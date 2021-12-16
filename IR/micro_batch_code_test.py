@@ -8,9 +8,14 @@ class MyModel(torch.nn.Module):
         super().__init__()
         self.lin = torch.nn.Linear(512, 512)
         self.lin2 = torch.nn.Linear(512, 512)
+        self.lin3 = torch.nn.Linear(512, 512)
 
     def forward(self, x):
-        return self.lin2(self.lin(x))
+        x = self.lin3(x) # To test reuse of modules
+        x = self.lin(x)
+        x = self.lin2(x)
+        x = self.lin3(x)
+        return x
 
 def train_loop(batch, model):
     out = model(batch)
