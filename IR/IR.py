@@ -2,8 +2,8 @@ import torch
 import torch.fx
 from torch.fx.passes.split_module import split_module
 
-import operator
-from typing import Dict, Optional, Union, cast
+import copy, operator
+from typing import Dict, List, Optional, Union, cast
 from enum import Enum
 
 # Pipe model representation
@@ -39,9 +39,10 @@ class MultiUseParameterConfig(Enum):
 MultiUseParamSpec = Union[MultiUseParameterConfig, Dict[str, MultiUseParameterConfig]]
 
 class Pipe(torch.nn.Module):
-    def __init__(self, split_gm : torch.fx.GraphModule):
+    def __init__(self, split_gm : torch.fx.GraphModule, replicated_params : Optional[Dict[str, List[str]]] = None):
         super().__init__()
         self.split_gm = split_gm
+        self.replicated_params = replicated_params if replicated_params else {}
 
     def forward(self, *args, **kwargs):
         return self.split_gm(*args, **kwargs)
@@ -107,6 +108,7 @@ class Pipe(torch.nn.Module):
 
         def move_param_to_callee(callee, param_val, use_idx):
             new_param_name = f"__{node.target.replace('.', '_')}"
+            assert not hasattr(callee, new_param_name)
             setattr(callee, new_param_name, param_val)
 
             ph_counter = 0
@@ -166,6 +168,8 @@ class Pipe(torch.nn.Module):
                 if input not in node_to_first_user:
                     node_to_first_user[input] = node
 
+        replicated_params : Dict[str, List[str]] = {}
+
         for node in split.graph.nodes:
             if node.op == 'get_attr' and node.target in multi_use_params_qualnames:
                 reuse_type = multi_use_params_qualnames[node.target]
@@ -215,14 +219,34 @@ class Pipe(torch.nn.Module):
                         node.replace_all_uses_with(transmitted_value_getitem)
                         split.graph.erase_node(node)
                 elif reuse_type == MultiUseParameterConfig.REPLICATE:
-                    raise NotImplementedError()
+                    submods_with_replication = []
+                    submod_target_name = None
+                    for user in copy.copy(node.users):
+                        use_idx = delete_user_reference(node, user, delete_node=False)
+                        param_val = split
+                        for atom in node.target.split('.'):
+                            param_val = getattr(param_val, atom)
+                        submod = split.get_submodule(user.target)
+                        param_access_node = move_param_to_callee(submod, param_val, use_idx)
+                        if submod_target_name:
+                            assert submod_target_name == param_access_node.target
+                        else:
+                            submod_target_name = param_access_node.target
+                        submods_with_replication.append(user.target)
+
+                    split.graph.erase_node(node)
+                    replicated_params[submod_target_name] = submods_with_replication
                 else:
                     raise ValueError(f'Unknown multi-use config value {reuse_type} specified for {node.target}')
+
+        # All parameter fetches should be moved into their respective locations at this point
+        for node in split.graph.nodes:
+            assert node.op != 'get_attr'
 
         split.graph.lint()
         split.recompile()
 
-        return Pipe(split)
+        return Pipe(split, replicated_params)
 
 
 # Test sequential
@@ -261,16 +285,17 @@ class ExampleCode(torch.nn.Module):
 ec = ExampleCode()
 ec(torch.randn(50, 512))
 
-ec_pipe = Pipe.from_tracing(ec)
-
-print(ec_pipe.split_gm)
-# TODO: split_module replicates reference to submodules but transmits parameters
-print(ec_pipe.split_gm.submod_2)
-
-# TODO:
-# 1. Shared parameters: configure to either lift into first use and transmit or replicate
-# 2. Add parameter movement to split_module
-# 3. Generalize split_module to configure the behavior of module calls
-
+ec_pipe = Pipe.from_tracing(ec, MultiUseParameterConfig.TRANSMIT)
 x = torch.randn(5, 512)
 torch.testing.assert_allclose(ec(x), ec_pipe(x))
+
+ec_pipe_replicated = Pipe.from_tracing(ec, MultiUseParameterConfig.REPLICATE)
+x = torch.randn(5, 512)
+torch.testing.assert_allclose(ec(x), ec_pipe_replicated(x))
+assert ec_pipe_replicated.replicated_params == {'__mm_param' : ['submod_0', 'submod_1']}
+
+
+# TODO:
+# 1. split_module replicates modules for each call, but we need to keep track of this
+#    so we can insert the proper synchronization in the backward pass
+# 2. Add parameter movement to split_module
