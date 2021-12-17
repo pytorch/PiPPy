@@ -39,24 +39,63 @@ class MultiUseParameterConfig(Enum):
 MultiUseParamSpec = Union[MultiUseParameterConfig, Dict[str, MultiUseParameterConfig]]
 
 class Pipe(torch.nn.Module):
-    def __init__(self, split_gm : torch.fx.GraphModule, replicated_params : Optional[List[Dict[str, str]]] = None):
+    def __init__(self, split_gm : torch.fx.GraphModule):
         super().__init__()
-        self.split_gm = split_gm
-        self.replicated_params = replicated_params if replicated_params else {}
+        self.split_gm : torch.fx.GraphModule = split_gm
+
+        for node in split_gm.graph.nodes:
+            assert (node.op in {'call_module', 'placeholder', 'output'} or 
+                (node.op, node.target) == ('call_function', operator.getitem))
+
+        # Detect replicated parameters so we know that we have to do an additional allreduce
+        # before applying the optimizer
+        #
+        # Note that this also handles the case where there were multiple calls to a single
+        # module from different stages, regardless of whether that module invocation
+        # was handled by the logic above.
+
+        # Map parameter value to a dictionary that maps the user pipeline module
+        # to the local qualname within that module
+        params_to_users : Dict[torch.nn.Parameter, Dict[str, str]] = {}
+
+        for m_qualname, mod in self.split_gm.named_children():
+            for p_qualname, param in mod.named_parameters():
+                params_to_users.setdefault(param, {})
+                params_to_users[param][m_qualname] = p_qualname
+
+        self.replicated_params : List[Dict[str, str]] = [
+            use_mapping for _, use_mapping in params_to_users.items() if len(use_mapping) > 1]
 
     def forward(self, *args, **kwargs):
         return self.split_gm(*args, **kwargs)
 
     @staticmethod
     def from_sequential(seq : torch.nn.Sequential):
+        # Deduplicate contained modules so we have a unique instance for each
+        # call in topological ordering. This is necessary so that detection of shared
+        # parameters across stages works.
+        new_seq_modules = []
+
+        seen_modules = {}
+        for module in seq:
+            if module in seen_modules:
+                to_append = copy.copy(module)
+            else:
+                to_append = module
+            new_seq_modules.append(to_append)
+            seen_modules.setdefault(to_append)
+
+        to_trace = torch.nn.Sequential(*new_seq_modules)
+
         assert isinstance(seq, torch.nn.Sequential)
         class AllModTracer(torch.fx.Tracer):
             def is_leaf_module(self, *args, **kwargs):
                 return True
 
         tracer = AllModTracer()
-        graph = tracer.trace(seq)
+        graph = tracer.trace(to_trace)
         gm = torch.fx.GraphModule(tracer.root, graph)
+
         return Pipe(gm)
 
     @staticmethod
@@ -229,40 +268,19 @@ class Pipe(torch.nn.Module):
                 else:
                     raise ValueError(f'Unknown multi-use config value {reuse_type} specified for {node.target}')
 
-        # All parameter fetches should be moved into their respective locations at this point
-        for node in split.graph.nodes:
-            assert node.op != 'get_attr'
-
         split.graph.lint()
         split.recompile()
 
-        # Detect replicated parameters so we know that we have to do an additional allreduce
-        # before applying the optimizer
-        #
-        # Note that this also handles the case where there were multiple calls to a single
-        # module from different stages, regardless of whether that module invocation
-        # was handled by the logic above.
-
-        # Map parameter value to a dictionary that maps the user pipeline module
-        # to the local qualname within that module
-        params_to_users : Dict[torch.nn.Parameter, Dict[str, str]] = {}
-
-        for m_qualname, mod in split.named_children():
-            for p_qualname, param in mod.named_parameters():
-                params_to_users.setdefault(param, {})
-                params_to_users[param][m_qualname] = p_qualname
-
-        replicated_params : List[Dict[str, str]] = [
-            use_mapping for _, use_mapping in params_to_users.items() if len(use_mapping) > 1]
-
-        return Pipe(split, replicated_params)
+        return Pipe(split)
 
 
 # Test sequential
 mods = [torch.nn.Linear(512, 512) for _ in range(5)]
+mods += [mods[0]]
 seq = torch.nn.Sequential(*mods)
 
 seq_pipe = Pipe.from_sequential(seq)
+assert seq_pipe.replicated_params == [{'0': 'weight', '5': 'weight'}, {'0': 'bias', '5': 'bias'}]
 
 x = torch.randn(50, 512)
 torch.testing.assert_allclose(seq(x), seq_pipe(x))
@@ -310,4 +328,9 @@ assert ec_pipe_replicated.replicated_params == [
 
 
 # TODO:
-# 2. Add parameter movement to split_module
+# 1. Test autograd on single-box
+# 2. investigate gradient sync for shared parameters. how does DDP do it?
+# . Shape specialized tracing?
+# . Can we define semantics for shared module call? Can we make this configurable in the same way as
+#    with shared parameters? probably need to modify split_module in this case
+# . Add parameter movement to split_module
