@@ -130,7 +130,6 @@ class Pipe(torch.nn.Module):
         split.graph.lint()
         split.recompile()
 
-        # TODO: lol
         return Pipe(split)
 
 
@@ -151,6 +150,7 @@ class ExampleCode(torch.nn.Module):
     super().__init__()
     self.mm_param = torch.nn.Parameter(torch.randn(512, 512))
     self.mm_param2 = torch.nn.Parameter(torch.randn(512, 512))
+    self.lin = torch.nn.Linear(512, 512)
 
   def forward(self, x):
     x = torch.mm(x, self.mm_param)
@@ -162,6 +162,7 @@ class ExampleCode(torch.nn.Module):
     x = torch.relu(x)
     x = x + skip_connection
     x = torch.mm(x, self.mm_param2)
+    x = self.lin(x)
     return x
 
 ec = ExampleCode()
@@ -170,6 +171,8 @@ ec(torch.randn(50, 512))
 ec_pipe = Pipe.from_tracing(ec)
 
 print(ec_pipe.split_gm)
+# TODO: why does split_module move submodules but not parameters?
+print(ec_pipe.split_gm.submod_2)
 
 x = torch.randn(5, 512)
 torch.testing.assert_allclose(ec(x), ec_pipe(x))
