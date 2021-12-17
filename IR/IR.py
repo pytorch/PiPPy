@@ -158,6 +158,7 @@ class ExampleCode(torch.nn.Module):
     x = torch.relu(x)
     pipe_split()
     x = torch.mm(x, self.mm_param)
+    x = self.lin(x)
     pipe_split()
     x = torch.relu(x)
     x = x + skip_connection
@@ -171,8 +172,14 @@ ec(torch.randn(50, 512))
 ec_pipe = Pipe.from_tracing(ec)
 
 print(ec_pipe.split_gm)
-# TODO: why does split_module move submodules but not parameters?
+# TODO: split_module replicates reference to submodules but transmits parameters
 print(ec_pipe.split_gm.submod_2)
+
+# TODO:
+# 1. Shared parameters: configure to either lift into first use and transmit or replicate
+# 2. Add parameter movement to split_module
+# 3. Generalize split_module to configure the behavior of module calls
+
 
 x = torch.randn(5, 512)
 torch.testing.assert_allclose(ec(x), ec_pipe(x))
