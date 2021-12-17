@@ -30,39 +30,29 @@ def pipe_split():
     if pipeline_tracer is not None:
         pipeline_tracer.graph.call_function(pipe_split, (), {})
 
-class PipeStage(torch.nn.Module):
-    def __init__(self, module : torch.nn.Module):
-        super().__init__()
-        self.module = module
-        self.sends = {}
-        self.receives = {}
-
-    def forward(self, *args, **kwargs):
-        return self.module(*args, **kwargs)
-
-
 class Pipe(torch.nn.Module):
-    def __init__(self, stages : Dict[str, PipeStage]):
+    def __init__(self, split_gm : torch.fx.GraphModule):
         super().__init__()
-        self.stages = stages
+        self.split_gm = split_gm
 
     def forward(self, *args, **kwargs):
-        for name, stage in self.stages.items():
-            # TODO: generalize this calling convention
-            rv = stage(*args, **kwargs)
-            args = (rv,)
-            kwargs = {}
-        return args[0]
+        return self.split_gm(*args, **kwargs)
 
     @staticmethod
     def from_sequential(seq : torch.nn.Sequential):
-        stages = {str(i): PipeStage(mod) for i, mod in enumerate(seq)}
-        return Pipe(stages)
+        assert isinstance(seq, torch.nn.Sequential)
+        class AllModTracer(torch.fx.Tracer):
+            def is_leaf_module(self, *args, **kwargs):
+                return True
+
+        tracer = AllModTracer()
+        graph = tracer.trace(seq)
+        gm = torch.fx.GraphModule(tracer.root, graph)
+        return Pipe(gm)
 
     @staticmethod
     def from_tracing(mod : torch.nn.Sequential):
-        # TODO: partitioning policy
-
+        # TODO: abstract partitioning policy
 
         global pipeline_tracer
         old_pipeline_tracer = pipeline_tracer
@@ -81,6 +71,8 @@ class Pipe(torch.nn.Module):
                 part_idx += 1
             return part_idx
 
+        # TODO: what does split do with module invocations? does it move the modules
+        # into the submodules?
         split = split_module(traced, mod, split_callback)
 
         # peephole to remove pipe_split
@@ -93,12 +85,53 @@ class Pipe(torch.nn.Module):
 
         # lift single-use parameter fetches into the modules that use them
         # TODO: backport this into split_module
+        def delete_user_reference(node, user):
+            assert len(user.kwargs) == 0
+            use_idxs = [i for i, arg in enumerate(user.args) if arg == node]
+            assert len(use_idxs) == 1
+            args_copy = list(user.args)
+            args_copy.pop(use_idxs[0])
+            user.args = args_copy
+            node.graph.erase_node(node)
 
-        print(split)
-        import pdb; pdb.set_trace()
+            return use_idxs[0]
+
+        def move_param_to_callee(callee, param_val, use_idx):
+            new_param_name = f"__{node.target.replace('.', '_')}"
+            setattr(callee, new_param_name, param_val)
+
+            ph_counter = 0
+            for sn in callee.graph.nodes:
+                if sn.op == 'placeholder':
+                    if ph_counter == use_idx:
+                        with callee.graph.inserting_before(sn):
+                            get_attr = callee.graph.get_attr(new_param_name)
+                            sn.replace_all_uses_with(get_attr)
+                            callee.graph.erase_node(sn)
+                    ph_counter += 1
+            callee.graph.lint()
+            callee.recompile()
+
+        for node in split.graph.nodes:
+            if node.op == 'get_attr' and len(node.users) == 1:
+                user = list(node.users)[0]
+                if user.op != 'call_module':
+                    continue
+                use_idx = delete_user_reference(node, user)
+
+                # Move parameter into submodule and replace PH with a get_attr
+                param_val = split
+                for atom in node.target.split('.'):
+                    param_val = getattr(param_val, atom)
+
+                callee = split.get_submodule(user.target)
+                move_param_to_callee(callee, param_val, use_idx)
+
+        split.graph.lint()
+        split.recompile()
 
         # TODO: lol
-        return Pipe({'0': PipeStage(traced)})
+        return Pipe(split)
 
 
 # Test sequential
