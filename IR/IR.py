@@ -154,7 +154,6 @@ class ExampleCode(torch.nn.Module):
 
   def forward(self, x):
     x = torch.mm(x, self.mm_param)
-    pipe_split()
     skip_connection = x
     x = torch.relu(x)
     pipe_split()
@@ -169,6 +168,8 @@ ec = ExampleCode()
 ec(torch.randn(50, 512))
 
 ec_pipe = Pipe.from_tracing(ec)
+
+print(ec_pipe.split_gm)
 
 x = torch.randn(5, 512)
 torch.testing.assert_allclose(ec(x), ec_pipe(x))
