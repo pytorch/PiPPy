@@ -39,7 +39,7 @@ class MultiUseParameterConfig(Enum):
 MultiUseParamSpec = Union[MultiUseParameterConfig, Dict[str, MultiUseParameterConfig]]
 
 class Pipe(torch.nn.Module):
-    def __init__(self, split_gm : torch.fx.GraphModule, replicated_params : Optional[Dict[str, List[str]]] = None):
+    def __init__(self, split_gm : torch.fx.GraphModule, replicated_params : Optional[List[Dict[str, str]]] = None):
         super().__init__()
         self.split_gm = split_gm
         self.replicated_params = replicated_params if replicated_params else {}
@@ -168,8 +168,6 @@ class Pipe(torch.nn.Module):
                 if input not in node_to_first_user:
                     node_to_first_user[input] = node
 
-        replicated_params : Dict[str, List[str]] = {}
-
         for node in split.graph.nodes:
             if node.op == 'get_attr' and node.target in multi_use_params_qualnames:
                 reuse_type = multi_use_params_qualnames[node.target]
@@ -219,8 +217,6 @@ class Pipe(torch.nn.Module):
                         node.replace_all_uses_with(transmitted_value_getitem)
                         split.graph.erase_node(node)
                 elif reuse_type == MultiUseParameterConfig.REPLICATE:
-                    submods_with_replication = []
-                    submod_target_name = None
                     for user in copy.copy(node.users):
                         use_idx = delete_user_reference(node, user, delete_node=False)
                         param_val = split
@@ -228,14 +224,8 @@ class Pipe(torch.nn.Module):
                             param_val = getattr(param_val, atom)
                         submod = split.get_submodule(user.target)
                         param_access_node = move_param_to_callee(submod, param_val, use_idx)
-                        if submod_target_name:
-                            assert submod_target_name == param_access_node.target
-                        else:
-                            submod_target_name = param_access_node.target
-                        submods_with_replication.append(user.target)
 
                     split.graph.erase_node(node)
-                    replicated_params[submod_target_name] = submods_with_replication
                 else:
                     raise ValueError(f'Unknown multi-use config value {reuse_type} specified for {node.target}')
 
@@ -245,6 +235,25 @@ class Pipe(torch.nn.Module):
 
         split.graph.lint()
         split.recompile()
+
+        # Detect replicated parameters so we know that we have to do an additional allreduce
+        # before applying the optimizer
+        #
+        # Note that this also handles the case where there were multiple calls to a single
+        # module from different stages, regardless of whether that module invocation
+        # was handled by the logic above.
+
+        # Map parameter value to a dictionary that maps the user pipeline module
+        # to the local qualname within that module
+        params_to_users : Dict[torch.nn.Parameter, Dict[str, str]] = {}
+
+        for m_qualname, mod in split.named_children():
+            for p_qualname, param in mod.named_parameters():
+                params_to_users.setdefault(param, {})
+                params_to_users[param][m_qualname] = p_qualname
+
+        replicated_params : List[Dict[str, str]] = [
+            use_mapping for _, use_mapping in params_to_users.items() if len(use_mapping) > 1]
 
         return Pipe(split, replicated_params)
 
@@ -288,14 +297,17 @@ ec(torch.randn(50, 512))
 ec_pipe = Pipe.from_tracing(ec, MultiUseParameterConfig.TRANSMIT)
 x = torch.randn(5, 512)
 torch.testing.assert_allclose(ec(x), ec_pipe(x))
+assert ec_pipe.replicated_params == [
+    {'submod_1': 'lin.weight', 'submod_2': 'lin.weight'}, {'submod_1': 'lin.bias', 'submod_2': 'lin.bias'}]
 
 ec_pipe_replicated = Pipe.from_tracing(ec, MultiUseParameterConfig.REPLICATE)
 x = torch.randn(5, 512)
 torch.testing.assert_allclose(ec(x), ec_pipe_replicated(x))
-assert ec_pipe_replicated.replicated_params == {'__mm_param' : ['submod_0', 'submod_1']}
+assert ec_pipe_replicated.replicated_params == [
+    {'submod_0': '__mm_param', 'submod_1': '__mm_param'},
+    {'submod_1': 'lin.weight', 'submod_2': 'lin.weight'},
+    {'submod_1': 'lin.bias', 'submod_2': 'lin.bias'}]
 
 
 # TODO:
-# 1. split_module replicates modules for each call, but we need to keep track of this
-#    so we can insert the proper synchronization in the backward pass
 # 2. Add parameter movement to split_module
