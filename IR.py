@@ -330,6 +330,7 @@ assert ec_pipe_replicated.replicated_params == [
 # TODO:
 # 1. Test autograd on single-box
 # 2. investigate gradient sync for shared parameters. how does DDP do it?
+# 3. Modify serialization to put parameters back in their original qualname form?
 # . Shape specialized tracing?
 # . Can we define semantics for shared module call? Can we make this configurable in the same way as
 #    with shared parameters? probably need to modify split_module in this case
