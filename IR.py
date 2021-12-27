@@ -139,7 +139,7 @@ class Pipe(torch.nn.Module):
             assert len(use_idxs) == 1
             args_copy = list(user.args)
             args_copy.pop(use_idxs[0])
-            user.args = args_copy
+            user.args = tuple(args_copy)
             if delete_node:
                 node.graph.erase_node(node)
 
