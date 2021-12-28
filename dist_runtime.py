@@ -222,7 +222,7 @@ if local_rank == 0:
 
         def call_function(self, target, args, kwargs):
             if target is operator.getitem and isinstance(args[0], torch._C._distributed_rpc.PyRRef):
-                return rpc.remote(args[0].owner().id, tuple_idx, args)
+                return rpc.remote(args[0].owner(), tuple_idx, args)
             return super().call_function(target, args, kwargs)
 
     interp = RemoteInterpreter(remote_stage_executor_rrefs, ec_pipe.split_gm)
