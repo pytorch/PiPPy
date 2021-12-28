@@ -43,7 +43,7 @@ class PipeStageExecutor:
     def invoke(self, args, kwargs):
         args = torch.fx.node.map_aggregate(args, to_here)
         kwargs = torch.fx.node.map_aggregate(kwargs, to_here)
-        logging.info(f'invoked target {self.mod} on rank {local_rank}')
+        logging.info(f'rank {local_rank} invoked target {self.mod}')
         return self.mod(*args, **kwargs)
 
 def tuple_idx(val_rref, idx):
