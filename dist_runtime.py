@@ -13,21 +13,22 @@ import torch.distributed.rpc as rpc
 
 logging.getLogger().setLevel(logging.INFO)
 
-def move(module):
-    return module
-
 def to_here(a):
     if isinstance(a, torch._C._distributed_rpc.PyRRef):
         return a.to_here()
     else:
         return a
 
-def invoke(mod_rref, args, kwargs):
-    args = torch.fx.node.map_aggregate(args, to_here)
-    kwargs = torch.fx.node.map_aggregate(kwargs, to_here)
-    out = mod_rref.to_here()(*args, **kwargs)
-    logging.info(f'invoked target {mod_rref} on rank {local_rank}')
-    return out
+class PipeStageExecutor:
+    def __init__(self, mod):
+        logging.info(f'Instantiating PipeStageExecutor for module {mod}')
+        self.mod = mod
+
+    def invoke(self, args, kwargs):
+        args = torch.fx.node.map_aggregate(args, to_here)
+        kwargs = torch.fx.node.map_aggregate(kwargs, to_here)
+        logging.info(f'invoked target {self.mod} on rank {local_rank}')
+        return self.mod(*args, **kwargs)
 
 def tuple_idx(val_rref, idx):
     return val_rref.to_here()[idx]
@@ -66,25 +67,25 @@ if local_rank == 0:
 
     optimizer = torch.optim.SGD(ec_pipe.parameters(), 0.01)
 
-    remote_module_rrefs : Dict[str, torch.distributed.rpc.RRef] = {}
+    remote_stage_executor_rrefs : Dict[str, torch.distributed.rpc.RRef] = {}
 
     for rank, (name, mod) in enumerate(ec_pipe.split_gm.named_children()):
-        remote_module_rrefs[name] = (rank, rpc.remote(rank, move, (mod,)))
+        remote_stage_executor_rrefs[name] = (rank, rpc.remote(rank, PipeStageExecutor, (mod,)))
 
     # Interpret top-level graph and issue remote calls
 
     class RemoteInterpreter(torch.fx.Interpreter):
-        def __init__(self, remote_module_rrefs, module, garbage_collect_values = True):
+        def __init__(self, remote_stage_executor_rrefs, module, garbage_collect_values = True):
             super().__init__(module, garbage_collect_values)
-            self.remote_module_rrefs = remote_module_rrefs
+            self.remote_stage_executor_rrefs = remote_stage_executor_rrefs
 
         def call_module(self, target, args, kwargs):
             assert isinstance(target, str)
 
-            if target in self.remote_module_rrefs:
-                rank, mod_rref = self.remote_module_rrefs[target]
+            if target in self.remote_stage_executor_rrefs:
+                rank, stage_executor = self.remote_stage_executor_rrefs[target]
                 logging.info(f'Issuing remote invocation for target {target} on rank {rank}')
-                return rpc.remote(rank, invoke, (mod_rref, args, kwargs))
+                return stage_executor.remote().invoke(args, kwargs)
             else:
                 logging.info(f'Running local operation {target} from driver')
                 return super().call_module(target, args, kwargs)
@@ -94,7 +95,7 @@ if local_rank == 0:
                 return rpc.remote(args[0].owner().id, tuple_idx, args)
             return super().call_function(target, args, kwargs)
 
-    interp = RemoteInterpreter(remote_module_rrefs, ec_pipe.split_gm)
+    interp = RemoteInterpreter(remote_stage_executor_rrefs, ec_pipe.split_gm)
 
     input = torch.randn(50, 512)
 
@@ -110,4 +111,5 @@ rpc.shutdown()
 #
 # * Serialize execution of jobs on a single stage -- create a scheduler class
 # * Implement schedules and scheduling language: fill-drain, 1f1b, interleaved, backpressure
-# * 
+# * Autograd
+# * Loss invocations
