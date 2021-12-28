@@ -1,9 +1,10 @@
 from IR import Pipe, MultiUseParameterConfig, pipe_split
 import torch
 import torch.fx
-from typing import Dict
+from typing import Any, Dict, List, NamedTuple, Optional
 import operator
 import logging
+import math
 
 import os
 local_rank = int(os.environ["LOCAL_RANK"])
@@ -27,13 +28,17 @@ class PipeStageExecutor:
     * Ownership of the stage's module and its recursive submodules/parameters
     * Serving as an entrypoint for the driver to push jobs into its queue
     * Queueing of jobs and execution schedule, e.g.
-        * TODO: fill-drain pipeline by serializing jobs
-        * TODO: 1F1B scheduling by serializing jobs and stalling for a specific
-                phase to come through
-        * TODO: Interleaved 1F1B (TODO: how to set up these data dependencies)
-        * TODO: dynamic scheduling via registers and back-pressure (TODO: how to
-                specify resource limits and how to implement backpressure?)
+        * Static Schedules
+            * TODO: fill-drain pipeline by serializing jobs
+            * TODO: 1F1B scheduling by serializing jobs and stalling for a specific
+                    phase to come through
+            * TODO: Interleaved 1F1B (TODO: how to set up these data dependencies)
+        * Dynamic Schedules
+            * TODO: Varuna dynamic schedule
+            * TODO: dynamic scheduling via registers and back-pressure (TODO: how to
+                    specify resource limits and how to implement backpressure?)
     * TODO: storage of activations for subsequent gradient computation
+    * TODO: gradient checkpointing
     * TODO: Invocation of `torch.autograd.backward()` to implement backward passes
     """
     def __init__(self, mod):
@@ -52,12 +57,14 @@ def tuple_idx(val_rref, idx):
 rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
 
 if local_rank == 0:
+    d_hid = 512
+
     class ExampleCode(torch.nn.Module):
         def __init__(self):
             super().__init__()
-            self.mm_param = torch.nn.Parameter(torch.randn(512, 512))
-            self.mm_param2 = torch.nn.Parameter(torch.randn(512, 512))
-            self.lin = torch.nn.Linear(512, 512)
+            self.mm_param = torch.nn.Parameter(torch.randn(d_hid, d_hid))
+            self.mm_param2 = torch.nn.Parameter(torch.randn(d_hid, d_hid))
+            self.lin = torch.nn.Linear(d_hid, d_hid)
 
         def forward(self, x):
             x = torch.mm(x, self.mm_param)
@@ -74,7 +81,7 @@ if local_rank == 0:
             return x
 
     ec = ExampleCode()
-    ec(torch.randn(50, 512))
+    ec(torch.randn(50, d_hid))
 
     ec_pipe = Pipe.from_tracing(ec, MultiUseParameterConfig.TRANSMIT)
 
@@ -95,6 +102,69 @@ if local_rank == 0:
             super().__init__(module, garbage_collect_values)
             self.remote_stage_executor_rrefs = remote_stage_executor_rrefs
 
+        class MicroBatchSplitTensor(NamedTuple):
+            chunks : List[torch.Tensor]
+
+        def run(self, *args, chunks : int, batch_dims : Optional[List[Optional[int]]] = None,
+                initial_env : Optional[Dict[torch.fx.Node, Any]] = None):
+            """
+            TODO: fill this out better
+
+            chunks : number of chunks
+            batch_dims : dimension indices for batch dimension for each tensor argument. If None,
+                         specified, defaults to dimension `0` for all Tensor arguments. If specified,
+                         values can be None to specify non-tensor arguments.
+            """
+
+            # Calculate full batch dims array
+            if batch_dims is None:
+                batch_dims = [0 if isinstance(arg, torch.Tensor) else None for arg in args]
+            assert isinstance(batch_dims, list)
+
+            if len(args) != len(batch_dims):
+                raise RuntimeError('Length of `batch_dims` must match')
+            split_args = []
+            for i, (arg, batch_dim) in enumerate(zip(args, batch_dims)):
+                if isinstance(arg, torch.Tensor):
+                    if batch_dim is None:
+                        raise RuntimeError(f'Batch dimension not specified for arg {i}')
+
+                    chunk_size = int(math.ceil(arg.shape[batch_dim] / chunks))
+                    sizes = []
+                    examples_counted = 0
+                    for _ in range(chunks):
+                        if examples_counted + chunk_size > arg.shape[batch_dim]:
+                            final_chunk_size = arg.shape[batch_dim] - examples_counted
+                            sizes.append(final_chunk_size)
+                            examples_counted += final_chunk_size
+                        else:
+                            sizes.append(chunk_size)
+                            examples_counted += chunk_size
+                    assert examples_counted == arg.shape[batch_dim]
+                    chunk_tensors = torch.split(arg, sizes)
+                    split_args.append(self.MicroBatchSplitTensor(chunk_tensors))
+
+                    logging.info(f'Split tensor argument {i} into {chunks} chunks of sizes '
+                                 f'{[chunk.shape for chunk in chunk_tensors]}')
+                else:
+                    split_args.append(arg)
+
+            microbatch_results = []
+            for chunk_idx in range(chunks):
+                microbatch_args = []
+                for arg in split_args:
+                    microbatch_args.append(arg.chunks[chunk_idx] if isinstance(arg, self.MicroBatchSplitTensor) else arg)
+                microbatch_results.append(super().run(*microbatch_args, initial_env))
+
+            # TODO: figure out what to do here for loss + backward.
+            # TODO: support multiple outputs
+            assert all(isinstance(result, torch._C._distributed_rpc.PyRRef) for result in microbatch_results)
+
+            # TODO: make this less hacky. specify output batch_dims?
+            local_results = [to_here(result) for result in microbatch_results]
+
+            return torch.cat(local_results)
+
         def call_module(self, target, args, kwargs):
             assert isinstance(target, str)
 
@@ -113,12 +183,13 @@ if local_rank == 0:
 
     interp = RemoteInterpreter(remote_stage_executor_rrefs, ec_pipe.split_gm)
 
-    input = torch.randn(50, 512)
+    # input = torch.randn(5, d_hid)
+    input = torch.arange(5 * d_hid).reshape(5, d_hid).float()
 
-    out = interp.run(input)
+    out = interp.run(input, chunks=5)
 
     ref_out = ec_pipe.split_gm(input)
 
-    torch.testing.assert_allclose(out.to_here(), ref_out)
+    torch.testing.assert_allclose(out, ref_out)
 
 rpc.shutdown()
