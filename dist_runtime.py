@@ -20,6 +20,22 @@ def to_here(a):
         return a
 
 class PipeStageExecutor:
+    """
+    PipeStageExecutor encapsulates the execution semantics of a fragement of
+    code on a pipeline stage. PipeStageExecutor handles:
+
+    * Ownership of the stage's module and its recursive submodules/parameters
+    * Serving as an entrypoint for the driver to push jobs into its queue
+    * Queueing of jobs and execution schedule, e.g.
+        * TODO: fill-drain pipeline by serializing jobs
+        * TODO: 1F1B scheduling by serializing jobs and stalling for a specific
+                phase to come through
+        * TODO: Interleaved 1F1B (TODO: how to set up these data dependencies)
+        * TODO: dynamic scheduling via registers and back-pressure (TODO: how to
+                specify resource limits and how to implement backpressure?)
+    * TODO: storage of activations for subsequent gradient computation
+    * TODO: Invocation of `torch.autograd.backward()` to implement backward passes
+    """
     def __init__(self, mod):
         logging.info(f'Instantiating PipeStageExecutor for module {mod}')
         self.mod = mod
@@ -106,10 +122,3 @@ if local_rank == 0:
     torch.testing.assert_allclose(out.to_here(), ref_out)
 
 rpc.shutdown()
-
-# TODOs:
-#
-# * Serialize execution of jobs on a single stage -- create a scheduler class
-# * Implement schedules and scheduling language: fill-drain, 1f1b, interleaved, backpressure
-# * Autograd
-# * Loss invocations
