@@ -12,7 +12,7 @@ world_size = int(os.environ["WORLD_SIZE"])
 
 import torch.distributed.rpc as rpc
 
-logging.getLogger().setLevel(logging.INFO)
+# logging.getLogger().setLevel(logging.INFO)
 
 def to_here(a):
     if isinstance(a, torch._C._distributed_rpc.PyRRef):
@@ -42,23 +42,20 @@ class PipeStageExecutor:
     * TODO: Invocation of `torch.autograd.backward()` to implement backward passes
     """
     def __init__(self, mod):
-        logging.info(f'Instantiating PipeStageExecutor for module {mod}')
+        logging.info(f'Rank {local_rank} Instantiating PipeStageExecutor for module {mod}')
         self.mod = mod
 
     def invoke(self, args, kwargs):
         args = torch.fx.node.map_aggregate(args, to_here)
         kwargs = torch.fx.node.map_aggregate(kwargs, to_here)
-        logging.info(f'rank {local_rank} invoked target {self.mod}')
+        logging.info(f'rank {local_rank} running target {self.mod}')
         return self.mod(*args, **kwargs)
-
-def tuple_idx(val_rref, idx):
-    return val_rref.to_here()[idx]
 
 rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
 
 if local_rank == 0:
     d_hid = 512
-    bs = 500
+    bs = 503
 
     class ExampleCode(torch.nn.Module):
         def __init__(self):
@@ -214,7 +211,7 @@ if local_rank == 0:
 
             if target in self.remote_stage_executor_rrefs:
                 rank, stage_executor = self.remote_stage_executor_rrefs[target]
-                logging.info(f'Issuing remote invocation for target {target} on rank {rank}')
+                logging.info(f'Issuing remote invocation for target {target} on  rank {rank}')
                 return stage_executor.remote().invoke(args, kwargs)
             else:
                 logging.info(f'Running local operation {target} from driver')
@@ -222,22 +219,26 @@ if local_rank == 0:
 
         def call_function(self, target, args, kwargs):
             if target is operator.getitem and isinstance(args[0], torch._C._distributed_rpc.PyRRef):
-                return rpc.remote(args[0].owner(), tuple_idx, args)
+                return args[0].remote().__getitem__(args[1])
             return super().call_function(target, args, kwargs)
 
     interp = RemoteInterpreter(remote_stage_executor_rrefs, ec_pipe.split_gm)
 
     input = torch.randn(bs, d_hid)
 
-    check_numeric_equivalence = False
+    check_numeric_equivalence = True
 
-    with torch.autograd.profiler.profile() as prof:
-        out = interp.run(input, chunks=5, _debug_mask_minibatches = check_numeric_equivalence)
-
-        ref_out = ec_pipe.split_gm(input)
-    prof.export_chrome_trace('pipe.csv')
+    # Warm up and correctness runs
+    out = interp.run(input, chunks=5, _debug_mask_minibatches = True)
+    ref_out = ec_pipe.split_gm(input)
 
     if check_numeric_equivalence:
         torch.testing.assert_allclose(out, ref_out)
+        
+    # Profiling runts
+    with torch.autograd.profiler.profile() as prof:
+        out = interp.run(input, chunks=5, _debug_mask_minibatches = False)
+        ref_out = ec_pipe.split_gm(input)
+    prof.export_chrome_trace('pipe.csv')
 
 rpc.shutdown()
