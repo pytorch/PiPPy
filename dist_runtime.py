@@ -1,7 +1,7 @@
 from IR import Pipe, MultiUseParameterConfig, pipe_split
 import torch
 import torch.fx
-from typing import Any, Dict, List, NamedTuple, Optional
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 import operator
 import logging
 import math
@@ -106,7 +106,8 @@ if local_rank == 0:
             chunks : List[torch.Tensor]
 
         def run(self, *args, chunks : int, batch_dims : Optional[List[Optional[int]]] = None,
-                initial_env : Optional[Dict[torch.fx.Node, Any]] = None):
+                initial_env : Optional[Dict[torch.fx.Node, Any]] = None,
+                _debug_mask_minibatches : bool = False):
             """
             TODO: fill this out better
 
@@ -124,24 +125,37 @@ if local_rank == 0:
             if len(args) != len(batch_dims):
                 raise RuntimeError('Length of `batch_dims` must match')
             split_args = []
+
+            # TODO: assuming input splits are the same as outputs
+            splits = []
             for i, (arg, batch_dim) in enumerate(zip(args, batch_dims)):
                 if isinstance(arg, torch.Tensor):
                     if batch_dim is None:
                         raise RuntimeError(f'Batch dimension not specified for arg {i}')
 
-                    chunk_size = int(math.ceil(arg.shape[batch_dim] / chunks))
-                    sizes = []
-                    examples_counted = 0
-                    for _ in range(chunks):
-                        if examples_counted + chunk_size > arg.shape[batch_dim]:
-                            final_chunk_size = arg.shape[batch_dim] - examples_counted
-                            sizes.append(final_chunk_size)
-                            examples_counted += final_chunk_size
-                        else:
-                            sizes.append(chunk_size)
-                            examples_counted += chunk_size
-                    assert examples_counted == arg.shape[batch_dim]
-                    chunk_tensors = torch.split(arg, sizes)
+                    sizes = self._calc_microbatch_split_sizes(chunks, arg.shape[batch_dim])
+                    if _debug_mask_minibatches:
+                        chunk_tensors = []
+
+                        prefix_sums = []
+                        sum = 0
+                        for size in sizes:
+                            sum += size
+                            prefix_sums.append(sum)
+
+                        predecessor = 0
+
+                        for sum in prefix_sums:
+                            splits.append((predecessor, sum))
+                            predecessor = sum
+
+                        for start, finish in splits:
+                            new_tensor = torch.zeros_like(input)
+                            new_tensor[start:finish] = input[start:finish]
+                            chunk_tensors.append(new_tensor)
+                    else:
+                        chunk_tensors = torch.split(arg, sizes)
+
                     split_args.append(self.MicroBatchSplitTensor(chunk_tensors))
 
                     logging.info(f'Split tensor argument {i} into {chunks} chunks of sizes '
@@ -163,7 +177,32 @@ if local_rank == 0:
             # TODO: make this less hacky. specify output batch_dims?
             local_results = [to_here(result) for result in microbatch_results]
 
+            if _debug_mask_minibatches:
+                assert len(splits) > 0
+                sliced_outputs = []
+                for result, (start, end) in zip(local_results, splits):
+                    sliced_outputs.append(result[start:end])
+                return torch.cat(sliced_outputs)
+
             return torch.cat(local_results)
+
+        def _calc_microbatch_split_sizes(self, chunks : int, dim_size : int):
+            # TODO: this splits with the last one bigger because i can't
+            # figure out the math to make the last one smaller
+            chunk_size = dim_size // chunks
+
+            sizes = []
+            examples_counted = 0
+            for i in range(chunks):
+                if i == chunks - 1:
+                    sizes.append(dim_size - examples_counted)
+                    examples_counted += (dim_size - examples_counted)
+                else:
+                    sizes.append(chunk_size)
+                    examples_counted += chunk_size
+
+            assert examples_counted == dim_size
+            return sizes
 
         def call_module(self, target, args, kwargs):
             assert isinstance(target, str)
@@ -186,7 +225,7 @@ if local_rank == 0:
     # input = torch.randn(5, d_hid)
     input = torch.arange(5 * d_hid).reshape(5, d_hid).float()
 
-    out = interp.run(input, chunks=5)
+    out = interp.run(input, chunks=5, _debug_mask_minibatches = True)
 
     ref_out = ec_pipe.split_gm(input)
 
