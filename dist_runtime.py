@@ -58,6 +58,7 @@ rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
 
 if local_rank == 0:
     d_hid = 512
+    bs = 500
 
     class ExampleCode(torch.nn.Module):
         def __init__(self):
@@ -81,7 +82,7 @@ if local_rank == 0:
             return x
 
     ec = ExampleCode()
-    ec(torch.randn(50, d_hid))
+    ec(torch.randn(bs, d_hid))
 
     ec_pipe = Pipe.from_tracing(ec, MultiUseParameterConfig.TRANSMIT)
 
@@ -186,6 +187,10 @@ if local_rank == 0:
 
             return torch.cat(local_results)
 
+        def run_node(self, n):
+            with torch.autograd.profiler.record_function(f'run_node {n}'):
+                return super().run_node(n)
+
         def _calc_microbatch_split_sizes(self, chunks : int, dim_size : int):
             # TODO: this splits with the last one bigger because i can't
             # figure out the math to make the last one smaller
@@ -222,13 +227,17 @@ if local_rank == 0:
 
     interp = RemoteInterpreter(remote_stage_executor_rrefs, ec_pipe.split_gm)
 
-    # input = torch.randn(5, d_hid)
-    input = torch.arange(5 * d_hid).reshape(5, d_hid).float()
+    input = torch.randn(bs, d_hid)
 
-    out = interp.run(input, chunks=5, _debug_mask_minibatches = True)
+    check_numeric_equivalence = False
 
-    ref_out = ec_pipe.split_gm(input)
+    with torch.autograd.profiler.profile() as prof:
+        out = interp.run(input, chunks=5, _debug_mask_minibatches = check_numeric_equivalence)
 
-    torch.testing.assert_allclose(out, ref_out)
+        ref_out = ec_pipe.split_gm(input)
+    prof.export_chrome_trace('pipe.csv')
+
+    if check_numeric_equivalence:
+        torch.testing.assert_allclose(out, ref_out)
 
 rpc.shutdown()
