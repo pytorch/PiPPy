@@ -3,12 +3,15 @@ import torch
 import torch.fx
 from typing import Dict
 import operator
+import logging
 
 import os
 local_rank = int(os.environ["LOCAL_RANK"])
 world_size = int(os.environ["WORLD_SIZE"])
 
 import torch.distributed.rpc as rpc
+
+logging.getLogger().setLevel(logging.INFO)
 
 def move(module):
     return module
@@ -23,7 +26,7 @@ def invoke(mod_rref, args, kwargs):
     args = torch.fx.node.map_aggregate(args, to_here)
     kwargs = torch.fx.node.map_aggregate(kwargs, to_here)
     out = mod_rref.to_here()(*args, **kwargs)
-    print(f'invoked target {mod_rref} on rank {local_rank}')
+    logging.info(f'invoked target {mod_rref} on rank {local_rank}')
     return out
 
 def tuple_idx(val_rref, idx):
@@ -80,8 +83,10 @@ if local_rank == 0:
 
             if target in self.remote_module_rrefs:
                 rank, mod_rref = self.remote_module_rrefs[target]
+                logging.info(f'Issuing remote invocation for target {target} on rank {rank}')
                 return rpc.remote(rank, invoke, (mod_rref, args, kwargs))
             else:
+                logging.info(f'Running local operation {target} from driver')
                 return super().call_module(target, args, kwargs)
 
         def call_function(self, target, args, kwargs):
@@ -100,3 +105,9 @@ if local_rank == 0:
     torch.testing.assert_allclose(out.to_here(), ref_out)
 
 rpc.shutdown()
+
+# TODOs:
+#
+# * Serialize execution of jobs on a single stage -- create a scheduler class
+# * Implement schedules and scheduling language: fill-drain, 1f1b, interleaved, backpressure
+# * 
