@@ -20,6 +20,19 @@ def to_here(a):
     else:
         return a
 
+# LOG EOD 12/28:
+#
+# Figure out if we can use `Future` directly to pass future values between the
+# ppeline stages and handle scheduling manually. Don't think we can put futures
+# over the wire (see future_test.py). Instead, should we push values via RPC?
+#
+# LOG EOD 1/4:
+# This seems fairly hairy. Future is returned directly by RPC agents that override
+# send(). Hypothetically we could create an agent where on the callee, requests are
+# handled by a scheduler. OTOH, we can probably just create some sort of message
+# format that includes (microbatch_id, phase, identifier for input) and send that
+# around.
+
 class PipeStageExecutor:
     """
     PipeStageExecutor encapsulates the execution semantics of a fragement of
