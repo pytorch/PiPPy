@@ -143,4 +143,6 @@ Note that micro-batch splitting and reconstruction is not guaranteed to be bitwi
 
 # Open questions
 
-TODO
+* We want to be able to schedule/serialize execution of forward/backward phases on each individual Pipeline stage. It is an open question what the best way to do this is given the design of the PT RPC framework. Some ideas:
+    * Implement this in user-space by having `PipeStageExecutor` handle the schedule and execution of pipeline phases. This is similar to how the FairScale experimental implementation works and is more of an actor model-type implementation, as opposed to the single-driver implementation that's currently in the codebase
+    * Make it so that `PipeStageExecutor.invoke` is serialized and only executed subject to the scheduling policy. The return value is still returned as an RRef and can be passed through to the successor stages to subsequently block on.
