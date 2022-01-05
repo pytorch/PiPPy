@@ -31,62 +31,65 @@ ref_out = ec(input)
 
 # Test output: split batch, process separately, cat together
 
-# 1 2 3 4 5 6 7 [8 9]
+USE_WHOLE_BATCH = False
 
-# dim_size = 7
-# chunks = 3
-# chunk_size = 3
-# chunks = [[1, 2, 3], [4, 5, 6], [7]]
+if USE_WHOLE_BATCH:
+    def _calc_microbatch_split_sizes(chunks : int, dim_size : int):
+        # TODO: this splits with the last one bigger because i can't
+        # figure out the math to make the last one smaller
+        chunk_size = dim_size // chunks
 
-# ceil(dim_size / chunks)
+        sizes = []
+        examples_counted = 0
+        for i in range(chunks):
+            if i == chunks - 1:
+                sizes.append(dim_size - examples_counted)
+                examples_counted += (dim_size - examples_counted)
+            else:
+                sizes.append(chunk_size)
+                examples_counted += chunk_size
 
-def _calc_microbatch_split_sizes(chunks : int, dim_size : int):
-    # TODO: this splits with the last one bigger because i can't
-    # figure out the math to make the last one smaller
-    chunk_size = dim_size // chunks
+        assert examples_counted == dim_size
+        return sizes
 
-    sizes = []
-    examples_counted = 0
-    for i in range(chunks):
-        if i == chunks - 1:
-            sizes.append(dim_size - examples_counted)
-            examples_counted += (dim_size - examples_counted)
-        else:
-            sizes.append(chunk_size)
-            examples_counted += chunk_size
+    split_sizes = _calc_microbatch_split_sizes(chunks=10, dim_size=input.shape[0])
 
-    assert examples_counted == dim_size
-    return sizes
+    # prefix sum of sizes
 
-split_sizes = _calc_microbatch_split_sizes(chunks=10, dim_size=input.shape[0])
+    prefix_sums = []
+    sum = 0
+    for size in split_sizes:
+        sum += size
+        prefix_sums.append(sum)
 
-# prefix sum of sizes
+    splits = []
+    predecessor = 0
 
-prefix_sums = []
-sum = 0
-for size in split_sizes:
-    sum += size
-    prefix_sums.append(sum)
+    for sum in prefix_sums:
+        splits.append((predecessor, sum))
+        predecessor = sum
 
-splits = []
-predecessor = 0
+    split_results = []
+    for start, finish in splits:
+        new_tensor = torch.zeros_like(input)
+        new_tensor[start:finish] = input[start:finish]
+        result = ec(new_tensor)
+        split_results.append(result[start:finish])
 
-for sum in prefix_sums:
-    splits.append((predecessor, sum))
-    predecessor = sum
+    test_out = torch.cat(split_results, dim=0)
 
-split_results = []
-for start, finish in splits:
-    new_tensor = torch.zeros_like(input)
-    new_tensor[start:finish] = input[start:finish]
-    result = ec(new_tensor)
-    split_results.append(result[start:finish])
+    torch.testing.assert_allclose(test_out, ref_out)
+else:
+    splits = torch.split(input, 10)
 
-test_out = torch.cat(split_results, dim=0)
+    results = [ec(s) for s in splits]
+    test_out = torch.cat(results, dim=0)
+
+    torch.testing.assert_allclose(test_out, ref_out)
+
 
 # # Test epsilon equivalence
 
-# torch.testing.assert_allclose(test_out, ref_out)
 """
 AssertionError: Tensor-likes are not close!
 
