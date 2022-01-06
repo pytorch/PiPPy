@@ -136,6 +136,7 @@ Note that the `Pipe` instance has an attribute `replicated_params`, which is a r
     * Implement explicit backward invocation
     * Gradient checkpointing support
 * `RemoteInterpreter` splits an input mini-batch into micro-batches and interprets the top-level `Pipe` graph, issuing `invoke` calls to the associated `PipeStageExecutors` to orchestrate execution of the program in a pipelined fashion.
+* Async RPC to yield the RPC callee to the scheduler
 
 # A Note About Correctness Testing
 
