@@ -99,7 +99,7 @@ class Pipe(torch.nn.Module):
         return Pipe(gm)
 
     @staticmethod
-    def from_tracing(mod : torch.nn.Sequential, multi_use_param_spec : Optional[MultiUseParamSpec] = None):
+    def from_tracing(mod : torch.nn.Module, multi_use_param_spec : Optional[MultiUseParamSpec] = None, **kwargs):
         # TODO: abstract partitioning policy
 
         global _pipeline_tracer
@@ -107,7 +107,7 @@ class Pipe(torch.nn.Module):
         _pipeline_tracer = torch.fx.Tracer()
         try:
             # TODO: tracing policy
-            graph = _pipeline_tracer.trace(mod)
+            graph = _pipeline_tracer.trace(mod, **kwargs)
             traced = torch.fx.GraphModule(mod, graph)
         finally:
             _pipeline_tracer = old__pipeline_tracer
@@ -272,6 +272,39 @@ class Pipe(torch.nn.Module):
         split.recompile()
 
         return Pipe(split)
+
+
+class PipeSplitWrapper(torch.nn.Module):
+    class SplitPoint(Enum):
+        BEGINNING = 1
+        END = 2
+
+    def __init__(self, mod : torch.nn.Module, split_point : SplitPoint = SplitPoint.BEGINNING):
+        super().__init__()
+        self.mod = mod
+        self.split_point = split_point
+
+    def forward(self, *args, **kwargs):
+        try:
+            if self.split_point == self.SplitPoint.BEGINNING:
+                pipe_split()
+
+            return self.mod(*args, **kwargs)
+        finally:
+            if self.split_point == self.SplitPoint.END:
+                pipe_split()
+
+
+def annotate_split_points(mod : torch.nn.Module, spec : Dict[str, Optional[PipeSplitWrapper.SplitPoint]]):
+    for qualname, split_type in spec.items():
+        atoms = qualname.split('.')
+        predecessor_module = mod
+        for atom in atoms[:-1]:
+            predecessor_module = getattr(predecessor_module, atom)
+
+        mod_to_wrap = getattr(predecessor_module, atoms[-1])
+        wrapped_mod = PipeSplitWrapper(mod_to_wrap, split_type)
+        setattr(predecessor_module, atoms[-1], wrapped_mod)
 
 
 # Test sequential
