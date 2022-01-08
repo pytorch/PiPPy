@@ -103,6 +103,8 @@ def forward(self, x):
 There are a few things to note about the above example:
 
 1. We use `IR.pipe_split` to explicitly demarcate within the code where we want pipeline boundaries to be. `from_tracing` will collect all data dependencies across these calls to `pipe_split` and emit corresponding data dependencies in the pipeline graph.
+    * Note that `IR.PipeSplitWrapper` and `IR.annotate_split_points` can be used to unintrusively specify split points at the beginning or end of execution of any Module
+    in the module hierarchy
 2. Note the `skip_connection` value in the original program. `from_tracing` will correctly detect the usage of this value in non-adjacent pipeline stages and emit a connection in the top-level graph to forward this dependency from stage 0 to 2.
 3. Notice that `self.mm_param` is used both in pipeline stage 0 and pipeline stage 1. Since we have specified `MultiUseParameterConfig.TRANSMIT` as the `multi_use_param_spec` argument to `from_tracing`, the system will emit code that will keep `mm_param` resident on stage 0 and transmit that value for use within stage 1. `multi_use_param_spec` can also be specified as a dictionary mapping parameter qualified names to a `MultiUseParameterConfig` value (one of `TRANSMIT` or `REPLICATE`) or it can be left as None to specify the default behavior (`TRANSMIT`) for all shared parameter. We will discuss replication in the following section.
 
