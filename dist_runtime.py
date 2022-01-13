@@ -62,6 +62,7 @@ class PipeStageExecutor:
         args : Tuple[Any]
         kwargs : Dict[str, Any]
         future : torch.futures.Future
+        microbatch_id : int
 
     def __init__(self, mod):
         logging.info(f'Rank {local_rank} Instantiating PipeStageExecutor for module {mod}')
@@ -75,19 +76,19 @@ class PipeStageExecutor:
 
     def worker_loop(self):
         while True:
-            args_rref, kwargs_rref, future = self.queue.get()
+            args_rrefs, kwargs_rrefs, future, microbatch_id = self.queue.get()
 
-            args = torch.fx.node.map_aggregate(args_rref, to_here)
-            kwargs = torch.fx.node.map_aggregate(kwargs_rref, to_here)
-            logging.info(f'rank {local_rank} running target {self.mod}')
+            args = torch.fx.node.map_aggregate(args_rrefs, to_here)
+            kwargs = torch.fx.node.map_aggregate(kwargs_rrefs, to_here)
+            logging.info(f'rank {local_rank} running microbatch {microbatch_id} target {self.mod}')
             out_val = self.mod(*args, **kwargs)
 
             future.set_result(out_val)
 
     @rpc.functions.async_execution
-    def invoke(self, args, kwargs):
+    def invoke(self, args, kwargs, cur_microbatch : int):
         future = torch.futures.Future()
-        self.queue.put(self.WorkItem(args, kwargs, future))
+        self.queue.put(self.WorkItem(args, kwargs, future, cur_microbatch))
         return future
 
 rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
@@ -138,6 +139,7 @@ if local_rank == 0:
         def __init__(self, remote_stage_executor_rrefs, module, garbage_collect_values = True):
             super().__init__(module, garbage_collect_values)
             self.remote_stage_executor_rrefs = remote_stage_executor_rrefs
+            self.cur_microbatch = -1
 
         class MicroBatchSplitTensor(NamedTuple):
             chunks : List[torch.Tensor]
@@ -201,10 +203,10 @@ if local_rank == 0:
                     split_args.append(arg)
 
             microbatch_results = []
-            for chunk_idx in range(chunks):
+            for self.cur_microbatch in range(chunks):
                 microbatch_args = []
                 for arg in split_args:
-                    microbatch_args.append(arg.chunks[chunk_idx] if isinstance(arg, self.MicroBatchSplitTensor) else arg)
+                    microbatch_args.append(arg.chunks[self.cur_microbatch] if isinstance(arg, self.MicroBatchSplitTensor) else arg)
                 microbatch_results.append(super().run(*microbatch_args, initial_env))
 
             # TODO: figure out what to do here for loss + backward.
@@ -251,7 +253,7 @@ if local_rank == 0:
             if target in self.remote_stage_executor_rrefs:
                 rank, stage_executor = self.remote_stage_executor_rrefs[target]
                 logging.info(f'Issuing remote invocation for target {target} on  rank {rank}')
-                return stage_executor.remote().invoke(args, kwargs)
+                return stage_executor.remote().invoke(args, kwargs, self.cur_microbatch)
             else:
                 logging.info(f'Running local operation {target} from driver')
                 return super().call_module(target, args, kwargs)
@@ -273,13 +275,13 @@ if local_rank == 0:
 
     if check_numeric_equivalence:
         torch.testing.assert_allclose(out, ref_out)
-        print(f'equivalence test passed {torch.sum(out)}')
+        print(f'equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}')
         
     # Profiling runts
     with torch.autograd.profiler_legacy.profile(enabled=PROFILING_ENABLED) as prof:
         out = interp.run(input, chunks=5, _debug_mask_minibatches = False)
         ref_out = ec_pipe.split_gm(input)
-        print(f'profiling run completed {torch.sum(ref_out)}')
+        print(f'profiling run completed {torch.sum(ref_out)} ref {torch.sum(ref_out)}')
     if PROFILING_ENABLED:
         prof.export_chrome_trace('pipe.csv')
 
