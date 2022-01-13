@@ -11,7 +11,7 @@ import os
 local_rank = int(os.environ["LOCAL_RANK"])
 world_size = int(os.environ["WORLD_SIZE"])
 
-PROFILING_ENABLED = False
+PROFILING_ENABLED = True
 
 import torch.distributed.rpc as rpc
 
@@ -276,7 +276,7 @@ if local_rank == 0:
         print(f'equivalence test passed {torch.sum(out)}')
         
     # Profiling runts
-    with torch.autograd.profiler.profile(enabled=PROFILING_ENABLED) as prof:
+    with torch.autograd.profiler_legacy.profile(enabled=PROFILING_ENABLED) as prof:
         out = interp.run(input, chunks=5, _debug_mask_minibatches = False)
         ref_out = ec_pipe.split_gm(input)
         print(f'profiling run completed {torch.sum(ref_out)}')
