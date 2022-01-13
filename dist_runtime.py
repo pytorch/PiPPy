@@ -6,13 +6,14 @@ from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 import operator
 import logging
 import threading
-import queue
+import copy
 
 import os
 local_rank = int(os.environ["LOCAL_RANK"])
 world_size = int(os.environ["WORLD_SIZE"])
 
 PROFILING_ENABLED = True
+DEBUG = False
 
 import torch.distributed.rpc as rpc
 
@@ -30,15 +31,40 @@ class SchedState(Enum):
     RUNNING = 2
     DONE = 3
 
-class WorkItem(NamedTuple):
+class WorkItem:
+    def __init__(
+            self, args, kwargs, future, microbatch_id, blocked_args_count, ready_args, state = SchedState.WAITING):
+        self.args, self.kwargs, self.future, self.microbatch_id, self.blocked_args_count, self.ready_args, self.state \
+            = args, kwargs, future, microbatch_id, blocked_args_count, ready_args, state
+
     args : Tuple[Any]
     kwargs : Dict[str, Any]
     future : torch.futures.Future
     microbatch_id : int
 
     blocked_args_count : int
-    ready_args : Dict[torch._C._distributed_rpc.PyRRef, Any] = {}
-    state : SchedState = SchedState.WAITING
+    ready_args : Dict[int, Any]
+    state : SchedState
+
+@rpc.functions.async_execution
+def async_transfer(scheduler_rref, rref_arg, arg_idx, runlist_key):
+    self = scheduler_rref.local_value()
+    # using clone is a HACK
+    fut = rref_arg.rpc_async().clone()
+
+    def bottom_half(fut):
+        value = fut.value()
+        with self.waiting_runlist_lock:
+            work_item = self.waiting_runlist[runlist_key]
+            work_item.ready_args[arg_idx] = value
+            work_item.blocked_args_count -= 1
+            if work_item.blocked_args_count == 0:
+                with self.ready_runlist_cv:
+                    work_item.state = SchedState.READY
+                    self.ready_runlist[runlist_key] = self.waiting_runlist.pop(runlist_key)
+                    self.ready_runlist_cv.notify()
+
+    return fut.then(bottom_half)
 
 class PipeStageExecutor:
     """
@@ -66,7 +92,12 @@ class PipeStageExecutor:
         logging.info(f'Rank {local_rank} Instantiating PipeStageExecutor for module {mod}')
         self.mod = mod
 
+        # HACK
+        self.self_rref = None
+
         self.waiting_runlist_lock = threading.Lock()
+        # self.waiting_rulist (*and the contained WorkItems*) are guarded by
+        # self.waiting_runlist_lock
         self.waiting_runlist : Dict[WorkItem, None] = {}
 
         self.ready_runlist_lock = threading.Lock()
@@ -75,6 +106,9 @@ class PipeStageExecutor:
 
         self.worker_thread = threading.Thread(target=self.worker_loop, name=f'worker_{self.mod}', daemon=True)
         self.worker_thread.start()
+
+    def _populate_self_rref(self, self_rref):
+        self.self_rref = self_rref
 
     def worker_loop(self):
         while True:
@@ -90,9 +124,20 @@ class PipeStageExecutor:
             kwargs_rrefs = work_item.kwargs
             future = work_item.future
             microbatch_id = work_item.microbatch_id
+            ready_args = work_item.ready_args
 
-            args = torch.fx.node.map_aggregate(args_rrefs, to_here)
-            kwargs = torch.fx.node.map_aggregate(kwargs_rrefs, to_here)
+            rref_arg_idx = 0
+            def retrieve_rref_args_by_idx(a):
+                if isinstance(a, torch._C._distributed_rpc.PyRRef):
+                    nonlocal rref_arg_idx
+                    val = ready_args[rref_arg_idx]
+                    rref_arg_idx += 1
+                    return val
+                else:
+                    return a
+
+            args = torch.fx.node.map_aggregate(args_rrefs, retrieve_rref_args_by_idx)
+            kwargs = torch.fx.node.map_aggregate(kwargs_rrefs, retrieve_rref_args_by_idx)
             logging.info(f'rank {local_rank} running microbatch {microbatch_id} target {self.mod}')
             out_val = self.mod(*args, **kwargs)
 
@@ -100,24 +145,44 @@ class PipeStageExecutor:
 
     @rpc.functions.async_execution
     def invoke(self, args, kwargs, cur_microbatch : int):
+        # Extract all RRef arguments so we can spawn asynchronous data transfers
+        # for each of them
         rref_args : List[torch._C._distributed_rpc.PyRRef] = []
-
         def extract_rref_args(arg):
             if isinstance(arg, torch._C._distributed_rpc.PyRRef):
                 rref_args.append(arg)
         torch.fx.node.map_aggregate(args, extract_rref_args)
         torch.fx.node.map_aggregate(kwargs, extract_rref_args)
 
+        # Construct WorkItem for this microbatch+phase and record it in the
+        # waiting runlist
         future = torch.futures.Future()
-
         # TODO: increase blocked_args_count for extra things like scheduling
-        work_item = WorkItem(args, kwargs, future, cur_microbatch, len(rref_args))
-        with self.ready_runlist_cv:
-            # TODO: backward jobs
-            runlist_key = f'{cur_microbatch}_forward'
-            assert runlist_key not in self.ready_runlist
-            self.ready_runlist[runlist_key] = work_item
-            self.ready_runlist_cv.notify()
+        work_item = WorkItem(args, kwargs, future, cur_microbatch, len(rref_args), {})
+        runlist_key = f'{cur_microbatch}_forward'
+        if len(rref_args) == 0:
+            # TODO: convert initial input into RRef?
+            with self.ready_runlist_cv:
+                self.ready_runlist[runlist_key] = work_item
+                self.ready_runlist_cv.notify()
+        else:
+            with self.waiting_runlist_lock:
+                # TODO: backward jobs
+                assert runlist_key not in self.waiting_runlist
+                self.waiting_runlist[runlist_key] = work_item
+
+
+        # Spawn asyncronous data transfers for each of the RRef arguments.
+        _futures = []
+        for arg_idx, rref_arg in enumerate(rref_args):
+            assert self.self_rref is not None
+            _futures.append(rpc.rpc_async(
+                to=local_rank, func=async_transfer, args=(self.self_rref, rref_arg, arg_idx, runlist_key)))
+
+        if DEBUG:
+            # Make exceptions visible
+            for fut in _futures:
+                fut.wait()
 
         return future
 
@@ -162,6 +227,10 @@ if local_rank == 0:
 
     for rank, (name, mod) in enumerate(ec_pipe.split_gm.named_children()):
         remote_stage_executor_rrefs[name] = (rank, rpc.remote(rank, PipeStageExecutor, (mod,)))
+
+        # Hack to thread an RRef to self into the remote stage executor for the purpose of
+        # async execution in scheduling
+        remote_stage_executor_rrefs[name][1].remote()._populate_self_rref(remote_stage_executor_rrefs[name][1])
 
     # Interpret top-level graph and issue remote calls
 
