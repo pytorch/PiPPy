@@ -4,7 +4,8 @@ import torch.fx
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 import operator
 import logging
-import math
+import threading
+import queue
 
 import os
 local_rank = int(os.environ["LOCAL_RANK"])
@@ -56,15 +57,38 @@ class PipeStageExecutor:
     * TODO: gradient checkpointing
     * TODO: Invocation of `torch.autograd.backward()` to implement backward passes
     """
+
+    class WorkItem(NamedTuple):
+        args : Tuple[Any]
+        kwargs : Dict[str, Any]
+        future : torch.futures.Future
+
     def __init__(self, mod):
         logging.info(f'Rank {local_rank} Instantiating PipeStageExecutor for module {mod}')
         self.mod = mod
 
+        # NB: queue.Queue is internally synchronized
+        self.queue : queue.Queue[self.WorkItem] = queue.Queue()
+
+        self.worker_thread = threading.Thread(target=self.worker_loop, name=f'worker_{self.mod}', daemon=True)
+        self.worker_thread.start()
+
+    def worker_loop(self):
+        while True:
+            args_rref, kwargs_rref, future = self.queue.get()
+
+            args = torch.fx.node.map_aggregate(args_rref, to_here)
+            kwargs = torch.fx.node.map_aggregate(kwargs_rref, to_here)
+            logging.info(f'rank {local_rank} running target {self.mod}')
+            out_val = self.mod(*args, **kwargs)
+
+            future.set_result(out_val)
+
+    @rpc.functions.async_execution
     def invoke(self, args, kwargs):
-        args = torch.fx.node.map_aggregate(args, to_here)
-        kwargs = torch.fx.node.map_aggregate(kwargs, to_here)
-        logging.info(f'rank {local_rank} running target {self.mod}')
-        return self.mod(*args, **kwargs)
+        future = torch.futures.Future()
+        self.queue.put(self.WorkItem(args, kwargs, future))
+        return future
 
 rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
 
@@ -249,11 +273,13 @@ if local_rank == 0:
 
     if check_numeric_equivalence:
         torch.testing.assert_allclose(out, ref_out)
+        print(f'equivalence test passed {torch.sum(out)}')
         
     # Profiling runts
     with torch.autograd.profiler.profile(enabled=PROFILING_ENABLED) as prof:
         out = interp.run(input, chunks=5, _debug_mask_minibatches = False)
         ref_out = ec_pipe.split_gm(input)
+        print(f'profiling run completed {torch.sum(ref_out)}')
     if PROFILING_ENABLED:
         prof.export_chrome_trace('pipe.csv')
 
