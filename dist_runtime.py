@@ -10,6 +10,8 @@ import os
 local_rank = int(os.environ["LOCAL_RANK"])
 world_size = int(os.environ["WORLD_SIZE"])
 
+PROFILING_ENABLED = False
+
 import torch.distributed.rpc as rpc
 
 # logging.getLogger().setLevel(logging.INFO)
@@ -249,9 +251,10 @@ if local_rank == 0:
         torch.testing.assert_allclose(out, ref_out)
         
     # Profiling runts
-    with torch.autograd.profiler.profile() as prof:
+    with torch.autograd.profiler.profile(enabled=PROFILING_ENABLED) as prof:
         out = interp.run(input, chunks=5, _debug_mask_minibatches = False)
         ref_out = ec_pipe.split_gm(input)
-    prof.export_chrome_trace('pipe.csv')
+    if PROFILING_ENABLED:
+        prof.export_chrome_trace('pipe.csv')
 
 rpc.shutdown()
