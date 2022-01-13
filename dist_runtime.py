@@ -1,6 +1,7 @@
 from IR import Pipe, MultiUseParameterConfig, pipe_split
 import torch
 import torch.fx
+from enum import Enum
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 import operator
 import logging
@@ -23,18 +24,21 @@ def to_here(a):
     else:
         return a
 
-# LOG EOD 12/28:
-#
-# Figure out if we can use `Future` directly to pass future values between the
-# ppeline stages and handle scheduling manually. Don't think we can put futures
-# over the wire (see future_test.py). Instead, should we push values via RPC?
-#
-# LOG EOD 1/4:
-# This seems fairly hairy. Future is returned directly by RPC agents that override
-# send(). Hypothetically we could create an agent where on the callee, requests are
-# handled by a scheduler. OTOH, we can probably just create some sort of message
-# format that includes (microbatch_id, phase, identifier for input) and send that
-# around.
+class SchedState(Enum):
+    WAITING = 0
+    READY = 1
+    RUNNING = 2
+    DONE = 3
+
+class WorkItem(NamedTuple):
+    args : Tuple[Any]
+    kwargs : Dict[str, Any]
+    future : torch.futures.Future
+    microbatch_id : int
+
+    blocked_args_count : int
+    ready_args : Dict[torch._C._distributed_rpc.PyRRef, Any] = {}
+    state : SchedState = SchedState.WAITING
 
 class PipeStageExecutor:
     """
@@ -58,25 +62,34 @@ class PipeStageExecutor:
     * TODO: Invocation of `torch.autograd.backward()` to implement backward passes
     """
 
-    class WorkItem(NamedTuple):
-        args : Tuple[Any]
-        kwargs : Dict[str, Any]
-        future : torch.futures.Future
-        microbatch_id : int
-
     def __init__(self, mod):
         logging.info(f'Rank {local_rank} Instantiating PipeStageExecutor for module {mod}')
         self.mod = mod
 
-        # NB: queue.Queue is internally synchronized
-        self.queue : queue.Queue[self.WorkItem] = queue.Queue()
+        self.waiting_runlist_lock = threading.Lock()
+        self.waiting_runlist : Dict[WorkItem, None] = {}
+
+        self.ready_runlist_lock = threading.Lock()
+        self.ready_runlist_cv = threading.Condition(self.ready_runlist_lock)
+        self.ready_runlist : Dict[str, WorkItem] = {}
 
         self.worker_thread = threading.Thread(target=self.worker_loop, name=f'worker_{self.mod}', daemon=True)
         self.worker_thread.start()
 
     def worker_loop(self):
         while True:
-            args_rrefs, kwargs_rrefs, future, microbatch_id = self.queue.get()
+            with self.ready_runlist_cv:
+                while len(self.ready_runlist) == 0:
+                    self.ready_runlist_cv.wait()
+
+                # TODO: extra priorities
+                first_key = next(iter(self.ready_runlist.keys()))
+                work_item = self.ready_runlist.pop(first_key)
+
+            args_rrefs = work_item.args
+            kwargs_rrefs = work_item.kwargs
+            future = work_item.future
+            microbatch_id = work_item.microbatch_id
 
             args = torch.fx.node.map_aggregate(args_rrefs, to_here)
             kwargs = torch.fx.node.map_aggregate(kwargs_rrefs, to_here)
@@ -87,8 +100,25 @@ class PipeStageExecutor:
 
     @rpc.functions.async_execution
     def invoke(self, args, kwargs, cur_microbatch : int):
+        rref_args : List[torch._C._distributed_rpc.PyRRef] = []
+
+        def extract_rref_args(arg):
+            if isinstance(arg, torch._C._distributed_rpc.PyRRef):
+                rref_args.append(arg)
+        torch.fx.node.map_aggregate(args, extract_rref_args)
+        torch.fx.node.map_aggregate(kwargs, extract_rref_args)
+
         future = torch.futures.Future()
-        self.queue.put(self.WorkItem(args, kwargs, future, cur_microbatch))
+
+        # TODO: increase blocked_args_count for extra things like scheduling
+        work_item = WorkItem(args, kwargs, future, cur_microbatch, len(rref_args))
+        with self.ready_runlist_cv:
+            # TODO: backward jobs
+            runlist_key = f'{cur_microbatch}_forward'
+            assert runlist_key not in self.ready_runlist
+            self.ready_runlist[runlist_key] = work_item
+            self.ready_runlist_cv.notify()
+
         return future
 
 rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
