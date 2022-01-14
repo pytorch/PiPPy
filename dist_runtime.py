@@ -120,6 +120,7 @@ class PipeStageExecutor:
                 first_key = next(iter(self.ready_runlist.keys()))
                 work_item = self.ready_runlist.pop(first_key)
 
+            work_item.state = SchedState.RUNNING
             args_rrefs = work_item.args
             kwargs_rrefs = work_item.kwargs
             future = work_item.future
@@ -142,6 +143,7 @@ class PipeStageExecutor:
             out_val = self.mod(*args, **kwargs)
 
             future.set_result(out_val)
+            work_item.state = SchedState.DONE
 
     @rpc.functions.async_execution
     def invoke(self, args, kwargs, cur_microbatch : int):
