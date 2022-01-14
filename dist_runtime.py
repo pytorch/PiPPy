@@ -94,9 +94,6 @@ class PipeStageExecutor:
         logging.info(f'Rank {local_rank} Instantiating PipeStageExecutor for module {mod}')
         self.mod = mod
 
-        # HACK
-        self.self_rref = None
-
         self.waiting_runlist_lock = threading.Lock()
         # self.waiting_rulist (*and the contained WorkItems*) are guarded by
         # self.waiting_runlist_lock
@@ -108,9 +105,6 @@ class PipeStageExecutor:
 
         self.worker_thread = threading.Thread(target=self.worker_loop, name=f'worker_{self.mod}', daemon=True)
         self.worker_thread.start()
-
-    def _populate_self_rref(self, self_rref):
-        self.self_rref = self_rref
 
     def worker_loop(self):
         while True:
@@ -179,9 +173,9 @@ class PipeStageExecutor:
         # Spawn asyncronous data transfers for each of the RRef arguments.
         _futures = []
         for arg_idx, rref_arg in enumerate(rref_args):
-            assert self.self_rref is not None
+            self_rref = rpc.RRef(self)
             _futures.append(rpc.rpc_async(
-                to=local_rank, func=async_transfer, args=(self.self_rref, rref_arg, arg_idx, runlist_key)))
+                to=local_rank, func=async_transfer, args=(self_rref, rref_arg, arg_idx, runlist_key)))
 
         if DEBUG:
             # Make exceptions visible
@@ -231,10 +225,6 @@ if local_rank == 0:
 
     for rank, (name, mod) in enumerate(ec_pipe.split_gm.named_children()):
         remote_stage_executor_rrefs[name] = (rank, rpc.remote(rank, PipeStageExecutor, (mod,)))
-
-        # Hack to thread an RRef to self into the remote stage executor for the purpose of
-        # async execution in scheduling
-        remote_stage_executor_rrefs[name][1].remote()._populate_self_rref(remote_stage_executor_rrefs[name][1])
 
     # Interpret top-level graph and issue remote calls
 
