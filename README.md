@@ -133,21 +133,24 @@ Note that the `Pipe` instance has an attribute `replicated_params`, which is a r
 
 `dist_runtime.py` is a work-in-progress implementation of a runtime that consumes `Pipe`. There are currently several (fairly unorganized) components:
 
-* `PipeStageExecutor`, which is a class that is instantiated on the pipeline stage machines via an `rpc.remote` call. This object is instantiated for each pipeline stage submodule, and manages ownership of the module/parameters and invocation of that module. Currently, `PipeStageExecutor.invoke` simply calls `to_here` on all remote RRefs and invokes the module directly. Current TODOs for this class:
-    * Make invocation asynchronous, i.e. make it so that we can implement various schedules
-    * Implement explicit backward invocation
-    * Gradient checkpointing support
+* `PipeStageExecutor`, which is a class that is instantiated on the pipeline stage machines via an `rpc.remote` call. This object is instantiated for each pipeline stage submodule, and manages ownership of the module/parameters and invocation of that module.
+  * `PipeStageExecutor.invoke` is an [async RPC function](https://pytorch.org/docs/master/rpc.html#torch.distributed.rpc.functions.async_execution) that does the following:
+    * Populates a `WorkItem` structure that records the args/kwargs of the invocation and metadata such as the microbatch ID, how many arguments are remote values that must be waited on, and the Future object that will be signalled when the invocation is complete.
+    * Puts the `WorkItem` onto a "waiting" runlist data structure (or the "running" runlist) so that the scheduling system can keep track of this work
+    * Initiates asynchronous transfers of remote arg/kwarg values. This is done via launching an async RPC to the `async_transfer` function on the local host. This function does a non-blocking call to an RPC on the remote, receives a future from that RPC, and installs a callback on that future that will update the `WorkItem` to inform it that one of its operands is ready, potentially also moving the `WorkItem` to the "ready" runlist
+  * `PipeStageExecutor` holds a `worker_thread` attribute, which is a Python thread that acts as a sort of event loop. It will block waiting for work on the "ready" runlist and execute that work whenever all of its dependencies are ready.
+  * TODO: different execution schedules
+  * TODO: backward execution
 * `RemoteInterpreter` splits an input mini-batch into micro-batches and interprets the top-level `Pipe` graph, issuing `invoke` calls to the associated `PipeStageExecutors` to orchestrate execution of the program in a pipelined fashion.
 * Async RPC to yield the RPC callee to the scheduler
-    * https://pytorch.org/docs/master/rpc.html#torch.distributed.rpc.functions.async_execution
-    * https://pytorch.org/tutorials/intermediate/rpc_async_execution.html
 
 # A Note About Correctness Testing
 
 Note that micro-batch splitting and reconstruction is not guaranteed to be bitwise-equivalent to running the same program on the full batch (see [here](https://pytorch.org/docs/master/notes/numerical_accuracy.html#batched-computations-or-slice-computations)). See also `exps/split_example.py`, which demonstrates this when constant `USE_WHOLE_BATCH` is set to `False`. A proposed way to get around this is, when testing for correctness, is to run the _full batch_ through the network for each micro-batch invocation and slice out the results from the full batch that correspond to each micro-batch, then cat those partial results together. This is demonstrated when `USE_WHOLE_BATCH` is `True`. This should guarantee numerical equivalence during testing while still exercising the micro-batch pipelining machinery.
 
-# Open questions
+# Work Items
 
-* We want to be able to schedule/serialize execution of forward/backward phases on each individual Pipeline stage. It is an open question what the best way to do this is given the design of the PT RPC framework. Some ideas:
-    * Implement this in user-space by having `PipeStageExecutor` handle the schedule and execution of pipeline phases. This is similar to how the FairScale experimental implementation works and is more of an actor model-type implementation, as opposed to the single-driver implementation that's currently in the codebase
-    * Make it so that `PipeStageExecutor.invoke` is serialized and only executed subject to the scheduling policy. The return value is still returned as an RRef and can be passed through to the successor stages to subsequently block on.
+- [ ] Loss execution in runtime
+- [ ] backward() execution in runtime
+- [ ] gradient checkpointing in runtime
+- [ ] shared weights synchronization in runtime
