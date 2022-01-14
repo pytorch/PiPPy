@@ -154,3 +154,6 @@ Note that micro-batch splitting and reconstruction is not guaranteed to be bitwi
 - [ ] backward() execution in runtime
 - [ ] gradient checkpointing in runtime
 - [ ] shared weights synchronization in runtime
+
+low-pri
+- [ ] TRANSMIT synchronization type for leaf modules

@@ -46,11 +46,13 @@ class WorkItem:
     ready_args : Dict[int, Any]
     state : SchedState
 
+def _get_value_on_remote(rref):
+    return rref.local_value()
+
 @rpc.functions.async_execution
 def async_transfer(scheduler_rref, rref_arg, arg_idx, runlist_key):
     self = scheduler_rref.local_value()
-    # using clone is a HACK
-    fut = rref_arg.rpc_async().clone()
+    fut = rpc.rpc_async(to=rref_arg.owner(), func=_get_value_on_remote, args=(rref_arg,))
 
     def bottom_half(fut):
         value = fut.value()
