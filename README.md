@@ -150,6 +150,7 @@ Note that micro-batch splitting and reconstruction is not guaranteed to be bitwi
 
 # Work Items
 
+- [ ] Figure out how performance looks
 - [ ] Loss execution in runtime
 - [ ] backward() execution in runtime
 - [ ] gradient checkpointing in runtime

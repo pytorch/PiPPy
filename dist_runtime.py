@@ -302,7 +302,7 @@ if local_rank == 0:
                     microbatch_args.append(arg.chunks[self.cur_microbatch] if isinstance(arg, self.MicroBatchSplitTensor) else arg)
                 microbatch_results.append(super().run(*microbatch_args, initial_env))
 
-            # TODO: figure out what to do here for loss + backward.
+            # TODO: figure out what to do here for loss + backward. 
             # TODO: support multiple outputs
             assert all(isinstance(result, torch._C._distributed_rpc.PyRRef) for result in microbatch_results)
 
