@@ -17,6 +17,16 @@ DEBUG = False
 
 import torch.distributed.rpc as rpc
 
+# LOG 1/18: Specifying schedule data dependencies via explicit dependencies is tricky because
+#           it constrains the topological ordering in which the execution schedule can be
+#           constructed. Instead, we could specify things like 1F1B scheduling by modeling
+#           the resource constraint (e.g. Registers in OneFlow -- analogous to a semaphore)
+#           and making the system block on this resource. zdevito pointed out that in this
+#           case, parallel jobs may deadlock, as they can acquire resources in an arbitrary
+#           order. This could be solved by specifying that acquiring this resource is an
+#           external side effect and serializing all stages with external side effects
+#           in the scheduling system.
+
 # logging.getLogger().setLevel(logging.INFO)
 
 def to_here(a):
