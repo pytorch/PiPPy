@@ -3,7 +3,7 @@ import torch.fx
 from torch.fx.passes.split_module import split_module
 
 import copy, operator
-from typing import Dict, List, Optional, Union, cast
+from typing import Callable, Dict, List, Optional, Union, cast
 from enum import Enum
 
 # Pipe model representation
@@ -70,7 +70,40 @@ class Pipe(torch.nn.Module):
         return self.split_gm(*args, **kwargs)
 
     @staticmethod
-    def from_sequential(seq : torch.nn.Sequential):
+    def _append_traced_loss_fn_to_gm(gm : torch.fx.GraphModule, loss_fn : Callable[[torch.Tensor], torch.Tensor]):
+        last_ph_node = None
+        for node in gm.graph.nodes:
+            if node.op == 'placeholder':
+                last_ph_node = node
+
+        assert last_ph_node is not None
+        with gm.graph.inserting_after(last_ph_node):
+            target_ph_node = gm.graph.placeholder('target')
+
+        output_node = None
+        for node in gm.graph.nodes:
+            if node.op == 'output':
+                output_node = node
+                break
+
+        # Trace loss computation into a new _loss submodule
+        # TODO: configurable tracing
+        traced_loss_submod = torch.fx.symbolic_trace(loss_fn)
+        assert not hasattr(gm, '_loss')
+        gm.add_module('_loss', traced_loss_submod)
+
+        assert output_node is not None
+        assert len(output_node.args) == 1
+        output_val = output_node.args[0]
+        with gm.graph.inserting_after(output_node):
+            loss_node = gm.graph.call_module('_loss', (output_val, target_ph_node))
+        gm.graph.erase_node(output_node)
+        gm.graph.output(loss_node)
+        gm.graph.lint()
+        gm.recompile()
+
+    @staticmethod
+    def from_sequential(seq : torch.nn.Sequential, loss_fn : Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None):
         # Deduplicate contained modules so we have a unique instance for each
         # call in topological ordering. This is necessary so that detection of shared
         # parameters across stages works.
@@ -94,7 +127,27 @@ class Pipe(torch.nn.Module):
 
         tracer = AllModTracer()
         graph = tracer.trace(to_trace)
-        gm = torch.fx.GraphModule(tracer.root, graph)
+        # Rename top-level submodules to align with the qualnames produced
+        # by split_module in the `from_tracing` frontend
+
+        copied_root_dict = dict(tracer.root.named_modules())
+
+        for node in graph.nodes:
+            if node.op == 'call_module':
+                new_target = f'submod_{node.target}'
+
+                # submod may have already been renamed by a previous call_module
+                if node.target in copied_root_dict:
+                    copied_root_dict[new_target] = copied_root_dict.pop(node.target)
+                else:
+                    assert new_target in copied_root_dict
+
+                node.target = new_target
+
+        gm = torch.fx.GraphModule(copied_root_dict, graph)
+
+        if loss_fn is not None:
+            Pipe._append_traced_loss_fn_to_gm(gm, loss_fn)
 
         return Pipe(gm)
 
@@ -313,7 +366,7 @@ mods += [mods[0]]
 seq = torch.nn.Sequential(*mods)
 
 seq_pipe = Pipe.from_sequential(seq)
-assert seq_pipe.replicated_params == [{'0': 'weight', '5': 'weight'}, {'0': 'bias', '5': 'bias'}]
+assert seq_pipe.replicated_params == [{'submod_0': 'weight', 'submod_5': 'weight'}, {'submod_0': 'bias', 'submod_5': 'bias'}]
 
 x = torch.randn(50, 512)
 torch.testing.assert_allclose(seq(x), seq_pipe(x))
@@ -359,7 +412,6 @@ assert ec_pipe_replicated.replicated_params == [
     {'submod_1': 'lin.weight', 'submod_2': 'lin.weight'},
     {'submod_1': 'lin.bias', 'submod_2': 'lin.bias'}]
 
-
 # TODO:
 # 1. Test autograd on single-box
 # 2. investigate gradient sync for shared parameters. how does DDP do it?
@@ -368,3 +420,13 @@ assert ec_pipe_replicated.replicated_params == [
 # . Can we define semantics for shared module call? Can we make this configurable in the same way as
 #    with shared parameters? probably need to modify split_module in this case
 # . Add parameter movement to split_module
+
+
+# **** Test loss & backward representation
+
+mse_loss = torch.nn.MSELoss()
+ec_pipe_with_loss = Pipe.from_sequential(seq, mse_loss)
+
+x = torch.randn(5, 512)
+target = torch.zeros(5, 512)
+torch.testing.assert_allclose(ec_pipe_with_loss(x, target), mse_loss(seq(x), target))
