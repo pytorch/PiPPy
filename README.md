@@ -148,6 +148,34 @@ Note that the `Pipe` instance has an attribute `replicated_params`, which is a r
 
 Note that micro-batch splitting and reconstruction is not guaranteed to be bitwise-equivalent to running the same program on the full batch (see [here](https://pytorch.org/docs/master/notes/numerical_accuracy.html#batched-computations-or-slice-computations)). See also `exps/split_example.py`, which demonstrates this when constant `USE_WHOLE_BATCH` is set to `False`. A proposed way to get around this is, when testing for correctness, is to run the _full batch_ through the network for each micro-batch invocation and slice out the results from the full batch that correspond to each micro-batch, then cat those partial results together. This is demonstrated when `USE_WHOLE_BATCH` is `True`. This should guarantee numerical equivalence during testing while still exercising the micro-batch pipelining machinery.
 
+# Training Loop API Considerations
+
+During the training loop, we should focus on a few important elements:
+
+* Data loader
+* `forward`
+  * This is already trivially handled by the current implementation. `Pipe` handles
+    micro-batch computation of the model in the `forward` execution
+* Loss
+  * There are a few alternatives for API design here:
+    1. We can preserve the training loop as-is and make it so that invoking a loss computation on the output
+       of the forward() computation issues jobs on the last stage to compute the loss. We could use something
+       similar to [DistributedLoss](https://github.com/facebookresearch/fairscale/blob/main/fairscale/experimental/nn/distributed_pipeline/loss.py#L16). An open question is how to represent the output of forward() in such a way
+       that it can represent the forward() output _for all micro-batches_. This might look like a data structure
+       that is a list of RRefs backed by async futures on the pipeline stages. Then, if we intercept computation
+       on this loss object, we would issue `WorkItem`s for each operation for each micro-batch. However, this
+       seems to degenerate down to a full-on tracing/single-coordinator system
+    2. We can make it so that the pipeline API takes the loss as a funciton argument and essentially encapsulates the
+       whole training loop. This is much easier, probably less flaky (in terms of not needing to build a whole tracing
+       mechanism), but is not super Pythonic. It may facilitate implementing async pipeline parallelism in the future
+* `backward`
+  * There are similar considerations for `backward` as there are for `loss`. `backward` is an invocation on the
+    scalar loss value that will need to schedule jobs in the backend.
+* Optimizer
+  * Requirements here are similar to loss and backwards, but the optimizer step happens only once for the
+    whole mini-batch, so it may be the case that this can literally be the same as the normal optimizer
+    (potentially using [DistributedOptimizer](https://pytorch.org/docs/master/distributed.optim.html)).
+
 # Work Items
 
 - [ ] Figure out how performance looks
