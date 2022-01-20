@@ -45,7 +45,8 @@ class Pipe(torch.nn.Module):
 
         for node in split_gm.graph.nodes:
             assert (node.op in {'call_module', 'placeholder', 'output'} or 
-                (node.op, node.target) == ('call_function', operator.getitem))
+                (node.op, node.target) == ('call_function', operator.getitem) or
+                (node.op, node.target) == ('call_method', 'backward'))
 
         # Detect replicated parameters so we know that we have to do an additional allreduce
         # before applying the optimizer
@@ -86,21 +87,30 @@ class Pipe(torch.nn.Module):
                 output_node = node
                 break
 
-        # Trace loss computation into a new _loss submodule
-        # TODO: configurable tracing
-        traced_loss_submod = torch.fx.symbolic_trace(loss_fn)
-        assert not hasattr(gm, '_loss')
-        gm.add_module('_loss', traced_loss_submod)
+        if isinstance(loss_fn, torch.nn.Module):
+            assert not hasattr(gm, '_loss')
+            gm.add_module('_loss', loss_fn)
+        else:
+            # Trace loss computation into a new _loss submodule
+            # TODO: configurable tracing
+            traced_loss_submod = torch.fx.symbolic_trace(loss_fn)
+            assert not hasattr(gm, '_loss')
+            gm.add_module('_loss', traced_loss_submod)
 
         assert output_node is not None
         assert len(output_node.args) == 1
         output_val = output_node.args[0]
         with gm.graph.inserting_after(output_node):
             loss_node = gm.graph.call_module('_loss', (output_val, target_ph_node))
+        # TODO: make this configurable. Do users want to call forward + loss w/o backward?
+        with gm.graph.inserting_after(loss_node):
+            gm.graph.call_method('backward', (loss_node,))
         gm.graph.erase_node(output_node)
         gm.graph.output(loss_node)
         gm.graph.lint()
         gm.recompile()
+
+        print(gm.graph)
 
     @staticmethod
     def from_sequential(seq : torch.nn.Sequential, loss_fn : Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None):
@@ -152,7 +162,8 @@ class Pipe(torch.nn.Module):
         return Pipe(gm)
 
     @staticmethod
-    def from_tracing(mod : torch.nn.Module, multi_use_param_spec : Optional[MultiUseParamSpec] = None, **kwargs):
+    def from_tracing(mod : torch.nn.Module, multi_use_param_spec : Optional[MultiUseParamSpec] = None,
+                     loss_fn : Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None, **kwargs):
         # TODO: abstract partitioning policy
 
         global _pipeline_tracer
@@ -324,6 +335,9 @@ class Pipe(torch.nn.Module):
         split.graph.lint()
         split.recompile()
 
+        if loss_fn is not None:
+            Pipe._append_traced_loss_fn_to_gm(split, loss_fn)
+
         return Pipe(split)
 
 
@@ -425,8 +439,11 @@ assert ec_pipe_replicated.replicated_params == [
 # **** Test loss & backward representation
 
 mse_loss = torch.nn.MSELoss()
-ec_pipe_with_loss = Pipe.from_sequential(seq, mse_loss)
+seq_pipe_with_loss = Pipe.from_sequential(seq, mse_loss)
 
 x = torch.randn(5, 512)
 target = torch.zeros(5, 512)
+torch.testing.assert_allclose(seq_pipe_with_loss(x, target), mse_loss(seq(x), target))
+
+ec_pipe_with_loss = Pipe.from_tracing(seq, loss_fn=mse_loss)
 torch.testing.assert_allclose(ec_pipe_with_loss(x, target), mse_loss(seq(x), target))
