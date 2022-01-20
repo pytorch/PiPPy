@@ -26,6 +26,20 @@ import torch.distributed.rpc as rpc
 #           order. This could be solved by specifying that acquiring this resource is an
 #           external side effect and serializing all stages with external side effects
 #           in the scheduling system.
+# LOG 1/20: TODOs for implementing forward/backward/loss with schedules:
+#           * ability to specify loss computation. Probably going to start with explicit callback
+#             rather than a more complicated tracing system
+#           * ability to switch between full-batch loss vs. per-microbatch loss. shen mentioned
+#             this might change numerics. So we should have the ability to compute loss over
+#             the whole minibatch rather than doing it for each micro-batch
+#           * ability to schedule backwards
+#
+#           Plan of action:
+#           * design representation in frontend/IR for forward/backward loss
+#             (full mini-batch loss)
+#           * Implement runtime for fill/drain pipelining (i.e. GPipe)
+#           * Extend loss computation to be per-microbatch
+#           * Implement 1F1B schedule
 
 # logging.getLogger().setLevel(logging.INFO)
 
