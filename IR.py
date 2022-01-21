@@ -1,3 +1,4 @@
+from termios import ECHOE
 import torch
 import torch.fx
 from torch.fx.passes.split_module import split_module
@@ -5,6 +6,7 @@ from torch.fx.passes.split_module import split_module
 import copy, operator
 from typing import Callable, Dict, List, Optional, Union, cast
 from enum import Enum
+import itertools
 
 # Pipe model representation
 #
@@ -39,7 +41,7 @@ class MultiUseParameterConfig(Enum):
 MultiUseParamSpec = Union[MultiUseParameterConfig, Dict[str, MultiUseParameterConfig]]
 
 class Pipe(torch.nn.Module):
-    def __init__(self, split_gm : torch.fx.GraphModule):
+    def __init__(self, split_gm : torch.fx.GraphModule, qualname_mapping : Dict[str, str]):
         super().__init__()
         self.split_gm : torch.fx.GraphModule = split_gm
 
@@ -67,8 +69,41 @@ class Pipe(torch.nn.Module):
         self.replicated_params : List[Dict[str, str]] = [
             use_mapping for _, use_mapping in params_to_users.items() if len(use_mapping) > 1]
 
+        self.new_to_old_qualname_mapping = qualname_mapping
+
     def forward(self, *args, **kwargs):
         return self.split_gm(*args, **kwargs)
+
+    def remap_qualname(self, qualname):
+        # TODO: annoying
+        if qualname.startswith('split_gm.'):
+            qualname = qualname[len('split_gm.'):]
+        return self.new_to_old_qualname_mapping.get(qualname, qualname)
+
+    @staticmethod
+    def _hack_build_qualname_mapping(old : torch.nn.Module, new : torch.nn.Module):
+        # HACK: this derives a mapping of qualified names from the split module
+        # to the orignal module by inspecting the values present in the two
+        # modules. Ideally we would track this information while building the
+        # new module, which would probably involve modifying split_module
+        # to return its internal `Partition.targets` mapping. I am currently
+        # too lazy to do this the right way so we are left with this hack.
+        new_mod_qn_to_values = {k : v for k, v in itertools.chain(new.named_parameters(), new.named_modules())}
+        # Multiple qualnames may map to the same value, so we record potentially multiple qualnames
+        # for each value
+        old_values_to_qns = {}
+        for k, v in itertools.chain(old.named_parameters(), old.named_modules()):
+            old_values_to_qns.setdefault(v, {})
+            old_values_to_qns[v].setdefault(k)
+
+        new_to_old_mapping = {}
+        for k, v in new_mod_qn_to_values.items():
+            if v in old_values_to_qns:
+                old_qns = old_values_to_qns[v]
+                for old_qn in old_qns:
+                    new_to_old_mapping[k] = old_qn
+
+        return new_to_old_mapping
 
     @staticmethod
     def _append_traced_loss_fn_to_gm(gm : torch.fx.GraphModule, loss_fn : Callable[[torch.Tensor], torch.Tensor]):
@@ -109,8 +144,6 @@ class Pipe(torch.nn.Module):
         gm.graph.output(loss_node)
         gm.graph.lint()
         gm.recompile()
-
-        print(gm.graph)
 
     @staticmethod
     def from_sequential(seq : torch.nn.Sequential, loss_fn : Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None):
@@ -159,7 +192,7 @@ class Pipe(torch.nn.Module):
         if loss_fn is not None:
             Pipe._append_traced_loss_fn_to_gm(gm, loss_fn)
 
-        return Pipe(gm)
+        return Pipe(gm, Pipe._hack_build_qualname_mapping(old=seq, new=gm))
 
     @staticmethod
     def from_tracing(mod : torch.nn.Module, multi_use_param_spec : Optional[MultiUseParamSpec] = None,
@@ -338,7 +371,7 @@ class Pipe(torch.nn.Module):
         if loss_fn is not None:
             Pipe._append_traced_loss_fn_to_gm(split, loss_fn)
 
-        return Pipe(split)
+        return Pipe(split, Pipe._hack_build_qualname_mapping(old=mod, new=split))
 
 
 class PipeSplitWrapper(torch.nn.Module):
@@ -385,6 +418,21 @@ assert seq_pipe.replicated_params == [{'submod_0': 'weight', 'submod_5': 'weight
 x = torch.randn(50, 512)
 torch.testing.assert_allclose(seq(x), seq_pipe(x))
 
+def check_qualname_mapping(old, new):
+    seen_old_qns = {}
+    for _, old_qn in new.new_to_old_qualname_mapping.items():
+            seen_old_qns.setdefault(old_qn)
+
+    for param_name, _ in old.named_parameters():
+        assert param_name in seen_old_qns, f'Expected parameter {param_name} in {seen_old_qns}'
+
+    for mod_name, _ in old.named_modules():
+        if mod_name == '':
+            continue
+        assert mod_name in seen_old_qns,  f'Expected module {mod_name} in {seen_old_qns}'
+
+check_qualname_mapping(old=seq, new=seq_pipe)
+
 
 # Test partitioning and skip connection
 
@@ -417,6 +465,7 @@ x = torch.randn(5, 512)
 torch.testing.assert_allclose(ec(x), ec_pipe(x))
 assert ec_pipe.replicated_params == [
     {'submod_1': 'lin.weight', 'submod_2': 'lin.weight'}, {'submod_1': 'lin.bias', 'submod_2': 'lin.bias'}]
+check_qualname_mapping(old=ec, new=ec_pipe)
 
 ec_pipe_replicated = Pipe.from_tracing(ec, MultiUseParameterConfig.REPLICATE)
 x = torch.randn(5, 512)
@@ -425,6 +474,7 @@ assert ec_pipe_replicated.replicated_params == [
     {'submod_0': '__mm_param', 'submod_1': '__mm_param'},
     {'submod_1': 'lin.weight', 'submod_2': 'lin.weight'},
     {'submod_1': 'lin.bias', 'submod_2': 'lin.bias'}]
+check_qualname_mapping(old=ec, new=ec_pipe_replicated)
 
 # TODO:
 # 1. Test autograd on single-box
@@ -436,14 +486,49 @@ assert ec_pipe_replicated.replicated_params == [
 # . Add parameter movement to split_module
 
 
-# **** Test loss & backward representation
+# **** Test loss & backward representation - sequential frontend
 
 mse_loss = torch.nn.MSELoss()
 seq_pipe_with_loss = Pipe.from_sequential(seq, mse_loss)
+check_qualname_mapping(old=seq, new=seq_pipe_with_loss)
+
+test_optim = torch.optim.SGD(seq_pipe_with_loss.parameters(), lr=0.01, momentum=0.9)
+ref_optim = torch.optim.SGD(seq.parameters(), lr=0.01, momentum=0.9)
 
 x = torch.randn(5, 512)
 target = torch.zeros(5, 512)
+
+test_optim.zero_grad()
+test_out = seq_pipe_with_loss(x, target)
+test_grads = {seq_pipe_with_loss.remap_qualname(name): copy.copy(val.grad) for name, val in seq_pipe_with_loss.named_parameters()}
 torch.testing.assert_allclose(seq_pipe_with_loss(x, target), mse_loss(seq(x), target))
 
-ec_pipe_with_loss = Pipe.from_tracing(seq, loss_fn=mse_loss)
-torch.testing.assert_allclose(ec_pipe_with_loss(x, target), mse_loss(seq(x), target))
+ref_optim.zero_grad()
+ref_out = mse_loss(seq(x), target)
+ref_out.backward()
+ref_grads = {name: copy.copy(val.grad) for name, val in seq.named_parameters()}
+
+for name, ref_grad in ref_grads.items():
+    assert name in test_grads
+    torch.testing.assert_allclose(test_grads[name], ref_grad)
+
+# **** Test loss & backward representation - tracing frontend
+
+ec_pipe_with_loss = Pipe.from_tracing(ec, loss_fn=mse_loss)
+check_qualname_mapping(old=ec, new=ec_pipe_with_loss)
+
+test_optim = torch.optim.SGD(ec_pipe_with_loss.parameters(), lr=0.01, momentum=0.9)
+ref_optim = torch.optim.SGD(ec.parameters(), lr=0.01, momentum=0.9)
+
+x = torch.randn(5, 512)
+target = torch.zeros(5, 512)
+
+test_optim.zero_grad()
+test_out = ec_pipe_with_loss(x, target)
+test_grads = {ec_pipe_with_loss.remap_qualname(name): copy.copy(val.grad) for name, val in ec_pipe_with_loss.named_parameters()}
+torch.testing.assert_allclose(ec_pipe_with_loss(x, target), mse_loss(ec(x), target))
+
+ref_optim.zero_grad()
+ref_out = mse_loss(ec(x), target)
+ref_out.backward()
+ref_grads = {name: copy.copy(val.grad) for name, val in ec.named_parameters()}
