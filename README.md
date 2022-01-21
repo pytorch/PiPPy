@@ -3,15 +3,22 @@
 This project is an attempt to build a state-of-the-art automated Pipeline Parallelism system for PyTorch subject to the design considerations brought up in these [RFCs](https://github.com/pytorch/rfcs/pull/32). Some of the main design considerations include:
 
 * An eye toward making running PyTorch code under Pipeline Parallelism as seamless as possible; that is, the user should have to make as few changes to their code as possible. In particular, we wish to elide the requirement of existing systems to structure your code as an `nn.Sequential`.
-* First-class support for cross-host pipeline parallelism, as this is where PP is typically used (over slower interconnects)
-* Composability with other parallelism schemes such as data parallelism or tensor splitting model parallelism
+* First-class support for cross-host pipeline parallelism, as this is where PP is typically used (over slower interconnects). This is currently missing from the torchgpipe-based `torch.distributed.pipeline.sync.Pipe`
+* Composability with other parallelism schemes such as data parallelism or tensor splitting model parallelism (overall, known as "3d parallelism")
 * Support for pipeline scheduling paradigms, including static schedules like fill-drain (GPipe), 1f1b, interleaved 1f1b and dynamic schedules like lookahead or registers/back-pressure.
 
 # Design and Codebase Roadmap
 
 ## Program Capture and Intermediate Representation
 
-`IR.py` defines the `Pipe` class, which is the main intermediate representation used in PiPPy. This intermediate representation consists of a restricted `fx.GraphModule`. In the top level `fx.Graph` representation, the IR is limited to only `placeholder` and `output` nodes, `call_module` nodes to call into the pipeline stages and `call_function` with a target of `operator.getitem`, for unpacking tuple outputs from pipeline stages. The top-level `fx.Graph` gives us 1) a topological ordering of pipeline stages and 2) the data dependencies between these pipeline stages.
+`IR.py` defines the `Pipe` class, which is the main intermediate representation used in PiPPy. This intermediate representation consists of a restricted `fx.GraphModule`. In the top level `fx.Graph` representation, the IR is limited to only the following node types:
+  * `placeholder` and `output` nodes to specify overall pipeline inputs and outputs, respectively
+  * `call_module` nodes to represents calls into the pipeline stages
+    * A single call to the `_loss` submodule can also be present to represent the loss computation for training
+  * `call_function` with a target of `operator.getitem`, for unpacking tuple outputs from pipeline stages
+  * `call_function` with a target of `backward` to represent backpropagation through the scalar loss value.
+
+The top-level `fx.Graph` gives us 1) a topological ordering of pipeline stages and 2) the data dependencies between these pipeline stages. Note that this is more general than existing pipeline APIs, as it supports arbitrary non-local (i.e. skip) connections between stages.
 
 We can create IR from existing PyTorch modules using one of several front-ends, exposed as static methods on `Pipe`. `Pipe.from_sequential` takes as argument an instance of `torch.nn.Sequential` and returns a `Pipe` instance that represents the trivial feed-forward nature of that sequential. For example:
 
@@ -25,26 +32,25 @@ seq_pipe = Pipe.from_sequential(seq)
 print(seq_pipe.split_gm)
 """
 GraphModule(
-  (0): Linear(in_features=512, out_features=512, bias=True)
-  (1): Linear(in_features=512, out_features=512, bias=True)
-  (2): Linear(in_features=512, out_features=512, bias=True)
-  (3): Linear(in_features=512, out_features=512, bias=True)
-  (4): Linear(in_features=512, out_features=512, bias=True)
-  (5): Linear(in_features=512, out_features=512, bias=True)
+  (submod_0): Linear(in_features=512, out_features=512, bias=True)
+  (submod_1): Linear(in_features=512, out_features=512, bias=True)
+  (submod_2): Linear(in_features=512, out_features=512, bias=True)
+  (submod_3): Linear(in_features=512, out_features=512, bias=True)
+  (submod_4): Linear(in_features=512, out_features=512, bias=True)
+  (submod_5): Linear(in_features=512, out_features=512, bias=True)
 )
 
 
 
 def forward(self, input):
     input_1 = input
-    _0 = getattr(self, "0")(input_1);  input_1 = None
-    _1 = getattr(self, "1")(_0);  _0 = None
-    _2 = getattr(self, "2")(_1);  _1 = None
-    _3 = getattr(self, "3")(_2);  _2 = None
-    _4 = getattr(self, "4")(_3);  _3 = None
-    _5 = getattr(self, "5")(_4);  _4 = None
+    _0 = self.submod_0(input_1);  input_1 = None
+    _1 = self.submod_1(_0);  _0 = None
+    _2 = self.submod_2(_1);  _1 = None
+    _3 = self.submod_3(_2);  _2 = None
+    _4 = self.submod_4(_3);  _3 = None
+    _5 = self.submod_5(_4);  _4 = None
     return _5
-"""
 ```
 
 Similarly, we can use `Pipe.from_tracing` to use `torch.fx` tracing to convert an arbitrary `nn.Module` instance to this form. For example:
@@ -97,16 +103,14 @@ def forward(self, x):
     submod_1 = self.submod_1(getitem, getitem_2);  getitem = getitem_2 = None
     submod_2 = self.submod_2(submod_1, getitem_1);  submod_1 = getitem_1 = None
     return submod_2
-"""
 ```
 
 There are a few things to note about the above example:
 
 1. We use `IR.pipe_split` to explicitly demarcate within the code where we want pipeline boundaries to be. `from_tracing` will collect all data dependencies across these calls to `pipe_split` and emit corresponding data dependencies in the pipeline graph.
-    * Note that `IR.PipeSplitWrapper` and `IR.annotate_split_points` can be used to unintrusively specify split points at the beginning or end of execution of any Module
-    in the module hierarchy
+    * Note that `IR.PipeSplitWrapper` and `IR.annotate_split_points` can be used to unintrusively specify split points at the beginning or end of execution of any Module in the module hierarchy
 2. Note the `skip_connection` value in the original program. `from_tracing` will correctly detect the usage of this value in non-adjacent pipeline stages and emit a connection in the top-level graph to forward this dependency from stage 0 to 2.
-3. Notice that `self.mm_param` is used both in pipeline stage 0 and pipeline stage 1. Since we have specified `MultiUseParameterConfig.TRANSMIT` as the `multi_use_param_spec` argument to `from_tracing`, the system will emit code that will keep `mm_param` resident on stage 0 and transmit that value for use within stage 1. `multi_use_param_spec` can also be specified as a dictionary mapping parameter qualified names to a `MultiUseParameterConfig` value (one of `TRANSMIT` or `REPLICATE`) or it can be left as None to specify the default behavior (`TRANSMIT`) for all shared parameter. We will discuss replication in the following section.
+3. Notice that `self.mm_param` is used both in pipeline stage 0 and pipeline stage 1. Since we have specified `MultiUseParameterConfig.TRANSMIT` as the `multi_use_param_spec` argument to `from_tracing`, the system will emit code that will keep `mm_param` resident on stage 0 and transmit that value for use within stage 1. `multi_use_param_spec` can also be specified as a dictionary mapping parameter qualified names to a `MultiUseParameterConfig` value (one of `TRANSMIT` or `REPLICATE`) or it can be left as `None` to specify the default behavior (`TRANSMIT`) for all shared parameters. We will discuss replication in the following section.
 
 
 Multi-use parameters can also be replicated. That is, each pipeline stage that uses a replicated parameter will have its own copy of the parameter and the system will record information about this replication such that the runtime can insert the proper synchronization operations upon update of these parameters. For example, let us rerun the above example with `multi_use_param_spec=MultiUseParameterConfig.REPLICATE`:
@@ -121,9 +125,9 @@ print(ec_pipe_replicated.replicated_params)
 """
 ```
 
-Note that the `Pipe` instance has an attribute `replicated_params`, which is a record of all of the parameters that are replicated across pipeline stages. This object is a list of dictionaries. Each dictionary represents a single value that has been replicated across stages. The keys of the dictionary are the qualified name of the pipeline stage submodules that hold copies of this parameter, and the values are the qualified name of the parameter itself within those pipeline stage modules. Note that not only do we see `mm_param` in the above example, but we also see parameter replication from the usage of the `self.lin` module in multiple pipeline stages. `self.lin` is a "leaf module" in `torch.fx` parlance, and since we cannot see into the implementation of a leaf module, we automatically replicate leaf module parameters (i.e. they cannot be transmitted).
+Note that the `Pipe` instance has an attribute `replicated_params`, which is a record of all of the parameters that are replicated across pipeline stages. This object is a list of dictionaries. Each dictionary represents a single value that has been replicated across stages. The keys of the dictionary are the qualified name of the pipeline stage submodules that hold copies of this parameter, and the values are the qualified name of the parameter itself within those pipeline stage modules. Note that not only do we see `mm_param` in the above example, but we also see parameter replication from the usage of the `self.lin` module in multiple pipeline stages. `self.lin` is a "leaf module" in `torch.fx` parlance, and since we cannot see into the implementation of a leaf module, we automatically replicate leaf module parameters (note that we could hypothetically emit code to fetch the parameters values from leaf modules and transmit them to use sites, but that will require further development work).
 
-### Futher Considerations for Program Capture
+### Aside: Futher Considerations for Program Capture
 
 * `torch.fx` tracing imposes limitations on the classes of programs that can be captured (as described in [Limitations of Symbolic Tracing](https://pytorch.org/docs/stable/fx.html#limitations-of-symbolic-tracing)). Thus, this limits the applicability of the above-described system. However, we can think of several ways to address this:
     * Convert tracing into a "just-in-time" system, where program capture happens on each invocation, and is specialized to certain parameters like shapes flowing throughout the program. By using ephemeral traces that are transmitted to each worker on each invocation, we can address the limitations of e.g. dynamic control flow. However, we will need to figure out the semantics of parameter placement in this scenario, as moving those around on each invocation will likely be sub-optimal
@@ -135,14 +139,13 @@ Note that the `Pipe` instance has an attribute `replicated_params`, which is a r
 
 * `PipeStageExecutor`, which is a class that is instantiated on the pipeline stage machines via an `rpc.remote` call. This object is instantiated for each pipeline stage submodule, and manages ownership of the module/parameters and invocation of that module.
   * `PipeStageExecutor.invoke` is an [async RPC function](https://pytorch.org/docs/master/rpc.html#torch.distributed.rpc.functions.async_execution) that does the following:
-    * Populates a `WorkItem` structure that records the args/kwargs of the invocation and metadata such as the microbatch ID, how many arguments are remote values that must be waited on, and the Future object that will be signalled when the invocation is complete.
-    * Puts the `WorkItem` onto a "waiting" runlist data structure (or the "running" runlist) so that the scheduling system can keep track of this work
+    * Populates a `WorkItem` structure that records the `args`/`kwargs` of the invocation and metadata such as the microbatch ID, how many arguments are remote values that must be waited on, and the `Future` object that will be signalled when the invocation is complete.
+    * Puts the `WorkItem` onto a "waiting" runlist data structure (or the "running" runlist in the unlikely event that it has no input data dependencies) so that the scheduling system can keep track of this work
     * Initiates asynchronous transfers of remote arg/kwarg values. This is done via launching an async RPC to the `async_transfer` function on the local host. This function does a non-blocking call to an RPC on the remote, receives a future from that RPC, and installs a callback on that future that will update the `WorkItem` to inform it that one of its operands is ready, potentially also moving the `WorkItem` to the "ready" runlist
-  * `PipeStageExecutor` holds a `worker_thread` attribute, which is a Python thread that acts as a sort of event loop. It will block waiting for work on the "ready" runlist and execute that work whenever all of its dependencies are ready.
+  * `PipeStageExecutor` holds a `worker_thread` attribute, which is a Python thread that acts as a sort of event loop. It will block waiting for work on the "ready" runlist and execute that work whenever all of its dependencies are ready. TODO: task selection here should be configurable
   * TODO: different execution schedules
   * TODO: backward execution
-* `RemoteInterpreter` splits an input mini-batch into micro-batches and interprets the top-level `Pipe` graph, issuing `invoke` calls to the associated `PipeStageExecutors` to orchestrate execution of the program in a pipelined fashion.
-* Async RPC to yield the RPC callee to the scheduler
+* `RemoteInterpreter` splits an input mini-batch into micro-batches and interprets the top-level `Pipe` graph, issuing `invoke` calls to the associated `PipeStageExecutors` to orchestrate execution of the program in a pipelined fashion. TODO: issue loss and backwards calls
 
 # A Note About Correctness Testing
 
@@ -183,6 +186,11 @@ During the training loop, we should focus on a few important elements:
 - [ ] backward() execution in runtime
 - [ ] gradient checkpointing in runtime
 - [ ] shared weights synchronization in runtime
+- [ ] CUDA device placement
+- [ ] Beta integration into repos like HuggingFace transformers
 
 low-pri
+- [ ] Shape-specialized tracing
+- [ ] More APIs and algorithms for splitting in the front-end
 - [ ] TRANSMIT synchronization type for leaf modules
+- [ ] Yield running coroutines when I/O bound (e.g. when running a collective)
