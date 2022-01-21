@@ -179,6 +179,25 @@ During the training loop, we should focus on a few important elements:
     whole mini-batch, so it may be the case that this can literally be the same as the normal optimizer
     (potentially using [DistributedOptimizer](https://pytorch.org/docs/master/distributed.optim.html)).
 
+# Automatic Differentiation Design Notes
+
+* `requires_grad` -- in PyTorch arbitrary parameters/tensors may or may not need gradients to propagate through them, dictated by the `requires_grad` attribute on Tensor. This potentially complicates pipelined execution, as various values flowing through the program may or may not require grad, meaning that various stages in the pipeline may or may not need to schedule a backward microbatch. This is important because it dictates whether we can free activation memory allocated in the forward (if it's not needed by data dependency in the forward or backward, we can free it). Some cases depending on whether the {inputs, weights} of the forward() require grad:
+  * {no, no} - We do not need to schedule a backward microbatch and we can free all memory associated with the execution of this forward microbatch
+  * {no, yes} - We need to schedule a backward() and preserve the closure of values from the forward, but we do not need to propagate gradients to any predecessor stages.
+  * {yes, no} - We need to schedule a backward() and preserve the closure of values from the forward AND we need to propagate gradients to one or more predecessor stages
+  * {yes, yes} - Same as previous, as well as accumulating gradients into this stage's parameters.
+* Interaction with requires_grad with schedules like 1f1b that expect every stage to have a backward?
+* In summary, the fact that stages may or may not require grad puts us between a rock and a hard place:
+  * Alternative 1: Always schedule a backward job and close over variables. This may use extra memory and result in extra computation (even if it's no-op) to happen during pipelining, but presents a uniform runtime semantics and can allow e.g. 1f1b to unconditionally work
+  * Alternative 2: Only schedule a backward job and close over variables if `requires_grad` is true for any of the parameters or inputs of the stage. This will save memory and computation, but creates a dynamic, inconsistent runtime semantics that may break something like 1f1b
+* checkpointing - checkpointing slightly modifies what values are closed over, but the same concepts should still apply as the non-checkpointed case
+* Should `PipeStageExecutor` schedule the backward computation or should it be scheduled centrally by `RemoteInterpreter`? Technically `requires_grad` specifies if the value *may* receive a gradient but it does not specify that backward() will ever be called. So, we probably have to lookahead in the program to see if we need to schedule backward jobs. This implies `RemoteInterpreter` should do it?
+  * Should we separate out the concept of closure for backward from actually scheduling backward?
+    * Closure - normally in PT this is handled by building up a tape and releasing it when refcount decrements allow. Is there an analogue under pipelining?
+    * Can we explicitly model the closure by passing the output value from a stage as an input to the corresponding backward microbatch?
+      * If we do this, we can statically analyze whether backward() is ever called in the training process, and if not, we can drop the closures even if some tensors `require_grad`. Is this a reasonable thing to do? I think so, it matches what we do in Python
+* double-backwards?
+
 # Work Items
 
 - [ ] Figure out how performance looks
@@ -194,3 +213,4 @@ low-pri
 - [ ] More APIs and algorithms for splitting in the front-end
 - [ ] TRANSMIT synchronization type for leaf modules
 - [ ] Yield running coroutines when I/O bound (e.g. when running a collective)
+- [ ] Model side-effectful operations (resource semaphore, RNG state mutation, etc)
