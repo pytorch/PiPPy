@@ -8,6 +8,68 @@ from typing import Callable, Dict, List, Optional, Union, cast
 from enum import Enum
 import itertools
 
+def stage_backward(stage_output, output_grads, input_values):
+    """
+    Given the input value(s) and the corresponding gradient for those/that input
+    value(s), compute and accumulate gradients for all parameter values (leaves
+    in the autograd trace) as well as return a list of the gradients for the
+    input values
+    """
+    torch.autograd.backward(stage_output, grad_tensors=output_grads)
+
+    return [val.grad for val in input_values]
+
+def _insert_stage_symbolic_backward(g : torch.fx.Graph):
+    output_nodes = [n for n in g.nodes if n.op == 'output']
+    assert len(output_nodes) == 1
+    output_node = output_nodes[0]
+
+    loss_nodes = [n for n in g.nodes if (n.op, n.target) == ('call_module', '_loss')]
+    assert len(loss_nodes) == 1
+    loss_node = loss_nodes[0]
+
+    val_to_grad = {loss_node : None}
+
+    # TODO: multiple uses in the forward need to accumulate in the backward
+    def assign_or_accumulate_grad(forward_node, grad_value):
+        if forward_node in val_to_grad:
+            raise NotImplementedError('Gradient accumulation not yet implemented')
+        val_to_grad[forward_node] = grad_value
+
+    with g.inserting_before(output_node):
+        for node in reversed(g.nodes):
+            if node.op == 'call_module':
+                grad_call = g.call_function(stage_backward, kwargs={
+                    'stage_output' : node,
+                    'output_grads' : val_to_grad[node],
+                    'input_values' : list(node.all_input_nodes)
+                })
+
+                input_nodes = list(node.all_input_nodes)
+                if len(input_nodes) == 1:
+                    assign_or_accumulate_grad(input_nodes[0], grad_call)
+                else:
+                    grad_call_proxy = torch.fx.Proxy(grad_call)
+                    for i, input_node in enumerate(input_nodes):
+                        assign_or_accumulate_grad(input_node, grad_call_proxy[i].node)
+            elif node.op == 'call_function':
+                assert node.target == operator.getitem
+                assert len(node.args) == 2
+                node_value, node_idx = tuple(node.args)
+                out_grad = val_to_grad[node]
+                if not isinstance(out_grad, tuple):
+                    out_grad = (out_grad,)
+                new_tuple_size = max(len(out_grad), node_idx + 1)
+                reconstructed_tuple = [None for _ in range(new_tuple_size)]
+                for i, val in enumerate(out_grad):
+                    reconstructed_tuple[i] = val
+                reconstructed_tuple[node_idx] = node_value
+                reconstructed_tuple = list(reconstructed_tuple)
+                assign_or_accumulate_grad(node_value, reconstructed_tuple)
+
+    return g
+
+
 # Pipe model representation
 #
 # Pipe can be thought of as an `nn.Sequential++`. That is to say: it specifies
@@ -40,15 +102,50 @@ class MultiUseParameterConfig(Enum):
 
 MultiUseParamSpec = Union[MultiUseParameterConfig, Dict[str, MultiUseParameterConfig]]
 
+class DetachExecutor(torch.fx.Interpreter):
+    """
+    Special interpreter to run the split_gm in testing that detaches all inputs to
+    a module invocation. This is needed so that the values at the boundary are
+    leaf modules in autograd execution.
+    """
+    def __init__(self, module, garbage_collect_values=True):
+        super().__init__(module, garbage_collect_values)
+        self.value_remap = {}
+
+    def call_module(self, target, args, kwargs):
+        def detach_tensors(a):
+            if isinstance(a, torch.Tensor) and a.requires_grad:
+                new_val = a.detach().requires_grad_(True)
+                assert a not in self.value_remap
+                self.value_remap[a] = new_val
+                return new_val
+            else:
+                return a
+
+        args = torch.fx.node.map_aggregate(args, detach_tensors)
+        kwargs = torch.fx.node.map_aggregate(kwargs, detach_tensors)
+
+        return super().call_module(target, args, kwargs)
+
+    def call_function(self, target, args, kwargs):
+        # HACK to reroute saved input tensors to point to the detach()ed version
+        if target == stage_backward:
+            kwargs = dict(kwargs)
+            kwargs['input_values'] = [self.value_remap.get(v, v) for v in kwargs['input_values']]
+
+        return super().call_function(target, args, kwargs)
+
 class Pipe(torch.nn.Module):
     def __init__(self, split_gm : torch.fx.GraphModule, qualname_mapping : Dict[str, str]):
         super().__init__()
         self.split_gm : torch.fx.GraphModule = split_gm
+        self.executor : DetachExecutor = DetachExecutor(self.split_gm)
 
         for node in split_gm.graph.nodes:
             assert (node.op in {'call_module', 'placeholder', 'output'} or 
                 (node.op, node.target) == ('call_function', operator.getitem) or
-                (node.op, node.target) == ('call_method', 'backward'))
+                (node.op, node.target) == ('call_method', 'backward') or
+                (node.op, node.target) == ('call_function', stage_backward))
 
         # Detect replicated parameters so we know that we have to do an additional allreduce
         # before applying the optimizer
@@ -72,7 +169,10 @@ class Pipe(torch.nn.Module):
         self.new_to_old_qualname_mapping = qualname_mapping
 
     def forward(self, *args, **kwargs):
-        return self.split_gm(*args, **kwargs)
+        if len(kwargs) > 0:
+            # TODO
+            raise NotImplementedError('Kwargs not implemented')
+        return self.executor.run(*args)
 
     def remap_qualname(self, qualname):
         # TODO: annoying
@@ -137,11 +237,12 @@ class Pipe(torch.nn.Module):
         output_val = output_node.args[0]
         with gm.graph.inserting_after(output_node):
             loss_node = gm.graph.call_module('_loss', (output_val, target_ph_node))
-        # TODO: make this configurable. Do users want to call forward + loss w/o backward?
-        with gm.graph.inserting_after(loss_node):
-            gm.graph.call_method('backward', (loss_node,))
         gm.graph.erase_node(output_node)
         gm.graph.output(loss_node)
+
+        # TODO: make this configurable. Do users want to call forward + loss w/o backward?
+        _insert_stage_symbolic_backward(gm.graph)
+
         gm.graph.lint()
         gm.recompile()
 
@@ -492,6 +593,8 @@ mse_loss = torch.nn.MSELoss()
 seq_pipe_with_loss = Pipe.from_sequential(seq, mse_loss)
 check_qualname_mapping(old=seq, new=seq_pipe_with_loss)
 
+print(seq_pipe_with_loss.split_gm)
+
 test_optim = torch.optim.SGD(seq_pipe_with_loss.parameters(), lr=0.01, momentum=0.9)
 ref_optim = torch.optim.SGD(seq.parameters(), lr=0.01, momentum=0.9)
 
@@ -501,7 +604,7 @@ target = torch.zeros(5, 512)
 test_optim.zero_grad()
 test_out = seq_pipe_with_loss(x, target)
 test_grads = {seq_pipe_with_loss.remap_qualname(name): copy.copy(val.grad) for name, val in seq_pipe_with_loss.named_parameters()}
-torch.testing.assert_allclose(seq_pipe_with_loss(x, target), mse_loss(seq(x), target))
+torch.testing.assert_allclose(test_out, mse_loss(seq(x), target))
 
 ref_optim.zero_grad()
 ref_out = mse_loss(seq(x), target)
@@ -526,7 +629,7 @@ target = torch.zeros(5, 512)
 test_optim.zero_grad()
 test_out = ec_pipe_with_loss(x, target)
 test_grads = {ec_pipe_with_loss.remap_qualname(name): copy.copy(val.grad) for name, val in ec_pipe_with_loss.named_parameters()}
-torch.testing.assert_allclose(ec_pipe_with_loss(x, target), mse_loss(ec(x), target))
+torch.testing.assert_allclose(test_out, mse_loss(ec(x), target))
 
 ref_optim.zero_grad()
 ref_out = mse_loss(ec(x), target)
