@@ -1,4 +1,3 @@
-from termios import ECHOE
 import torch
 import torch.fx
 from torch.fx.passes.split_module import split_module
@@ -30,10 +29,10 @@ def _insert_stage_symbolic_backward(g : torch.fx.Graph):
 
     val_to_grad = {loss_node : None}
 
-    # TODO: multiple uses in the forward need to accumulate in the backward
     def assign_or_accumulate_grad(forward_node, grad_value):
         if forward_node in val_to_grad:
-            raise NotImplementedError('Gradient accumulation not yet implemented')
+            # TODO: test codepath
+            grad_value = g.call_function(torch.add, (val_to_grad[forward_node], grad_value))
         val_to_grad[forward_node] = grad_value
 
     with g.inserting_before(output_node):
@@ -55,17 +54,27 @@ def _insert_stage_symbolic_backward(g : torch.fx.Graph):
             elif node.op == 'call_function':
                 assert node.target == operator.getitem
                 assert len(node.args) == 2
-                node_value, node_idx = tuple(node.args)
-                out_grad = val_to_grad[node]
-                if not isinstance(out_grad, tuple):
-                    out_grad = (out_grad,)
-                new_tuple_size = max(len(out_grad), node_idx + 1)
-                reconstructed_tuple = [None for _ in range(new_tuple_size)]
-                for i, val in enumerate(out_grad):
-                    reconstructed_tuple[i] = val
-                reconstructed_tuple[node_idx] = node_value
-                reconstructed_tuple = list(reconstructed_tuple)
-                assign_or_accumulate_grad(node_value, reconstructed_tuple)
+                indexed_value, node_idx = tuple(node.args)
+
+                grad_output = val_to_grad[node]
+
+                # indexed_value is a collection that we are indexing into. It could
+                # exist in the val_to_grad map if we've processed another `getitem`
+                # already.
+                existing_list_size = len(val_to_grad[indexed_value]) if indexed_value in val_to_grad else -1
+                new_list_size = max(node_idx + 1, existing_list_size)
+
+                reconstructed_list = [None for _ in range(new_list_size)]
+
+                # Copy over existing elements if present
+                if indexed_value in val_to_grad:
+                    for i, val in enumerate(val_to_grad[indexed_value]):
+                        reconstructed_list[i] = val
+
+                # Populate value represented by this node
+                reconstructed_list[node_idx] = grad_output
+
+                val_to_grad[indexed_value] = reconstructed_list
 
     return g
 
@@ -109,6 +118,7 @@ class DetachExecutor(torch.fx.Interpreter):
     leaf modules in autograd execution.
     """
     def __init__(self, module, garbage_collect_values=True):
+        garbage_collect_values = False
         super().__init__(module, garbage_collect_values)
         self.value_remap = {}
 
@@ -133,6 +143,7 @@ class DetachExecutor(torch.fx.Interpreter):
             kwargs = dict(kwargs)
             kwargs['input_values'] = [self.value_remap.get(v, v) for v in kwargs['input_values']]
 
+
         return super().call_function(target, args, kwargs)
 
 class Pipe(torch.nn.Module):
@@ -145,7 +156,8 @@ class Pipe(torch.nn.Module):
             assert (node.op in {'call_module', 'placeholder', 'output'} or 
                 (node.op, node.target) == ('call_function', operator.getitem) or
                 (node.op, node.target) == ('call_method', 'backward') or
-                (node.op, node.target) == ('call_function', stage_backward))
+                (node.op, node.target) == ('call_function', stage_backward) or
+                (node.op, node.target) == ('call_function', torch.add))
 
         # Detect replicated parameters so we know that we have to do an additional allreduce
         # before applying the optimizer
@@ -592,8 +604,6 @@ check_qualname_mapping(old=ec, new=ec_pipe_replicated)
 mse_loss = torch.nn.MSELoss()
 seq_pipe_with_loss = Pipe.from_sequential(seq, mse_loss)
 check_qualname_mapping(old=seq, new=seq_pipe_with_loss)
-
-print(seq_pipe_with_loss.split_gm)
 
 test_optim = torch.optim.SGD(seq_pipe_with_loss.parameters(), lr=0.01, momentum=0.9)
 ref_optim = torch.optim.SGD(seq.parameters(), lr=0.01, momentum=0.9)
