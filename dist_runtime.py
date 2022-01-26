@@ -240,9 +240,6 @@ if local_rank == 0:
 
     ec_pipe = Pipe.from_tracing(ec, MultiUseParameterConfig.TRANSMIT)
 
-    def loss_code(x):
-        return torch.sum(x)
-
     optimizer = torch.optim.SGD(ec_pipe.parameters(), 0.01)
 
     remote_stage_executor_rrefs : Dict[str, torch.distributed.rpc.RRef] = {}
