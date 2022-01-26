@@ -6,6 +6,7 @@ This project is an attempt to build a state-of-the-art automated Pipeline Parall
 * First-class support for cross-host pipeline parallelism, as this is where PP is typically used (over slower interconnects). This is currently missing from the torchgpipe-based `torch.distributed.pipeline.sync.Pipe`
 * Composability with other parallelism schemes such as data parallelism or tensor splitting model parallelism (overall, known as "3d parallelism")
 * Support for pipeline scheduling paradigms, including static schedules like fill-drain (GPipe), 1f1b, interleaved 1f1b and dynamic schedules like lookahead or registers/back-pressure.
+* Support non-trivial topologies, including skip connections and tied weights/layers.
 
 # Design and Codebase Roadmap
 
@@ -16,7 +17,8 @@ This project is an attempt to build a state-of-the-art automated Pipeline Parall
   * `call_module` nodes to represents calls into the pipeline stages
     * A single call to the `_loss` submodule can also be present to represent the loss computation for training
   * `call_function` with a target of `operator.getitem`, for unpacking tuple outputs from pipeline stages
-  * `call_function` with a target of `backward` to represent backpropagation through the scalar loss value.
+  * `call_function` with a target of `IR.stage_backward` for the purpose of modeling the backward computation of each pipeline stage. This is described later in the section about IR for the backward pass.
+  * `call_function` with a target of `torch.add`, emitted solely for accumulating gradients of values that have multiple uses in the backward pass.
 
 The top-level `fx.Graph` gives us 1) a topological ordering of pipeline stages and 2) the data dependencies between these pipeline stages. Note that this is more general than existing pipeline APIs, as it supports arbitrary non-local (i.e. skip) connections between stages.
 
@@ -133,6 +135,83 @@ Note that the `Pipe` instance has an attribute `replicated_params`, which is a r
     * Convert tracing into a "just-in-time" system, where program capture happens on each invocation, and is specialized to certain parameters like shapes flowing throughout the program. By using ephemeral traces that are transmitted to each worker on each invocation, we can address the limitations of e.g. dynamic control flow. However, we will need to figure out the semantics of parameter placement in this scenario, as moving those around on each invocation will likely be sub-optimal
     * We can formulate pipeline paralellism as a program (program counter, call stack, live heap content) that migrates through multiple devices. Thus, rather than defining semantics for program capture and analysis, we simply need to define runtime semantics for migrating a running coroutine between devices. This may be difficult to implement in existing languages (Python). This could be implemented in TorchScript, but then that would require the program to be admissible to TorchScript's program capture limitations. Maybe we should just make a new language.
 
+## Intermediate Representation: Loss and backward() Computation
+
+`Pipe.from_sequential` and `Pipe.from_tracing` also take a `loss_fn` argument to specify the loss computation in the training scenario. `loss_fn` can be an `nn.Module` instance or a free function. The module/function should take two positional arguments: the output of the feedforward computation and the `target` values. An example of using this API and the IR it produces can be seen here:
+
+```
+ec_pipe_with_loss = Pipe.from_tracing(ec, loss_fn=mse_loss)
+print(ec_pipe_with_loss.split_gm)
+"""
+GraphModule(
+  (submod_0): GraphModule()
+  (submod_1): GraphModule(
+    (lin): Linear(in_features=512, out_features=512, bias=True)
+  )
+  (submod_2): GraphModule(
+    (lin): Linear(in_features=512, out_features=512, bias=True)
+  )
+  (_loss): MSELoss()
+)
+
+
+
+def forward(self, x, target):
+    submod_0 = self.submod_0(x)
+    getitem_2 = submod_0[2]
+    getitem = submod_0[0]
+    getitem_1 = submod_0[1]
+    submod_1 = self.submod_1(getitem, getitem_2)
+    submod_2 = self.submod_2(submod_1, getitem_1)
+    _loss = self._loss(submod_2, target)
+    stage_backward = __main___stage_backward(stage_output = _loss, output_grads = None, input_values = [submod_2, target]);  target = None
+    getitem_3 = stage_backward[0]
+    getitem_4 = stage_backward[1];  stage_backward = None
+    stage_backward_1 = __main___stage_backward(stage_output = submod_2, output_grads = getitem_3, input_values = [submod_1, getitem_1]);  submod_2 = getitem_3 = getitem_1 = None
+    getitem_5 = stage_backward_1[0]
+    getitem_6 = stage_backward_1[1];  stage_backward_1 = None
+    stage_backward_2 = __main___stage_backward(stage_output = submod_1, output_grads = getitem_5, input_values = [getitem, getitem_2]);  submod_1 = getitem_5 = getitem = getitem_2 = None
+    getitem_7 = stage_backward_2[0]
+    getitem_8 = stage_backward_2[1];  stage_backward_2 = None
+    stage_backward_3 = __main___stage_backward(stage_output = submod_0, output_grads = [getitem_7, getitem_6, getitem_8], input_values = [x]);  submod_0 = getitem_7 = getitem_6 = getitem_8 = x = None
+    return _loss
+"""
+```
+
+Note the following:
+
+1. When `loss_fn` is specified, an additional positional input (`target`) is added to the signature of the model. During training, the value representing the target label used in loss computation should be passed in as this argument.
+2. The loss value is returned, allowing for e.g. logging of loss values during training.
+3. A simple symbolic automatic differentiation process emits code for computing the gradients of the model training process in a pipelined way. This is described below.
+
+## Symbolic Autodiff
+
+When thinking about how to implement backwards() in a pipeline parallel scenario, there are two considerations:
+
+
+* In PyTorch autograd, `requires_grad` dictates whether operations record values/functions in the autograd tape. However, this does not compel execution of the backward for those operations.
+* `backward` is only run when a corresponding `backward()` call later in the program initiates gradient computation.
+
+
+Given this, we should think about how these semantics could map onto pipeline parallel execution, especially given that we would like to arbitrarily schedule the forward/backward jobs in the computation (such as in 1f1b scheduling). There are basically two options here:
+
+
+1. Emulate the “autograd tracing + just-in-time gradient computation” of Eager mode PyTorch. This may be a bit difficult to do in conjunction with schedules, as the dynamic nature of this type of autograd makes it more difficult to reason about if/when/what is run in autograd or to reference specific forward/backward executions in a schedule
+2. Model `backward` ahead-of-time by emitting stages into the IR. This allows us to schedule all stages uniformly (we don’t need to essentially replicate the autograd machinery in the runtime) and allows us to know what backward stages will be run ahead of time and reference them in the scheduling system.
+
+We elect to implement option (2). We implement this by doing a reverse iteration over the nodes of the `Pipe` module and applying the following rules for each type of node:
+
+* *call_module*. For module calls, we want to compute the gradient of each tensor input or module parameter with `requires_grad` with respect to the gradient of each tensor output that `requires_grad`. We can emit a call to a function `stage_backward(output_vals, dout)` that is a wrapper over `autograd.backward` (or autograd.grad). This wrapper handles unpacking/packing collection type inputs/outputs (like a pytree) and delegates to autograd.backward to compute and accumulates gradient values into the .grad attribute for each input and parameter value of this pipeline stage. `stage_backward` returns the gradients of the input values of the pipeline stage.
+    * TODO: For gradient checkpointing, we should wrap the forward() invocation of the forward module with torch.utils.checkpoint. Then we can compute gradients in the same manner (TODO: is this right?)
+    * TODO: is it good enough to dynamically figure out which tensor inputs require grad?
+    * TODO: if the input tensors are values sent over the wire from the remote, do they have any attached grad_fn? If so, do we need to block the gradient somehow? Can we detach?
+    * TODO: how to transmit saved output tensors on the same device without putting them through RPC? i.e. the data dependencies from the forward to the backward phase should just be passing a tensor reference, not going over RPC
+        * Maybe just special-case this in the executor?
+    * TODO: Zach mentioned that it is not always necessary to save the whole output tensor for computing the gradient. e.g. gradient of matmul does not require the output in the formulae for gradient of its inputs. Is there a way to call autograd.backward and only pass in the grad_fns and not the output tensors themselves? ask alban
+
+* `call_function` + `operator.getitem`. This is used solely for the purpose of indexing into tuple outputs of stages if a stage has multiple outputs. In the backwards, the corresponding operation should be to rebuild the collection type for the purpose of passing it to `stage_backward`. We need to lazily build these collection types as we iterate in reverse order over the program
+* placeholder - TODO: should we return gradients of pipeline inputs? Does anyone need this?
+
 ## Runtime
 
 `dist_runtime.py` is a work-in-progress implementation of a runtime that consumes `Pipe`. There are currently several (fairly unorganized) components:
@@ -178,13 +257,6 @@ During the training loop, we should focus on a few important elements:
   * Requirements here are similar to loss and backwards, but the optimizer step happens only once for the
     whole mini-batch, so it may be the case that this can literally be the same as the normal optimizer
     (potentially using [DistributedOptimizer](https://pytorch.org/docs/master/distributed.optim.html)).
-
-# Automatic Differentiation Design Notes
-
-I think the most straightforward way to implement backwards is to explicitly emit torch.autograd.backward() calls (or some pytree wrapper thereof) in reverse pipeline stage order in the IR, then schedule those to the appropriate machines. This explicitly models the data dependencies from closing over values for backwards (in either case the input and output values from the forward pipeline stage are preserved -- those values may also close over intermediate values if checkpointing is not being used). In the case that there's no backward() call in the network, these values go out of scope and are freed, preserving memory efficiency in the forward-only case.
-
-* Interaction of the above with schedules?
-* double-backwards?
 
 # Work Items
 
