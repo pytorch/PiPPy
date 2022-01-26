@@ -29,6 +29,7 @@ from PipelineDriver import PipelineDriver
 #           * Implement 1F1B schedule
 
 PROFILING_ENABLED = True
+CHECK_NUMERIC_EQUIVALENCE = True
 
 import os
 local_rank = int(os.environ["LOCAL_RANK"])
@@ -72,13 +73,11 @@ if local_rank == 0:
 
     input = torch.randn(bs, d_hid)
 
-    check_numeric_equivalence = True
-
     # # Warm up and correctness runs
     out = pipe_driver.run(input, chunks=5, _debug_mask_minibatches = True)
     ref_out = ec_pipe.split_gm(input)
 
-    if check_numeric_equivalence:
+    if CHECK_NUMERIC_EQUIVALENCE:
         torch.testing.assert_allclose(out, ref_out)
         print(f'equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}')
         
