@@ -5,8 +5,10 @@ from enum import Enum
 import logging
 import operator
 import threading
+import warnings
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
+from IR import Pipe
 
 DEBUG = False
 
@@ -303,3 +305,41 @@ class RemoteInterpreter(torch.fx.Interpreter):
         if target is operator.getitem and isinstance(args[0], torch._C._distributed_rpc.PyRRef):
             return args[0].remote().__getitem__(args[1])
         return super().call_function(target, args, kwargs)
+
+
+class PipelineDriver:
+    def __init__(self, pipe : Pipe, world_size : int, all_ranks : List[int] = None):
+        self.pipe = pipe
+        self.world_size = world_size
+
+        self.remote_stage_executor_rrefs : Dict[str, torch.distributed.rpc.RRef] = {}
+
+        if all_ranks is not None:
+            assert len(all_ranks) == world_size, "Explicitly specified ranks must match world_size"
+        else:
+            all_ranks = list(range(world_size))
+
+        # TODO: generalize mapping from pipeline stage to rank
+        pipeline_submods = {name : mod for name, mod in self.pipe.split_gm.named_children() if name.startswith('submod_') }
+
+        if len(pipeline_submods) > world_size:
+            raise RuntimeError(f'Tried to run pipeline with {len(pipeline_submods)} stages with a world size of '
+                               f'{world_size}. Please ensure world_size is large enough to accomodate your pipeline.')
+
+        if len(pipeline_submods) < world_size:
+            warnings.warn(f'Running pipeline with {len(pipeline_submods)} stages on world_size of {world_size}. '
+                          f'Remaining ranks will be idle.')
+
+
+        for rank, stage_name in zip(all_ranks, pipeline_submods):
+            stage_submod = pipeline_submods[stage_name]
+            self.remote_stage_executor_rrefs[stage_name] = (rank, rpc.remote(rank, PipeStageExecutor, (stage_submod, rank)))
+
+        self.interp = RemoteInterpreter(self.remote_stage_executor_rrefs, self.pipe.split_gm)
+
+
+    def run(self, *args, chunks : int, batch_dims : Optional[List[Optional[int]]] = None,
+            initial_env : Optional[Dict[torch.fx.Node, Any]] = None,
+            _debug_mask_minibatches : bool = False):
+        return self.interp.run(*args, chunks=chunks, batch_dims=batch_dims, initial_env=initial_env,
+                              _debug_mask_minibatches=_debug_mask_minibatches)

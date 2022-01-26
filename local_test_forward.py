@@ -1,9 +1,8 @@
 import torch
 import torch.distributed.rpc as rpc
-from typing import Dict
 
 from IR import MultiUseParameterConfig, Pipe, pipe_split
-from PipelineDriver import PipeStageExecutor, RemoteInterpreter
+from PipelineDriver import PipelineDriver
 
 # LOG 1/18: Specifying schedule data dependencies via explicit dependencies is tricky because
 #           it constrains the topological ordering in which the execution schedule can be
@@ -69,31 +68,23 @@ if local_rank == 0:
 
     optimizer = torch.optim.SGD(ec_pipe.parameters(), 0.01)
 
-    # TODO: refactor into PipeDriver
-    remote_stage_executor_rrefs : Dict[str, torch.distributed.rpc.RRef] = {}
-
-    for rank, (name, mod) in enumerate(ec_pipe.split_gm.named_children()):
-        # TODO: rank as argument to PipeStageExecutor must match the actual rank of the process
-        # as seen by RPC. Is there a cleaner way of doing this?
-        remote_stage_executor_rrefs[name] = (rank, rpc.remote(rank, PipeStageExecutor, (mod, rank)))
-
-    interp = RemoteInterpreter(remote_stage_executor_rrefs, ec_pipe.split_gm)
+    pipe_driver = PipelineDriver(ec_pipe, world_size)
 
     input = torch.randn(bs, d_hid)
 
     check_numeric_equivalence = True
 
-    # Warm up and correctness runs
-    out = interp.run(input, chunks=5, _debug_mask_minibatches = True)
+    # # Warm up and correctness runs
+    out = pipe_driver.run(input, chunks=5, _debug_mask_minibatches = True)
     ref_out = ec_pipe.split_gm(input)
 
     if check_numeric_equivalence:
         torch.testing.assert_allclose(out, ref_out)
         print(f'equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}')
         
-    # Profiling runts
+    # # Profiling runts
     with torch.autograd.profiler_legacy.profile(enabled=PROFILING_ENABLED) as prof:
-        out = interp.run(input, chunks=5, _debug_mask_minibatches = False)
+        out = pipe_driver.run(input, chunks=5, _debug_mask_minibatches = False)
         ref_out = ec_pipe.split_gm(input)
         print(f'profiling run completed {torch.sum(ref_out)} ref {torch.sum(ref_out)}')
     if PROFILING_ENABLED:
