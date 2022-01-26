@@ -230,6 +230,12 @@ These classes are more geared toward being implementation details, but may be us
   * TODO: backward execution
 * `RemoteInterpreter` splits an input mini-batch into micro-batches and interprets the top-level `Pipe` graph, issuing `invoke` calls to the associated `PipeStageExecutors` to orchestrate execution of the program in a pipelined fashion. TODO: issue loss and backwards calls
 
+# Testing Entrypoints
+
+Testing entrypoints are the following:
+
+* `local_test_forward.py` tests forward-only execution of a pipelined model with multiple processes on a single host. It should be launched via `launch_local_test_forward.sh`, which internally uses torchrun to spawn multiple processes and assign them all a unique rank
+
 # A Note About Correctness Testing
 
 Note that micro-batch splitting and reconstruction is not guaranteed to be bitwise-equivalent to running the same program on the full batch (see [here](https://pytorch.org/docs/master/notes/numerical_accuracy.html#batched-computations-or-slice-computations)). See also `exps/split_example.py`, which demonstrates this when constant `USE_WHOLE_BATCH` is set to `False`. A proposed way to get around this is, when testing for correctness, is to run the _full batch_ through the network for each micro-batch invocation and slice out the results from the full batch that correspond to each micro-batch, then cat those partial results together. This is demonstrated when `USE_WHOLE_BATCH` is `True`. This should guarantee numerical equivalence during testing while still exercising the micro-batch pipelining machinery.
