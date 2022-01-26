@@ -214,7 +214,11 @@ We elect to implement option (2). We implement this by doing a reverse iteration
 
 ## Runtime
 
-`dist_runtime.py` is a work-in-progress implementation of a runtime that consumes `Pipe`. There are currently several (fairly unorganized) components:
+`PipelineDriver.py` contains the implementation for a single-driver multiple-follower runtime that interprets the abstract IR described above. The classes contained within this file are the following:
+
+* `PipelineDriver` is the main user-facing entrypoint for using this runtime. The user feeds in the `Pipe` instance representing their model as well as the world size over which to run the pipeline. The user can optionally specify a non-trivial set of ranks over which to run the pipeline (i.e. not 0, 1, 2, ..., world_size-1). `PipelineDriver.run` is the main entry-point for actually running the model in a pipelined way. `run` takes as argument the initial arguments to the pipelined computation, the number of chunks to split the mini-batch into, optionally the batch dimension of each tensor input (assumed to be 0 if not specified), and optionally the initial environment, equivalent to the `initial_env` used in `fx.Interpreter`. Finally, a private argument for testing purposes is `_debug_mask_minibatches`, which, when `True`, implements the masking numeric correctness checking described below.
+
+These classes are more geared toward being implementation details, but may be useful for overriding behavior:
 
 * `PipeStageExecutor`, which is a class that is instantiated on the pipeline stage machines via an `rpc.remote` call. This object is instantiated for each pipeline stage submodule, and manages ownership of the module/parameters and invocation of that module.
   * `PipeStageExecutor.invoke` is an [async RPC function](https://pytorch.org/docs/master/rpc.html#torch.distributed.rpc.functions.async_execution) that does the following:
