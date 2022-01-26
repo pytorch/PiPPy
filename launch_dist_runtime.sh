@@ -1,1 +1,0 @@
-torchrun --standalone --nnodes=1 --nproc_per_node=10 dist_runtime.py
