@@ -236,6 +236,32 @@ These classes are more geared toward being implementation details, but may be us
   * TODO: backward execution
 * `RemoteInterpreter` splits an input mini-batch into micro-batches and interprets the top-level `Pipe` graph, issuing `invoke` calls to the associated `PipeStageExecutors` to orchestrate execution of the program in a pipelined fashion. TODO: issue loss and backwards calls
 
+# Scheduler Design Notes
+
+We can examine two types of schedules to extract out the requirements for a general, programmable system for issuing and scheduling computation:
+
+* Synchronous Fill-Drain (aka GPipe[1]) 
+
+![GPipe Schedule](https://i.imgur.com/eyUc947.png)
+
+* Synchronous 1F1B (aka PipeDream-Flush) (from PipeDream[2] + Megatron 2 paper[3])
+
+![Synchronous 1F1B Schedule](https://i.imgur.com/Voomtcd.png)
+
+
+We can further examine what needs to happen at different stages of the runtime for each strategy. The two stages we'll examine are:
+
+* Partitioning the work and distributing (microbatch, phase) pairs to each of the pipeline stages (in the form of `WorkItem`s)
+* Scheduling `WorkItems` at runtime, subject to the policy specified by a schedule
+
+
+|                   | *Fill-Drain (GPipe)*        | *Synchronous 1F1B*             |
+| ----------------- | --------------------------- | ------------------------------ |
+| *WorkItem Issue*  | All forward WorkItems, then full mini-batch loss, then all backward WorkItems    | All forward WorkItems, then micro-batch loss, then all backward WorkItems         |
+| *Online Schedule* | Consume and process WorkItems in order. Note that we my want to make the loss computation configurable in terms of whether it happens over the full mini-batch or per-micro-batch.      | Consume forward WorkItems in order until steady state, then alternate forward and backward until drain, then consume backward WorkItems in-order. Note that the last stage must execute the loss computation per-micro-batch |
+
+Given the above, we should implement extension points for both the `RemoteInterpreter` class that issues `WorkItem`s to each stage, as well as the `PipeStageExecutor` class that handles execution of `WorkItem`s at runtime.
+
 # Testing Entrypoints
 
 Testing entrypoints are the following:
@@ -273,6 +299,12 @@ During the training loop, we should focus on a few important elements:
   * Requirements here are similar to loss and backwards, but the optimizer step happens only once for the
     whole mini-batch, so it may be the case that this can literally be the same as the normal optimizer
     (potentially using [DistributedOptimizer](https://pytorch.org/docs/master/distributed.optim.html)).
+
+# References
+
+[1] https://arxiv.org/abs/1811.06965
+[2] https://arxiv.org/abs/1806.03377
+[3] https://arxiv.org/abs/2104.04473
 
 # Work Items
 
