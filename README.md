@@ -53,6 +53,7 @@ def forward(self, input):
     _4 = self.submod_4(_3);  _3 = None
     _5 = self.submod_5(_4);  _4 = None
     return _5
+"""
 ```
 
 Similarly, we can use `Pipe.from_tracing` to use `torch.fx` tracing to convert an arbitrary `nn.Module` instance to this form. For example:
@@ -105,6 +106,7 @@ def forward(self, x):
     submod_1 = self.submod_1(getitem, getitem_2);  getitem = getitem_2 = None
     submod_2 = self.submod_2(submod_1, getitem_1);  submod_1 = getitem_1 = None
     return submod_2
+"""
 ```
 
 There are a few things to note about the above example:
