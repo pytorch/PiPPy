@@ -306,11 +306,66 @@ class RemoteInterpreter(torch.fx.Interpreter):
             return args[0].remote().__getitem__(args[1])
         return super().call_function(target, args, kwargs)
 
+class PipelineSchedule(Enum):
+    FillDrainMiniBatchLoss = 1
+    FillDrainMicroBatchLoss = 2
+    _1F1BDrain = 3
+    DynamicResources = 4
 
 class PipelineDriver:
-    def __init__(self, pipe : Pipe, world_size : int, all_ranks : List[int] = None):
+    def __init__(self, pipe : Pipe, world_size : int, all_ranks : List[int] = None,
+                 schedule : PipelineSchedule = PipelineSchedule.FillDrainMiniBatchLoss):
         self.pipe = pipe
         self.world_size = world_size
+
+        if schedule != PipelineSchedule.FillDrainMiniBatchLoss:
+            raise NotImplementedError(f'Schedule {schedule} not currently supported!')
+
+        # Schedule design notes:
+        #
+        # At this point we need to impart physical execution semantics onto the abstract IR.
+        # The IR describes the computation's data and code partitioned into stages, but it
+        # does not specify micro-batch semantics or the order in which the work is actually
+        # executed. So at this point we:
+        #
+        # 1. Define the strategy for replicating the computation. In particular, we will likely make the assumption
+        #    that the operations in the program are batch-wise commutative (my term), i.e. we can guarantee equivalence
+        #    with splitting up the operation along the batch dimension, applying the computation to those sub-batches,
+        #    then merging them back together via concatenation. We should provide a crisp contract surrounding this
+        # 2.  Define the way the RemoteInterpreter will interpret the IR and issue `invoke` commands to the
+        #     `PipeStageExecutor` instances. This will depend entirely on each execution schedule's strategy
+        #        * FillDrain variants will issue all forward jobs before all backward jobs
+        #        * 1F1B will issue jobs in some valid topological order
+        #        * dynamic backpressue is similar to 1f1b
+        #     * TODO: need to define how information like # pipeline stages, num chunks, etc is communicated to
+        #           workers
+        # 3. Define the way that the `PipeStageExecutor` will consume `WorkItems` in its `ready` runlist. This
+        #    similarly depends entirely on the strategy of the execution schedule.
+        #        * FillDrain with micro-batch loss will execute all forward WorkItems and come to a "barrier". Once
+        #          all micro-batches reach this barrier, the scheduler will start executing loss and backward
+        #          WorkItems
+        #        * FillDrain with mini-batch loss will do as above^ but internally the scheduler on the last stage
+        #          will compute the loss by concatenating the results from each micro-batch, applying the loss
+        #          once (over the whole mini-batch), then executing backward WorkItems with slices of the mini-batch
+        #          loss.
+        #        * 1F1B for each stage will compute a fill phase consisting of only forward WorkItems, a steady-state
+        #          where forward/backward WorkItems are alternated, and a drain phase consisting of backward WorkItems.
+        #          Last stage will always compute loss and backward after a forward WorkItem.
+        #        * Dynamic resource-based scheduling will have a set of open "registers" that limit the number of
+        #          forward WorkItems that can be admitted. A corresponding backward WorkItem will release the
+        #          registers allocated by the forward.
+        #
+        # Idea: compiler/processor split
+        #       Compiler: orders instructions from each micro-batch into some order for consumption by the processor
+        #       Processor: configurable execution engine. Mainly can be configured for in-order or out-of-order
+        #                  execution.
+        #
+        #   Fill-drain: Compiler orders all forward chunks, loss, then all backward. Could either be an in-order
+        #               processor or an out-of-order processor. In the case of OOO, compiler will emit barrier
+        #               instruction
+        #   1F1B: Compiler orders chunks in 1f1b order. In-order processor, strict about ordering
+        #   Dynamic: Compiler orders chunks in any order. Out-of-order processor with registers/resource
+        #            limits.
 
         self.remote_stage_executor_rrefs : Dict[str, torch.distributed.rpc.RRef] = {}
 

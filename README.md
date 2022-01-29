@@ -315,6 +315,7 @@ During the training loop, we should focus on a few important elements:
 - [ ] shared weights synchronization in runtime
 - [ ] CUDA device placement
 - [ ] Beta integration into repos like HuggingFace transformers
+- [ ] Checkpointing as a configuration surface (manual & automated)
 
 low-pri
 - [ ] Shape-specialized tracing
