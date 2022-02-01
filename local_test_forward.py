@@ -2,7 +2,7 @@ import torch
 import torch.distributed.rpc as rpc
 
 from IR import MultiUseParameterConfig, Pipe, pipe_split
-from PipelineDriver import PipelineDriver
+from PipelineDriver import PipelineDriverFillDrain
 
 # LOG 1/18: Specifying schedule data dependencies via explicit dependencies is tricky because
 #           it constrains the topological ordering in which the execution schedule can be
@@ -69,7 +69,7 @@ if local_rank == 0:
 
     optimizer = torch.optim.SGD(ec_pipe.parameters(), 0.01)
 
-    pipe_driver = PipelineDriver(ec_pipe, world_size)
+    pipe_driver = PipelineDriverFillDrain(ec_pipe, world_size)
 
     input = torch.randn(bs, d_hid)
 

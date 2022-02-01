@@ -147,10 +147,13 @@ class DetachExecutor(torch.fx.Interpreter):
         return super().call_function(target, args, kwargs)
 
 class Pipe(torch.nn.Module):
-    def __init__(self, split_gm : torch.fx.GraphModule, qualname_mapping : Dict[str, str]):
+    def __init__(self, split_gm : torch.fx.GraphModule, qualname_mapping : Dict[str, str],
+                 num_stages : int, has_loss_and_backward : bool):
         super().__init__()
         self.split_gm : torch.fx.GraphModule = split_gm
         self.executor : DetachExecutor = DetachExecutor(self.split_gm)
+        self.num_stages : int = num_stages
+        self.has_loss_and_backwards = has_loss_and_backward
 
         for node in split_gm.graph.nodes:
             assert (node.op in {'call_module', 'placeholder', 'output'} or 
@@ -216,6 +219,17 @@ class Pipe(torch.nn.Module):
                     new_to_old_mapping[k] = old_qn
 
         return new_to_old_mapping
+
+    @staticmethod
+    def _number_and_count_forward_stages(gm : torch.fx.GraphModule):
+        num_stages = 0
+        for node in gm.graph.nodes:
+            if node.op == 'call_module' and node.target.startswith('submod_'):
+                assert int(node.target[len('submod_'):]) == num_stages
+                node.meta['stage_idx'] = num_stages
+                num_stages += 1
+
+        return num_stages
 
     @staticmethod
     def _append_traced_loss_fn_to_gm(gm : torch.fx.GraphModule, loss_fn : Callable[[torch.Tensor], torch.Tensor]):
@@ -302,10 +316,15 @@ class Pipe(torch.nn.Module):
 
         gm = torch.fx.GraphModule(copied_root_dict, graph)
 
+        num_stages = Pipe._number_and_count_forward_stages(gm)
+
         if loss_fn is not None:
             Pipe._append_traced_loss_fn_to_gm(gm, loss_fn)
+            has_loss_and_backward = True
+        else:
+            has_loss_and_backward = False
 
-        return Pipe(gm, Pipe._hack_build_qualname_mapping(old=seq, new=gm))
+        return Pipe(gm, Pipe._hack_build_qualname_mapping(old=seq, new=gm), num_stages, has_loss_and_backward)
 
     @staticmethod
     def from_tracing(mod : torch.nn.Module, multi_use_param_spec : Optional[MultiUseParamSpec] = None,
@@ -481,10 +500,15 @@ class Pipe(torch.nn.Module):
         split.graph.lint()
         split.recompile()
 
+        num_stages = Pipe._number_and_count_forward_stages(split)
+
         if loss_fn is not None:
             Pipe._append_traced_loss_fn_to_gm(split, loss_fn)
+            has_loss_and_backward = True
+        else:
+            has_loss_and_backward = False
 
-        return Pipe(split, Pipe._hack_build_qualname_mapping(old=mod, new=split))
+        return Pipe(split, Pipe._hack_build_qualname_mapping(old=mod, new=split), num_stages, has_loss_and_backward)
 
 
 class PipeSplitWrapper(torch.nn.Module):
