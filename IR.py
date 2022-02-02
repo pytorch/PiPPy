@@ -14,15 +14,17 @@ def stage_backward(stage_output, output_grads, input_values):
     in the autograd trace) as well as return a list of the gradients for the
     input values
     """
-    def coll_require_grad_str(c):
-        if isinstance(c, (tuple, list)):
-            return str([getattr(t, 'requires_grad', None) for t in c])
-        else:
-            return str(getattr(c, 'requires_grad', None))
     torch.autograd.backward(stage_output, grad_tensors=output_grads)
-    print('*****stage_backward', coll_require_grad_str(stage_output), coll_require_grad_str(output_grads), coll_require_grad_str(input_values), [val.grad for val in input_values])
 
-    return [val.grad for val in input_values]
+    grad_inputs = []
+    for val in input_values:
+        if isinstance(val, torch.Tensor):
+            grad_inputs.append(val.grad)
+        elif val is None:
+            grad_inputs.append(None)
+        else:
+            raise NotImplementedError(f'Cannot pass gradient for value {val}')
+    return grad_inputs
 
 def _insert_stage_symbolic_backward(g : torch.fx.Graph):
     output_nodes = [n for n in g.nodes if n.op == 'output']

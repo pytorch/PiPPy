@@ -196,6 +196,19 @@ class PipeStageExecutor:
             future = work_item.future
             microbatch_id = work_item.microbatch_id
             ready_args = work_item.ready_args
+            phase = work_item.phase
+
+            if phase == Phase.BACKWARD and 'stage_output' in kwargs_rrefs:
+                # HACK: here we are directly accessing the saved tensor outputs
+                # for closed-over outputs so that they still have the grad_fn
+                # from local autograd. Can we solve this more elegantly?
+                kwargs_rrefs = dict(kwargs_rrefs)
+                def get_local_values(v):
+                    if isinstance(v, torch._C._distributed_rpc.PyRRef) and v.owner().id == self.local_rank:
+                        return v.local_value()
+                    else:
+                        return v
+                kwargs_rrefs['stage_output'] = torch.fx.node.map_aggregate(kwargs_rrefs['stage_output'], get_local_values)
 
             rref_arg_idx = 0
             def retrieve_rref_args_by_idx(a):
