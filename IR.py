@@ -581,45 +581,45 @@ check_qualname_mapping(old=seq, new=seq_pipe)
 
 # Test partitioning and skip connection
 
-class ExampleCode(torch.nn.Module):
-  def __init__(self):
-    super().__init__()
-    self.mm_param = torch.nn.Parameter(torch.randn(512, 512))
-    self.mm_param2 = torch.nn.Parameter(torch.randn(512, 512))
-    self.lin = torch.nn.Linear(512, 512)
+# class ExampleCode(torch.nn.Module):
+#   def __init__(self):
+#     super().__init__()
+#     self.mm_param = torch.nn.Parameter(torch.randn(512, 512))
+#     self.mm_param2 = torch.nn.Parameter(torch.randn(512, 512))
+#     self.lin = torch.nn.Linear(512, 512)
 
-  def forward(self, x):
-    x = torch.mm(x, self.mm_param)
-    skip_connection = x
-    x = torch.relu(x)
-    pipe_split()
-    x = torch.mm(x, self.mm_param)
-    x = self.lin(x)
-    pipe_split()
-    x = torch.relu(x)
-    x = x + skip_connection
-    x = torch.mm(x, self.mm_param2)
-    x = self.lin(x)
-    return x
+#   def forward(self, x):
+#     x = torch.mm(x, self.mm_param)
+#     skip_connection = x
+#     x = torch.relu(x)
+#     pipe_split()
+#     x = torch.mm(x, self.mm_param)
+#     x = self.lin(x)
+#     pipe_split()
+#     x = torch.relu(x)
+#     x = x + skip_connection
+#     x = torch.mm(x, self.mm_param2)
+#     x = self.lin(x)
+#     return x
 
-ec = ExampleCode()
-ec(torch.randn(50, 512))
+# ec = ExampleCode()
+# ec(torch.randn(50, 512))
 
-ec_pipe = Pipe.from_tracing(ec, MultiUseParameterConfig.TRANSMIT)
-x = torch.randn(5, 512)
-torch.testing.assert_allclose(ec(x), ec_pipe(x))
-assert ec_pipe.replicated_params == [
-    {'submod_1': 'lin.weight', 'submod_2': 'lin.weight'}, {'submod_1': 'lin.bias', 'submod_2': 'lin.bias'}]
-check_qualname_mapping(old=ec, new=ec_pipe)
+# ec_pipe = Pipe.from_tracing(ec, MultiUseParameterConfig.TRANSMIT)
+# x = torch.randn(5, 512)
+# torch.testing.assert_allclose(ec(x), ec_pipe(x))
+# assert ec_pipe.replicated_params == [
+#     {'submod_1': 'lin.weight', 'submod_2': 'lin.weight'}, {'submod_1': 'lin.bias', 'submod_2': 'lin.bias'}]
+# check_qualname_mapping(old=ec, new=ec_pipe)
 
-ec_pipe_replicated = Pipe.from_tracing(ec, MultiUseParameterConfig.REPLICATE)
-x = torch.randn(5, 512)
-torch.testing.assert_allclose(ec(x), ec_pipe_replicated(x))
-assert ec_pipe_replicated.replicated_params == [
-    {'submod_0': '__mm_param', 'submod_1': '__mm_param'},
-    {'submod_1': 'lin.weight', 'submod_2': 'lin.weight'},
-    {'submod_1': 'lin.bias', 'submod_2': 'lin.bias'}]
-check_qualname_mapping(old=ec, new=ec_pipe_replicated)
+# ec_pipe_replicated = Pipe.from_tracing(ec, MultiUseParameterConfig.REPLICATE)
+# x = torch.randn(5, 512)
+# torch.testing.assert_allclose(ec(x), ec_pipe_replicated(x))
+# assert ec_pipe_replicated.replicated_params == [
+#     {'submod_0': '__mm_param', 'submod_1': '__mm_param'},
+#     {'submod_1': 'lin.weight', 'submod_2': 'lin.weight'},
+#     {'submod_1': 'lin.bias', 'submod_2': 'lin.bias'}]
+# check_qualname_mapping(old=ec, new=ec_pipe_replicated)
 
 # TODO:
 # 1. Test autograd on single-box
@@ -633,47 +633,47 @@ check_qualname_mapping(old=ec, new=ec_pipe_replicated)
 
 # **** Test loss & backward representation - sequential frontend
 
-mse_loss = torch.nn.MSELoss()
-seq_pipe_with_loss = Pipe.from_sequential(seq, mse_loss)
-check_qualname_mapping(old=seq, new=seq_pipe_with_loss)
+# mse_loss = torch.nn.MSELoss()
+# seq_pipe_with_loss = Pipe.from_sequential(seq, mse_loss)
+# check_qualname_mapping(old=seq, new=seq_pipe_with_loss)
 
-test_optim = torch.optim.SGD(seq_pipe_with_loss.parameters(), lr=0.01, momentum=0.9)
-ref_optim = torch.optim.SGD(seq.parameters(), lr=0.01, momentum=0.9)
+# test_optim = torch.optim.SGD(seq_pipe_with_loss.parameters(), lr=0.01, momentum=0.9)
+# ref_optim = torch.optim.SGD(seq.parameters(), lr=0.01, momentum=0.9)
 
-x = torch.randn(5, 512)
-target = torch.zeros(5, 512)
+# x = torch.randn(5, 512)
+# target = torch.zeros(5, 512)
 
-test_optim.zero_grad()
-test_out = seq_pipe_with_loss(x, target)
-test_grads = {seq_pipe_with_loss.remap_qualname(name): copy.copy(val.grad) for name, val in seq_pipe_with_loss.named_parameters()}
-torch.testing.assert_allclose(test_out, mse_loss(seq(x), target))
+# test_optim.zero_grad()
+# test_out = seq_pipe_with_loss(x, target)
+# test_grads = {seq_pipe_with_loss.remap_qualname(name): copy.copy(val.grad) for name, val in seq_pipe_with_loss.named_parameters()}
+# torch.testing.assert_allclose(test_out, mse_loss(seq(x), target))
 
-ref_optim.zero_grad()
-ref_out = mse_loss(seq(x), target)
-ref_out.backward()
-ref_grads = {name: copy.copy(val.grad) for name, val in seq.named_parameters()}
+# ref_optim.zero_grad()
+# ref_out = mse_loss(seq(x), target)
+# ref_out.backward()
+# ref_grads = {name: copy.copy(val.grad) for name, val in seq.named_parameters()}
 
-for name, ref_grad in ref_grads.items():
-    assert name in test_grads
-    torch.testing.assert_allclose(test_grads[name], ref_grad)
+# for name, ref_grad in ref_grads.items():
+#     assert name in test_grads
+#     torch.testing.assert_allclose(test_grads[name], ref_grad)
 
-# **** Test loss & backward representation - tracing frontend
+# # **** Test loss & backward representation - tracing frontend
 
-ec_pipe_with_loss = Pipe.from_tracing(ec, loss_fn=mse_loss)
-check_qualname_mapping(old=ec, new=ec_pipe_with_loss)
+# ec_pipe_with_loss = Pipe.from_tracing(ec, loss_fn=mse_loss)
+# check_qualname_mapping(old=ec, new=ec_pipe_with_loss)
 
-test_optim = torch.optim.SGD(ec_pipe_with_loss.parameters(), lr=0.01, momentum=0.9)
-ref_optim = torch.optim.SGD(ec.parameters(), lr=0.01, momentum=0.9)
+# test_optim = torch.optim.SGD(ec_pipe_with_loss.parameters(), lr=0.01, momentum=0.9)
+# ref_optim = torch.optim.SGD(ec.parameters(), lr=0.01, momentum=0.9)
 
-x = torch.randn(5, 512)
-target = torch.zeros(5, 512)
+# x = torch.randn(5, 512)
+# target = torch.zeros(5, 512)
 
-test_optim.zero_grad()
-test_out = ec_pipe_with_loss(x, target)
-test_grads = {ec_pipe_with_loss.remap_qualname(name): copy.copy(val.grad) for name, val in ec_pipe_with_loss.named_parameters()}
-torch.testing.assert_allclose(test_out, mse_loss(ec(x), target))
+# test_optim.zero_grad()
+# test_out = ec_pipe_with_loss(x, target)
+# test_grads = {ec_pipe_with_loss.remap_qualname(name): copy.copy(val.grad) for name, val in ec_pipe_with_loss.named_parameters()}
+# torch.testing.assert_allclose(test_out, mse_loss(ec(x), target))
 
-ref_optim.zero_grad()
-ref_out = mse_loss(ec(x), target)
-ref_out.backward()
-ref_grads = {name: copy.copy(val.grad) for name, val in ec.named_parameters()}
+# ref_optim.zero_grad()
+# ref_out = mse_loss(ec(x), target)
+# ref_out.backward()
+# ref_grads = {name: copy.copy(val.grad) for name, val in ec.named_parameters()}
