@@ -1,8 +1,33 @@
 import torch
 import torch.distributed.rpc as rpc
+import logging
 
 from IR import MultiUseParameterConfig, Pipe, pipe_split
-from PipelineDriver import PipelineDriver
+from PipelineDriver import PipelineDriverFillDrain
+
+# LOG 1/18: Specifying schedule data dependencies via explicit dependencies is tricky because
+#           it constrains the topological ordering in which the execution schedule can be
+#           constructed. Instead, we could specify things like 1F1B scheduling by modeling
+#           the resource constraint (e.g. Registers in OneFlow -- analogous to a semaphore)
+#           and making the system block on this resource. zdevito pointed out that in this
+#           case, parallel jobs may deadlock, as they can acquire resources in an arbitrary
+#           order. This could be solved by specifying that acquiring this resource is an
+#           external side effect and serializing all stages with external side effects
+#           in the scheduling system.
+# LOG 1/20: TODOs for implementing forward/backward/loss with schedules:
+#           * ability to specify loss computation. Probably going to start with explicit callback
+#             rather than a more complicated tracing system
+#           * ability to switch between full-batch loss vs. per-microbatch loss. shen mentioned
+#             this might change numerics. So we should have the ability to compute loss over
+#             the whole minibatch rather than doing it for each micro-batch
+#           * ability to schedule backwards
+#
+#           Plan of action:
+#           * design representation in frontend/IR for forward/backward loss
+#             (full mini-batch loss)
+#           * Implement runtime for fill/drain pipelining (i.e. GPipe)
+#           * Extend loss computation to be per-microbatch
+#           * Implement 1F1B schedule
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
@@ -10,6 +35,8 @@ CHECK_NUMERIC_EQUIVALENCE = True
 import os
 local_rank = int(os.environ["LOCAL_RANK"])
 world_size = int(os.environ["WORLD_SIZE"])
+
+# logging.getLogger().setLevel(logging.DEBUG)
 
 rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
 
@@ -40,6 +67,7 @@ if local_rank == 0:
 
     ec = ExampleCode()
     ec(torch.randn(bs, d_hid))
+    ec.train()
 
     mse_loss = torch.nn.MSELoss()
 
@@ -47,7 +75,7 @@ if local_rank == 0:
 
     optimizer = torch.optim.SGD(ec_pipe.parameters(), 0.01)
 
-    pipe_driver = PipelineDriver(ec_pipe, world_size)
+    pipe_driver = PipelineDriverFillDrain(ec_pipe, world_size)
 
     input = torch.randn(bs, d_hid)
     target = torch.zeros(bs, d_hid)
@@ -62,7 +90,7 @@ if local_rank == 0:
         
     # # Profiling runts
     with torch.autograd.profiler_legacy.profile(enabled=PROFILING_ENABLED) as prof:
-        out = pipe_driver.run(input, chunks=5, _debug_mask_minibatches = False)
+        out = pipe_driver.run(input, target, chunks=5, _debug_mask_minibatches = False)
         ref_out = ec_pipe.split_gm(input)
         print(f'profiling run completed {torch.sum(ref_out)} ref {torch.sum(ref_out)}')
     if PROFILING_ENABLED:

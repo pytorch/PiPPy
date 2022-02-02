@@ -1,8 +1,9 @@
+from concurrent.futures import Executor
 import torch
 from torch.futures import S
 import torch.fx
 import torch.distributed.rpc as rpc
-from IR import Pipe
+from IR import Pipe, stage_backward
 from enum import Enum
 from typing import Any, Callable, Dict, List, Tuple, NamedTuple, Optional
 import logging
@@ -88,6 +89,11 @@ def to_here(a):
     else:
         return a
 
+class Phase(Enum):
+    FORWARD = 0
+    LOSS = 1
+    BACKWARD = 2
+
 class SchedState(Enum):
     WAITING = 0
     READY = 1
@@ -96,10 +102,11 @@ class SchedState(Enum):
 
 class WorkItem:
     def __init__(
-            self, args, kwargs, future, microbatch_id, blocked_args_count, ready_args, state = SchedState.WAITING):
-        self.args, self.kwargs, self.future, self.microbatch_id, self.blocked_args_count, self.ready_args, self.state \
-            = args, kwargs, future, microbatch_id, blocked_args_count, ready_args, state
+            self, phase, args, kwargs, future, microbatch_id, blocked_args_count, ready_args, state = SchedState.WAITING, debug_str = ''):
+        self.phase, self.args, self.kwargs, self.future, self.microbatch_id, self.blocked_args_count, self.ready_args, self.state, self.debug_str \
+            = phase, args, kwargs, future, microbatch_id, blocked_args_count, ready_args, state, debug_str
 
+    phase : Phase
     args : Tuple[Any]
     kwargs : Dict[str, Any]
     future : torch.futures.Future
@@ -108,6 +115,7 @@ class WorkItem:
     blocked_args_count : int
     ready_args : Dict[int, Any]
     state : SchedState
+    debug_str : str
 
 def _get_value_on_remote(rref):
     return rref.local_value()
@@ -154,10 +162,11 @@ class PipeStageExecutor:
     * TODO: Invocation of `torch.autograd.backward()` to implement backward passes
     """
 
-    def __init__(self, mod, local_rank):
+    def __init__(self, mod, local_rank, loss_mod=None):
         self.local_rank = local_rank
         logging.info(f'Rank {self.local_rank} Instantiating PipeStageExecutor for module {mod}')
         self.mod = mod
+        self.loss_mod = loss_mod
 
         self.waiting_runlist_lock = threading.Lock()
         # self.waiting_rulist (*and the contained WorkItems*) are guarded by
@@ -201,13 +210,22 @@ class PipeStageExecutor:
             args = torch.fx.node.map_aggregate(args_rrefs, retrieve_rref_args_by_idx)
             kwargs = torch.fx.node.map_aggregate(kwargs_rrefs, retrieve_rref_args_by_idx)
             logging.info(f'rank {self.local_rank} running microbatch {microbatch_id} target {self.mod}')
-            out_val = self.mod(*args, **kwargs)
+            if work_item.phase == Phase.FORWARD:
+                out_val = self.mod(*args, **kwargs)
+            elif work_item.phase == Phase.LOSS:
+                assert self.loss_mod is not None
+                out_val = self.loss_mod(*args, **kwargs)
+            elif work_item.phase == Phase.BACKWARD:
+                out_val = stage_backward(*args, **kwargs)
+                print('grad for work', work_item.debug_str, out_val)
+            else:
+                assert False, f'Unrecognized phase {work_item.phase} encountered in execution'
 
             future.set_result(out_val)
             work_item.state = SchedState.DONE
 
     @rpc.functions.async_execution
-    def invoke(self, args, kwargs, cur_microbatch : int):
+    def invoke(self, phase : Phase, args, kwargs, cur_microbatch : int, debug_str : str):
         # Extract all RRef arguments so we can spawn asynchronous data transfers
         # for each of them
         rref_args : List[torch._C._distributed_rpc.PyRRef] = []
@@ -221,8 +239,13 @@ class PipeStageExecutor:
         # waiting runlist
         future = torch.futures.Future()
         # TODO: increase blocked_args_count for extra things like scheduling
-        work_item = WorkItem(args, kwargs, future, cur_microbatch, len(rref_args), {})
-        runlist_key = f'{cur_microbatch}_forward'
+        work_item = WorkItem(phase, args, kwargs, future, cur_microbatch, len(rref_args), {}, debug_str=debug_str)
+        key_suffix = {
+            Phase.FORWARD : 'forward',
+            Phase.LOSS : 'loss',
+            Phase.BACKWARD : 'backward'
+        }
+        runlist_key = f'{cur_microbatch}_{key_suffix[phase]}'
         if len(rref_args) == 0:
             # TODO: convert initial input into RRef?
             with self.ready_runlist_cv:
@@ -230,8 +253,7 @@ class PipeStageExecutor:
                 self.ready_runlist_cv.notify()
         else:
             with self.waiting_runlist_lock:
-                # TODO: backward jobs
-                assert runlist_key not in self.waiting_runlist
+                assert runlist_key not in self.waiting_runlist, f'key {runlist_key} already in waiting runlist {self.waiting_runlist}'
                 self.waiting_runlist[runlist_key] = work_item
 
 
@@ -257,29 +279,65 @@ class PipelineDriverBase:
         self.all_ranks = all_ranks
         self.executor_class = PipeStageExecutor
 
+        self._init_remote_executors()
+
+    def _init_remote_executors(self):
         self.remote_stage_executor_rrefs : Dict[str, torch.distributed.rpc.RRef] = {}
 
-        if all_ranks is not None:
-            assert len(all_ranks) == world_size, "Explicitly specified ranks must match world_size"
+        if self.all_ranks is not None:
+            assert len(self.all_ranks) == self.world_size, "Explicitly specified ranks must match world_size"
         else:
-            all_ranks = list(range(world_size))
+            self.all_ranks = list(range(self.world_size))
 
-        # TODO: generalize mapping from pipeline stage to rank
-        pipeline_submods = {name : mod for name, mod in self.pipe.split_gm.named_children() if name.startswith('submod_') }
+        class ExecutorDescriptor:
+            name : str
+            mod : torch.nn.Module
+            loss_mod : Optional[torch.nn.Module] = None
+            has_backward : bool = False
 
-        if len(pipeline_submods) > world_size:
-            raise RuntimeError(f'Tried to run pipeline with {len(pipeline_submods)} stages with a world size of '
-                               f'{world_size}. Please ensure world_size is large enough to accomodate your pipeline.')
+        split_gm = self.pipe.split_gm
 
-        if len(pipeline_submods) < world_size:
-            warnings.warn(f'Running pipeline with {len(pipeline_submods)} stages on world_size of {world_size}. '
+        executor_descriptors = []
+        seen_loss = False
+        seen_loss_backward = False
+        bw_idx = -1
+        for node in split_gm.graph.nodes:
+            if node.op == 'call_module':
+                assert not seen_loss
+                target_mod = split_gm.get_submodule(node.target)
+                if node.target == '_loss':
+                    assert len(executor_descriptors) > 0
+                    executor_descriptors[-1].loss_mod = target_mod
+                else:
+                    descr = ExecutorDescriptor()
+                    descr.name = node.target
+                    descr.mod = target_mod
+                    executor_descriptors.append(descr)
+            elif (node.op, node.target) == ('call_function', stage_backward):
+                if not seen_loss_backward:
+                    seen_loss_backward = True
+                    node.meta['fw_stage'] = '_loss'
+                else:
+                    executor_descriptors[bw_idx].has_backward = True
+                    node.meta['fw_stage'] = executor_descriptors[bw_idx].name
+                    bw_idx -= 1
+
+        assert all(d.has_backward for d in executor_descriptors) or all(not d.has_backward for d in executor_descriptors)
+
+        if len(executor_descriptors) > self.world_size:
+            raise RuntimeError(f'Tried to run pipeline with {len(executor_descriptors)} stages with a world size of '
+                               f'{self.world_size}. Please ensure world_size is large enough to accomodate your pipeline.')
+
+        if len(executor_descriptors) < self.world_size:
+            warnings.warn(f'Running pipeline with {len(executor_descriptors)} stages on world_size of {self.world_size}. '
                           f'Remaining ranks will be idle.')
 
-
-        for rank, stage_name in zip(all_ranks, pipeline_submods):
-            stage_submod = pipeline_submods[stage_name]
-            self.remote_stage_executor_rrefs[stage_name] = (rank, rpc.remote(rank, self.executor_class, (stage_submod, rank)))
-
+        self.loss_stage = None
+        for rank, descr in zip(self.all_ranks, executor_descriptors):
+            self.remote_stage_executor_rrefs[descr.name] = (rank, rpc.remote(rank, self.executor_class, (descr.mod, rank, descr.loss_mod)))
+            if descr.loss_mod:
+                self.remote_stage_executor_rrefs['_loss'] = self.remote_stage_executor_rrefs[descr.name]
+        
     def run(self, *args, chunks : int, batch_dims : Optional[List[Optional[int]]] = None,
             _debug_mask_minibatches : bool = False):
         raise NotImplementedError('PipelineDriverBase is an abstract base class, please use a concrete '
@@ -363,15 +421,17 @@ class RemoteInterpreter(torch.fx.Interpreter):
         self.cur_microbatch = cur_microbatch
         self.args_iter = iter(init_args)
         self.pc = 0
-        self.node_list = list(module.graph.nodes)
+        self.node_list = list(self.module.graph.nodes)
 
     def call_module(self, target, args, kwargs):
         assert isinstance(target, str)
+        node = self.node_list[self.pc]
 
         if target in self.remote_stage_executor_rrefs:
             rank, stage_executor = self.remote_stage_executor_rrefs[target]
-            logging.info(f'Issuing remote invocation for target {target} on  rank {rank}')
-            return stage_executor.remote().invoke(args, kwargs, self.cur_microbatch)
+            phase = Phase.LOSS if target == '_loss' else Phase.FORWARD
+            logging.info(f'Microbatch {self.cur_microbatch} Issuing {phase} invocation for target {target} on rank {rank}')
+            return stage_executor.remote().invoke(phase, args, kwargs, self.cur_microbatch, debug_str=node.format_node())
         else:
             logging.info(f'Running local operation {target} from driver')
             return super().call_module(target, args, kwargs)
@@ -379,20 +439,28 @@ class RemoteInterpreter(torch.fx.Interpreter):
     def call_function(self, target, args, kwargs):
         if target is operator.getitem and isinstance(args[0], torch._C._distributed_rpc.PyRRef):
             return args[0].remote().__getitem__(args[1])
+        elif target is stage_backward:
+            node = self.node_list[self.pc]
+            assert 'fw_stage' in node.meta
+            rank, stage_executor = self.remote_stage_executor_rrefs[node.meta['fw_stage']]
+            logging.info(f'Microbatch {self.cur_microbatch} Issuing BW invocation for target {node.meta["fw_stage"]} on rank {rank}')
+            return stage_executor.remote().invoke(Phase.BACKWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node())
         return super().call_function(target, args, kwargs)
 
     def run_until(self, predicate : Callable[[torch.fx.Node], bool]):
         for self.pc in range(self.pc, len(self.node_list)):
             node = self.node_list[self.pc]
-            # TODO: hoist run() implementation
-            self.env[node] = super().run_node(node)
 
             if predicate(node):
                 return node
 
+            # TODO: hoist run() implementation
+            self.env[node] = super().run_node(node)
+
 class PipelineDriverFillDrain(PipelineDriverBase):
-    def __init__(self, pipe : Pipe, world_size : int, all_ranks : List[int] = None):
+    def __init__(self, pipe : Pipe, world_size : int, all_ranks : List[int] = None, single_loss : bool = False):
         super().__init__(pipe, world_size, all_ranks)
+        self.single_loss = single_loss
 
     def run(self, *args, chunks : int, batch_dims : Optional[List[Optional[int]]] = None,
             _debug_mask_minibatches : bool = False):
@@ -425,6 +493,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
             # Forward-only; return output values
             output_vals = []
             for interp, last_node in zip(microbatch_interpreters, last_nodes):
+                interp.run_until(lambda n : False)
                 output_vals.append(interp.env[last_node])
 
             local_results = [to_here(result) for result in output_vals]
@@ -438,9 +507,20 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 
             return torch.cat(local_results)                  
 
-        # TODO: output for forward only
+        if self.single_loss:
+            raise NotImplementedError('Single loss not yet implemented')
+
+        # TODO: multiple targets per stage executor; last stage should have fwd+loss+back
+
+        print(self.pipe.split_gm)
+
+        last_nodes = []
+        for interp in microbatch_interpreters:
+            last_nodes.append(interp.run_until(lambda n: n.op == 'output'))
+
+        import pdb; pdb.set_trace()
 
         # TODO: loss, backward, output
 
-        raise NotImplementedError()
+
 
