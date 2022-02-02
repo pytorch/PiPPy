@@ -81,19 +81,23 @@ if local_rank == 0:
     target = torch.zeros(bs, d_hid)
 
     # # Warm up and correctness runs
-    out = pipe_driver.run(input, target, chunks=5, _debug_mask_minibatches = True)
-    ref_out = ec_pipe.split_gm(input)
+    # out = pipe_driver.run(input, target, chunks=5, _debug_mask_minibatches = True)
+    print(ec_pipe.split_gm)
+    ref_out = ec_pipe(input, target)
 
-    if CHECK_NUMERIC_EQUIVALENCE:
-        torch.testing.assert_allclose(out, ref_out)
-        print(f'equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}')
+    # if CHECK_NUMERIC_EQUIVALENCE:
+    #     torch.testing.assert_allclose(out, ref_out)
+    #     print(f'equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}')
         
-    # # Profiling runts
-    with torch.autograd.profiler_legacy.profile(enabled=PROFILING_ENABLED) as prof:
-        out = pipe_driver.run(input, target, chunks=5, _debug_mask_minibatches = False)
-        ref_out = ec_pipe.split_gm(input)
-        print(f'profiling run completed {torch.sum(ref_out)} ref {torch.sum(ref_out)}')
-    if PROFILING_ENABLED:
-        prof.export_chrome_trace('pipe.csv')
+    # # # Profiling ruts
+    # with torch.autograd.profiler_legacy.profile(enabled=PROFILING_ENABLED) as prof:
+    #     out = pipe_driver.run(input, target, chunks=5, _debug_mask_minibatches = False)
+    #     ref_out = ec_pipe.split_gm(input, target)
+    #     print(f'profiling run completed {torch.sum(ref_out)} ref {torch.sum(ref_out)}')
+    # if PROFILING_ENABLED:
+    #     prof.export_chrome_trace('pipe.csv')
+
+    # TODO: test grad equivalence
+    import pdb; pdb.set_trace()
 
 rpc.shutdown()

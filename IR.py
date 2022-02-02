@@ -132,9 +132,8 @@ class DetachExecutor(torch.fx.Interpreter):
 
     def call_module(self, target, args, kwargs):
         def detach_tensors(a):
-            if isinstance(a, torch.Tensor) and a.requires_grad:
+            if isinstance(a, torch.Tensor) and a.requires_grad and a not in self.value_remap:
                 new_val = a.detach().requires_grad_(True)
-                assert a not in self.value_remap
                 self.value_remap[a] = new_val
                 return new_val
             else:
@@ -190,6 +189,10 @@ class Pipe(torch.nn.Module):
             use_mapping for _, use_mapping in params_to_users.items() if len(use_mapping) > 1]
 
         self.new_to_old_qualname_mapping = qualname_mapping
+
+        def throw(self, *args, **kwargs):
+            raise RuntimeError('To run pipeline locally, invoke the Pipe object directly, not `split_gm`')
+        self.split_gm.forward = throw
 
     def forward(self, *args, **kwargs):
         if len(kwargs) > 0:
