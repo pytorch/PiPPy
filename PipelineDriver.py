@@ -230,12 +230,12 @@ class PipeStageExecutor:
                 out_val = self.loss_mod(*args, **kwargs)
             elif work_item.phase == Phase.BACKWARD:
                 out_val = stage_backward(*args, **kwargs)
-                print('grad for work', work_item.debug_str, out_val)
             else:
                 assert False, f'Unrecognized phase {work_item.phase} encountered in execution'
 
             future.set_result(out_val)
             work_item.state = SchedState.DONE
+
 
     @rpc.functions.async_execution
     def invoke(self, phase : Phase, args, kwargs, cur_microbatch : int, debug_str : str):
@@ -504,36 +504,39 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 
         if last_nodes[0].op == 'output':
             # Forward-only; return output values
-            output_vals = []
-            for interp, last_node in zip(microbatch_interpreters, last_nodes):
-                interp.run_until(lambda n : False)
-                output_vals.append(interp.env[last_node])
-
-            local_results = [to_here(result) for result in output_vals]
-
-            if _debug_mask_minibatches:
-                assert len(splits) > 0
-                sliced_outputs = []
-                for result, (start, end) in zip(local_results, splits):
-                    sliced_outputs.append(result[start:end])
-                return torch.cat(sliced_outputs)
-
-            return torch.cat(local_results)                  
-
+            return self._retrieve_output_values(microbatch_interpreters, last_nodes, _debug_mask_minibatches, splits)
+   
         if self.single_loss:
             raise NotImplementedError('Single loss not yet implemented')
-
-        # TODO: multiple targets per stage executor; last stage should have fwd+loss+back
-
-        print(self.pipe.split_gm)
 
         last_nodes = []
         for interp in microbatch_interpreters:
             last_nodes.append(interp.run_until(lambda n: n.op == 'output'))
 
-        import pdb; pdb.set_trace()
+        assert all(n == last_nodes[0] for n in last_nodes)
+        assert last_nodes[0].op == 'output'
+        return self._retrieve_output_values(microbatch_interpreters, last_nodes, _debug_mask_minibatches, splits)
 
-        # TODO: loss, backward, output
+    def _retrieve_output_values(self, microbatch_interpreters, last_nodes, _debug_mask_minibatches, splits):
+        output_vals = []
+        for interp, last_node in zip(microbatch_interpreters, last_nodes):
+            interp.run_until(lambda n : False)
+            output_vals.append(interp.env[last_node])
 
+        local_results = [to_here(result) for result in output_vals]
+
+        if all(isinstance(r, torch.Tensor) and r.ndim == 0 for r in local_results):
+            # HACK - design more systematic programming model for losses, which
+            # reduce
+            return torch.mean(torch.stack(local_results))
+
+        if _debug_mask_minibatches:
+            assert len(splits) > 0
+            sliced_outputs = []
+            for result, (start, end) in zip(local_results, splits):
+                sliced_outputs.append(result[start:end])
+            return torch.cat(sliced_outputs)
+
+        return torch.cat(local_results)
 
 
