@@ -416,7 +416,7 @@ class PipelineDriverBase:
         split_args = []
 
         # TODO: assuming input splits are the same as outputs
-        splits = []
+        splits_per_arg = []
         for i, (arg, batch_dim) in enumerate(zip(args, batch_dims)):
             if isinstance(arg, torch.Tensor):
                 if batch_dim is None:
@@ -425,7 +425,7 @@ class PipelineDriverBase:
                 sizes = self._calc_microbatch_split_sizes(chunks, arg.shape[batch_dim])
                 logging.info(f'[root] Splitting arg {i} with size {arg.shape} into chunks {sizes} along dimension {batch_dim}')
                 if _debug_mask_minibatches:
-                    logging.info(f'[root] Using masked minibatches')
+                    splits = []
                     chunk_tensors = []
 
                     prefix_sums = []
@@ -434,18 +434,24 @@ class PipelineDriverBase:
                         sum += size
                         prefix_sums.append(sum)
 
+                    logging.info(f'[root] Prefix sums {prefix_sums}')
+
                     predecessor = 0
 
                     for sum in prefix_sums:
                         splits.append((predecessor, sum))
                         predecessor = sum
 
+                    logging.info(f'[root] splits {splits}')
+
                     for start, finish in splits:
                         new_tensor = torch.zeros_like(arg)
                         new_tensor[start:finish] = arg[start:finish]
                         chunk_tensors.append(new_tensor)
+                    logging.info(f'[root] Chunk tensor sizes {[t.shape for t in chunk_tensors]}')
+
+                    splits_per_arg.append(splits)
                 else:
-                    logging.info(f'[root] Not using masked minibatches, normal tensor split')
                     chunk_tensors = torch.split(arg, sizes)
 
                 split_args.append(self.MicroBatchSplitTensor(chunk_tensors))
@@ -461,7 +467,7 @@ class PipelineDriverBase:
                 return str(a)
         logging.info(f'[root] Final splits: {[split_str(a) for a in split_args]}')
 
-        return split_args, splits
+        return split_args, splits_per_arg
 
 def DEBUG_INDEX(arg, idx, debug_str):
     val = arg.local_value()[idx]
@@ -526,7 +532,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         # 3) Scheduling - Use control logic to advance interpreters to issue round-robin
         #       forward work items, then round robin losses, then round robin backwards
 
-        split_args, splits = self._split_args_into_microbatches(
+        split_args, splits_per_arg = self._split_args_into_microbatches(
             *args, chunks=chunks, batch_dims=batch_dims, _debug_mask_minibatches=_debug_mask_minibatches)
 
         microbatch_interpreters : List[self.RunUntilInterpreter] = []
@@ -544,7 +550,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 
         last_nodes = []
         for i, interp in enumerate(microbatch_interpreters):
-            logging.info(f'[root][i] Executing forward stages')
+            logging.info(f'[root][{i}] Executing forward stages')
             last_nodes.append(interp.run_until(node_is_loss_or_output))
 
         assert all(n == last_nodes[0] for n in last_nodes)
@@ -552,7 +558,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         if last_nodes[0].op == 'output':
             logging.info(f'[root] Program does not have loss/backward, returning outputs directly')
             # Forward-only; return output values
-            return self._retrieve_output_values(microbatch_interpreters, last_nodes, _debug_mask_minibatches, splits)
+            return self._retrieve_output_values(microbatch_interpreters, last_nodes, _debug_mask_minibatches, splits_per_arg)
    
         if self.single_loss:
             raise NotImplementedError('Single loss not yet implemented')
@@ -564,9 +570,9 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 
         assert all(n == last_nodes[0] for n in last_nodes)
         assert last_nodes[0].op == 'output'
-        return self._retrieve_output_values(microbatch_interpreters, last_nodes, _debug_mask_minibatches, splits)
+        return self._retrieve_output_values(microbatch_interpreters, last_nodes, _debug_mask_minibatches, splits_per_arg)
 
-    def _retrieve_output_values(self, microbatch_interpreters, last_nodes, _debug_mask_minibatches, splits):
+    def _retrieve_output_values(self, microbatch_interpreters, last_nodes, _debug_mask_minibatches, splits_per_arg):
         logging.info(f'[root] Combining output values from {len(microbatch_interpreters)} chunks')
         output_vals = []
         for interp, last_node in zip(microbatch_interpreters, last_nodes):
@@ -585,7 +591,9 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 
         if _debug_mask_minibatches:
             logging.info(f'[root] Using masked outputs, splicing valid sections')
-            assert len(splits) > 0
+            assert len(splits_per_arg) > 0
+            # HACK: assuming split is the same as split for first arg
+            splits = splits_per_arg[0]
             sliced_outputs = []
             for result, (start, end) in zip(local_results, splits):
                 sliced_outputs.append(result[start:end])
