@@ -163,7 +163,7 @@ class PipeStageExecutor:
 
     def __init__(self, mod, local_rank, loss_mod=None):
         self.local_rank = local_rank
-        logging.info(f'Rank {self.local_rank} Instantiating PipeStageExecutor')
+        logging.info(f'[{self.local_rank}] Instantiating PipeStageExecutor')
         self.mod = mod
         self.loss_mod = loss_mod
 
@@ -221,7 +221,7 @@ class PipeStageExecutor:
 
             args = torch.fx.node.map_aggregate(args_rrefs, retrieve_rref_args_by_idx)
             kwargs = torch.fx.node.map_aggregate(kwargs_rrefs, retrieve_rref_args_by_idx)
-            logging.info(f'rank {self.local_rank} running microbatch {microbatch_id}')
+            logging.info(f'[{self.local_rank}][{microbatch_id}] Running WorkItem {work_item.debug_str}')
             if work_item.phase == Phase.FORWARD:
                 flat_tensor_args = []
                 def extract_tensor_args(a):
@@ -403,10 +403,13 @@ class PipelineDriverBase:
 
     def _split_args_into_microbatches(self, *args, chunks : int, batch_dims : Optional[List[Optional[int]]] = None,
                                       _debug_mask_minibatches : bool = False):
+        logging.info(f'[root] Splitting args with sizes '
+                     f'{[arg.shape if isinstance(arg, torch.Tensor) else arg for arg in args]} into {chunks} chunks.')
         # Calculate full batch dims array
         if batch_dims is None:
             batch_dims = [0 if isinstance(arg, torch.Tensor) else None for arg in args]
         assert isinstance(batch_dims, list)
+        logging.info(f'[root] Arguments have batch dims {batch_dims}')
 
         if len(args) != len(batch_dims):
             raise RuntimeError('Length of `batch_dims` must match')
@@ -420,7 +423,9 @@ class PipelineDriverBase:
                     raise RuntimeError(f'Batch dimension not specified for arg {i}')
 
                 sizes = self._calc_microbatch_split_sizes(chunks, arg.shape[batch_dim])
+                logging.info(f'[root] Splitting arg {i} with size {arg.shape} into chunks {sizes} along dimension {batch_dim}')
                 if _debug_mask_minibatches:
+                    logging.info(f'[root] Using masked minibatches')
                     chunk_tensors = []
 
                     prefix_sums = []
@@ -440,14 +445,21 @@ class PipelineDriverBase:
                         new_tensor[start:finish] = arg[start:finish]
                         chunk_tensors.append(new_tensor)
                 else:
+                    logging.info(f'[root] Not using masked minibatches, normal tensor split')
                     chunk_tensors = torch.split(arg, sizes)
 
                 split_args.append(self.MicroBatchSplitTensor(chunk_tensors))
 
-                logging.info(f'Split tensor argument {i} into {chunks} chunks of sizes '
-                                f'{[chunk.shape for chunk in chunk_tensors]}')
             else:
+                logging.info(f'[root] Arg {i} is a non-tensor value, not splitting')
                 split_args.append(arg)
+
+        def split_str(a):
+            if isinstance(a, self.MicroBatchSplitTensor):
+                return f'MicrobatchSplitTensor(chunks={[c.shape for c in a.chunks]}'
+            else:
+                return str(a)
+        logging.info(f'[root] Final splits: {[split_str(a) for a in split_args]}')
 
         return split_args, splits
 
@@ -472,10 +484,10 @@ class RemoteInterpreter(torch.fx.Interpreter):
         if target in self.remote_stage_executor_rrefs:
             rank, stage_executor = self.remote_stage_executor_rrefs[target]
             phase = Phase.LOSS if target == '_loss' else Phase.FORWARD
-            logging.info(f'Microbatch {self.cur_microbatch} Issuing {phase} invocation for target {target} on rank {rank}')
+            logging.info(f'[root][{self.cur_microbatch}] Issuing {phase} invocation for target {target} on rank {rank}')
             return stage_executor.remote().invoke(phase, args, kwargs, self.cur_microbatch, debug_str=node.format_node())
         else:
-            logging.info(f'Running local operation {target} from driver')
+            logging.info(f'[root][{self.cur_microbatch}] Running local operation {target} from driver')
             return super().call_module(target, args, kwargs)
 
     def call_function(self, target, args, kwargs):
@@ -486,7 +498,7 @@ class RemoteInterpreter(torch.fx.Interpreter):
             node = self.node_list[self.pc]
             assert 'fw_stage' in node.meta
             rank, stage_executor = self.remote_stage_executor_rrefs[node.meta['fw_stage']]
-            logging.info(f'Microbatch {self.cur_microbatch} Issuing BW invocation for target {node.meta["fw_stage"]} on rank {rank}')
+            logging.info(f'[root][{self.cur_microbatch}] Issuing BW invocation for target {node.meta["fw_stage"]} on rank {rank}')
             return stage_executor.remote().invoke(Phase.BACKWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node())
         return super().call_function(target, args, kwargs)
 
@@ -507,6 +519,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 
     def run(self, *args, chunks : int, batch_dims : Optional[List[Optional[int]]] = None,
             _debug_mask_minibatches : bool = False):
+        logging.info(f'[root] Running pipeline')
         # Roadmap:
         # 1) Micro-batch splitting - divide input arguments out into concrete chunk values
         # 2) Interpreter tiling - one interpreter per micro-batch
@@ -519,26 +532,32 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         microbatch_interpreters : List[self.RunUntilInterpreter] = []
 
         for chunk in range(chunks):
+            logging.info(f'[root] Instantiating microbatch interpreter for chunk {chunk}') 
             initial_arg_chunks = [arg.chunks[chunk] for arg in split_args]
             interp = RemoteInterpreter(self.remote_stage_executor_rrefs, self.pipe.split_gm, chunk, initial_arg_chunks)
             microbatch_interpreters.append(interp)
+
+        logging.info(f'[root] {len(microbatch_interpreters)} instantiated')
 
         def node_is_loss_or_output(n):
             return (n.op == 'call_module' and n.target == '_loss') or n.op == 'output'
 
         last_nodes = []
-        for interp in microbatch_interpreters:
+        for i, interp in enumerate(microbatch_interpreters):
+            logging.info(f'[root][i] Executing forward stages')
             last_nodes.append(interp.run_until(node_is_loss_or_output))
 
         assert all(n == last_nodes[0] for n in last_nodes)
 
         if last_nodes[0].op == 'output':
+            logging.info(f'[root] Program does not have loss/backward, returning outputs directly')
             # Forward-only; return output values
             return self._retrieve_output_values(microbatch_interpreters, last_nodes, _debug_mask_minibatches, splits)
    
         if self.single_loss:
             raise NotImplementedError('Single loss not yet implemented')
 
+        logging.info(f'[root] Executing loss + backward stages')
         last_nodes = []
         for interp in microbatch_interpreters:
             last_nodes.append(interp.run_until(lambda n: n.op == 'output'))
@@ -548,25 +567,32 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         return self._retrieve_output_values(microbatch_interpreters, last_nodes, _debug_mask_minibatches, splits)
 
     def _retrieve_output_values(self, microbatch_interpreters, last_nodes, _debug_mask_minibatches, splits):
+        logging.info(f'[root] Combining output values from {len(microbatch_interpreters)} chunks')
         output_vals = []
         for interp, last_node in zip(microbatch_interpreters, last_nodes):
             interp.run_until(lambda n : False)
             output_vals.append(interp.env[last_node])
 
+        # TODO: non-single-output returns?
         local_results = [to_here(result) for result in output_vals]
+        logging.info(f'[root] Got {len(local_results)} outputs')
 
         if all(isinstance(r, torch.Tensor) and r.ndim == 0 for r in local_results):
             # HACK - design more systematic programming model for losses, which
             # reduce
+            logging.info(f'[root] Reducing loss output using `torch.mean`')
             return torch.mean(torch.stack(local_results))
 
         if _debug_mask_minibatches:
+            logging.info(f'[root] Using masked outputs, splicing valid sections')
             assert len(splits) > 0
             sliced_outputs = []
             for result, (start, end) in zip(local_results, splits):
                 sliced_outputs.append(result[start:end])
+            logging.info(f'[root] Returning spliced outputs')
             return torch.cat(sliced_outputs)
 
+        logging.info(f'Returning concatenated outputs')
         return torch.cat(local_results)
 
 
