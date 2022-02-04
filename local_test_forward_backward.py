@@ -36,7 +36,7 @@ import os
 local_rank = int(os.environ["LOCAL_RANK"])
 world_size = int(os.environ["WORLD_SIZE"])
 
-# logging.getLogger().setLevel(logging.DEBUG)
+logging.getLogger().setLevel(logging.DEBUG)
 
 rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
 
@@ -80,8 +80,10 @@ if local_rank == 0:
     input = torch.randn(bs, d_hid)
     target = torch.zeros(bs, d_hid)
 
+    print(ec_pipe.split_gm)
+
     # # Warm up and correctness runs
-    out = pipe_driver.run(input, target, chunks=5, _debug_mask_minibatches = True)
+    out = pipe_driver.run(input, target, chunks=1, _debug_mask_minibatches = True)
     ref_out = ec_pipe(input, target)
 
     if CHECK_NUMERIC_EQUIVALENCE:

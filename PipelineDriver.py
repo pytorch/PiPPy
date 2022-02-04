@@ -1,6 +1,5 @@
 from concurrent.futures import Executor
 import torch
-from torch.futures import S
 import torch.fx
 import torch.distributed.rpc as rpc
 from IR import Pipe, stage_backward
@@ -164,7 +163,7 @@ class PipeStageExecutor:
 
     def __init__(self, mod, local_rank, loss_mod=None):
         self.local_rank = local_rank
-        logging.info(f'Rank {self.local_rank} Instantiating PipeStageExecutor for module {mod}')
+        logging.info(f'Rank {self.local_rank} Instantiating PipeStageExecutor')
         self.mod = mod
         self.loss_mod = loss_mod
 
@@ -179,6 +178,10 @@ class PipeStageExecutor:
 
         self.worker_thread = threading.Thread(target=self.worker_loop, name=f'worker_{self.mod}', daemon=True)
         self.worker_thread.start()
+
+        # map microbatch ID to list of forward tensor args
+        self.fwd_cache : Dict[int, Tuple[Any, List[torch.Tensor]]]= {}
+        self.loss_cache : Dict[int, Tuple[Any, List[torch.Tensor]]]= {}
 
     def worker_loop(self):
         while True:
@@ -198,17 +201,13 @@ class PipeStageExecutor:
             ready_args = work_item.ready_args
             phase = work_item.phase
 
-            if phase == Phase.BACKWARD and 'stage_output' in kwargs_rrefs:
+            if phase == Phase.BACKWARD:
                 # HACK: here we are directly accessing the saved tensor outputs
                 # for closed-over outputs so that they still have the grad_fn
                 # from local autograd. Can we solve this more elegantly?
+                cache = self.loss_cache if len(self.loss_cache) > 0 else self.fwd_cache
                 kwargs_rrefs = dict(kwargs_rrefs)
-                def get_local_values(v):
-                    if isinstance(v, torch._C._distributed_rpc.PyRRef) and v.owner().id == self.local_rank:
-                        return v.local_value()
-                    else:
-                        return v
-                kwargs_rrefs['stage_output'] = torch.fx.node.map_aggregate(kwargs_rrefs['stage_output'], get_local_values)
+                kwargs_rrefs['stage_output'], kwargs_rrefs['input_values'] = cache.pop(microbatch_id)
 
             rref_arg_idx = 0
             def retrieve_rref_args_by_idx(a):
@@ -222,13 +221,38 @@ class PipeStageExecutor:
 
             args = torch.fx.node.map_aggregate(args_rrefs, retrieve_rref_args_by_idx)
             kwargs = torch.fx.node.map_aggregate(kwargs_rrefs, retrieve_rref_args_by_idx)
-            logging.info(f'rank {self.local_rank} running microbatch {microbatch_id} target {self.mod}')
+            logging.info(f'rank {self.local_rank} running microbatch {microbatch_id}')
             if work_item.phase == Phase.FORWARD:
+                flat_tensor_args = []
+                def extract_tensor_args(a):
+                    if isinstance(a, torch.Tensor):
+                        nonlocal flat_tensor_args
+                        val = a.detach().requires_grad_(a.requires_grad)
+                        flat_tensor_args.append(val)
+                        return val
+                    else:
+                        return a
+                args = torch.fx.node.map_aggregate(args, extract_tensor_args)
+                kwargs = torch.fx.node.map_aggregate(kwargs, extract_tensor_args)
                 out_val = self.mod(*args, **kwargs)
+                self.fwd_cache[microbatch_id] = (out_val, flat_tensor_args)
             elif work_item.phase == Phase.LOSS:
                 assert self.loss_mod is not None
+                flat_tensor_args = []
+                def extract_tensor_args(a):
+                    if isinstance(a, torch.Tensor):
+                        nonlocal flat_tensor_args
+                        val = a.detach().requires_grad_(a.requires_grad)
+                        flat_tensor_args.append(val)
+                        return val
+                    else:
+                        return a
+                args = torch.fx.node.map_aggregate(args, extract_tensor_args)
+                kwargs = torch.fx.node.map_aggregate(kwargs, extract_tensor_args)
                 out_val = self.loss_mod(*args, **kwargs)
+                self.loss_cache[microbatch_id] = (out_val, flat_tensor_args)
             elif work_item.phase == Phase.BACKWARD:
+                output_grads = kwargs['output_grads']
                 out_val = stage_backward(*args, **kwargs)
             else:
                 assert False, f'Unrecognized phase {work_item.phase} encountered in execution'
@@ -427,6 +451,11 @@ class PipelineDriverBase:
 
         return split_args, splits
 
+def DEBUG_INDEX(arg, idx, debug_str):
+    val = arg.local_value()[idx]
+    print(f'*****INDEXING VALUE {debug_str} {val}')
+    return val
+
 class RemoteInterpreter(torch.fx.Interpreter):
     def __init__(self, remote_stage_executor_rrefs, module, cur_microbatch : int, init_args, garbage_collect_values = True):
         super().__init__(module, garbage_collect_values)
@@ -452,6 +481,7 @@ class RemoteInterpreter(torch.fx.Interpreter):
     def call_function(self, target, args, kwargs):
         if target is operator.getitem and isinstance(args[0], torch._C._distributed_rpc.PyRRef):
             return args[0].remote().__getitem__(args[1])
+            # return rpc.remote(args[0].owner(), DEBUG_INDEX, (args[0], args[1], self.node_list[self.pc].format_node()))
         elif target is stage_backward:
             node = self.node_list[self.pc]
             assert 'fw_stage' in node.meta
