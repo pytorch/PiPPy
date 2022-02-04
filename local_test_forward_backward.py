@@ -99,6 +99,5 @@ if local_rank == 0:
     #     prof.export_chrome_trace('pipe.csv')
 
     # TODO: test grad equivalence
-    import pdb; pdb.set_trace()
 
 rpc.shutdown()

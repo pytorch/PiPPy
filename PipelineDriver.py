@@ -116,6 +116,9 @@ class WorkItem:
     state : SchedState
     debug_str : str
 
+    def __str__(self):
+        return f'WorkItem({self.debug_str})'
+
 def _get_value_on_remote(rref):
     return rref.local_value()
 
@@ -189,9 +192,12 @@ class PipeStageExecutor:
                 while len(self.ready_runlist) == 0:
                     self.ready_runlist_cv.wait()
 
+                logging.info(f'[{self.local_rank}] Dequeueing workitem from set of {len(self.ready_runlist)}')
                 # TODO: extra priorities
                 first_key = next(iter(self.ready_runlist.keys()))
                 work_item = self.ready_runlist.pop(first_key)
+
+            logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Got WorkItem {work_item}')
 
             work_item.state = SchedState.RUNNING
             args_rrefs = work_item.args
@@ -202,6 +208,7 @@ class PipeStageExecutor:
             phase = work_item.phase
 
             if phase == Phase.BACKWARD:
+                logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running backward phase. Retrieving stashed values')
                 # HACK: here we are directly accessing the saved tensor outputs
                 # for closed-over outputs so that they still have the grad_fn
                 # from local autograd. Can we solve this more elegantly?
@@ -221,7 +228,6 @@ class PipeStageExecutor:
 
             args = torch.fx.node.map_aggregate(args_rrefs, retrieve_rref_args_by_idx)
             kwargs = torch.fx.node.map_aggregate(kwargs_rrefs, retrieve_rref_args_by_idx)
-            logging.info(f'[{self.local_rank}][{microbatch_id}] Running WorkItem {work_item.debug_str}')
             if work_item.phase == Phase.FORWARD:
                 flat_tensor_args = []
                 def extract_tensor_args(a):
@@ -234,6 +240,7 @@ class PipeStageExecutor:
                         return a
                 args = torch.fx.node.map_aggregate(args, extract_tensor_args)
                 kwargs = torch.fx.node.map_aggregate(kwargs, extract_tensor_args)
+                logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running forward module')
                 out_val = self.mod(*args, **kwargs)
                 self.fwd_cache[microbatch_id] = (out_val, flat_tensor_args)
             elif work_item.phase == Phase.LOSS:
@@ -249,20 +256,26 @@ class PipeStageExecutor:
                         return a
                 args = torch.fx.node.map_aggregate(args, extract_tensor_args)
                 kwargs = torch.fx.node.map_aggregate(kwargs, extract_tensor_args)
+                logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running loss module')
                 out_val = self.loss_mod(*args, **kwargs)
                 self.loss_cache[microbatch_id] = (out_val, flat_tensor_args)
             elif work_item.phase == Phase.BACKWARD:
-                output_grads = kwargs['output_grads']
+                logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running backward')
                 out_val = stage_backward(*args, **kwargs)
             else:
                 assert False, f'Unrecognized phase {work_item.phase} encountered in execution'
 
+            logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Populating result of type {type(out_val)}')
             future.set_result(out_val)
             work_item.state = SchedState.DONE
 
 
     @rpc.functions.async_execution
-    def invoke(self, phase : Phase, args, kwargs, cur_microbatch : int, debug_str : str):
+    def invoke(self, unique_key : str, phase : Phase, args, kwargs, cur_microbatch : int, debug_str : str):
+        # TODO: do we need to serialize calls to invoke() to preserve the order in which WorkItems appear for
+        # static schedules?
+
+        logging.info(f'[{self.local_rank}][{cur_microbatch}] Received invoke call for {debug_str}')
         # Extract all RRef arguments so we can spawn asynchronous data transfers
         # for each of them
         rref_args : List[torch._C._distributed_rpc.PyRRef] = []
@@ -272,34 +285,38 @@ class PipeStageExecutor:
         torch.fx.node.map_aggregate(args, extract_rref_args)
         torch.fx.node.map_aggregate(kwargs, extract_rref_args)
 
+        logging.info(f'[{self.local_rank}][{cur_microbatch}] Invoke call found {len(rref_args)} RRef arguments')
+
         # Construct WorkItem for this microbatch+phase and record it in the
         # waiting runlist
         future = torch.futures.Future()
         # TODO: increase blocked_args_count for extra things like scheduling
         work_item = WorkItem(phase, args, kwargs, future, cur_microbatch, len(rref_args), {}, debug_str=debug_str)
-        key_suffix = {
-            Phase.FORWARD : 'forward',
-            Phase.LOSS : 'loss',
-            Phase.BACKWARD : 'backward'
-        }
-        runlist_key = f'{cur_microbatch}_{key_suffix[phase]}'
+        logging.info(f'[{self.local_rank}][{cur_microbatch}] Invoke instantiated WorkItem {work_item} with key {unique_key}')
         if len(rref_args) == 0:
             # TODO: convert initial input into RRef?
+            logging.info(f'[{self.local_rank}][{cur_microbatch}] No RRef arguments. Scheduling directly as READY workitem')
+            work_item.state = SchedState.READY
             with self.ready_runlist_cv:
-                self.ready_runlist[runlist_key] = work_item
+                logging.info(f'[{self.local_rank}][{cur_microbatch}] Current ready runlist keys: {self.ready_runlist.keys()}')
+                self.ready_runlist[unique_key] = work_item
                 self.ready_runlist_cv.notify()
         else:
+            logging.info(f'[{self.local_rank}][{cur_microbatch}] Scheduling WorkItem as WAITING workitem')
+            work_item.state = SchedState.WAITING
             with self.waiting_runlist_lock:
-                assert runlist_key not in self.waiting_runlist, f'key {runlist_key} already in waiting runlist {self.waiting_runlist}'
-                self.waiting_runlist[runlist_key] = work_item
+                logging.info(f'[{self.local_rank}][{cur_microbatch}] Current waiting runlist keys: {self.waiting_runlist.keys()}')
+                assert unique_key not in self.waiting_runlist, f'key {unique_key} already in waiting runlist {self.waiting_runlist}'
+                self.waiting_runlist[unique_key] = work_item
 
 
         # Spawn asyncronous data transfers for each of the RRef arguments.
         _futures = []
         for arg_idx, rref_arg in enumerate(rref_args):
+            logging.info(f'[{self.local_rank}][{cur_microbatch}] Launching asynchronous data transfer for RRef {arg_idx} {rref_arg}')
             self_rref = rpc.RRef(self)
             _futures.append(rpc.rpc_async(
-                to=self.local_rank, func=async_transfer, args=(self_rref, rref_arg, arg_idx, runlist_key)))
+                to=self.local_rank, func=async_transfer, args=(self_rref, rref_arg, arg_idx, unique_key)))
 
         if DEBUG:
             # Make exceptions visible
@@ -469,9 +486,10 @@ class PipelineDriverBase:
 
         return split_args, splits_per_arg
 
-def DEBUG_INDEX(arg, idx, debug_str):
-    val = arg.local_value()[idx]
-    print(f'*****INDEXING VALUE {debug_str} {val}')
+def DEBUG_INDEX(rank, microbatch, arg, idx, debug_str):
+    indexee = arg.local_value()
+    val = indexee[idx]
+    logging.info(f'[{rank}][{microbatch}] *****INDEXING VALUE {debug_str} input_type {type(indexee)} index {idx} output type {type(val)}')
     return val
 
 class RemoteInterpreter(torch.fx.Interpreter):
@@ -491,21 +509,24 @@ class RemoteInterpreter(torch.fx.Interpreter):
             rank, stage_executor = self.remote_stage_executor_rrefs[target]
             phase = Phase.LOSS if target == '_loss' else Phase.FORWARD
             logging.info(f'[root][{self.cur_microbatch}] Issuing {phase} invocation for target {target} on rank {rank}')
-            return stage_executor.remote().invoke(phase, args, kwargs, self.cur_microbatch, debug_str=node.format_node())
+            invocation_key = f'{self.cur_microbatch}_{node.name}'
+            return stage_executor.remote().invoke(invocation_key, phase, args, kwargs, self.cur_microbatch, debug_str=node.format_node())
         else:
             logging.info(f'[root][{self.cur_microbatch}] Running local operation {target} from driver')
             return super().call_module(target, args, kwargs)
 
     def call_function(self, target, args, kwargs):
         if target is operator.getitem and isinstance(args[0], torch._C._distributed_rpc.PyRRef):
-            return args[0].remote().__getitem__(args[1])
-            # return rpc.remote(args[0].owner(), DEBUG_INDEX, (args[0], args[1], self.node_list[self.pc].format_node()))
+            # return args[0].remote().__getitem__(args[1])
+            # HACK: wtf is going on here
+            return rpc.remote(args[0].owner(), DEBUG_INDEX, (args[0].owner().id, self.cur_microbatch, args[0], args[1], self.node_list[self.pc].format_node()))
         elif target is stage_backward:
             node = self.node_list[self.pc]
             assert 'fw_stage' in node.meta
             rank, stage_executor = self.remote_stage_executor_rrefs[node.meta['fw_stage']]
             logging.info(f'[root][{self.cur_microbatch}] Issuing BW invocation for target {node.meta["fw_stage"]} on rank {rank}')
-            return stage_executor.remote().invoke(Phase.BACKWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node())
+            invocation_key = f'{self.cur_microbatch}_{node.name}'
+            return stage_executor.remote().invoke(invocation_key, Phase.BACKWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node())
         return super().call_function(target, args, kwargs)
 
     def run_until(self, predicate : Callable[[torch.fx.Node], bool]):
