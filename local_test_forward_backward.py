@@ -36,7 +36,7 @@ import os
 local_rank = int(os.environ["LOCAL_RANK"])
 world_size = int(os.environ["WORLD_SIZE"])
 
-logging.getLogger().setLevel(logging.DEBUG)
+# logging.getLogger().setLevel(logging.DEBUG)
 
 rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
 
@@ -83,12 +83,16 @@ if local_rank == 0:
     print(ec_pipe.split_gm)
 
     # # Warm up and correctness runs
-    out = pipe_driver.run(input, target, chunks=1, _debug_mask_minibatches = True)
+    out = pipe_driver.run(input, target, chunks=2, _debug_mask_minibatches = True)
     ref_out = ec_pipe(input, target)
 
     if CHECK_NUMERIC_EQUIVALENCE:
         torch.testing.assert_allclose(out, ref_out)
         print(f'equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}')
+
+    # TODO: check that gradients are equivalent. Probably need some way to block
+    #       on pipeline drain
+    # TODO: make sure state is clean after `pipe_driver.run()` and we can start another run
         
     # # # Profiling ruts
     # with torch.autograd.profiler_legacy.profile(enabled=PROFILING_ENABLED) as prof:
@@ -98,6 +102,5 @@ if local_rank == 0:
     # if PROFILING_ENABLED:
     #     prof.export_chrome_trace('pipe.csv')
 
-    # TODO: test grad equivalence
-
+# TODO: figure out shutdown issue on worker ranks
 rpc.shutdown()

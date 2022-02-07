@@ -80,6 +80,16 @@ import warnings
 #
 #   Decision: We can easily convert (a) to (c), so let's go with (a).
 
+import signal
+
+_executors = []
+
+def sigint_handler(*args):
+    for e in _executors:
+        e._debug_print(to_file=True)
+
+signal.signal(signal.SIGINT, sigint_handler)
+
 DEBUG = False
 
 def to_here(a):
@@ -119,15 +129,21 @@ class WorkItem:
     def __str__(self):
         return f'WorkItem({self.debug_str})'
 
-def _get_value_on_remote(rref):
+def _get_value_on_remote(caller_rank, callee_rank, runlist_key, microbatch, rref):
+    logging.info(f'[{callee_rank}][{microbatch}] Executing async transfer of value '
+                 f'{rref} initiated by rank {caller_rank} for {runlist_key}')
     return rref.local_value()
 
 @rpc.functions.async_execution
-def async_transfer(scheduler_rref, rref_arg, arg_idx, runlist_key):
+def async_transfer(rank, microbatch, scheduler_rref, rref_arg, arg_idx, runlist_key):
+    logging.info(f'[{rank}][{microbatch}] vvvvv Starting transfer')
     self = scheduler_rref.local_value()
-    fut = rpc.rpc_async(to=rref_arg.owner(), func=_get_value_on_remote, args=(rref_arg,))
+    fut = rpc.rpc_async(to=rref_arg.owner(), func=_get_value_on_remote,
+                        args=(rank, rref_arg.owner().id, runlist_key, microbatch, rref_arg,))
 
     def bottom_half(fut):
+        logging.info(f'[{rank}][{microbatch}] Completing transfer of value {rref_arg} from {rref_arg.owner().id} '
+                     f'for runlist item {runlist_key}')
         value = fut.value()
         with self.waiting_runlist_lock:
             work_item = self.waiting_runlist[runlist_key]
@@ -138,6 +154,9 @@ def async_transfer(scheduler_rref, rref_arg, arg_idx, runlist_key):
                     work_item.state = SchedState.READY
                     self.ready_runlist[runlist_key] = self.waiting_runlist.pop(runlist_key)
                     self.ready_runlist_cv.notify()
+                logging.info(f'[{rank}][{microbatch}] vvvvv All operands ready')
+            else:
+                logging.info(f'[{rank}][{microbatch}] vvvvv Still waiting for {work_item.blocked_args_count} operands.')
 
     return fut.then(bottom_half)
 
@@ -185,6 +204,42 @@ class PipeStageExecutor:
         # map microbatch ID to list of forward tensor args
         self.fwd_cache : Dict[int, Tuple[Any, List[torch.Tensor]]]= {}
         self.loss_cache : Dict[int, Tuple[Any, List[torch.Tensor]]]= {}
+
+        self.completed_workitems = {}
+
+        _executors.append(self)
+
+    def _debug_print(self, to_file=False):
+        # NB: this does not take the runlist locks. This method should only be
+        # called when the system is stalled
+        s = f'Executor instance {id(self)} for rank {self.local_rank}.\n' \
+            f'\tCompleted WorkItems: {self.completed_workitems.keys()}\n' \
+            f'\tWaiting WorkItems: {self.waiting_runlist.keys()}\n' \
+            f'\tReady WorkItems: {self.ready_runlist.keys()}\n'
+
+        blocked_args = {}
+        ready_args = {}
+        for name, workitem in self.waiting_runlist.items():
+            if workitem.blocked_args_count > 0:
+                pass
+                rref_args = []
+                def retrieve_rref_args_by_idx(a):
+                    if isinstance(a, torch._C._distributed_rpc.PyRRef):
+                        rref_args.append(a)
+                torch.fx.node.map_aggregate(workitem.args, retrieve_rref_args_by_idx)
+                torch.fx.node.map_aggregate(workitem.kwargs, retrieve_rref_args_by_idx)
+                blocked_rref_idxs = set(range(len(rref_args))) - set(workitem.ready_args.keys())
+                blocked_args[name] = blocked_rref_idxs
+                ready_args[name] = workitem.ready_args.keys()
+
+        s += f'\tBlocked args: {blocked_args}\n'
+        s += f'\tReady args: {ready_args}\n'
+
+        if to_file:
+            with open(f'{self.local_rank}.log', 'w') as f:
+                f.write(s)
+
+        return s
 
     def worker_loop(self):
         while True:
@@ -265,9 +320,13 @@ class PipeStageExecutor:
             else:
                 assert False, f'Unrecognized phase {work_item.phase} encountered in execution'
 
-            logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Populating result of type {type(out_val)}')
+            logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Populating result of type {type(out_val)} '
+                         f'for {first_key}')
             future.set_result(out_val)
             work_item.state = SchedState.DONE
+
+            assert first_key not in self.completed_workitems
+            self.completed_workitems[first_key] = work_item
 
 
     @rpc.functions.async_execution
@@ -316,7 +375,8 @@ class PipeStageExecutor:
             logging.info(f'[{self.local_rank}][{cur_microbatch}] Launching asynchronous data transfer for RRef {arg_idx} {rref_arg}')
             self_rref = rpc.RRef(self)
             _futures.append(rpc.rpc_async(
-                to=self.local_rank, func=async_transfer, args=(self_rref, rref_arg, arg_idx, unique_key)))
+                to=self.local_rank, func=async_transfer,
+                args=(self.local_rank, cur_microbatch, self_rref, rref_arg, arg_idx, unique_key)))
 
         if DEBUG:
             # Make exceptions visible
@@ -519,7 +579,7 @@ class RemoteInterpreter(torch.fx.Interpreter):
         if target is operator.getitem and isinstance(args[0], torch._C._distributed_rpc.PyRRef):
             # return args[0].remote().__getitem__(args[1])
             # HACK: wtf is going on here
-            return rpc.remote(args[0].owner(), DEBUG_INDEX, (args[0].owner().id, self.cur_microbatch, args[0], args[1], self.node_list[self.pc].format_node()))
+            return rpc.rpc_sync(args[0].owner(), DEBUG_INDEX, (args[0].owner().id, self.cur_microbatch, args[0], args[1], self.node_list[self.pc].format_node()))
         elif target is stage_backward:
             node = self.node_list[self.pc]
             assert 'fw_stage' in node.meta
@@ -537,6 +597,7 @@ class RemoteInterpreter(torch.fx.Interpreter):
                 return node
 
             # TODO: hoist run() implementation
+            logging.info(f'[{self.cur_microbatch}] Issue command to run {node.format_node()}')
             self.env[node] = super().run_node(node)
 
 class PipelineDriverFillDrain(PipelineDriverBase):
@@ -601,6 +662,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
             output_vals.append(interp.env[last_node])
 
         # TODO: non-single-output returns?
+        # TODO: this times out after 60 seconds. Fix?
         local_results = [to_here(result) for result in output_vals]
         logging.info(f'[root] Got {len(local_results)} outputs')
 
