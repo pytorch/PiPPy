@@ -79,6 +79,12 @@ import warnings
 #       c) Allow it to be dynamic but cache compiled policies?
 #
 #   Decision: We can easily convert (a) to (c), so let's go with (a).
+#
+#
+# LOG: 2/7/2022
+#
+# Need to reimplement per-chunk splitting to account for a single shared loss invocation. The numerics
+# of per-microbatch loss are not numerically equivalent, thus numerical comparisons fail
 
 import signal
 
@@ -178,9 +184,7 @@ class PipeStageExecutor:
             * TODO: Varuna dynamic schedule
             * TODO: dynamic scheduling via registers and back-pressure (TODO: how to
                     specify resource limits and how to implement backpressure?)
-    * TODO: storage of activations for subsequent gradient computation
     * TODO: gradient checkpointing
-    * TODO: Invocation of `torch.autograd.backward()` to implement backward passes
     """
 
     def __init__(self, mod, local_rank, loss_mod=None):
@@ -607,6 +611,9 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 
     def run(self, *args, chunks : int, batch_dims : Optional[List[Optional[int]]] = None,
             _debug_mask_minibatches : bool = False):
+        if not self.single_loss:
+            raise NotImplementedError('Per-microbatch loss not implemented')
+
         logging.info(f'[root] Running pipeline')
         # Roadmap:
         # 1) Micro-batch splitting - divide input arguments out into concrete chunk values
@@ -642,8 +649,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
             # Forward-only; return output values
             return self._retrieve_output_values(microbatch_interpreters, last_nodes, _debug_mask_minibatches, splits_per_arg)
    
-        if self.single_loss:
-            raise NotImplementedError('Single loss not yet implemented')
+        raise NotImplementedError('Loss not yet implemented')
 
         logging.info(f'[root] Executing loss + backward stages')
         last_nodes = []
@@ -662,15 +668,8 @@ class PipelineDriverFillDrain(PipelineDriverBase):
             output_vals.append(interp.env[last_node])
 
         # TODO: non-single-output returns?
-        # TODO: this times out after 60 seconds. Fix?
         local_results = [to_here(result) for result in output_vals]
         logging.info(f'[root] Got {len(local_results)} outputs')
-
-        if all(isinstance(r, torch.Tensor) and r.ndim == 0 for r in local_results):
-            # HACK - design more systematic programming model for losses, which
-            # reduce
-            logging.info(f'[root] Reducing loss output using `torch.mean`')
-            return torch.mean(torch.stack(local_results))
 
         if _debug_mask_minibatches:
             logging.info(f'[root] Using masked outputs, splicing valid sections')
