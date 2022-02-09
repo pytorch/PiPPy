@@ -86,9 +86,19 @@ if local_rank == 0:
     out = pipe_driver.run(input, target, chunks=2, _debug_mask_minibatches = True)
     ref_out = ec_pipe(input, target)
 
-    if CHECK_NUMERIC_EQUIVALENCE:
-        torch.testing.assert_allclose(out, ref_out)
-        print(f'equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}')
+    # if CHECK_NUMERIC_EQUIVALENCE:
+    #     torch.testing.assert_allclose(out, ref_out)
+    #     print(f'equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}')
+
+    print(ec_pipe.split_gm)
+
+    for name, params in ec_pipe.named_parameters():
+        print(name, ec_pipe.remap_qualname(name))
+
+    for name, rref in pipe_driver.remote_stage_executor_rrefs.items():
+        print(name)
+
+    import pdb; pdb.set_trace()
 
     # TODO: check that gradients are equivalent. Probably need some way to block
     #       on pipeline drain

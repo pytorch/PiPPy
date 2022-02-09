@@ -386,7 +386,7 @@ class Pipe(torch.nn.Module):
             return use_idxs[0]
 
         def move_param_to_callee(callee, param_val, use_idx):
-            new_param_name = f"__{node.target.replace('.', '_')}"
+            new_param_name = f"moved_{node.target.replace('.', '_')}"
             assert not hasattr(callee, new_param_name)
             setattr(callee, new_param_name, param_val)
 
@@ -418,6 +418,13 @@ class Pipe(torch.nn.Module):
 
                 callee = split.get_submodule(user.target)
                 move_param_to_callee(callee, param_val, use_idx)
+
+                atoms = node.target.split('.')
+                mod_itr = split
+                for atom in atoms[:-1]:
+                    mod_itr = getattr(mod_itr, atom)
+
+                delattr(mod_itr, atoms[-1])
 
         split.graph.lint()
         split.recompile()
@@ -463,6 +470,13 @@ class Pipe(torch.nn.Module):
                     submod = split.get_submodule(first_user.target)
 
                     callee_param_def = move_param_to_callee(submod, param_val, use_idx)
+
+                    atoms = node.target.split('.')
+                    mod_itr = split
+                    for atom in atoms[:-1]:
+                        mod_itr = getattr(mod_itr, atom)
+
+                    delattr(mod_itr, atoms[-1])
 
                     # Add extra output to the callee and switch references to the parameter
                     # access in the pipeline graph to use this.
