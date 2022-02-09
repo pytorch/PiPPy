@@ -42,7 +42,11 @@ world_size = int(os.environ["WORLD_SIZE"])
 rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
 
 def get_grad_from_executor(executor, qualname):
-    return executor.to_here().mod.get_parameter(qualname).grad
+    return executor.local_value().mod.get_parameter(qualname).grad
+
+def set_grad_in_executor(executor, qualname, value):
+    param = executor.local_value().mod.get_parameter(qualname)
+    param.grad = value
 
 if local_rank == 0:
     d_hid = 512
@@ -83,20 +87,28 @@ if local_rank == 0:
     input = torch.randn(bs, d_hid)
     target = torch.zeros(bs, d_hid)
 
-    print(ec_pipe.split_gm)
-
-    # # Warm up and correctness runs
-    out = pipe_driver.run(input, target, chunks=2, _debug_mask_minibatches = True)
-    ref_out = ec_pipe(input, target)
-
-    # TODO: scale output
-    if CHECK_NUMERIC_EQUIVALENCE:
-        torch.testing.assert_allclose(out, ref_out)
-        print(f'equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}')
+    # TODO: distributed optimizer
+    out = pipe_driver.run(input, target, chunks=1, _debug_mask_minibatches = True)
 
     # TODO: barrier
     import time
     time.sleep(10)
+
+    # Shared parameter sync. TODO: move this to actual runtime
+    for param_set in ec_pipe.replicated_params:
+        grad_values = []
+        for module_name, param_qualname in param_set.items():
+            assert module_name in pipe_driver.remote_stage_executor_rrefs
+            rank, module_rref = pipe_driver.remote_stage_executor_rrefs[module_name]
+            grad_value = rpc.rpc_sync(rank, get_grad_from_executor, (module_rref, param_qualname))
+            grad_values.append(grad_value)
+
+        synced_value = torch.sum(torch.stack(grad_values), dim=0)
+
+        for module_name, param_qualname in param_set.items():
+            assert module_name in pipe_driver.remote_stage_executor_rrefs
+            rank, module_rref = pipe_driver.remote_stage_executor_rrefs[module_name]
+            rpc.rpc_sync(rank, set_grad_in_executor, (module_rref, param_qualname, synced_value))
 
     pipe_grads = {}
 
@@ -110,18 +122,23 @@ if local_rank == 0:
         grad_value = rpc.rpc_sync(rank, get_grad_from_executor, (module_rref, param_qualname))
         pipe_grads[name] = copy.deepcopy(grad_value)
 
-
     optim = torch.optim.SGD(ec_pipe.split_gm.parameters(), lr=0.05)
     optim.zero_grad()
-    fwd_out = ec_pipe.forward(input, target)
+    ref_out = ec_pipe(input, target)
 
-    not_close_params = []
+    # TODO: scale output
+    if CHECK_NUMERIC_EQUIVALENCE:
+        torch.testing.assert_allclose(out, ref_out)
+        print(f'equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}')
+
+    not_close_grads = []
     for name, param in ec_pipe.named_parameters():
         assert name in pipe_grads, f'{name} not in pipe_grads keys {pipe_grads.keys()}'
         if not torch.allclose(pipe_grads[name], param.grad):
-            not_close_params.append(name)
+            not_close_grads.append(name)
 
-    assert len(not_close_params) == 0, f'Not close params: {not_close_params}'
+    assert len(not_close_grads) == 0, f'Not close params: {not_close_grads}'
+    print('Gradient equivalence test passed')
 
         
     # # # Profiling ruts
