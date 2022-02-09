@@ -132,13 +132,34 @@ if local_rank == 0:
         print(f'equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}')
 
     not_close_grads = []
+    ref_grads = {}
     for name, param in ec_pipe.named_parameters():
         assert name in pipe_grads, f'{name} not in pipe_grads keys {pipe_grads.keys()}'
+        ref_grads[name] = param.grad
         if not torch.allclose(pipe_grads[name], param.grad):
             not_close_grads.append(name)
 
-    assert len(not_close_grads) == 0, f'Not close params: {not_close_grads}'
+    for name in not_close_grads:
+        pipe_grad = pipe_grads[name]
+        ref_grad = ref_grads[name]
+
+        print(name, torch.abs(pipe_grad - ref_grad))
+
+    assert len(not_close_grads) == 0, f'Not close grads: {not_close_grads}'
     print('Gradient equivalence test passed')
+
+    # Test equivalence with initial code as well
+    orig_optim = torch.optim.SGD(ec.parameters(), lr=0.05)
+    orig_optim.zero_grad()
+    orig_loss = mse_loss(ec(input), target)
+    orig_loss.backward()
+    torch.testing.assert_allclose(out, orig_loss)
+
+    orig_grads = {name: param.grad for name, param in ec.named_parameters()}
+    for name, pipe_grad in pipe_grads.items():
+        remapped_name_orig = ec_pipe.remap_qualname(name)
+        torch.testing.assert_allclose(pipe_grad, orig_grads[remapped_name_orig])
+    print('correctness checks with original module passed')
 
         
     # # # Profiling ruts
