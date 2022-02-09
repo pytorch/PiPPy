@@ -209,15 +209,12 @@ class PipeStageExecutor:
         self.fwd_cache : Dict[int, Tuple[Any, List[torch.Tensor]]]= {}
         self.loss_cache : Dict[int, Tuple[Any, List[torch.Tensor]]]= {}
 
-        self.completed_workitems = {}
-
         _executors.append(self)
 
     def _debug_print(self, to_file=False):
         # NB: this does not take the runlist locks. This method should only be
         # called when the system is stalled
         s = f'Executor instance {id(self)} for rank {self.local_rank}.\n' \
-            f'\tCompleted WorkItems: {self.completed_workitems.keys()}\n' \
             f'\tWaiting WorkItems: {self.waiting_runlist.keys()}\n' \
             f'\tReady WorkItems: {self.ready_runlist.keys()}\n'
 
@@ -328,10 +325,6 @@ class PipeStageExecutor:
                          f'for {first_key}')
             future.set_result(out_val)
             work_item.state = SchedState.DONE
-
-            assert first_key not in self.completed_workitems
-            self.completed_workitems[first_key] = work_item
-
 
     @rpc.functions.async_execution
     def invoke(self, unique_key : str, phase : Phase, args, kwargs, cur_microbatch : int, debug_str : str):
