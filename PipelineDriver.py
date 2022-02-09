@@ -665,7 +665,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         if all(isinstance(r, torch.Tensor) and r.ndim == 0 for r in local_results):
             # HACK - design more systematic programming model for losses, which
             # reduce
-            return torch.mean(torch.stack(local_results))
+            return torch.sum(torch.stack(local_results))
 
         if _debug_mask_minibatches:
             logging.info(f'[root] Using masked outputs, splicing valid sections')

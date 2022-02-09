@@ -73,7 +73,8 @@ if local_rank == 0:
     ec(torch.randn(bs, d_hid))
     ec.train()
 
-    mse_loss = torch.nn.MSELoss()
+    # TODO: works with sum, need to define semantics for e.g. mean
+    mse_loss = torch.nn.MSELoss(reduction='sum')
 
     ec_pipe = Pipe.from_tracing(ec, MultiUseParameterConfig.TRANSMIT, loss_fn=mse_loss)
 
@@ -89,9 +90,9 @@ if local_rank == 0:
     ref_out = ec_pipe(input, target)
 
     # TODO: scale output
-    # if CHECK_NUMERIC_EQUIVALENCE:
-    #     torch.testing.assert_allclose(out, ref_out)
-    #     print(f'equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}')
+    if CHECK_NUMERIC_EQUIVALENCE:
+        torch.testing.assert_allclose(out, ref_out)
+        print(f'equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}')
 
     # TODO: barrier
     import time
@@ -117,8 +118,6 @@ if local_rank == 0:
     for name, param in ec_pipe.named_parameters():
         assert name in pipe_grads, f'{name} not in pipe_grads keys {pipe_grads.keys()}'
         torch.testing.assert_allclose(pipe_grads[name], param.grad)
-
-
 
         
     # # # Profiling ruts
