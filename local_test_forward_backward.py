@@ -1,6 +1,7 @@
 import torch
 import torch.distributed.rpc as rpc
 import logging
+import copy
 
 from IR import MultiUseParameterConfig, Pipe, pipe_split
 from PipelineDriver import PipelineDriverFillDrain
@@ -40,6 +41,9 @@ world_size = int(os.environ["WORLD_SIZE"])
 
 rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
 
+def get_grad_from_executor(executor, qualname):
+    return executor.to_here().mod.get_parameter(qualname).grad
+
 if local_rank == 0:
     d_hid = 512
     bs = 503
@@ -73,8 +77,6 @@ if local_rank == 0:
 
     ec_pipe = Pipe.from_tracing(ec, MultiUseParameterConfig.TRANSMIT, loss_fn=mse_loss)
 
-    optimizer = torch.optim.SGD(ec_pipe.parameters(), 0.01)
-
     pipe_driver = PipelineDriverFillDrain(ec_pipe, world_size)
 
     input = torch.randn(bs, d_hid)
@@ -86,23 +88,38 @@ if local_rank == 0:
     out = pipe_driver.run(input, target, chunks=2, _debug_mask_minibatches = True)
     ref_out = ec_pipe(input, target)
 
+    # TODO: scale output
     # if CHECK_NUMERIC_EQUIVALENCE:
     #     torch.testing.assert_allclose(out, ref_out)
     #     print(f'equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}')
 
-    print(ec_pipe.split_gm)
+    # TODO: barrier
+    import time
+    time.sleep(10)
+
+    pipe_grads = {}
 
     for name, params in ec_pipe.named_parameters():
-        print(name, ec_pipe.remap_qualname(name))
+        assert 'split_gm.' in name
+        tail = name.split('split_gm.')[1]
+        module_name, param_qualname = tail.split('.', maxsplit=1)
 
-    for name, rref in pipe_driver.remote_stage_executor_rrefs.items():
-        print(name)
+        assert module_name in pipe_driver.remote_stage_executor_rrefs
+        rank, module_rref = pipe_driver.remote_stage_executor_rrefs[module_name]
+        grad_value = rpc.rpc_sync(rank, get_grad_from_executor, (module_rref, param_qualname))
+        pipe_grads[name] = copy.deepcopy(grad_value)
 
-    import pdb; pdb.set_trace()
 
-    # TODO: check that gradients are equivalent. Probably need some way to block
-    #       on pipeline drain
-    # TODO: make sure state is clean after `pipe_driver.run()` and we can start another run
+    optim = torch.optim.SGD(ec_pipe.split_gm.parameters(), lr=0.05)
+    optim.zero_grad()
+    fwd_out = ec_pipe.forward(input, target)
+
+    for name, param in ec_pipe.named_parameters():
+        assert name in pipe_grads, f'{name} not in pipe_grads keys {pipe_grads.keys()}'
+        torch.testing.assert_allclose(pipe_grads[name], param.grad)
+
+
+
         
     # # # Profiling ruts
     # with torch.autograd.profiler_legacy.profile(enabled=PROFILING_ENABLED) as prof:
