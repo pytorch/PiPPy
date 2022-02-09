@@ -457,24 +457,6 @@ class PipelineDriverBase:
     class MicroBatchSplitTensor(NamedTuple):
         chunks : List[torch.Tensor]
 
-    def _calc_microbatch_split_sizes(self, chunks : int, dim_size : int):
-        # TODO: this splits with the last one bigger because i can't
-        # figure out the math to make the last one smaller
-        chunk_size = dim_size // chunks
-
-        sizes = []
-        examples_counted = 0
-        for i in range(chunks):
-            if i == chunks - 1:
-                sizes.append(dim_size - examples_counted)
-                examples_counted += (dim_size - examples_counted)
-            else:
-                sizes.append(chunk_size)
-                examples_counted += chunk_size
-
-        assert examples_counted == dim_size
-        return sizes
-
     def _split_args_into_microbatches(self, *args, chunks : int, batch_dims : Optional[List[Optional[int]]] = None,
                                       _debug_mask_minibatches : bool = False):
         logging.info(f'[root] Splitting args with sizes '
@@ -496,39 +478,32 @@ class PipelineDriverBase:
                 if batch_dim is None:
                     raise RuntimeError(f'Batch dimension not specified for arg {i}')
 
-                sizes = self._calc_microbatch_split_sizes(chunks, arg.shape[batch_dim])
-                logging.info(f'[root] Splitting arg {i} with size {arg.shape} into chunks {sizes} along dimension {batch_dim}')
+                logging.info(f'[root] Splitting arg {i} with size {arg.shape} into {chunks} chunks along dimension {batch_dim}')
+                chunk_tensors = torch.chunk(arg, chunks)
+
                 if _debug_mask_minibatches:
                     splits = []
-                    chunk_tensors = []
-
-                    prefix_sums = []
-                    sum = 0
-                    for size in sizes:
-                        sum += size
-                        prefix_sums.append(sum)
-
-                    logging.info(f'[root] Prefix sums {prefix_sums}')
-
+                    chunk_tensors_debug = []
                     predecessor = 0
 
-                    for sum in prefix_sums:
-                        splits.append((predecessor, sum))
-                        predecessor = sum
+                    for t in chunk_tensors:
+                        successor = predecessor + t.shape[batch_dim]
+                        splits.append((predecessor, successor))
+
+                        new_tensor = torch.zeros_like(arg)
+                        new_tensor[predecessor:successor] = t
+                        chunk_tensors_debug.append(new_tensor)
+
+                        predecessor = successor
 
                     logging.info(f'[root] splits {splits}')
-
-                    for start, finish in splits:
-                        new_tensor = torch.zeros_like(arg)
-                        new_tensor[start:finish] = arg[start:finish]
-                        chunk_tensors.append(new_tensor)
                     logging.info(f'[root] Chunk tensor sizes {[t.shape for t in chunk_tensors]}')
 
                     splits_per_arg.append(splits)
-                else:
-                    chunk_tensors = torch.split(arg, sizes)
+                    split_args.append(self.MicroBatchSplitTensor(chunk_tensors_debug))
 
-                split_args.append(self.MicroBatchSplitTensor(chunk_tensors))
+                else:
+                    split_args.append(self.MicroBatchSplitTensor(chunk_tensors))
 
             else:
                 logging.info(f'[root] Arg {i} is a non-tensor value, not splitting')
