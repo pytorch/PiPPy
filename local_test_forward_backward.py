@@ -115,9 +115,13 @@ if local_rank == 0:
     optim.zero_grad()
     fwd_out = ec_pipe.forward(input, target)
 
+    not_close_params = []
     for name, param in ec_pipe.named_parameters():
         assert name in pipe_grads, f'{name} not in pipe_grads keys {pipe_grads.keys()}'
-        torch.testing.assert_allclose(pipe_grads[name], param.grad)
+        if not torch.allclose(pipe_grads[name], param.grad):
+            not_close_params.append(name)
+
+    assert len(not_close_params) == 0, f'Not close params: {not_close_params}'
 
         
     # # # Profiling ruts
