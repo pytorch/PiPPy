@@ -81,14 +81,16 @@ if local_rank == 0:
     mse_loss = torch.nn.MSELoss(reduction='sum')
 
     ec_pipe = Pipe.from_tracing(ec, MultiUseParameterConfig.TRANSMIT, loss_fn=mse_loss)
+    print(ec_pipe.split_gm)
 
     pipe_driver = PipelineDriverFillDrain(ec_pipe, world_size)
 
     input = torch.randn(bs, d_hid)
-    target = torch.zeros(bs, d_hid)
+    target = torch.randn(bs, d_hid)
 
-    CHUNKS = 2
+    CHUNKS = 5
     DEBUG_MASK_MINIBATCHES = False
+    REF_USE_MICROBATCHES = True
 
     # TODO: distributed optimizer
     out = pipe_driver.run(input, target, chunks=CHUNKS, _debug_mask_minibatches = DEBUG_MASK_MINIBATCHES)
@@ -127,14 +129,17 @@ if local_rank == 0:
 
     optim = torch.optim.SGD(ec_pipe.split_gm.parameters(), lr=0.05)
     optim.zero_grad()
-    split_args, _ = PipelineDriverFillDrain._split_args_into_microbatches(input, target, chunks=CHUNKS, batch_dims=[0, 0],
-        _debug_mask_minibatches = DEBUG_MASK_MINIBATCHES)
-    ref_outs = []
-    for chunk in range(CHUNKS):
-        input_chunk = split_args[0].chunks[chunk]
-        target_chunk = split_args[1].chunks[chunk]
-        ref_outs.append(ec_pipe(input_chunk, target_chunk))
-    ref_out = torch.sum(torch.stack(ref_outs))
+    if REF_USE_MICROBATCHES:
+        split_args, _ = PipelineDriverFillDrain._split_args_into_microbatches(input, target, chunks=CHUNKS,
+            batch_dims=[0, 0], _debug_mask_minibatches = DEBUG_MASK_MINIBATCHES)
+        ref_outs = []
+        for chunk in range(CHUNKS):
+            input_chunk = split_args[0].chunks[chunk]
+            target_chunk = split_args[1].chunks[chunk]
+            ref_outs.append(ec_pipe(input_chunk, target_chunk))
+        ref_out = torch.sum(torch.stack(ref_outs))
+    else:
+        ref_out = ec_pipe(input, target)
 
     # TODO: scale output
     if CHECK_NUMERIC_EQUIVALENCE:
