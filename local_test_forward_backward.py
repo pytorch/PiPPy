@@ -87,8 +87,11 @@ if local_rank == 0:
     input = torch.randn(bs, d_hid)
     target = torch.zeros(bs, d_hid)
 
+    CHUNKS = 2
+    DEBUG_MASK_MINIBATCHES = False
+
     # TODO: distributed optimizer
-    out = pipe_driver.run(input, target, chunks=1, _debug_mask_minibatches = True)
+    out = pipe_driver.run(input, target, chunks=CHUNKS, _debug_mask_minibatches = DEBUG_MASK_MINIBATCHES)
 
     # TODO: barrier
     import time
@@ -124,7 +127,14 @@ if local_rank == 0:
 
     optim = torch.optim.SGD(ec_pipe.split_gm.parameters(), lr=0.05)
     optim.zero_grad()
-    ref_out = ec_pipe(input, target)
+    split_args, _ = PipelineDriverFillDrain._split_args_into_microbatches(input, target, chunks=CHUNKS, batch_dims=[0, 0],
+        _debug_mask_minibatches = DEBUG_MASK_MINIBATCHES)
+    ref_outs = []
+    for chunk in range(CHUNKS):
+        input_chunk = split_args[0].chunks[chunk]
+        target_chunk = split_args[1].chunks[chunk]
+        ref_outs.append(ec_pipe(input_chunk, target_chunk))
+    ref_out = torch.sum(torch.stack(ref_outs))
 
     # TODO: scale output
     if CHECK_NUMERIC_EQUIVALENCE:
@@ -143,7 +153,8 @@ if local_rank == 0:
         pipe_grad = pipe_grads[name]
         ref_grad = ref_grads[name]
 
-        print(name, torch.abs(pipe_grad - ref_grad))
+        relative_delta = torch.abs(pipe_grad - ref_grad) / ref_grad
+        print(name, torch.mean(relative_delta), torch.std(relative_delta), torch.max(relative_delta))
 
     assert len(not_close_grads) == 0, f'Not close grads: {not_close_grads}'
     print('Gradient equivalence test passed')

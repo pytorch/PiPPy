@@ -457,7 +457,8 @@ class PipelineDriverBase:
     class MicroBatchSplitTensor(NamedTuple):
         chunks : List[torch.Tensor]
 
-    def _split_args_into_microbatches(self, *args, chunks : int, batch_dims : Optional[List[Optional[int]]] = None,
+    @classmethod
+    def _split_args_into_microbatches(cls, *args, chunks : int, batch_dims : Optional[List[Optional[int]]] = None,
                                       _debug_mask_minibatches : bool = False):
         logging.info(f'[root] Splitting args with sizes '
                      f'{[arg.shape if isinstance(arg, torch.Tensor) else arg for arg in args]} into {chunks} chunks.')
@@ -500,17 +501,17 @@ class PipelineDriverBase:
                     logging.info(f'[root] Chunk tensor sizes {[t.shape for t in chunk_tensors]}')
 
                     splits_per_arg.append(splits)
-                    split_args.append(self.MicroBatchSplitTensor(chunk_tensors_debug))
+                    split_args.append(cls.MicroBatchSplitTensor(chunk_tensors_debug))
 
                 else:
-                    split_args.append(self.MicroBatchSplitTensor(chunk_tensors))
+                    split_args.append(cls.MicroBatchSplitTensor(chunk_tensors))
 
             else:
                 logging.info(f'[root] Arg {i} is a non-tensor value, not splitting')
                 split_args.append(arg)
 
         def split_str(a):
-            if isinstance(a, self.MicroBatchSplitTensor):
+            if isinstance(a, cls.MicroBatchSplitTensor):
                 return f'MicrobatchSplitTensor(chunks={[c.shape for c in a.chunks]}'
             else:
                 return str(a)
@@ -589,7 +590,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         # 3) Scheduling - Use control logic to advance interpreters to issue round-robin
         #       forward work items, then round robin losses, then round robin backwards
 
-        split_args, splits_per_arg = self._split_args_into_microbatches(
+        split_args, splits_per_arg = PipelineDriverFillDrain._split_args_into_microbatches(
             *args, chunks=chunks, batch_dims=batch_dims, _debug_mask_minibatches=_debug_mask_minibatches)
 
         microbatch_interpreters : List[self.RunUntilInterpreter] = []
