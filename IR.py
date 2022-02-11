@@ -130,6 +130,10 @@ class DetachExecutor(torch.fx.Interpreter):
         super().__init__(module, garbage_collect_values)
         self.value_remap = {}
 
+    def run(self, *args, initial_env = None):
+        self.value_remap = {}
+        return super().run(*args, initial_env=initial_env)
+
     def call_module(self, target, args, kwargs):
         def detach_tensors(a):
             if isinstance(a, torch.Tensor) and a.requires_grad and a not in self.value_remap:
@@ -150,8 +154,8 @@ class DetachExecutor(torch.fx.Interpreter):
             kwargs = dict(kwargs)
             kwargs['input_values'] = [self.value_remap.get(v, v) for v in kwargs['input_values']]
 
-
         return super().call_function(target, args, kwargs)
+
 
 class Pipe(torch.nn.Module):
     def __init__(self, split_gm : torch.fx.GraphModule, qualname_mapping : Dict[str, str],
