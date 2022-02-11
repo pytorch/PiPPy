@@ -208,7 +208,7 @@ class Pipe(torch.nn.Module):
         # TODO: annoying
         if qualname.startswith('split_gm.'):
             qualname = qualname[len('split_gm.'):]
-        return self.new_to_old_qualname_mapping.get(qualname, qualname)
+        return self.new_to_old_qualname_mapping[qualname]
 
     @staticmethod
     def _hack_build_qualname_mapping(old : torch.nn.Module, new : torch.nn.Module):

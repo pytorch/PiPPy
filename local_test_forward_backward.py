@@ -49,10 +49,10 @@ def set_grad_in_executor(executor, qualname, value):
     param.grad = value
 
 if local_rank == 0:
-    d_hid = 4
-    bs = 5
-    CHUNKS = 5
-    DEBUG_MASK_MINIBATCHES = False
+    d_hid = 512
+    bs = 503
+    CHUNKS = 1
+    DEBUG_MASK_MINIBATCHES = True
     REF_USE_MICROBATCHES = True
     # TODO: something is broken with REPLICATE
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.TRANSMIT
@@ -100,6 +100,8 @@ if local_rank == 0:
     import time
     time.sleep(10)
 
+    all_grad_qualnames = {k: None for k, v in ec_pipe.named_parameters()}
+
     # Shared parameter sync. TODO: move this to actual runtime
     for param_set in ec_pipe.replicated_params:
         grad_values = []
@@ -108,6 +110,7 @@ if local_rank == 0:
             rank, module_rref = pipe_driver.remote_stage_executor_rrefs[module_name]
             grad_value = rpc.rpc_sync(rank, get_grad_from_executor, (module_rref, param_qualname))
             grad_values.append(grad_value)
+            all_grad_qualnames.setdefault(f'split_gm.{module_name}.{param_qualname}')
 
         synced_value = torch.sum(torch.stack(grad_values), dim=0)
 
@@ -118,10 +121,9 @@ if local_rank == 0:
 
     pipe_grads = {}
 
-    for name, params in ec_pipe.named_parameters():
+    for name in all_grad_qualnames:
         assert 'split_gm.' in name
-        tail = name.split('split_gm.')[1]
-        module_name, param_qualname = tail.split('.', maxsplit=1)
+        _, module_name, param_qualname = name.split('.', maxsplit=2)
 
         assert module_name in pipe_driver.remote_stage_executor_rrefs
         rank, module_rref = pipe_driver.remote_stage_executor_rrefs[module_name]
@@ -149,7 +151,8 @@ if local_rank == 0:
 
     not_close_grads = []
     ref_grads = {}
-    for name, param in ec_pipe.named_parameters():
+    for name in all_grad_qualnames:
+        param = ec_pipe.get_parameter(name)
         assert name in pipe_grads, f'{name} not in pipe_grads keys {pipe_grads.keys()}'
         ref_grads[name] = param.grad
         if not torch.allclose(pipe_grads[name], param.grad):
@@ -159,7 +162,6 @@ if local_rank == 0:
         pipe_grad = pipe_grads[name]
         ref_grad = ref_grads[name]
 
-        print(name, pipe_grad, ref_grad)
         relative_delta = torch.abs(pipe_grad - ref_grad) / ref_grad
         print(name, torch.mean(relative_delta), torch.std(relative_delta), torch.max(relative_delta))
 
@@ -173,10 +175,15 @@ if local_rank == 0:
     orig_loss.backward()
     torch.testing.assert_allclose(out, orig_loss)
 
-    orig_grads = {name: param.grad for name, param in ec.named_parameters()}
-    for name, pipe_grad in pipe_grads.items():
-        remapped_name_orig = ec_pipe.remap_qualname(name)
-        torch.testing.assert_allclose(pipe_grad, orig_grads[remapped_name_orig])
+    for name in all_grad_qualnames:
+        try:
+            remapped_qualname = ec_pipe.remap_qualname(name)
+        except KeyError:
+            # HACK: qualname remapping does not keep track of replicated params
+            continue
+        orig_grad = ec.get_parameter(remapped_qualname).grad
+        pipe_grad = pipe_grads[name]
+        torch.testing.assert_allclose(pipe_grad, orig_grad)
     print('correctness checks with original module passed')
 
         
