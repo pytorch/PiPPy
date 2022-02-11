@@ -49,8 +49,13 @@ def set_grad_in_executor(executor, qualname, value):
     param.grad = value
 
 if local_rank == 0:
-    d_hid = 512
-    bs = 503
+    d_hid = 4
+    bs = 5
+    CHUNKS = 5
+    DEBUG_MASK_MINIBATCHES = False
+    REF_USE_MICROBATCHES = True
+    # TODO: something is broken with REPLICATE
+    MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.TRANSMIT
 
     class ExampleCode(torch.nn.Module):
         def __init__(self):
@@ -80,17 +85,13 @@ if local_rank == 0:
     # TODO: works with sum, need to define semantics for e.g. mean
     mse_loss = torch.nn.MSELoss(reduction='sum')
 
-    ec_pipe = Pipe.from_tracing(ec, MultiUseParameterConfig.TRANSMIT, loss_fn=mse_loss)
+    ec_pipe = Pipe.from_tracing(ec, MULTI_USE_PARAM_CONFIG, loss_fn=mse_loss)
     print(ec_pipe.split_gm)
 
     pipe_driver = PipelineDriverFillDrain(ec_pipe, world_size)
 
     input = torch.randn(bs, d_hid)
     target = torch.randn(bs, d_hid)
-
-    CHUNKS = 5
-    DEBUG_MASK_MINIBATCHES = False
-    REF_USE_MICROBATCHES = True
 
     # TODO: distributed optimizer
     out = pipe_driver.run(input, target, chunks=CHUNKS, _debug_mask_minibatches = DEBUG_MASK_MINIBATCHES)
@@ -158,6 +159,7 @@ if local_rank == 0:
         pipe_grad = pipe_grads[name]
         ref_grad = ref_grads[name]
 
+        print(name, pipe_grad, ref_grad)
         relative_delta = torch.abs(pipe_grad - ref_grad) / ref_grad
         print(name, torch.mean(relative_delta), torch.std(relative_delta), torch.max(relative_delta))
 
