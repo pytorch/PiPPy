@@ -192,6 +192,19 @@ class Pipe(torch.nn.Module):
         self.replicated_params : List[Dict[str, str]] = [
             use_mapping for _, use_mapping in params_to_users.items() if len(use_mapping) > 1]
 
+        # We must break the aliasing relationship between the replicated parameters for correct
+        # numerics in reference runs. If we do not do this, the autograd tape in separate stages
+        # will have a reference to the same tensor value and will erroneously apply gradient
+        # updates multiple times. Therefore, for each replicated parameter set, we deepcopy the
+        # values so that we have separate instances.
+        for param_mapping in self.replicated_params:
+            for submod_name, param_qualname in param_mapping.items():
+                submod = getattr(self.split_gm, submod_name)
+                atoms = param_qualname.split('.')
+                for atom in atoms[:-1]:
+                    submod = getattr(submod, atom)
+                setattr(submod, atoms[-1], copy.deepcopy(getattr(submod, atoms[-1])))
+
         self.new_to_old_qualname_mapping = qualname_mapping
 
         def throw(self, *args, **kwargs):

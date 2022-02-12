@@ -51,7 +51,7 @@ def set_grad_in_executor(executor, qualname, value):
 if local_rank == 0:
     d_hid = 512
     bs = 503
-    CHUNKS = 1
+    CHUNKS = 2
     DEBUG_MASK_MINIBATCHES = True
     REF_USE_MICROBATCHES = True
     # TODO: something is broken with REPLICATE
