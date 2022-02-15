@@ -8,6 +8,20 @@ This project is an attempt to build a state-of-the-art automated Pipeline Parall
 * Support for pipeline scheduling paradigms, including static schedules like fill-drain (GPipe), 1f1b, interleaved 1f1b and dynamic schedules like lookahead or registers/back-pressure.
 * Support non-trivial topologies, including skip connections and tied weights/layers.
 
+# Quickstart
+
+To install PiPPy from source, run the following command in the same directory as this README:
+
+```
+python setup.py install
+``
+
+To expose PiPPy for development such that changes to this repo are reflected in the imported package, run:
+
+```
+python setup.py develop
+```
+
 # Design and Codebase Roadmap
 
 ## Program Capture and Intermediate Representation

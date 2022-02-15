@@ -2,7 +2,7 @@ from concurrent.futures import Executor
 import torch
 import torch.fx
 import torch.distributed.rpc as rpc
-from IR import Pipe, stage_backward
+from pippy.IR import Pipe, stage_backward
 from enum import Enum
 from typing import Any, Callable, Dict, List, Tuple, NamedTuple, Optional
 import logging

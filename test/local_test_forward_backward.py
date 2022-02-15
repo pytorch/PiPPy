@@ -3,8 +3,8 @@ import torch.distributed.rpc as rpc
 import warnings
 import copy
 
-from IR import MultiUseParameterConfig, Pipe, pipe_split
-from PipelineDriver import PipelineDriverFillDrain
+from pippy.IR import MultiUseParameterConfig, Pipe, pipe_split
+from pippy.PipelineDriver import PipelineDriverFillDrain
 
 # LOG 1/18: Specifying schedule data dependencies via explicit dependencies is tricky because
 #           it constrains the topological ordering in which the execution schedule can be
