@@ -222,19 +222,19 @@ We elect to implement option (2). We implement this by doing a reverse iteration
 
 `PipelineDriver.py` contains the implementation for a single-driver multiple-follower runtime that interprets the abstract IR described above. The classes contained within this file are the following:
 
-* `PipelineDriver` is the main user-facing entrypoint for using this runtime. The user feeds in the `Pipe` instance representing their model as well as the world size over which to run the pipeline. The user can optionally specify a non-trivial set of ranks over which to run the pipeline (i.e. not 0, 1, 2, ..., world_size-1). `PipelineDriver.run` is the main entry-point for actually running the model in a pipelined way. `run` takes as argument the initial arguments to the pipelined computation, the number of chunks to split the mini-batch into, optionally the batch dimension of each tensor input (assumed to be 0 if not specified), and optionally the initial environment, equivalent to the `initial_env` used in `fx.Interpreter`. Finally, a private argument for testing purposes is `_debug_mask_minibatches`, which, when `True`, implements the masking numeric correctness checking described below.
+* `PipelineDriverBase` is the base class that specifies the interface for pipeline runtimes. This abstract class must overridden and its abstract methods implemented to specify a given pipeline parallel schedule/execution semantics. `PipelineDriverBase` specifies the following methods:
+  * `def run(self, *args, chunks : int, batch_dims : Optional[List[Optional[int]]] = None, _debug_mask_minibatches : bool = False)`. This is the main entrypoint for running a mini-batch through the pipeline. `args` are the input values to the model code (Tensor values should have exactly one batch dimension along which to divide). `chunks` is the number of chunks (micro-batches) to split the minibatch into. `batch-dims` specifies--for each `Tensor` input in the same order they appear in `args`-- what the batch dimensions are for each Tensor (if `None`, the 0th dimension is assumed to be the batch dimension for each tensor). `_debug_mask_minibatches` specifies to send masked versions of the mini-batch through instead of micro-batch slices--this can be used for more stable numerical testing (see [A Note About Correctness Testing])
+  * `MicroBatchSplitTensor` is a data structure to represent an input (an element of `args`) that has been split into chunks.
 
-These classes are more geared toward being implementation details, but may be useful for overriding behavior:
+The following implementations of `PipelineDriverBase` exist:
+* `PipelineDriverFillDrain` implements a GPipe-style fill-drain schedule.
+  * `__init__` takes various configuration parameters for this schedule. `pipe` is the pipelined
+  program to run. `world_size` and `all_ranks` specify the execution environment using parameters that match the `torch.distributed.rpc` rank and world size concepts. `all_ranks` allows you to specify arbitrary ranks to run the pipeline on, otherwise `range(world_size)` is assumed. `single_loss` allows you to specify that losses from all micro-batches should be computed via a single application of the loss function, rather than individual applications for each micro-batch. (Note that `single_loss=True` is not currently implemented)
+  * `run` implements the run interface from `PipelineDriverBase` and will execute a mini-batch of examples by splitting it up into micro-batches, pumping those through the ranks in a fill-drain pipeline manner, and returning the result (or loss value) and computing gradients (if the `Pipe` instance has backwards specified).
 
-* `PipeStageExecutor`, which is a class that is instantiated on the pipeline stage machines via an `rpc.remote` call. This object is instantiated for each pipeline stage submodule, and manages ownership of the module/parameters and invocation of that module.
-  * `PipeStageExecutor.invoke` is an [async RPC function](https://pytorch.org/docs/master/rpc.html#torch.distributed.rpc.functions.async_execution) that does the following:
-    * Populates a `WorkItem` structure that records the `args`/`kwargs` of the invocation and metadata such as the microbatch ID, how many arguments are remote values that must be waited on, and the `Future` object that will be signalled when the invocation is complete.
-    * Puts the `WorkItem` onto a "waiting" runlist data structure (or the "running" runlist in the unlikely event that it has no input data dependencies) so that the scheduling system can keep track of this work
-    * Initiates asynchronous transfers of remote arg/kwarg values. This is done via launching an async RPC to the `async_transfer` function on the local host. This function does a non-blocking call to an RPC on the remote, receives a future from that RPC, and installs a callback on that future that will update the `WorkItem` to inform it that one of its operands is ready, potentially also moving the `WorkItem` to the "ready" runlist
-  * `PipeStageExecutor` holds a `worker_thread` attribute, which is a Python thread that acts as a sort of event loop. It will block waiting for work on the "ready" runlist and execute that work whenever all of its dependencies are ready. TODO: task selection here should be configurable
-  * TODO: different execution schedules
-  * TODO: backward execution
-* `RemoteInterpreter` splits an input mini-batch into micro-batches and interprets the top-level `Pipe` graph, issuing `invoke` calls to the associated `PipeStageExecutors` to orchestrate execution of the program in a pipelined fashion. TODO: issue loss and backwards calls
+Implementation details:
+
+* `RemoteInterpreter` splits an input mini-batch into micro-batches and interprets the top-level `Pipe` graph, issuing `invoke` calls to the associated `PipeStageExecutors` to orchestrate execution of the program in a pipelined fashion. `RemoteInterpreter` exposes a custom `run_until` method, which allows you to run the given interpreter until a given predicate is true for the next node to be executed. This allows you to implement schedules by executing subsets of the full pipeline and interleaving the computation from different micro-batches onto the `PipeStageExecutor`.
 
 # Scheduler Design Notes
 
@@ -267,6 +267,7 @@ Given the above, we should implement extension points for both the `RemoteInterp
 Testing entrypoints are the following:
 
 * `local_test_forward.py` tests forward-only execution of a pipelined model with multiple processes on a single host. It should be launched via `launch_local_test_forward.sh`, which internally uses torchrun to spawn multiple processes and assign them all a unique rank
+* `local_test_forward_backward.py` is similar to `local_test_forward.py` but tests running the loss and gradient computations. There is also a corresponding `launch_local_test_forward_backward.sh`. Note that correctness testing here is not very strict, as there are some numerical differences due to the reduction order of accumulating gradient values. TODO: figure out a more systematic way to fix this: 1) log individual accumulations & compare? 2) test in fp64?
 
 # A Note About Correctness Testing
 
