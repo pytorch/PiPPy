@@ -14,7 +14,7 @@ To install PiPPy from source, run the following command in the same directory as
 
 ```
 python setup.py install
-``
+```
 
 To expose PiPPy for development such that changes to this repo are reflected in the imported package, run:
 
