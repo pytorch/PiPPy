@@ -1,4 +1,4 @@
-from IR import Pipe, annotate_split_points, PipeSplitWrapper
+from pippy.IR import Pipe, annotate_split_points, PipeSplitWrapper
 
 import logging
 logging.basicConfig(
@@ -101,7 +101,7 @@ sp_spec = {
 annotate_split_points(model, sp_spec)
 
 traced_pipe = Pipe.from_tracing(model, concrete_args={'targets': None})
-torch.testing.assert_allclose(traced_pipe.split_gm(x)[0], model(x)[0])
+torch.testing.assert_allclose(traced_pipe(x)[0], model(x)[0])
 
 assert list(dict(traced_pipe.split_gm.named_children()).keys()) == ['submod_0', 'submod_1', 'submod_2']
 
