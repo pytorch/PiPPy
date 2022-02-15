@@ -22,6 +22,13 @@ To expose PiPPy for development such that changes to this repo are reflected in 
 python setup.py develop
 ```
 
+# Testing Entrypoints
+
+Testing entrypoints are the following:
+
+* `local_test_forward.py` tests forward-only execution of a pipelined model with multiple processes on a single host. It should be launched via `launch_local_test_forward.sh`, which internally uses torchrun to spawn multiple processes and assign them all a unique rank
+* `local_test_forward_backward.py` is similar to `local_test_forward.py` but tests running the loss and gradient computations. There is also a corresponding `launch_local_test_forward_backward.sh`. Note that correctness testing here is not very strict, as there are some numerical differences due to the reduction order of accumulating gradient values. TODO: figure out a more systematic way to fix this: 1) log individual accumulations & compare? 2) test in fp64?
+
 # Design and Codebase Roadmap
 
 ## Program Capture and Intermediate Representation
@@ -275,13 +282,6 @@ We can further examine what needs to happen at different stages of the runtime f
 | *Online Schedule* | Consume and process WorkItems in order. Note that we my want to make the loss computation configurable in terms of whether it happens over the full mini-batch or per-micro-batch.      | Consume forward WorkItems in order until steady state, then alternate forward and backward until drain, then consume backward WorkItems in-order. Note that the last stage must execute the loss computation per-micro-batch |
 
 Given the above, we should implement extension points for both the `RemoteInterpreter` class that issues `WorkItem`s to each stage, as well as the `PipeStageExecutor` class that handles execution of `WorkItem`s at runtime.
-
-# Testing Entrypoints
-
-Testing entrypoints are the following:
-
-* `local_test_forward.py` tests forward-only execution of a pipelined model with multiple processes on a single host. It should be launched via `launch_local_test_forward.sh`, which internally uses torchrun to spawn multiple processes and assign them all a unique rank
-* `local_test_forward_backward.py` is similar to `local_test_forward.py` but tests running the loss and gradient computations. There is also a corresponding `launch_local_test_forward_backward.sh`. Note that correctness testing here is not very strict, as there are some numerical differences due to the reduction order of accumulating gradient values. TODO: figure out a more systematic way to fix this: 1) log individual accumulations & compare? 2) test in fp64?
 
 # A Note About Correctness Testing
 
