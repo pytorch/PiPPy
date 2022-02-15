@@ -1,3 +1,6 @@
 [submodule "minGPT"]
 	path = minGPT
 	url = git@github.com:jamesr66a/minGPT.git
+[submodule "docs/src/pytorch-sphinx-theme"]
+	path = docs/src/pytorch-sphinx-theme
+	url = https://github.com/pytorch/pytorch_sphinx_theme.git
