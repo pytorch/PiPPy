@@ -4,30 +4,6 @@ import torch.distributed.rpc as rpc
 from pippy.IR import MultiUseParameterConfig, Pipe, pipe_split
 from pippy.PipelineDriver import PipelineDriverFillDrain
 
-# LOG 1/18: Specifying schedule data dependencies via explicit dependencies is tricky because
-#           it constrains the topological ordering in which the execution schedule can be
-#           constructed. Instead, we could specify things like 1F1B scheduling by modeling
-#           the resource constraint (e.g. Registers in OneFlow -- analogous to a semaphore)
-#           and making the system block on this resource. zdevito pointed out that in this
-#           case, parallel jobs may deadlock, as they can acquire resources in an arbitrary
-#           order. This could be solved by specifying that acquiring this resource is an
-#           external side effect and serializing all stages with external side effects
-#           in the scheduling system.
-# LOG 1/20: TODOs for implementing forward/backward/loss with schedules:
-#           * ability to specify loss computation. Probably going to start with explicit callback
-#             rather than a more complicated tracing system
-#           * ability to switch between full-batch loss vs. per-microbatch loss. shen mentioned
-#             this might change numerics. So we should have the ability to compute loss over
-#             the whole minibatch rather than doing it for each micro-batch
-#           * ability to schedule backwards
-#
-#           Plan of action:
-#           * design representation in frontend/IR for forward/backward loss
-#             (full mini-batch loss)
-#           * Implement runtime for fill/drain pipelining (i.e. GPipe)
-#           * Extend loss computation to be per-microbatch
-#           * Implement 1F1B schedule
-
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
 
