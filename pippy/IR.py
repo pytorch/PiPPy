@@ -2,7 +2,8 @@ import torch
 import torch.fx
 from torch.fx.passes.split_module import split_module
 
-import copy, operator
+import copy
+import operator
 from typing import Callable, Dict, List, Optional, Union, cast
 from enum import Enum
 import itertools
@@ -37,7 +38,7 @@ def stage_backward(stage_output, output_grads, input_values):
 
 def accum_grads(lhs_grads, rhs_grads):
     assert len(lhs_grads) == len(rhs_grads)
-    return [torch.add(lhs, rhs) for lhs, rhs in \
+    return [torch.add(lhs, rhs) for lhs, rhs in
             zip(lhs_grads, rhs_grads)]
 
 def _insert_stage_symbolic_backward(g : torch.fx.Graph):
@@ -144,7 +145,7 @@ class DetachExecutor(torch.fx.Interpreter):
         super().__init__(module, garbage_collect_values)
         self.value_remap = {}
 
-    def run(self, *args, initial_env = None):
+    def run(self, *args, initial_env=None):
         self.value_remap = {}
         return super().run(*args, initial_env=initial_env)
 
@@ -182,10 +183,10 @@ class Pipe(torch.nn.Module):
 
         for node in split_gm.graph.nodes:
             assert (node.op in {'call_module', 'placeholder', 'output'} or 
-                (node.op, node.target) == ('call_function', operator.getitem) or
-                (node.op, node.target) == ('call_method', 'backward') or
-                (node.op, node.target) == ('call_function', stage_backward) or
-                (node.op, node.target) == ('call_function', accum_grads))
+                   (node.op, node.target) == ('call_function', operator.getitem) or
+                   (node.op, node.target) == ('call_method', 'backward') or
+                   (node.op, node.target) == ('call_function', stage_backward) or
+                   (node.op, node.target) == ('call_function', accum_grads))
 
         # Detect replicated parameters so we know that we have to do an additional allreduce
         # before applying the optimizer
@@ -336,6 +337,7 @@ class Pipe(torch.nn.Module):
         to_trace = torch.nn.Sequential(*new_seq_modules)
 
         assert isinstance(seq, torch.nn.Sequential)
+
         class AllModTracer(torch.fx.Tracer):
             def is_leaf_module(self, *args, **kwargs):
                 return True
@@ -386,6 +388,7 @@ class Pipe(torch.nn.Module):
             _pipeline_tracer = old__pipeline_tracer
 
         part_idx = 0
+
         def split_callback(n : torch.fx.Node):
             nonlocal part_idx
             if (n.op, n.target) == ('call_function', pipe_split):
