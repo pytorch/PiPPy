@@ -10,51 +10,10 @@ import operator
 import threading
 import warnings
 
-# Schedule design notes:
-#
-# At this point we need to impart physical execution semantics onto the abstract IR.
-# The IR describes the computation's data and code partitioned into stages, but it
-# does not specify micro-batch semantics or the order in which the work is actually
-# executed. So at this point we:
-#
-# 1. Define the strategy for replicating the computation. In particular, we will likely make the assumption
-#    that the operations in the program are batch-wise commutative (my term), i.e. we can guarantee equivalence
-#    with splitting up the operation along the batch dimension, applying the computation to those sub-batches,
-#    then merging them back together via concatenation. We should provide a crisp contract surrounding this
-# 2.  Define the way the RemoteInterpreter will interpret the IR and issue `invoke` commands to the
-#     `PipeStageExecutor` instances. This will depend entirely on each execution schedule's strategy
-#        * FillDrain variants will issue all forward jobs before all backward jobs
-#        * 1F1B will issue jobs in some valid topological order
-#        * dynamic backpressue is similar to 1f1b
-#     * TODO: need to define how information like # pipeline stages, num chunks, etc is communicated to
-#           workers
-# 3. Define the way that the `PipeStageExecutor` will consume `WorkItems` in its `ready` runlist. This
-#    similarly depends entirely on the strategy of the execution schedule.
-#        * FillDrain with micro-batch loss will execute all forward WorkItems and come to a "barrier". Once
-#          all micro-batches reach this barrier, the scheduler will start executing loss and backward
-#          WorkItems
-#        * FillDrain with mini-batch loss will do as above^ but internally the scheduler on the last stage
-#          will compute the loss by concatenating the results from each micro-batch, applying the loss
-#          once (over the whole mini-batch), then executing backward WorkItems with slices of the mini-batch
-#          loss.
-#        * 1F1B for each stage will compute a fill phase consisting of only forward WorkItems, a steady-state
-#          where forward/backward WorkItems are alternated, and a drain phase consisting of backward WorkItems.
-#          Last stage will always compute loss and backward after a forward WorkItem.
-#        * Dynamic resource-based scheduling will have a set of open "registers" that limit the number of
-#          forward WorkItems that can be admitted. A corresponding backward WorkItem will release the
-#          registers allocated by the forward.
-#
-# Idea: compiler/processor split
-#       Compiler: orders instructions from each micro-batch into some order for consumption by the processor
-#       Processor: configurable execution engine. Mainly can be configured for in-order or out-of-order
-#                  execution.
-#
-#   Fill-drain: Compiler orders all forward chunks, loss, then all backward. Could either be an in-order
-#               processor or an out-of-order processor. In the case of OOO, compiler will emit barrier
-#               instruction
-#   1F1B: Compiler orders chunks in 1f1b order. In-order processor, strict about ordering
-#   Dynamic: Compiler orders chunks in any order. Out-of-order processor with registers/resource
-#            limits.
+# TODO: Define the strategy for replicating the computation. In particular, we will likely make the assumption
+# that the operations in the program are batch-wise commutative (my term), i.e. we can guarantee equivalence
+# with splitting up the operation along the batch dimension, applying the computation to those sub-batches,
+# then merging them back together via concatenation. We should provide a crisp contract surrounding this
     
 # ===== Questions to Answer =====
 # 1. When does each stage happen?
@@ -79,22 +38,6 @@ import warnings
 #       c) Allow it to be dynamic but cache compiled policies?
 #
 #   Decision: We can easily convert (a) to (c), so let's go with (a).
-#
-#
-# LOG: 2/7/2022
-#
-# Need to reimplement per-chunk splitting to account for a single shared loss invocation. The numerics
-# of per-microbatch loss are not numerically equivalent, thus numerical comparisons fail
-
-import signal
-
-_executors = []
-
-def sigint_handler(*args):
-    for e in _executors:
-        e._debug_print(to_file=True)
-
-signal.signal(signal.SIGINT, sigint_handler)
 
 DEBUG = False
 
@@ -109,6 +52,7 @@ class Phase(Enum):
     LOSS = 1
     BACKWARD = 2
 
+# TODO: do we need this?
 class SchedState(Enum):
     WAITING = 0
     READY = 1
@@ -142,7 +86,7 @@ def _get_value_on_remote(caller_rank, callee_rank, runlist_key, microbatch, rref
 
 @rpc.functions.async_execution
 def async_transfer(rank, microbatch, scheduler_rref, rref_arg, arg_idx, runlist_key):
-    logging.info(f'[{rank}][{microbatch}] vvvvv Starting transfer')
+    logging.info(f'[{rank}][{microbatch}] Starting transfer')
     self = scheduler_rref.local_value()
     fut = rpc.rpc_async(to=rref_arg.owner(), func=_get_value_on_remote,
                         args=(rank, rref_arg.owner().id, runlist_key, microbatch, rref_arg,))
@@ -160,9 +104,9 @@ def async_transfer(rank, microbatch, scheduler_rref, rref_arg, arg_idx, runlist_
                     work_item.state = SchedState.READY
                     self.ready_runlist[runlist_key] = self.waiting_runlist.pop(runlist_key)
                     self.ready_runlist_cv.notify()
-                logging.info(f'[{rank}][{microbatch}] vvvvv All operands ready')
+                logging.info(f'[{rank}][{microbatch}] All operands ready')
             else:
-                logging.info(f'[{rank}][{microbatch}] vvvvv Still waiting for {work_item.blocked_args_count} operands.')
+                logging.info(f'[{rank}][{microbatch}] Still waiting for {work_item.blocked_args_count} operands.')
 
     return fut.then(bottom_half)
 
@@ -176,7 +120,7 @@ class PipeStageExecutor:
     * TODO: in-order execution
     * Queueing of jobs and execution schedule, e.g.
         * Static Schedules
-            * TODO: fill-drain pipeline by serializing jobs
+            * Fill-drain (GPipe) pipeline by serializing jobs
             * TODO: 1F1B scheduling by serializing jobs and stalling for a specific
                     phase to come through
             * TODO: Interleaved 1F1B (TODO: how to set up these data dependencies)
@@ -208,8 +152,6 @@ class PipeStageExecutor:
         # map microbatch ID to list of forward tensor args
         self.fwd_cache : Dict[int, Tuple[Any, List[torch.Tensor]]]= {}
         self.loss_cache : Dict[int, Tuple[Any, List[torch.Tensor]]]= {}
-
-        _executors.append(self)
 
     def _debug_print(self, to_file=False):
         # NB: this does not take the runlist locks. This method should only be
