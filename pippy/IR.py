@@ -7,6 +7,15 @@ from typing import Callable, Dict, List, Optional, Union, cast
 from enum import Enum
 import itertools
 
+# TODO:
+# 1. investigate gradient sync for shared parameters. how does DDP do it?
+# 2. Modify serialization to put parameters back in their original qualname form?
+# 3. Shape specialized tracing?
+# 4. Can we define semantics for shared module call? Can we make this configurable in the same way as
+#    with shared parameters? probably need to modify split_module in this case
+# 5. Add parameter movement to split_module
+
+# TODO: move to a separate file with runtime artifacts
 def stage_backward(stage_output, output_grads, input_values):
     """
     Given the input value(s) and the corresponding gradient for those/that input
@@ -26,6 +35,11 @@ def stage_backward(stage_output, output_grads, input_values):
             raise NotImplementedError(f'Cannot pass gradient for value {val}')
     return grad_inputs
 
+def accum_grads(lhs_grads, rhs_grads):
+    assert len(lhs_grads) == len(rhs_grads)
+    return [torch.add(lhs, rhs) for lhs, rhs in \
+            zip(lhs_grads, rhs_grads)]
+
 def _insert_stage_symbolic_backward(g : torch.fx.Graph):
     output_nodes = [n for n in g.nodes if n.op == 'output']
     assert len(output_nodes) == 1
@@ -40,7 +54,7 @@ def _insert_stage_symbolic_backward(g : torch.fx.Graph):
     def assign_or_accumulate_grad(forward_node, grad_value):
         if forward_node in val_to_grad:
             # TODO: test codepath
-            grad_value = g.call_function(torch.add, (val_to_grad[forward_node], grad_value))
+            grad_value = g.call_function(accum_grads, (val_to_grad[forward_node], grad_value))
         val_to_grad[forward_node] = grad_value
 
     with g.inserting_before(output_node):
@@ -171,7 +185,7 @@ class Pipe(torch.nn.Module):
                 (node.op, node.target) == ('call_function', operator.getitem) or
                 (node.op, node.target) == ('call_method', 'backward') or
                 (node.op, node.target) == ('call_function', stage_backward) or
-                (node.op, node.target) == ('call_function', torch.add))
+                (node.op, node.target) == ('call_function', accum_grads))
 
         # Detect replicated parameters so we know that we have to do an additional allreduce
         # before applying the optimizer
@@ -251,11 +265,14 @@ class Pipe(torch.nn.Module):
     @staticmethod
     def _number_and_count_forward_stages(gm : torch.fx.GraphModule):
         num_stages = 0
+        found_idxs = {}
         for node in gm.graph.nodes:
             if node.op == 'call_module' and node.target.startswith('submod_'):
-                assert int(node.target[len('submod_'):]) == num_stages
-                node.meta['stage_idx'] = num_stages
+                node.meta['stage_idx'] = int(node.target[len('submod_'):])
+                found_idxs.setdefault(node.meta['stage_idx'])
                 num_stages += 1
+
+        assert all(i in found_idxs for i in range(num_stages))
 
         return num_stages
 
@@ -325,20 +342,19 @@ class Pipe(torch.nn.Module):
 
         tracer = AllModTracer()
         graph = tracer.trace(to_trace)
+
         # Rename top-level submodules to align with the qualnames produced
         # by split_module in the `from_tracing` frontend
-
         copied_root_dict = dict(tracer.root.named_modules())
 
         for node in graph.nodes:
             if node.op == 'call_module':
                 new_target = f'submod_{node.target}'
 
-                # submod may have already been renamed by a previous call_module
-                if node.target in copied_root_dict:
-                    copied_root_dict[new_target] = copied_root_dict.pop(node.target)
-                else:
-                    assert new_target in copied_root_dict
+                # All submodules should be unique, even if they were aliased in the
+                # original Sequential, since we did a shallow copy of all modules above
+                assert new_target not in copied_root_dict
+                copied_root_dict[new_target] = copied_root_dict.pop(node.target)
 
                 node.target = new_target
 
@@ -424,8 +440,7 @@ class Pipe(torch.nn.Module):
         for node in split.graph.nodes:
             if node.op == 'get_attr' and len(node.users) == 1:
                 user = list(node.users)[0]
-                if user.op != 'call_module':
-                    continue
+                assert user.op == 'call_module'
                 use_idx = delete_user_reference(node, user)
 
                 # Move parameter into submodule and replace PH with a get_attr
@@ -446,7 +461,8 @@ class Pipe(torch.nn.Module):
         split.graph.lint()
         split.recompile()
 
-        # # Handle multi-use parameters based on user's configuration
+        # Handle multi-use parameters based on user's configuration
+        # TODO: generalize this to sequential
         multi_use_param_spec = multi_use_param_spec or {}
 
         multi_use_params_qualnames : Dict[str, Optional[MultiUseParameterConfig]] = {}
@@ -581,136 +597,12 @@ def annotate_split_points(mod : torch.nn.Module, spec : Dict[str, Optional[PipeS
     for qualname, split_type in spec.items():
         atoms = qualname.split('.')
         predecessor_module = mod
-        for atom in atoms[:-1]:
-            predecessor_module = getattr(predecessor_module, atom)
+        for i, atom in enumerate(atoms[:-1]):
+            try:
+                predecessor_module = getattr(predecessor_module, atom)
+            except AttributeError as e:
+                raise AttributeError(f'Specified target {qualname} referenced nonexistent module {".".join(atoms[:i+1])}')
 
         mod_to_wrap = getattr(predecessor_module, atoms[-1])
         wrapped_mod = PipeSplitWrapper(mod_to_wrap, split_type)
         setattr(predecessor_module, atoms[-1], wrapped_mod)
-
-
-# Test sequential
-mods = [torch.nn.Linear(512, 512) for _ in range(5)]
-mods += [mods[0]]
-seq = torch.nn.Sequential(*mods)
-
-seq_pipe = Pipe.from_sequential(seq)
-assert seq_pipe.replicated_params == [{'submod_0': 'weight', 'submod_5': 'weight'}, {'submod_0': 'bias', 'submod_5': 'bias'}]
-
-x = torch.randn(50, 512)
-torch.testing.assert_allclose(seq(x), seq_pipe(x))
-
-def check_qualname_mapping(old, new):
-    seen_old_qns = {}
-    for _, old_qn in new.new_to_old_qualname_mapping.items():
-            seen_old_qns.setdefault(old_qn)
-
-    for param_name, _ in old.named_parameters():
-        assert param_name in seen_old_qns, f'Expected parameter {param_name} in {seen_old_qns}'
-
-    for mod_name, _ in old.named_modules():
-        if mod_name == '':
-            continue
-        assert mod_name in seen_old_qns,  f'Expected module {mod_name} in {seen_old_qns}'
-
-check_qualname_mapping(old=seq, new=seq_pipe)
-
-
-# Test partitioning and skip connection
-
-# class ExampleCode(torch.nn.Module):
-#   def __init__(self):
-#     super().__init__()
-#     self.mm_param = torch.nn.Parameter(torch.randn(512, 512))
-#     self.mm_param2 = torch.nn.Parameter(torch.randn(512, 512))
-#     self.lin = torch.nn.Linear(512, 512)
-
-#   def forward(self, x):
-#     x = torch.mm(x, self.mm_param)
-#     skip_connection = x
-#     x = torch.relu(x)
-#     pipe_split()
-#     x = torch.mm(x, self.mm_param)
-#     x = self.lin(x)
-#     pipe_split()
-#     x = torch.relu(x)
-#     x = x + skip_connection
-#     x = torch.mm(x, self.mm_param2)
-#     x = self.lin(x)
-#     return x
-
-# ec = ExampleCode()
-# ec(torch.randn(50, 512))
-
-# ec_pipe = Pipe.from_tracing(ec, MultiUseParameterConfig.TRANSMIT)
-# x = torch.randn(5, 512)
-# torch.testing.assert_allclose(ec(x), ec_pipe(x))
-# assert ec_pipe.replicated_params == [
-#     {'submod_1': 'lin.weight', 'submod_2': 'lin.weight'}, {'submod_1': 'lin.bias', 'submod_2': 'lin.bias'}]
-# check_qualname_mapping(old=ec, new=ec_pipe)
-
-# ec_pipe_replicated = Pipe.from_tracing(ec, MultiUseParameterConfig.REPLICATE)
-# x = torch.randn(5, 512)
-# torch.testing.assert_allclose(ec(x), ec_pipe_replicated(x))
-# assert ec_pipe_replicated.replicated_params == [
-#     {'submod_0': '__mm_param', 'submod_1': '__mm_param'},
-#     {'submod_1': 'lin.weight', 'submod_2': 'lin.weight'},
-#     {'submod_1': 'lin.bias', 'submod_2': 'lin.bias'}]
-# check_qualname_mapping(old=ec, new=ec_pipe_replicated)
-
-# TODO:
-# 1. Test autograd on single-box
-# 2. investigate gradient sync for shared parameters. how does DDP do it?
-# 3. Modify serialization to put parameters back in their original qualname form?
-# . Shape specialized tracing?
-# . Can we define semantics for shared module call? Can we make this configurable in the same way as
-#    with shared parameters? probably need to modify split_module in this case
-# . Add parameter movement to split_module
-
-
-# **** Test loss & backward representation - sequential frontend
-
-# mse_loss = torch.nn.MSELoss()
-# seq_pipe_with_loss = Pipe.from_sequential(seq, mse_loss)
-# check_qualname_mapping(old=seq, new=seq_pipe_with_loss)
-
-# test_optim = torch.optim.SGD(seq_pipe_with_loss.parameters(), lr=0.01, momentum=0.9)
-# ref_optim = torch.optim.SGD(seq.parameters(), lr=0.01, momentum=0.9)
-
-# x = torch.randn(5, 512)
-# target = torch.zeros(5, 512)
-
-# test_optim.zero_grad()
-# test_out = seq_pipe_with_loss(x, target)
-# test_grads = {seq_pipe_with_loss.remap_qualname(name): copy.copy(val.grad) for name, val in seq_pipe_with_loss.named_parameters()}
-# torch.testing.assert_allclose(test_out, mse_loss(seq(x), target))
-
-# ref_optim.zero_grad()
-# ref_out = mse_loss(seq(x), target)
-# ref_out.backward()
-# ref_grads = {name: copy.copy(val.grad) for name, val in seq.named_parameters()}
-
-# for name, ref_grad in ref_grads.items():
-#     assert name in test_grads
-#     torch.testing.assert_allclose(test_grads[name], ref_grad)
-
-# # **** Test loss & backward representation - tracing frontend
-
-# ec_pipe_with_loss = Pipe.from_tracing(ec, loss_fn=mse_loss)
-# check_qualname_mapping(old=ec, new=ec_pipe_with_loss)
-
-# test_optim = torch.optim.SGD(ec_pipe_with_loss.parameters(), lr=0.01, momentum=0.9)
-# ref_optim = torch.optim.SGD(ec.parameters(), lr=0.01, momentum=0.9)
-
-# x = torch.randn(5, 512)
-# target = torch.zeros(5, 512)
-
-# test_optim.zero_grad()
-# test_out = ec_pipe_with_loss(x, target)
-# test_grads = {ec_pipe_with_loss.remap_qualname(name): copy.copy(val.grad) for name, val in ec_pipe_with_loss.named_parameters()}
-# torch.testing.assert_allclose(test_out, mse_loss(ec(x), target))
-
-# ref_optim.zero_grad()
-# ref_out = mse_loss(ec(x), target)
-# ref_out.backward()
-# ref_grads = {name: copy.copy(val.grad) for name, val in ec.named_parameters()}
