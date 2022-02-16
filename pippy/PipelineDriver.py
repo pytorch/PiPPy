@@ -1,4 +1,3 @@
-from concurrent.futures import Executor
 import torch
 import torch.fx
 import torch.distributed.rpc as rpc
@@ -14,7 +13,7 @@ import warnings
 # that the operations in the program are batch-wise commutative (my term), i.e. we can guarantee equivalence
 # with splitting up the operation along the batch dimension, applying the computation to those sub-batches,
 # then merging them back together via concatenation. We should provide a crisp contract surrounding this
-    
+
 # ===== Questions to Answer =====
 # 1. When does each stage happen?
 #       micro-batch splitting: per-invocation or with one fixed chunk size?
@@ -61,9 +60,13 @@ class SchedState(Enum):
 
 class WorkItem:
     def __init__(
-            self, phase, args, kwargs, future, microbatch_id, blocked_args_count, ready_args, state = SchedState.WAITING, debug_str = ''):
-        self.phase, self.args, self.kwargs, self.future, self.microbatch_id, self.blocked_args_count, self.ready_args, self.state, self.debug_str \
-            = phase, args, kwargs, future, microbatch_id, blocked_args_count, ready_args, state, debug_str
+            self, phase, args, kwargs, future, microbatch_id, blocked_args_count, ready_args,
+            state=SchedState.WAITING, debug_str=''):
+        args_to_fwd = ['phase', 'args', 'kwargs', 'future', 'microbatch_id', 'blocked_args_count',
+                       'ready_args', 'state', 'debug_str']
+
+        for arg in args_to_fwd:
+            setattr(self, arg, locals()[arg])
 
     phase : Phase
     args : Tuple[Any]
@@ -150,8 +153,8 @@ class PipeStageExecutor:
         self.worker_thread.start()
 
         # map microbatch ID to list of forward tensor args
-        self.fwd_cache : Dict[int, Tuple[Any, List[torch.Tensor]]]= {}
-        self.loss_cache : Dict[int, Tuple[Any, List[torch.Tensor]]]= {}
+        self.fwd_cache : Dict[int, Tuple[Any, List[torch.Tensor]]] = {}
+        self.loss_cache : Dict[int, Tuple[Any, List[torch.Tensor]]] = {}
 
     def _debug_print(self, to_file=False):
         # NB: this does not take the runlist locks. This method should only be
@@ -166,6 +169,7 @@ class PipeStageExecutor:
             if workitem.blocked_args_count > 0:
                 pass
                 rref_args = []
+
                 def retrieve_rref_args_by_idx(a):
                     if isinstance(a, torch._C._distributed_rpc.PyRRef):
                         rref_args.append(a)
@@ -215,6 +219,7 @@ class PipeStageExecutor:
                 kwargs_rrefs['stage_output'], kwargs_rrefs['input_values'] = cache.pop(microbatch_id)
 
             rref_arg_idx = 0
+
             def retrieve_rref_args_by_idx(a):
                 if isinstance(a, torch._C._distributed_rpc.PyRRef):
                     nonlocal rref_arg_idx
@@ -228,6 +233,7 @@ class PipeStageExecutor:
             kwargs = torch.fx.node.map_aggregate(kwargs_rrefs, retrieve_rref_args_by_idx)
             if work_item.phase == Phase.FORWARD:
                 flat_tensor_args = []
+
                 def extract_tensor_args(a):
                     if isinstance(a, torch.Tensor):
                         nonlocal flat_tensor_args
@@ -244,6 +250,7 @@ class PipeStageExecutor:
             elif work_item.phase == Phase.LOSS:
                 assert self.loss_mod is not None
                 flat_tensor_args = []
+
                 def extract_tensor_args(a):
                     if isinstance(a, torch.Tensor):
                         nonlocal flat_tensor_args
@@ -277,6 +284,7 @@ class PipeStageExecutor:
         # Extract all RRef arguments so we can spawn asynchronous data transfers
         # for each of them
         rref_args : List[torch._C._distributed_rpc.PyRRef] = []
+
         def extract_rref_args(arg):
             if isinstance(arg, torch._C._distributed_rpc.PyRRef):
                 rref_args.append(arg)
@@ -390,7 +398,7 @@ class PipelineDriverBase:
             self.remote_stage_executor_rrefs[descr.name] = (rank, rpc.remote(rank, self.executor_class, (descr.mod, rank, descr.loss_mod)))
             if descr.loss_mod:
                 self.remote_stage_executor_rrefs['_loss'] = self.remote_stage_executor_rrefs[descr.name]
-        
+
     def run(self, *args, chunks : int, batch_dims : Optional[List[Optional[int]]] = None,
             _debug_mask_minibatches : bool = False):
         raise NotImplementedError('PipelineDriverBase is an abstract base class, please use a concrete '
@@ -468,7 +476,8 @@ def DEBUG_INDEX(rank, microbatch, arg, idx, debug_str):
     return val
 
 class RemoteInterpreter(torch.fx.Interpreter):
-    def __init__(self, remote_stage_executor_rrefs, module, cur_microbatch : int, init_args, garbage_collect_values = True):
+    def __init__(self, remote_stage_executor_rrefs, module, cur_microbatch : int,   
+                 init_args, garbage_collect_values=True):
         super().__init__(module, garbage_collect_values)
         self.remote_stage_executor_rrefs = remote_stage_executor_rrefs
         self.cur_microbatch = cur_microbatch
@@ -525,7 +534,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         if self.single_loss:
             raise NotImplementedError('Single minibatch loss not implemented')
 
-        logging.info(f'[root] Running pipeline')
+        logging.info('[root] Running pipeline')
         # Roadmap:
         # 1) Micro-batch splitting - divide input arguments out into concrete chunk values
         # 2) Interpreter tiling - one interpreter per micro-batch
@@ -556,11 +565,11 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         assert all(n == last_nodes[0] for n in last_nodes)
 
         if last_nodes[0].op == 'output':
-            logging.info(f'[root] Program does not have loss/backward, returning outputs directly')
+            logging.info('[root] Program does not have loss/backward, returning outputs directly')
             # Forward-only; return output values
             return self._retrieve_output_values(microbatch_interpreters, last_nodes, _debug_mask_minibatches, splits_per_arg)
-   
-        logging.info(f'[root] Executing loss + backward stages')
+
+        logging.info('[root] Executing loss + backward stages')
         last_nodes = []
         for interp in microbatch_interpreters:
             last_nodes.append(interp.run_until(lambda n: n.op == 'output'))
@@ -586,17 +595,15 @@ class PipelineDriverFillDrain(PipelineDriverBase):
             return torch.sum(torch.stack(local_results))
 
         if _debug_mask_minibatches:
-            logging.info(f'[root] Using masked outputs, splicing valid sections')
+            logging.info('[root] Using masked outputs, splicing valid sections')
             assert len(splits_per_arg) > 0
             # HACK: assuming split is the same as split for first arg
             splits = splits_per_arg[0]
             sliced_outputs = []
             for result, (start, end) in zip(local_results, splits):
                 sliced_outputs.append(result[start:end])
-            logging.info(f'[root] Returning spliced outputs')
+            logging.info('[root] Returning spliced outputs')
             return torch.cat(sliced_outputs)
 
-        logging.info(f'Returning concatenated outputs')
+        logging.info('Returning concatenated outputs')
         return torch.cat(local_results)
-
-
