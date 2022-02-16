@@ -27,7 +27,7 @@ python setup.py develop
 Testing entrypoints are the following:
 
 * `local_test_forward.py` tests forward-only execution of a pipelined model with multiple processes on a single host. It should be launched via `launch_local_test_forward.sh`, which internally uses torchrun to spawn multiple processes and assign them all a unique rank
-* `local_test_forward_backward.py` is similar to `local_test_forward.py` but tests running the loss and gradient computations. There is also a corresponding `launch_local_test_forward_backward.sh`. Note that correctness testing here is not very strict, as there are some numerical differences due to the reduction order of accumulating gradient values. TODO: figure out a more systematic way to fix this: 1) log individual accumulations & compare? 2) test in fp64?
+* `local_test_forward_backward.py` is similar to `local_test_forward.py` but tests running the loss and gradient computations. There is also a corresponding `launch_local_test_forward_backward.sh`. Note that correctness testing here is not very strict, as there are some numerical differences due to the reduction order of accumulating gradient values. TODO: figure out a more systematic way to fix this: 1) log individual accumulations & compare? 2) test in fp64? 3) Craft the test case in such a way that it does not create grads with values in the lower bits of the mantissa?
 
 # Design and Codebase Roadmap
 
