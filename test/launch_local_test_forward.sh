@@ -1,1 +1,3 @@
-torchrun --standalone --nnodes=1 --nproc_per_node=10 local_test_forward.py
+SCRIPT=`realpath $0`
+SCRIPTPATH=`dirname $SCRIPT`
+torchrun --standalone --nnodes=1 --nproc_per_node=10 "${SCRIPTPATH}/local_test_forward.py"
