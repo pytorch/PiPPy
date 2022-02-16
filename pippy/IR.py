@@ -521,6 +521,9 @@ class Pipe(torch.nn.Module):
                             # TODO: test this code path
                             orig_output_getitem = split.graph.call_function(operator.getitem, (first_user, 0))
                             first_user.replace_all_uses_with(orig_output_getitem)
+                            # HACK because the above replace_all_uses with ALSO replaced the instance
+                            # of first_user within the getitem node we just added
+                            orig_output_getitem.args = (first_user,) + orig_output_getitem.args[1:]
 
                         transmitted_value_getitem = split.graph.call_function(
                             operator.getitem, (first_user, new_output_idx))

@@ -49,7 +49,7 @@ def set_grad_in_executor(executor, qualname, value):
     param.grad = value
 
 if local_rank == 0:
-    d_hid = 512
+    d_hid = 50
     bs = 503
     CHUNKS = 5
     DEBUG_MASK_MINIBATCHES = True
@@ -57,12 +57,23 @@ if local_rank == 0:
     # TODO: something is broken with REPLICATE
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.TRANSMIT
 
+    def rand_zeros_or_ones(shape):
+        return torch.randint(0, 2, shape).float()
+
+    class ZeroOneLinear(torch.nn.Module):
+        def __init__(self, in_dim, out_dim):
+            super().__init__()
+            self.w = torch.nn.Parameter(rand_zeros_or_ones((in_dim, out_dim)))
+
+        def forward(self, x):
+            return x @ self.w
+
     class ExampleCode(torch.nn.Module):
         def __init__(self):
             super().__init__()
-            self.mm_param = torch.nn.Parameter(torch.randn(d_hid, d_hid))
-            self.mm_param2 = torch.nn.Parameter(torch.randn(d_hid, d_hid))
-            self.lin = torch.nn.Linear(d_hid, d_hid)
+            self.mm_param = torch.nn.Parameter(rand_zeros_or_ones((d_hid, d_hid)))
+            self.mm_param2 = torch.nn.Parameter(rand_zeros_or_ones((d_hid, d_hid)))
+            self.lin = ZeroOneLinear(d_hid, d_hid)
 
         def forward(self, x):
             x = torch.mm(x, self.mm_param)
@@ -163,11 +174,6 @@ if local_rank == 0:
             not_close_grads.append(name)
 
     for name in not_close_grads:
-        if name in replicated_params_qualnames:
-            warnings.warn(f'Replicated parameter {name} is not numerically equivalent to the '
-                           f'reference. This is likely due to floating point non-associativity '
-                           f'in the gradient accumulation')
-            continue
         pipe_grad = pipe_grads[name]
         ref_grad = ref_grads[name]
 
@@ -194,11 +200,6 @@ if local_rank == 0:
             continue
         orig_grad = ec.get_parameter(remapped_qualname).grad
         pipe_grad = pipe_grads[name]
-        if name in replicated_params_qualnames and not torch.allclose(pipe_grad, orig_grad):
-            warnings.warn(f'Replicated parameter {name} is not numerically equivalent to the '
-                           f'reference. This is likely due to floating point non-associativity '
-                           f'in the gradient accumulation')
-            continue
         if not torch.allclose(pipe_grad, orig_grad):
             not_close_orig_grads.append(name)
             print(name, torch.abs(pipe_grad - orig_grad) / orig_grad)
