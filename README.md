@@ -283,6 +283,20 @@ We can further examine what needs to happen at different stages of the runtime f
 
 Given the above, we should implement extension points for both the `RemoteInterpreter` class that issues `WorkItem`s to each stage, as well as the `PipeStageExecutor` class that handles execution of `WorkItem`s at runtime.
 
+Idea: compiler/processor split
+  * Compiler: orders instructions from each micro-batch into some order for consumption by the processor
+  * Processor: configurable execution engine. Mainly can be configured for in-order or out-of-order
+              execution.
+
+We can organize the schedules along the compiler/processor split:
+
+  * Fill-drain: Compiler orders all forward chunks, loss, then all backward. Could either be an in-order
+              processor or an out-of-order processor. In the case of OOO, compiler will emit barrier
+              instruction
+  * 1F1B: Compiler orders chunks in 1f1b order. In-order processor, strict about ordering
+  * Dynamic: Compiler orders chunks in any order. Out-of-order processor with registers/resource
+            limits.
+
 # A Note About Correctness Testing
 
 Note that micro-batch splitting and reconstruction is not guaranteed to be bitwise-equivalent to running the same program on the full batch (see [here](https://pytorch.org/docs/master/notes/numerical_accuracy.html#batched-computations-or-slice-computations)). See also `exps/split_example.py`, which demonstrates this when constant `USE_WHOLE_BATCH` is set to `False`. A proposed way to get around this is, when testing for correctness, is to run the _full batch_ through the network for each micro-batch invocation and slice out the results from the full batch that correspond to each micro-batch, then cat those partial results together. This is demonstrated when `USE_WHOLE_BATCH` is `True`. This should guarantee numerical equivalence during testing while still exercising the micro-batch pipelining machinery.
