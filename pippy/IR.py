@@ -151,10 +151,11 @@ class DetachExecutor(torch.fx.Interpreter):
 
     def call_module(self, target, args, kwargs):
         def detach_tensors(a):
-            if isinstance(a, torch.Tensor) and a.requires_grad and a not in self.value_remap:
-                new_val = a.detach().requires_grad_(True)
-                self.value_remap[a] = new_val
-                return new_val
+            if isinstance(a, torch.Tensor) and a.requires_grad:
+                if a not in self.value_remap:
+                    new_val = a.detach().requires_grad_(True)
+                    self.value_remap[a] = new_val
+                return self.value_remap[a]
             else:
                 return a
 
@@ -168,7 +169,6 @@ class DetachExecutor(torch.fx.Interpreter):
         if target == stage_backward:
             kwargs = dict(kwargs)
             kwargs['input_values'] = [self.value_remap.get(v, v) for v in kwargs['input_values']]
-
         return super().call_function(target, args, kwargs)
 
 

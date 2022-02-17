@@ -118,7 +118,10 @@ class TestIR(unittest.TestCase):
         ref_out.backward()
         ref_grads = {name: copy.copy(val.grad) for name, val in self.ec.named_parameters()}
 
-    @unittest.skip("shake out the bugs here")
+        for name, ref_grad in ref_grads.items():
+            assert name in test_grads
+            torch.testing.assert_allclose(test_grads[name], ref_grad)
+
     def test_grad_accumulation(self):
         # TODO: test grad accumulation in runtime
         class Code(torch.nn.Module):
@@ -140,7 +143,6 @@ class TestIR(unittest.TestCase):
         mse_loss = torch.nn.MSELoss()
         accum_pipe = Pipe.from_tracing(c, loss_fn=mse_loss)
         assert any(n.target == accum_grads for n in accum_pipe.split_gm.graph.nodes)
-        print(accum_pipe.split_gm)
         accum_pipe(torch.randn(5, 50), torch.randn(5, 50))
 
     def test_invoke_pipeline_error(self):
