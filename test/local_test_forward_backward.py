@@ -38,7 +38,9 @@ if local_rank == 0:
     CHUNKS = 5
     DEBUG_MASK_MINIBATCHES = True
     REF_USE_MICROBATCHES = True
-    MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE
+    REPLICATE = os.environ.get('REPLICATE', '0') != '0'
+    MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if REPLICATE else MultiUseParameterConfig.TRANSMIT
+    print(f'REPLICATE config: {REPLICATE} -> {MULTI_USE_PARAM_CONFIG}')
 
     def rand_zeros_or_ones(shape):
         return torch.randint(0, 2, shape).float()
