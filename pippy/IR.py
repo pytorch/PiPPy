@@ -36,11 +36,6 @@ def stage_backward(stage_output, output_grads, input_values):
             raise NotImplementedError(f'Cannot pass gradient for value {val}')
     return grad_inputs
 
-def accum_grads(lhs_grads, rhs_grads):
-    assert len(lhs_grads) == len(rhs_grads)
-    return [torch.add(lhs, rhs) for lhs, rhs in
-            zip(lhs_grads, rhs_grads)]
-
 def _insert_stage_symbolic_backward(g : torch.fx.Graph):
     output_nodes = [n for n in g.nodes if n.op == 'output']
     assert len(output_nodes) == 1
@@ -54,8 +49,7 @@ def _insert_stage_symbolic_backward(g : torch.fx.Graph):
 
     def assign_or_accumulate_grad(forward_node, grad_value):
         if forward_node in val_to_grad:
-            # TODO: test codepath
-            grad_value = g.call_function(accum_grads, (val_to_grad[forward_node], grad_value))
+            grad_value = g.call_function(torch.add, (val_to_grad[forward_node], grad_value))
         val_to_grad[forward_node] = grad_value
 
     with g.inserting_before(output_node):
@@ -68,12 +62,9 @@ def _insert_stage_symbolic_backward(g : torch.fx.Graph):
                 })
 
                 input_nodes = list(node.all_input_nodes)
-                if len(input_nodes) == 1:
-                    assign_or_accumulate_grad(input_nodes[0], grad_call)
-                else:
-                    grad_call_proxy = torch.fx.Proxy(grad_call)
-                    for i, input_node in enumerate(input_nodes):
-                        assign_or_accumulate_grad(input_node, grad_call_proxy[i].node)
+                grad_call_proxy = torch.fx.Proxy(grad_call)
+                for i, input_node in enumerate(input_nodes):
+                    assign_or_accumulate_grad(input_node, grad_call_proxy[i].node)
             elif node.op == 'call_function':
                 assert node.target == operator.getitem
                 assert len(node.args) == 2
@@ -186,7 +177,7 @@ class Pipe(torch.nn.Module):
                    (node.op, node.target) == ('call_function', operator.getitem) or
                    (node.op, node.target) == ('call_method', 'backward') or
                    (node.op, node.target) == ('call_function', stage_backward) or
-                   (node.op, node.target) == ('call_function', accum_grads))
+                   (node.op, node.target) == ('call_function', torch.add))
 
         # Detect replicated parameters so we know that we have to do an additional allreduce
         # before applying the optimizer
@@ -557,9 +548,18 @@ class Pipe(torch.nn.Module):
                         submod = split.get_submodule(user.target)
                         param_access_node = move_param_to_callee(submod, param_val, use_idx)
 
+                    atoms = node.target.split('.')
+                    mod_itr = split
+                    for atom in atoms[:-1]:
+                        mod_itr = getattr(mod_itr, atom)
+
+                    delattr(mod_itr, atoms[-1])
+
                     split.graph.erase_node(node)
                 else:
                     raise ValueError(f'Unknown multi-use config value {reuse_type} specified for {node.target}')
+
+        split.delete_all_unused_submodules()
 
         split.graph.lint()
         split.recompile()

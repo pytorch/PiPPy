@@ -38,8 +38,7 @@ if local_rank == 0:
     CHUNKS = 5
     DEBUG_MASK_MINIBATCHES = True
     REF_USE_MICROBATCHES = True
-    # TODO: something is broken with REPLICATE
-    MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.TRANSMIT
+    MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE
 
     def rand_zeros_or_ones(shape):
         return torch.randint(0, 2, shape).float()
@@ -143,6 +142,17 @@ if local_rank == 0:
     else:
         ref_out = ec_pipe(input, target)
 
+    # Shared parameter sync for reference. TODO: move this to actual runtime
+    for param_set in ec_pipe.replicated_params:
+        grad_values = []
+        for module_name, param_qualname in param_set.items():
+            grad_values.append(ec_pipe.get_parameter(f'split_gm.{module_name}.{param_qualname}').grad)
+
+        synced_value = torch.sum(torch.stack(grad_values), dim=0)
+
+        for module_name, param_qualname in param_set.items():
+            ec_pipe.get_parameter(f'split_gm.{module_name}.{param_qualname}').grad = synced_value
+
     # TODO: scale output
     if CHECK_NUMERIC_EQUIVALENCE:
         torch.testing.assert_allclose(out, ref_out)
@@ -162,7 +172,7 @@ if local_rank == 0:
         ref_grad = ref_grads[name]
 
         relative_delta = torch.abs(pipe_grad - ref_grad) / ref_grad
-        assert False, f'Parameter {name} is not numerically close! Relative diff mean ' \
+        assert False, f'Gradient for parameter {name} is not numerically close! Relative diff mean ' \
                       f'{torch.mean(relative_delta)} std {torch.std(relative_delta)} max {torch.max(relative_delta)}'
 
     print('Gradient equivalence test passed')

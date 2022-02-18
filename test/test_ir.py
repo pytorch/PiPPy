@@ -2,7 +2,7 @@ import torch
 import copy
 import unittest
 
-from pippy.IR import Pipe, pipe_split, MultiUseParameterConfig, accum_grads, annotate_split_points, PipeSplitWrapper
+from pippy.IR import Pipe, pipe_split, MultiUseParameterConfig, annotate_split_points, PipeSplitWrapper
 
 class ExampleCode(torch.nn.Module):
   def __init__(self):
@@ -32,11 +32,6 @@ def check_qualname_mapping(old, new):
 
     for param_name, _ in old.named_parameters():
         assert param_name in seen_old_qns, f'Expected parameter {param_name} in {seen_old_qns}'
-
-    for mod_name, _ in old.named_modules():
-        if mod_name == '':
-            continue
-        assert mod_name in seen_old_qns,  f'Expected module {mod_name} in {seen_old_qns}'
 
 class TestIR(unittest.TestCase):
     def setUp(self):
@@ -71,6 +66,34 @@ class TestIR(unittest.TestCase):
             {'submod_1': 'lin.weight', 'submod_2': 'lin.weight'},
             {'submod_1': 'lin.bias', 'submod_2': 'lin.bias'}]
         check_qualname_mapping(old=self.ec, new=ec_pipe_replicated)
+
+    def test_tracing_shared_non_leaf_mod(self):
+        class ShareMe(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.param = torch.nn.Parameter(torch.randn(5, 3))
+
+            def forward(self, x):
+                return x + self.param
+
+        class PipeMod(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.shared = ShareMe()
+
+            def forward(self, x):
+                x = self.shared(x)
+                pipe_split()
+                x = self.shared(x)
+                pipe_split()
+                return torch.relu(x)
+
+        pm = PipeMod()
+        pm_pipe = Pipe.from_tracing(pm, MultiUseParameterConfig.TRANSMIT)
+        x = torch.randn(5, 3)
+        torch.testing.assert_allclose(pm_pipe(x), pm(x))
+        assert pm_pipe.replicated_params == []
+        check_qualname_mapping(old=pm, new=pm_pipe)
 
     def test_loss_backward_sequential(self):
         mse_loss = torch.nn.MSELoss()
@@ -142,7 +165,8 @@ class TestIR(unittest.TestCase):
         c.train()
         mse_loss = torch.nn.MSELoss()
         accum_pipe = Pipe.from_tracing(c, loss_fn=mse_loss)
-        assert any(n.target == accum_grads for n in accum_pipe.split_gm.graph.nodes)
+        print(accum_pipe.split_gm)
+        assert any(n.target == torch.add for n in accum_pipe.split_gm.graph.nodes)
         accum_pipe(torch.randn(5, 50), torch.randn(5, 50))
 
     def test_invoke_pipeline_error(self):
