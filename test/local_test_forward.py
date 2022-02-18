@@ -17,6 +17,10 @@ if local_rank == 0:
     d_hid = 512
     bs = 503
 
+    REPLICATE = os.environ.get('REPLICATE', '0') != '0'
+    MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if REPLICATE else MultiUseParameterConfig.TRANSMIT
+    print(f'REPLICATE config: {REPLICATE} -> {MULTI_USE_PARAM_CONFIG}')
+
     class ExampleCode(torch.nn.Module):
         def __init__(self):
             super().__init__()
@@ -41,7 +45,7 @@ if local_rank == 0:
     ec = ExampleCode()
     ec(torch.randn(bs, d_hid))
 
-    ec_pipe = Pipe.from_tracing(ec, MultiUseParameterConfig.TRANSMIT)
+    ec_pipe = Pipe.from_tracing(ec, MULTI_USE_PARAM_CONFIG)
 
     optimizer = torch.optim.SGD(ec_pipe.parameters(), 0.01)
 
