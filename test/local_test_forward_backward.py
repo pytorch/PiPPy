@@ -207,7 +207,7 @@ if local_rank == 0:
     print('correctness checks with original module passed')
 
         
-    # # # Profiling ruts
+    # # # Profiling runs
     # with torch.autograd.profiler_legacy.profile(enabled=PROFILING_ENABLED) as prof:
     #     out = pipe_driver.run(input, target, chunks=5, _debug_mask_minibatches = False)
     #     ref_out = ec_pipe.split_gm(input, target)

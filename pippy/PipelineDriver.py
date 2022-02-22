@@ -115,7 +115,7 @@ def async_transfer(rank, microbatch, scheduler_rref, rref_arg, arg_idx, runlist_
 
 class PipeStageExecutor:
     """
-    PipeStageExecutor encapsulates the execution semantics of a fragement of
+    PipeStageExecutor encapsulates the execution semantics of a fragment of
     code on a pipeline stage. PipeStageExecutor handles:
 
     * Ownership of the stage's module and its recursive submodules/parameters
@@ -141,7 +141,7 @@ class PipeStageExecutor:
         self.loss_mod = loss_mod
 
         self.waiting_runlist_lock = threading.Lock()
-        # self.waiting_rulist (*and the contained WorkItems*) are guarded by
+        # self.waiting_runlist (*and the contained WorkItems*) are guarded by
         # self.waiting_runlist_lock
         self.waiting_runlist : Dict[WorkItem, None] = {}
 
@@ -343,7 +343,7 @@ class PipelineDriverBase:
         self._init_remote_executors()
 
     def _init_remote_executors(self):
-        self.remote_stage_executor_rrefs : Dict[str, torch.distributed.rpc.RRef] = {}
+        self.remote_stage_executor_rrefs : Dict[str, (int, torch.distributed.rpc.RRef)] = {}
 
         if self.all_ranks is not None:
             assert len(self.all_ranks) == self.world_size, "Explicitly specified ranks must match world_size"
@@ -387,7 +387,7 @@ class PipelineDriverBase:
 
         if len(executor_descriptors) > self.world_size:
             raise RuntimeError(f'Tried to run pipeline with {len(executor_descriptors)} stages with a world size of '
-                               f'{self.world_size}. Please ensure world_size is large enough to accomodate your pipeline.')
+                               f'{self.world_size}. Please ensure world_size is large enough to accommodate your pipeline.')
 
         if len(executor_descriptors) < self.world_size:
             warnings.warn(f'Running pipeline with {len(executor_descriptors)} stages on world_size of {self.world_size}. '
@@ -539,7 +539,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         # 1) Micro-batch splitting - divide input arguments out into concrete chunk values
         # 2) Interpreter tiling - one interpreter per micro-batch
         # 3) Scheduling - Use control logic to advance interpreters to issue round-robin
-        #       forward work items, then round robin losses, then round robin backwards
+        #       forward work items, then round-robin losses, then round-robin backwards
 
         split_args, splits_per_arg = PipelineDriverFillDrain._split_args_into_microbatches(
             *args, chunks=chunks, batch_dims=batch_dims, _debug_mask_minibatches=_debug_mask_minibatches)
