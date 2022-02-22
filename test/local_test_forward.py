@@ -61,7 +61,7 @@ if local_rank == 0:
         torch.testing.assert_allclose(out, ref_out)
         print(f'equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}')
         
-    # # Profiling runts
+    # # Profiling runs
     with torch.autograd.profiler_legacy.profile(enabled=PROFILING_ENABLED) as prof:
         out = pipe_driver.run(input, chunks=5, _debug_mask_minibatches = False)
         ref_out = ec_pipe(input)
