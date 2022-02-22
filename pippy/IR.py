@@ -129,7 +129,10 @@ def _insert_stage_symbolic_backward(g : torch.fx.Graph):
 _pipeline_tracer = None
 
 def pipe_split():
+<<<<<<< HEAD
     # hasattr(_pipeline_tracer, 'graph') is a workaround to support HFTracer
+=======
+>>>>>>> HF BERT and GPT-2 tests
     if _pipeline_tracer is not None and hasattr(_pipeline_tracer, 'graph'):
         _pipeline_tracer.graph.call_function(pipe_split, (), {})
 
