@@ -364,20 +364,9 @@ class Pipe(torch.nn.Module):
         return Pipe(gm, Pipe._hack_build_qualname_mapping(old=seq, new=gm), num_stages, has_loss_and_backward)
 
     @staticmethod
-    def from_tracing(mod : torch.nn.Module, multi_use_param_spec : Optional[MultiUseParamSpec] = None,
-                     loss_fn : Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None, **kwargs):
-        # TODO: abstract partitioning policy
-
-        global _pipeline_tracer
-        old__pipeline_tracer = _pipeline_tracer
-        _pipeline_tracer = torch.fx.Tracer()
-        try:
-            # TODO: tracing policy
-            graph = _pipeline_tracer.trace(mod, **kwargs)
-            traced = torch.fx.GraphModule(mod, graph)
-        finally:
-            _pipeline_tracer = old__pipeline_tracer
-
+    def from_traced(mod : torch.nn.Module, traced : torch.fx.GraphModule,
+                    multi_use_param_spec : Optional[MultiUseParamSpec] = None,
+                    loss_fn : Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None, **kwargs):
         part_idx = 0
 
         def split_callback(n : torch.fx.Node):
@@ -573,6 +562,26 @@ class Pipe(torch.nn.Module):
             has_loss_and_backward = False
 
         return Pipe(split, Pipe._hack_build_qualname_mapping(old=mod, new=split), num_stages, has_loss_and_backward)
+
+    @staticmethod
+    def from_tracing(mod : torch.nn.Module, multi_use_param_spec : Optional[MultiUseParamSpec] = None,
+                     loss_fn : Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None, **kwargs):
+        # TODO: abstract partitioning policy
+
+        # TODO(pbelevich): Here we can add support for custom torch.fx tracers
+        #  https://github.com/jamesr66a/PiPPy/issues/15
+
+        global _pipeline_tracer
+        old__pipeline_tracer = _pipeline_tracer
+        _pipeline_tracer = torch.fx.Tracer()
+        try:
+            # TODO: tracing policy
+            graph = _pipeline_tracer.trace(mod, **kwargs)
+            traced = torch.fx.GraphModule(mod, graph)
+        finally:
+            _pipeline_tracer = old__pipeline_tracer
+
+        return Pipe.from_traced(mod, traced, multi_use_param_spec, loss_fn, **kwargs)
 
 
 class PipeSplitWrapper(torch.nn.Module):
