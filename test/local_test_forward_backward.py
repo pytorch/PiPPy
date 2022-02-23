@@ -25,6 +25,18 @@ if VERBOSE:
 
 rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
 
+# import ctypes
+# libc = ctypes.cdll.LoadLibrary("libc.so.6")
+# libc.prctl.argtypes = [
+#     ctypes.c_int,
+#     ctypes.c_ulong,
+#     ctypes.c_ulong,
+#     ctypes.c_ulong,
+#     ctypes.c_ulong,
+# ]
+# libc.prctl.restype = ctypes.c_int
+# libc.prctl(0x59616D61, -1, 0, 0, 0)
+
 def get_grad_from_executor(executor, qualname):
     return executor.local_value().mod.get_parameter(qualname).grad
 
