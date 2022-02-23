@@ -209,15 +209,6 @@ class PipeStageExecutor:
             ready_args = work_item.ready_args
             phase = work_item.phase
 
-            if phase == Phase.BACKWARD:
-                logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running backward phase. Retrieving stashed values')
-                # HACK: here we are directly accessing the saved tensor outputs
-                # for closed-over outputs so that they still have the grad_fn
-                # from local autograd. Can we solve this more elegantly?
-                cache = self.loss_cache if len(self.loss_cache) > 0 else self.fwd_cache
-                kwargs_rrefs = dict(kwargs_rrefs)
-                kwargs_rrefs['stage_output'], kwargs_rrefs['input_values'] = cache.pop(microbatch_id)
-
             rref_arg_idx = 0
 
             def retrieve_rref_args_by_idx(a):
@@ -231,6 +222,16 @@ class PipeStageExecutor:
 
             args = torch.fx.node.map_aggregate(args_rrefs, retrieve_rref_args_by_idx)
             kwargs = torch.fx.node.map_aggregate(kwargs_rrefs, retrieve_rref_args_by_idx)
+
+            if phase == Phase.BACKWARD:
+                logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running backward phase. Retrieving stashed values')
+                # HACK: here we are directly accessing the saved tensor outputs
+                # for closed-over outputs so that they still have the grad_fn
+                # from local autograd. Can we solve this more elegantly?
+                cache = self.loss_cache if len(self.loss_cache) > 0 else self.fwd_cache
+                kwargs = dict(kwargs)
+                kwargs['stage_output'], kwargs['input_values'] = cache.pop(microbatch_id)
+
             if work_item.phase == Phase.FORWARD:
                 flat_tensor_args = []
 
@@ -523,6 +524,10 @@ class RemoteInterpreter(torch.fx.Interpreter):
             # TODO: hoist run() implementation
             logging.info(f'[{self.cur_microbatch}] Issue command to run {node.format_node()}')
             self.env[node] = super().run_node(node)
+
+            if DEBUG and isinstance(self.env[node], torch._C._distributed_rpc.PyRRef):
+                print(node, self.env[node])
+                self.env[node].to_here()
 
 class PipelineDriverFillDrain(PipelineDriverBase):
     def __init__(self, pipe : Pipe, world_size : int, all_ranks : List[int] = None, single_loss : bool = False):
