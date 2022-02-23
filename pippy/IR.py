@@ -218,10 +218,21 @@ class Pipe(torch.nn.Module):
         self.split_gm.forward = throw
 
     def forward(self, *args, **kwargs):
+        executor_args = args
         if len(kwargs) > 0:
-            # TODO
-            raise NotImplementedError('Kwargs not implemented')
-        return self.executor.run(*args)
+            from inspect import Signature, Parameter
+            parameters = []
+            for node in self.split_gm.graph.nodes:
+                if node.op == 'placeholder':
+                    if node.args and len(node.args) > 0:
+                        parameters.append(Parameter(node.target, Parameter.POSITIONAL_OR_KEYWORD, default=node.args[0]))
+                    else:
+                        parameters.append(Parameter(node.target, Parameter.POSITIONAL_OR_KEYWORD))
+            signature = Signature(parameters)
+            ba = signature.bind(*args, **kwargs)
+            ba.apply_defaults()
+            executor_args = ba.arguments.values()
+        return self.executor.run(*executor_args)
 
     def remap_qualname(self, qualname):
         # TODO: annoying
