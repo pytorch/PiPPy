@@ -327,5 +327,42 @@ class TestIR(unittest.TestCase):
         with self.assertRaisesRegex(AttributeError, 'Specified target foo.bar.baz referenced nonexistent module foo'):
             annotate_split_points(m, {'foo.bar.baz': PipeSplitWrapper.SplitPoint.END})
 
+    def test_pipe_forward_kwargs(self):
+        class ModuleWithArgsAndKWArgs(torch.nn.Module):
+            def forward(self, x, y=2):
+                return x + y
+
+        module = ModuleWithArgsAndKWArgs()
+        pipe = Pipe.from_tracing(module)
+        self.assertEqual(pipe(1), 3)
+        self.assertEqual(pipe(1, y=3), 4)
+        self.assertEqual(pipe(1, 4), 5)
+        with self.assertRaisesRegex(TypeError, "got an unexpected keyword argument 'z'"):
+            pipe(1, z=100)
+        with self.assertRaisesRegex(TypeError, "got an unexpected keyword argument 'a'"):
+            pipe(1, y=3, a='a', b=True, c='c')
+        with self.assertRaisesRegex(TypeError, "multiple values for argument 'y'"):
+            pipe(1, 4, y=100)
+
+        class ModuleWithOnlyKWArgs(torch.nn.Module):
+            def forward(self, x=1, y=2):
+                return x + y
+
+        module = ModuleWithOnlyKWArgs()
+        pipe = Pipe.from_tracing(module)
+        self.assertEqual(pipe(), 3)
+        self.assertEqual(pipe(2), 4)
+        self.assertEqual(pipe(x=3), 5)
+        self.assertEqual(pipe(y=4), 5)
+        self.assertEqual(pipe(3, 3), 6)
+        self.assertEqual(pipe(3, y=4), 7)
+        self.assertEqual(pipe(x=4, y=4), 8)
+        with self.assertRaisesRegex(TypeError, "got an unexpected keyword argument 'b'"):
+            pipe(b=True, a='a', c='c')
+        with self.assertRaisesRegex(TypeError, "multiple values for argument 'x'"):
+            pipe(2, x=3)
+        with self.assertRaisesRegex(TypeError, "multiple values for argument 'x'"):
+            pipe(1, 2, x=3, y=4)
+
 if __name__ == '__main__':
     unittest.main()
