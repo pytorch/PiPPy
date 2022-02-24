@@ -470,12 +470,6 @@ class PipelineDriverBase:
 
         return split_args, splits_per_arg
 
-def DEBUG_INDEX(rank, microbatch, arg, idx, debug_str):
-    indexee = arg.local_value()
-    val = indexee[idx]
-    logging.info(f'[{rank}][{microbatch}] *****INDEXING VALUE {debug_str} input_type {type(indexee)} index {idx} output type {type(val)}')
-    return val
-
 class RemoteInterpreter(torch.fx.Interpreter):
     def __init__(self, remote_stage_executor_rrefs, module, cur_microbatch : int,   
                  init_args, garbage_collect_values=True):
@@ -493,25 +487,27 @@ class RemoteInterpreter(torch.fx.Interpreter):
         if target in self.remote_stage_executor_rrefs:
             rank, stage_executor = self.remote_stage_executor_rrefs[target]
             phase = Phase.LOSS if target == '_loss' else Phase.FORWARD
-            logging.info(f'[root][{self.cur_microbatch}] Issuing {phase} invocation for target {target} on rank {rank}')
+            logging.info(f'[root][{self.cur_microbatch}] Issuing {phase} '
+                         f'invocation for target {target} on rank {rank}')
             invocation_key = f'{self.cur_microbatch}_{node.name}'
-            return stage_executor.remote().invoke(invocation_key, phase, args, kwargs, self.cur_microbatch, debug_str=node.format_node())
+            return stage_executor.remote().invoke(
+                invocation_key, phase, args, kwargs, self.cur_microbatch, debug_str=node.format_node())
         else:
             logging.info(f'[root][{self.cur_microbatch}] Running local operation {target} from driver')
             return super().call_module(target, args, kwargs)
 
     def call_function(self, target, args, kwargs):
         if target is operator.getitem and isinstance(args[0], torch._C._distributed_rpc.PyRRef):
-            # return args[0].remote().__getitem__(args[1])
-            # HACK: wtf is going on here
-            return rpc.rpc_sync(args[0].owner(), DEBUG_INDEX, (args[0].owner().id, self.cur_microbatch, args[0], args[1], self.node_list[self.pc].format_node()))
+            return args[0].remote().__getitem__(args[1])
         elif target is stage_backward:
             node = self.node_list[self.pc]
             assert 'fw_stage' in node.meta
             rank, stage_executor = self.remote_stage_executor_rrefs[node.meta['fw_stage']]
-            logging.info(f'[root][{self.cur_microbatch}] Issuing BW invocation for target {node.meta["fw_stage"]} on rank {rank}')
+            logging.info(f'[root][{self.cur_microbatch}] Issuing BW invocation '
+                         f'for target {node.meta["fw_stage"]} on rank {rank}')
             invocation_key = f'{self.cur_microbatch}_{node.name}'
-            return stage_executor.remote().invoke(invocation_key, Phase.BACKWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node())
+            return stage_executor.remote().invoke(
+                invocation_key, Phase.BACKWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node())
         return super().call_function(target, args, kwargs)
 
     def run_until(self, predicate : Callable[[torch.fx.Node], bool]):
@@ -524,6 +520,17 @@ class RemoteInterpreter(torch.fx.Interpreter):
             # TODO: hoist run() implementation
             logging.info(f'[{self.cur_microbatch}] Issue command to run {node.format_node()}')
             self.env[node] = super().run_node(node)
+
+            # TODO: we could potentially move this waiting to the use sites for an RRef
+            # (i.e. during Interpreter.map_nodes_to_values or when we pass args/kwargs
+            #  to the callees) as an optimization
+            # TODO: is it possible for there to be a blocking version of this API?
+            def wait_for_confirmation(n):
+                if isinstance(n, torch._C._distributed_rpc.PyRRef):
+                    while not n.confirmed_by_owner():
+                        pass
+
+            torch.fx.node.map_aggregate(self.env[node], wait_for_confirmation)
 
             if DEBUG and isinstance(self.env[node], torch._C._distributed_rpc.PyRRef):
                 print(node, self.env[node])
