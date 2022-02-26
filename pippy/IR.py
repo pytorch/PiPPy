@@ -116,7 +116,8 @@ def _insert_stage_symbolic_backward(g : torch.fx.Graph):
 _pipeline_tracer = None
 
 def pipe_split():
-    if _pipeline_tracer is not None:
+    # hasattr(_pipeline_tracer, 'graph') is a workaround to support HFTracer
+    if _pipeline_tracer is not None and hasattr(_pipeline_tracer, 'graph'):
         _pipeline_tracer.graph.call_function(pipe_split, (), {})
 
 class MultiUseParameterConfig(Enum):
@@ -375,9 +376,9 @@ class Pipe(torch.nn.Module):
         return Pipe(gm, Pipe._hack_build_qualname_mapping(old=seq, new=gm), num_stages, has_loss_and_backward)
 
     @staticmethod
-    def from_traced(mod : torch.nn.Module, traced : torch.fx.GraphModule,
-                    multi_use_param_spec : Optional[MultiUseParamSpec] = None,
-                    loss_fn : Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None, **kwargs):
+    def _from_traced(mod: torch.nn.Module, traced: torch.fx.GraphModule,
+                     multi_use_param_spec: Optional[MultiUseParamSpec] = None,
+                     loss_fn: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None, **kwargs):
         part_idx = 0
 
         def split_callback(n : torch.fx.Node):
@@ -576,7 +577,8 @@ class Pipe(torch.nn.Module):
 
     @staticmethod
     def from_tracing(mod : torch.nn.Module, multi_use_param_spec : Optional[MultiUseParamSpec] = None,
-                     loss_fn : Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None, **kwargs):
+                     loss_fn : Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
+                     tracer=None, **kwargs):
         # TODO: abstract partitioning policy
 
         # TODO(pbelevich): Here we can add support for custom torch.fx tracers
@@ -584,7 +586,7 @@ class Pipe(torch.nn.Module):
 
         global _pipeline_tracer
         old__pipeline_tracer = _pipeline_tracer
-        _pipeline_tracer = torch.fx.Tracer()
+        _pipeline_tracer = tracer or torch.fx.Tracer()
         try:
             # TODO: tracing policy
             graph = _pipeline_tracer.trace(mod, **kwargs)
@@ -592,7 +594,7 @@ class Pipe(torch.nn.Module):
         finally:
             _pipeline_tracer = old__pipeline_tracer
 
-        return Pipe.from_traced(mod, traced, multi_use_param_spec, loss_fn, **kwargs)
+        return Pipe._from_traced(mod, traced, multi_use_param_spec, loss_fn, **kwargs)
 
 
 class PipeSplitWrapper(torch.nn.Module):
