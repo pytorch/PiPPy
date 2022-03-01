@@ -18,6 +18,10 @@ world_size = int(os.environ["WORLD_SIZE"])
 
 rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
 
+@torch.fx.wrap
+def torch_ones_wrapper(*args, **kwargs):
+    return torch.ones(*args, **kwargs)
+
 if local_rank == 0:
     bs = 20
     seq_length = 512
@@ -38,9 +42,21 @@ if local_rank == 0:
     sig = inspect.signature(bert.forward)
     concrete_args = {p.name: p.default for p in sig.parameters.values() if p.name not in input_names}
 
-    hf_tracer = fx.HFTracer()
+    bert_traced = fx.symbolic_trace(bert)
 
-    bert_pipe = Pipe.from_tracing(bert, MULTI_USE_PARAM_CONFIG, tracer=hf_tracer, concrete_args=concrete_args)
+    # HACK to replace HF's non-resolvable wrappers with the original
+    # tensor constructor functions
+    # Requires this patch to HF: https://github.com/jamesr66a/transformers/commit/ede9d30f36f12be390692617ef76e2928b1612bd
+    for node in bert_traced.graph.nodes:
+        if node.op == 'call_function':
+            if getattr(node.target, '_orig', None) == torch.ones:
+                node.target = torch_ones_wrapper
+
+    bert_traced.recompile()
+
+    bert_pipe = Pipe._from_traced(bert, bert_traced, MULTI_USE_PARAM_CONFIG)
+
+    # bert_pipe = Pipe.from_tracing(bert, MULTI_USE_PARAM_CONFIG, tracer=hf_tracer, concrete_args=concrete_args)
 
     optimizer = torch.optim.SGD(bert_pipe.parameters(), 0.01)
 
