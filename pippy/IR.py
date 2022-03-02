@@ -6,7 +6,6 @@ import copy
 import operator
 from typing import Callable, Dict, List, Optional, Union, cast
 from enum import Enum
-import itertools
 
 # TODO:
 # 1. investigate gradient sync for shared parameters. how does DDP do it?
