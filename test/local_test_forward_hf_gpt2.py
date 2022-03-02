@@ -32,7 +32,6 @@ if local_rank == 0:
 
     gpt2 = GPT2Model(GPT2Config())
     gpt2_input = torch.zeros(bs, seq_length, dtype=torch.long).random_(gpt2.config.vocab_size)
-    gpt2(gpt2_input)
 
     for i in range(gpt2.config.n_layer):
         annotate_split_points(gpt2, {f'h.{i}': PipeSplitWrapper.SplitPoint.BEGINNING})
@@ -42,6 +41,7 @@ if local_rank == 0:
     sig = inspect.signature(gpt2.forward)
     concrete_args = {p.name: p.default for p in sig.parameters.values() if p.name not in input_names}
 
+    print('Tracing GPT2')
     gpt2_traced = fx.symbolic_trace(gpt2)
 
     # HACK to replace HF's non-resolvable wrappers with the original
@@ -52,7 +52,7 @@ if local_rank == 0:
             if getattr(node.target, '_orig', None) == torch.arange:
                 node.target = torch_arange_wrapper
 
-
+    print('Instantiating GPT2 Pipeline')
     gpt2_pipe = Pipe._from_traced(gpt2, gpt2_traced, MULTI_USE_PARAM_CONFIG)
 
     optimizer = torch.optim.SGD(gpt2_pipe.parameters(), 0.01)
@@ -60,7 +60,9 @@ if local_rank == 0:
     pipe_driver = PipelineDriverFillDrain(gpt2_pipe, world_size)
 
     # # Warm up and correctness runs
+    print('Running GPT2 pipeline. NB: if this is too slow, set OMP_NUM_THREADS to a higher value')
     out = pipe_driver.run(gpt2_input, chunks=5, _debug_mask_minibatches=True)
+    print('Running reference pipeline')
     ref_out = gpt2_pipe(gpt2_input)
 
     if CHECK_NUMERIC_EQUIVALENCE:
