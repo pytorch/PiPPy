@@ -18,6 +18,10 @@ world_size = int(os.environ["WORLD_SIZE"])
 
 rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
 
+@torch.fx.wrap
+def torch_arange_wrapper(*args, **kwargs):
+    return torch.arange(*args, **kwargs)
+
 if local_rank == 0:
     bs = 20
     seq_length = 512
@@ -38,9 +42,18 @@ if local_rank == 0:
     sig = inspect.signature(gpt2.forward)
     concrete_args = {p.name: p.default for p in sig.parameters.values() if p.name not in input_names}
 
-    hf_tracer = fx.HFTracer()
+    gpt2_traced = fx.symbolic_trace(gpt2)
 
-    gpt2_pipe = Pipe.from_tracing(gpt2, MULTI_USE_PARAM_CONFIG, tracer=hf_tracer, concrete_args=concrete_args)
+    # HACK to replace HF's non-resolvable wrappers with the original
+    # tensor constructor functions
+    # Requires this patch to HF: https://github.com/jamesr66a/transformers/commit/ede9d30f36f12be390692617ef76e2928b1612bd
+    for node in gpt2_traced.graph.nodes:
+        if node.op == 'call_function':
+            if getattr(node.target, '_orig', None) == torch.arange:
+                node.target = torch_arange_wrapper
+
+
+    gpt2_pipe = Pipe._from_traced(gpt2, gpt2_traced, MULTI_USE_PARAM_CONFIG)
 
     optimizer = torch.optim.SGD(gpt2_pipe.parameters(), 0.01)
 
