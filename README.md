@@ -257,6 +257,21 @@ Implementation details:
 
 * `RemoteInterpreter` splits an input mini-batch into micro-batches and interprets the top-level `Pipe` graph, issuing `invoke` calls to the associated `PipeStageExecutors` to orchestrate execution of the program in a pipelined fashion. `RemoteInterpreter` exposes a custom `run_until` method, which allows you to run the given interpreter until a given predicate is true for the next node to be executed. This allows you to implement schedules by executing subsets of the full pipeline and interleaving the computation from different micro-batches onto the `PipeStageExecutor`.
 
+# UI: Input and Output Chunking Specification and Program Replication
+
+In general, the inputs and outputs to a given PyTorch model/program can be any combination of primitive or collection types (including `torch.Tensor`). Pipelining in DL training relies upon the following two assumptions:
+
+* The program can be split across instructions (i.e. program text) and
+* The program can be split and parallelized across input data, run in parallel, and joined together at the output data
+
+Regarding the second requirement, we need to define both an API and a splitting semantics to a) confirm the program is splittable this way as well as b) actually do the splitting at runtime.
+
+We'll need two components:
+
+1. An API specifying how to decompose input values into constituent chunked (or replicated) components. This could be implemented with something like pytree
+2. An inference algorithm to ensure that the program can indeed be split in this way. Some cases where this breaks includes cases like BatchNorm, which has a reduction operation across the batch dimension
+3. An API similar to (1) that specifies how the single output value should be reconstructed from the chunked outputs.
+
 # Scheduler Design Notes
 
 We can examine two types of schedules to extract out the requirements for a general, programmable system for issuing and scheduling computation:

@@ -232,6 +232,7 @@ class Pipe(torch.nn.Module):
             ba = signature.bind(*args, **kwargs)
             ba.apply_defaults()
             executor_args = ba.arguments.values()
+
         return self.executor.run(*executor_args)
 
     def remap_qualname(self, qualname):
