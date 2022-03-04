@@ -31,7 +31,9 @@ def check_qualname_mapping(old, new):
     for _, old_qn in new.new_to_old_qualname_mapping.items():
         seen_old_qns.setdefault(old_qn)
 
-    for param_name, _ in old.named_parameters():
+    # Do not check recursive parameter names as they don't exist in the mapping
+    # The resursive names will be checked by tests with the remap_qualname call
+    for param_name, _ in old.named_parameters(recurse=False):
         assert param_name in seen_old_qns, f'Expected parameter {param_name} in {seen_old_qns}'
 
 class TestIR(unittest.TestCase):
@@ -48,7 +50,10 @@ class TestIR(unittest.TestCase):
         x = torch.randn(50, 512)
         torch.testing.assert_allclose(self.seq(x), seq_pipe(x))
 
-        check_qualname_mapping(old=self.seq, new=seq_pipe)
+        # Check exact qualname mapping
+        expected_map = {
+                'submod_0': '0', 'submod_1': '1', 'submod_2': '2', 'submod_3': '3', 'submod_4': '4', 'submod_5': '5'}
+        self.assertDictEqual(expected_map, seq_pipe.new_to_old_qualname_mapping)
 
     def test_tracing_transmit(self):
         ec_pipe = Pipe.from_tracing(self.ec, MultiUseParameterConfig.TRANSMIT)
@@ -56,7 +61,11 @@ class TestIR(unittest.TestCase):
         torch.testing.assert_allclose(self.ec(x), ec_pipe(x))
         assert ec_pipe.replicated_params == [
             {'submod_1': 'lin.weight', 'submod_2': 'lin.weight'}, {'submod_1': 'lin.bias', 'submod_2': 'lin.bias'}]
-        check_qualname_mapping(old=self.ec, new=ec_pipe)
+
+        # Check exact qualname mapping
+        expected_map = {
+                'submod_1.lin': 'lin', 'submod_2.lin': 'lin', 'submod_1.moved_buffer': 'buffer', 'submod_2.moved_mm_param2': 'mm_param2', 'submod_0.moved_mm_param': 'mm_param'}
+        self.assertDictEqual(expected_map, ec_pipe.new_to_old_qualname_mapping)
 
     def test_tracing_replicate(self):
         ec_pipe_replicated = Pipe.from_tracing(self.ec, MultiUseParameterConfig.REPLICATE)

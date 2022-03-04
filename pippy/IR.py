@@ -6,7 +6,6 @@ import copy
 import operator
 from typing import Callable, Dict, List, Optional, Union, cast
 from enum import Enum
-import itertools
 
 # TODO:
 # 1. investigate gradient sync for shared parameters. how does DDP do it?
@@ -238,32 +237,23 @@ class Pipe(torch.nn.Module):
         # TODO: annoying
         if qualname.startswith('split_gm.'):
             qualname = qualname[len('split_gm.'):]
+
+        # The qualname map does not store recursive items, thus,
+        # when passed a qualname with leaves, we need to perform longest prefix match
+        if qualname not in self.new_to_old_qualname_mapping:
+            # Split from the right, one each time
+            split_names = qualname.rsplit('.', 1)
+            leaf = split_names[-1]
+            while(len(split_names) > 1):
+                prefix = split_names[0]
+                if prefix in self.new_to_old_qualname_mapping:
+                    old_prefix = self.new_to_old_qualname_mapping[prefix]
+                    return '.'.join([old_prefix, leaf])
+                split_names = prefix.rsplit('.', 1)
+                leaf = '.'.join([split_names[-1], leaf])
+
+        # Either full name match, or key not found
         return self.new_to_old_qualname_mapping[qualname]
-
-    @staticmethod
-    def _hack_build_qualname_mapping(old : torch.nn.Module, new : torch.nn.Module):
-        # HACK: this derives a mapping of qualified names from the split module
-        # to the orignal module by inspecting the values present in the two
-        # modules. Ideally we would track this information while building the
-        # new module, which would probably involve modifying split_module
-        # to return its internal `Partition.targets` mapping. I am currently
-        # too lazy to do this the right way so we are left with this hack.
-        new_mod_qn_to_values = {k : v for k, v in itertools.chain(new.named_parameters(), new.named_modules())}
-        # Multiple qualnames may map to the same value, so we record potentially multiple qualnames
-        # for each value
-        old_values_to_qns = {}
-        for k, v in itertools.chain(old.named_parameters(), old.named_modules()):
-            old_values_to_qns.setdefault(v, {})
-            old_values_to_qns[v].setdefault(k)
-
-        new_to_old_mapping = {}
-        for k, v in new_mod_qn_to_values.items():
-            if v in old_values_to_qns:
-                old_qns = old_values_to_qns[v]
-                for old_qn in old_qns:
-                    new_to_old_mapping[k] = old_qn
-
-        return new_to_old_mapping
 
     @staticmethod
     def _number_and_count_forward_stages(gm : torch.fx.GraphModule):
@@ -350,6 +340,8 @@ class Pipe(torch.nn.Module):
         # Rename top-level submodules to align with the qualnames produced
         # by split_module in the `from_tracing` frontend
         copied_root_dict = dict(tracer.root.named_modules())
+        # Mapping from new qualname to old qualname
+        qualname_map : Dict[str, str] = {}
 
         for node in graph.nodes:
             if node.op == 'call_module':
@@ -359,6 +351,9 @@ class Pipe(torch.nn.Module):
                 # original Sequential, since we did a shallow copy of all modules above
                 assert new_target not in copied_root_dict
                 copied_root_dict[new_target] = copied_root_dict.pop(node.target)
+
+                # Map from new target name to old target name
+                qualname_map[new_target] = node.target
 
                 node.target = new_target
 
@@ -372,7 +367,7 @@ class Pipe(torch.nn.Module):
         else:
             has_loss_and_backward = False
 
-        return Pipe(gm, Pipe._hack_build_qualname_mapping(old=seq, new=gm), num_stages, has_loss_and_backward)
+        return Pipe(gm, qualname_map, num_stages, has_loss_and_backward)
 
     @staticmethod
     def from_traced(mod : torch.nn.Module, traced : torch.fx.GraphModule,
@@ -386,9 +381,11 @@ class Pipe(torch.nn.Module):
                 part_idx += 1
             return part_idx
 
+        # Ask split_module to return mapping from new qualname to old qualname
+        qualname_map : Dict[str, str] = {}
         # TODO: what does split do with module invocations? does it move the modules
         # into the submodules?
-        split = split_module(traced, mod, split_callback)
+        split = split_module(traced, mod, split_callback, qualname_map)
 
         # peephole to remove pipe_split
         for submodule in split.modules():
@@ -412,13 +409,25 @@ class Pipe(torch.nn.Module):
 
             return use_idxs[0]
 
-        def move_param_to_callee(callee, param_val, use_idx, is_buffer):
+        def move_param_to_callee(root, callee_name, param_val, use_idx, is_buffer):
+            callee = root.get_submodule(callee_name)
             new_param_name = f"moved_{node.target.replace('.', '_')}"
             assert not hasattr(callee, new_param_name)
             if is_buffer:
                 callee.register_buffer(new_param_name, param_val)
             else:
                 setattr(callee, new_param_name, param_val)
+
+            # Update qualname mapping
+            # New qualname will have submodule prefix
+            new_qualname = f"{callee_name}.{new_param_name}"
+            if node.target in qualname_map:
+                # Just in case the target name is already in the qualname_map
+                # returned by split_module() -- we update the mapping using the
+                # new name as a new key
+                qualname_map[new_qualname] = qualname_map.pop(node.target)
+            else:
+                qualname_map[new_qualname] = node.target
 
             ph_counter = 0
             for sn in callee.graph.nodes:
@@ -442,16 +451,13 @@ class Pipe(torch.nn.Module):
 
                 # Move parameter into submodule and replace PH with a get_attr
                 atoms = node.target.split('.')
-
-                atoms = node.target.split('.')
                 mod_itr = split
                 for atom in atoms[:-1]:
                     mod_itr = getattr(mod_itr, atom)
                 param_val = getattr(mod_itr, atoms[-1])
                 is_buffer = atoms[-1] in mod_itr._buffers
 
-                callee = split.get_submodule(user.target)
-                move_param_to_callee(callee, param_val, use_idx, is_buffer)
+                move_param_to_callee(split, user.target, param_val, use_idx, is_buffer)
 
                 delattr(mod_itr, atoms[-1])
 
@@ -500,14 +506,13 @@ class Pipe(torch.nn.Module):
                     param_val = getattr(mod_itr, atoms[-1])
                     is_buffer = atoms[-1] in mod_itr._buffers
 
-                    submod = split.get_submodule(first_user.target)
-
-                    callee_param_def = move_param_to_callee(submod, param_val, use_idx, is_buffer)
+                    callee_param_def = move_param_to_callee(split, first_user.target, param_val, use_idx, is_buffer)
 
                     delattr(mod_itr, atoms[-1])
 
                     # Add extra output to the callee and switch references to the parameter
                     # access in the pipeline graph to use this.
+                    submod = split.get_submodule(first_user.target)
                     callee_output_nodes = [n for n in submod.graph.nodes if n.op == 'output']
                     assert len(callee_output_nodes) == 1
                     callee_output_node = callee_output_nodes[0]
@@ -550,8 +555,7 @@ class Pipe(torch.nn.Module):
                         param_val = getattr(mod_itr, atoms[-1])
                         is_buffer = atoms[-1] in mod_itr._buffers
 
-                        submod = split.get_submodule(user.target)
-                        move_param_to_callee(submod, param_val, use_idx, is_buffer)
+                        move_param_to_callee(split, user.target, param_val, use_idx, is_buffer)
 
                     atoms = node.target.split('.')
                     mod_itr = split
@@ -577,7 +581,7 @@ class Pipe(torch.nn.Module):
         else:
             has_loss_and_backward = False
 
-        return Pipe(split, Pipe._hack_build_qualname_mapping(old=mod, new=split), num_stages, has_loss_and_backward)
+        return Pipe(split, qualname_map, num_stages, has_loss_and_backward)
 
     @staticmethod
     def from_tracing(mod : torch.nn.Module, multi_use_param_spec : Optional[MultiUseParamSpec] = None,
