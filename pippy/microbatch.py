@@ -204,13 +204,14 @@ def merge_chunks(chunks, chunk_spec, _debug_mask_minibatches : bool = False):
 
                     slice_indices = [slice(None, None, None)] * partial_value.ndim
                     slice_indices[arg.split_dim] = slice(chunk_start_idx, chunk_end_idx)
-                    values_to_cat.append(partial_value[slice_indices])
+                    sliced = partial_value[slice_indices]
+                    values_to_cat.append(sliced)
 
                     chunk_start_idx = chunk_end_idx
             else:
                 values_to_cat = partial_values
 
-            args_flattened.append(torch.cat(partial_values, dim=arg.split_dim))
+            args_flattened.append(torch.cat(values_to_cat, dim=arg.split_dim))
         else:
             value = chunks_flattened[0][arg_idx]
             for chunk_idx in range(1, len(chunks_flattened)):
