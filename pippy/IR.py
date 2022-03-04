@@ -412,10 +412,13 @@ class Pipe(torch.nn.Module):
 
             return use_idxs[0]
 
-        def move_param_to_callee(callee, param_val, use_idx):
+        def move_param_to_callee(callee, param_val, use_idx, is_buffer):
             new_param_name = f"moved_{node.target.replace('.', '_')}"
             assert not hasattr(callee, new_param_name)
-            setattr(callee, new_param_name, param_val)
+            if is_buffer:
+                callee.register_buffer(new_param_name, param_val)
+            else:
+                setattr(callee, new_param_name, param_val)
 
             ph_counter = 0
             for sn in callee.graph.nodes:
@@ -438,17 +441,17 @@ class Pipe(torch.nn.Module):
                 use_idx = delete_user_reference(node, user)
 
                 # Move parameter into submodule and replace PH with a get_attr
-                param_val = split
-                for atom in node.target.split('.'):
-                    param_val = getattr(param_val, atom)
-
-                callee = split.get_submodule(user.target)
-                move_param_to_callee(callee, param_val, use_idx)
+                atoms = node.target.split('.')
 
                 atoms = node.target.split('.')
                 mod_itr = split
                 for atom in atoms[:-1]:
                     mod_itr = getattr(mod_itr, atom)
+                param_val = getattr(mod_itr, atoms[-1])
+                is_buffer = atoms[-1] in mod_itr._buffers
+
+                callee = split.get_submodule(user.target)
+                move_param_to_callee(callee, param_val, use_idx, is_buffer)
 
                 delattr(mod_itr, atoms[-1])
 
@@ -490,18 +493,16 @@ class Pipe(torch.nn.Module):
 
                     use_idx = delete_user_reference(node, first_user, delete_node=False)
 
-                    param_val = split
-                    for atom in node.target.split('.'):
-                        param_val = getattr(param_val, atom)
-
-                    submod = split.get_submodule(first_user.target)
-
-                    callee_param_def = move_param_to_callee(submod, param_val, use_idx)
-
                     atoms = node.target.split('.')
                     mod_itr = split
                     for atom in atoms[:-1]:
                         mod_itr = getattr(mod_itr, atom)
+                    param_val = getattr(mod_itr, atoms[-1])
+                    is_buffer = atoms[-1] in mod_itr._buffers
+
+                    submod = split.get_submodule(first_user.target)
+
+                    callee_param_def = move_param_to_callee(submod, param_val, use_idx, is_buffer)
 
                     delattr(mod_itr, atoms[-1])
 
@@ -542,11 +543,15 @@ class Pipe(torch.nn.Module):
                 elif reuse_type == MultiUseParameterConfig.REPLICATE:
                     for user in copy.copy(node.users):
                         use_idx = delete_user_reference(node, user, delete_node=False)
-                        param_val = split
-                        for atom in node.target.split('.'):
-                            param_val = getattr(param_val, atom)
+                        atoms = node.target.split('.')
+                        mod_itr = split
+                        for atom in atoms[:-1]:
+                            mod_itr = getattr(mod_itr, atom)
+                        param_val = getattr(mod_itr, atoms[-1])
+                        is_buffer = atoms[-1] in mod_itr._buffers
+
                         submod = split.get_submodule(user.target)
-                        param_access_node = move_param_to_callee(submod, param_val, use_idx)
+                        move_param_to_callee(submod, param_val, use_idx, is_buffer)
 
                     atoms = node.target.split('.')
                     mod_itr = split

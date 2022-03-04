@@ -71,13 +71,14 @@ if local_rank == 0:
             self.mm_param = torch.nn.Parameter(rand_zeros_or_ones((d_hid, d_hid)))
             self.mm_param2 = torch.nn.Parameter(rand_zeros_or_ones((d_hid, d_hid)))
             self.lin = ZeroOneLinear(d_hid, d_hid)
+            self.register_buffer('buffer', 0.00001 * rand_zeros_or_ones((bs + 100, d_hid)))
 
         def forward(self, x):
             x = torch.mm(x, self.mm_param)
             skip_connection = x
             x = torch.relu(x)
             pipe_split()
-            x = torch.mm(x, self.mm_param)
+            x = torch.mm(x, self.mm_param) + self.buffer[:x.shape[0]]
             x = self.lin(x)
             pipe_split()
             x = torch.relu(x)
