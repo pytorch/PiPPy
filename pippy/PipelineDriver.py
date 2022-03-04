@@ -620,7 +620,6 @@ class PipelineDriverFillDrain(PipelineDriverBase):
             interp.run_until(lambda n : False)
             output_vals.append(interp.env[last_node])
 
-        # TODO: non-single-output returns?
-        local_results = [to_here(result) for result in output_vals]
+        local_results = torch.fx.node.map_aggregate(output_vals, to_here)
 
         return merge_chunks(local_results, self.output_chunk_spec, _debug_mask_minibatches)
