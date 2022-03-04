@@ -186,7 +186,7 @@ class Pipe(torch.nn.Module):
         self.has_loss_and_backwards = has_loss_and_backward
 
         for node in split_gm.graph.nodes:
-            assert (node.op in {'call_module', 'placeholder', 'output'} or 
+            assert (node.op in {'call_module', 'placeholder', 'output'} or
                    (node.op, node.target) == ('call_function', operator.getitem) or
                    (node.op, node.target) == ('call_method', 'backward') or
                    (node.op, node.target) == ('call_function', stage_backward) or
@@ -386,15 +386,9 @@ class Pipe(torch.nn.Module):
         return Pipe(gm, qualname_map, num_stages, has_loss_and_backward)
 
     @staticmethod
-<<<<<<< HEAD
-    def _from_traced(mod: torch.nn.Module, traced: torch.fx.GraphModule,
-                     multi_use_param_spec: Optional[MultiUseParamSpec] = None,
-                     loss_fn: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None, **kwargs):
-=======
     def _from_traced(mod : torch.nn.Module, traced : torch.fx.GraphModule,
                      multi_use_param_spec : Optional[MultiUseParamSpec] = None,
                      loss_fn : Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None, **kwargs):
->>>>>>> fix lint
         part_idx = 0
 
         def split_callback(n : torch.fx.Node):
@@ -543,12 +537,12 @@ class Pipe(torch.nn.Module):
                     if isinstance(callee_output_node.args[0], tuple):
                         new_output_args = callee_output_node.args[0] + (callee_param_def,)
                         callee_output_node.args = (new_output_args,)
-                        new_output_idx = len(new_output_args) - 1                        
+                        new_output_idx = len(new_output_args) - 1
                         promoted_to_tuple = False
                     else:
                         new_output_args = (callee_output_node.args[0], callee_param_def)
                         callee_output_node.args = (new_output_args,)
-                        new_output_idx = len(new_output_args) - 1                        
+                        new_output_idx = len(new_output_args) - 1
                         promoted_to_tuple = True
 
                     submod.graph.lint()
