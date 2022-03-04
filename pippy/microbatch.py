@@ -1,6 +1,5 @@
 import torch
 
-from typing import NamedTuple
 from torch.utils._pytree import tree_flatten, tree_unflatten
 
 
@@ -32,7 +31,7 @@ def shard_dict_of_args(args_dict, args_chunk_spec, num_chunks, _debug_mask_minib
 
         if len(flat) != len(chunk_spec_flat):
             raise ValueError(f'Argument value {arg} did not have the same number of '
-                            f'values as as chunk spec {chunk_spec}')
+                             f'values as as chunk spec {chunk_spec}')
 
         sharded_arg_flat = []
 
