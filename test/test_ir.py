@@ -5,30 +5,31 @@ import unittest
 from pippy.IR import Pipe, pipe_split, MultiUseParameterConfig, annotate_split_points, PipeSplitWrapper
 
 class ExampleCode(torch.nn.Module):
-  def __init__(self):
-    super().__init__()
-    self.mm_param = torch.nn.Parameter(torch.randn(512, 512))
-    self.mm_param2 = torch.nn.Parameter(torch.randn(512, 512))
-    self.lin = torch.nn.Linear(512, 512)
+    def __init__(self):
+        super().__init__()
+        self.mm_param = torch.nn.Parameter(torch.randn(512, 512))
+        self.mm_param2 = torch.nn.Parameter(torch.randn(512, 512))
+        self.lin = torch.nn.Linear(512, 512)
+        self.register_buffer('buffer', 0.001 * torch.randn(512))
 
-  def forward(self, x):
-    x = torch.mm(x, self.mm_param)
-    skip_connection = x
-    x = torch.relu(x)
-    pipe_split()
-    x = torch.mm(x, self.mm_param)
-    x = self.lin(x)
-    pipe_split()
-    x = torch.relu(x)
-    x = x + skip_connection
-    x = torch.mm(x, self.mm_param2)
-    x = self.lin(x)
-    return x
+    def forward(self, x):
+        x = torch.mm(x, self.mm_param)
+        skip_connection = x
+        x = torch.relu(x)
+        pipe_split()
+        x = torch.mm(x, self.mm_param) + self.buffer
+        x = self.lin(x)
+        pipe_split()
+        x = torch.relu(x)
+        x = x + skip_connection
+        x = torch.mm(x, self.mm_param2)
+        x = self.lin(x)
+        return x
 
 def check_qualname_mapping(old, new):
     seen_old_qns = {}
     for _, old_qn in new.new_to_old_qualname_mapping.items():
-            seen_old_qns.setdefault(old_qn)
+        seen_old_qns.setdefault(old_qn)
 
     # Do not check recursive parameter names as they don't exist in the mapping
     # The resursive names will be checked by tests with the remap_qualname call
@@ -63,7 +64,7 @@ class TestIR(unittest.TestCase):
 
         # Check exact qualname mapping
         expected_map = {
-                'submod_1.lin': 'lin', 'submod_2.lin': 'lin', 'submod_2.moved_mm_param2': 'mm_param2', 'submod_0.moved_mm_param': 'mm_param'}
+                'submod_1.lin': 'lin', 'submod_2.lin': 'lin', 'submod_1.moved_buffer': 'buffer', 'submod_2.moved_mm_param2': 'mm_param2', 'submod_0.moved_mm_param': 'mm_param'}
         self.assertDictEqual(expected_map, ec_pipe.new_to_old_qualname_mapping)
 
     def test_tracing_replicate(self):
@@ -289,6 +290,13 @@ class TestIR(unittest.TestCase):
         x = torch.randn(5, 5)
         torch.testing.assert_allclose(pipe(x), b(x))
         assert 'submod_1' in dict(pipe.split_gm.named_modules())
+
+    def test_from_tracing_preserves_buffer(self):
+        ec = ExampleCode()
+        pipe = Pipe.from_tracing(ec)
+        assert 'moved_buffer' in dict(pipe.split_gm.submod_1.named_buffers())
+        # NB: identity comparison
+        assert ec.buffer is pipe.split_gm.submod_1.moved_buffer
 
     def test_annotate_split_points_end(self):
         class Foo(torch.nn.Module):
