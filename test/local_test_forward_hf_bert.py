@@ -5,6 +5,7 @@ import torch.distributed.rpc as rpc
 
 import transformers.utils.fx as fx
 from pippy.IR import MultiUseParameterConfig, Pipe, PipeSplitWrapper, annotate_split_points
+from pippy.microbatch import TensorChunkSpec
 from pippy.PipelineDriver import PipelineDriverFillDrain
 from transformers import *
 
@@ -60,19 +61,24 @@ if local_rank == 0:
 
     optimizer = torch.optim.SGD(bert_pipe.parameters(), 0.01)
 
-    pipe_driver = PipelineDriverFillDrain(bert_pipe, world_size)
+    args_chunk_spec = (TensorChunkSpec(0),)
+    kwargs_chunk_spec = {}
+    output_chunk_spec = {'last_hidden_state' : TensorChunkSpec(0), 'pooler_output': TensorChunkSpec(0)}
+
+    pipe_driver = PipelineDriverFillDrain(bert_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size)
 
     # # Warm up and correctness runs
-    out = pipe_driver.run(bert_input, chunks=5, _debug_mask_minibatches=True)
+    out = pipe_driver.run((bert_input,), {}, chunks=5, _debug_mask_minibatches=True)
     ref_out = bert_pipe(bert_input)
 
     if CHECK_NUMERIC_EQUIVALENCE:
-        torch.testing.assert_allclose(out, ref_out)
+        torch.testing.assert_allclose(out['last_hidden_state'], ref_out['last_hidden_state'])
+        torch.testing.assert_allclose(out['pooler_output'], ref_out['pooler_output'])
         print(f'equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}')
 
     # # Profiling runs
     with torch.autograd.profiler_legacy.profile(enabled=PROFILING_ENABLED) as prof:
-        out = pipe_driver.run(bert_input, chunks=5, _debug_mask_minibatches=False)
+        out = pipe_driver.run((bert_input,), {}, chunks=5, _debug_mask_minibatches=False)
         ref_out = bert_pipe(bert_input)
         print(f'profiling run completed {torch.sum(ref_out)} ref {torch.sum(ref_out)}')
     if PROFILING_ENABLED:
