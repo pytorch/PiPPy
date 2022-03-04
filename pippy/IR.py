@@ -237,6 +237,22 @@ class Pipe(torch.nn.Module):
         # TODO: annoying
         if qualname.startswith('split_gm.'):
             qualname = qualname[len('split_gm.'):]
+
+        # The qualname map does not store recursive items, thus,
+        # when passed a qualname with leaves, we need to perform longest prefix match
+        if qualname not in self.new_to_old_qualname_mapping:
+            # Split from the right, one each time
+            split_names = qualname.rsplit('.', 1)
+            leaf = split_names[-1]
+            while(len(split_names) > 1):
+                prefix = split_names[0]
+                if prefix in self.new_to_old_qualname_mapping:
+                    old_prefix = self.new_to_old_qualname_mapping[prefix]
+                    return '.'.join([old_prefix, leaf])
+                split_names = prefix.rsplit('.', 1)
+                leaf = '.'.join([split_names[-1], leaf])
+
+        # Either full name match, or key not found
         return self.new_to_old_qualname_mapping[qualname]
 
     @staticmethod
