@@ -433,7 +433,28 @@ class TestIR(unittest.TestCase):
             assert isinstance(arg, tuple) and len(arg) == 1
             torch.testing.assert_allclose(arg[0], x[chunk_idx:chunk_idx + 1, :])
 
-        # Test execution
+        assert len(kwargs_split) == NCHUNKS
+        for i, kwarg in enumerate(kwargs_split):
+            assert isinstance(kwarg, dict) and len(kwarg) == 1 and 'input_nt' in kwarg
+            input_nt_to_test = kwarg['input_nt']
+            assert isinstance(input_nt_to_test, SpecialInputNamedTuple)
+            torch.testing.assert_allclose(input_nt_to_test.my_tensor, input_nt.my_tensor[i:i+1, :])
+            assert input_nt_to_test.my_integer == 42
+
+        # Test with _debug_mask_minibatches=True
+        args_split_masked, kwargs_split_masked = split_args_kwargs_into_chunks(
+            (x,), {'input_nt': input_nt}, (TensorChunkSpec(0),),
+            {'input_nt': SpecialInputNamedTuple(TensorChunkSpec(0), None)}, chunks=NCHUNKS,
+            _debug_mask_minibatches=True)
+
+        assert len(args_split_masked) == NCHUNKS
+        for chunk_idx, arg in enumerate(args_split_masked):
+            assert isinstance(arg, tuple) and len(arg) == 1
+            torch.testing.assert_allclose(arg[0][0:chunk_idx, :], torch.zeros(chunk_idx, arg[0].size(1)))
+            torch.testing.assert_allclose(arg[0][chunk_idx:chunk_idx + 1, :], x[chunk_idx:chunk_idx + 1, :])
+            torch.testing.assert_allclose(arg[0][chunk_idx + 1:, :], torch.zeros(arg[0].size(0) - chunk_idx - 1, arg[0].size(1)))
+
+        # Test execution w/ merge
         model_out_chunks = []
         for chunk_idx in range(NCHUNKS):
             model_out_chunks.append(pipe(*args_split[chunk_idx], **kwargs_split[chunk_idx]))
@@ -449,6 +470,26 @@ class TestIR(unittest.TestCase):
 
         torch.testing.assert_allclose(chunks_merged['added'], ref_out['added'])
         torch.testing.assert_allclose(chunks_merged['multiplied'], ref_out['multiplied'])
+
+
+        # Test execution w/ merge w/ _debug_mask_minibatches=True
+        model_out_chunks_mask = []
+        for chunk_idx in range(NCHUNKS):
+            model_out_chunks_mask.append(pipe(*args_split_masked[chunk_idx], **kwargs_split_masked[chunk_idx]))
+
+        assert len(model_out_chunks) == NCHUNKS
+        catted_added = torch.cat(tuple(v['added'][i:i+1, :] for i, v in enumerate(model_out_chunks_mask)))
+        catted_multiplied = torch.cat(tuple(v['multiplied'][i:i+1, :] for i, v in enumerate(model_out_chunks_mask)))
+
+        torch.testing.assert_allclose(catted_added, ref_out['added'])
+        torch.testing.assert_allclose(catted_multiplied, ref_out['multiplied'])
+
+        chunks_merged_masked = merge_chunks(model_out_chunks, {'added': TensorChunkSpec(0), 'multiplied': TensorChunkSpec(0)},
+                                            _debug_mask_minibatches=True)
+
+        torch.testing.assert_allclose(chunks_merged_masked['added'], ref_out['added'])
+        torch.testing.assert_allclose(chunks_merged_masked['multiplied'], ref_out['multiplied'])
+
 
 
 if __name__ == '__main__':
