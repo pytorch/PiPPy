@@ -5,6 +5,7 @@ import copy
 
 from pippy.IR import MultiUseParameterConfig, Pipe, pipe_split
 from pippy.PipelineDriver import PipelineDriverFillDrain
+from pippy.microbatch import TensorChunkSpec, CustomReducer
 
 # TODOs for implementing forward/backward/loss with schedules:
 # * ability to switch between full-batch loss vs. per-microbatch loss. shen mentioned
@@ -97,13 +98,17 @@ if local_rank == 0:
     ec_pipe = Pipe.from_tracing(ec, MULTI_USE_PARAM_CONFIG, loss_fn=mse_loss)
     print(ec_pipe.split_gm)
 
-    pipe_driver = PipelineDriverFillDrain(ec_pipe, world_size)
+    args_chunk_spec = (TensorChunkSpec(0), TensorChunkSpec(0))
+    kwargs_chunk_spec = {}
+    output_chunk_spec = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
+
+    pipe_driver = PipelineDriverFillDrain(ec_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size)
 
     input = torch.randn(bs, d_hid)
     target = torch.randn(bs, d_hid)
 
     # TODO: distributed optimizer
-    out = pipe_driver.run(input, target, chunks=CHUNKS, _debug_mask_minibatches = DEBUG_MASK_MINIBATCHES)
+    out = pipe_driver.run((input, target), {}, chunks=CHUNKS, _debug_mask_minibatches = DEBUG_MASK_MINIBATCHES)
 
     # TODO: barrier
     import time

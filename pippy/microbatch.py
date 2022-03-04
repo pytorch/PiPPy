@@ -4,6 +4,11 @@ from typing import NamedTuple
 from torch.utils._pytree import tree_flatten, tree_unflatten
 
 
+class CustomReducer:
+    def __init__(self, init_value, reduce_fn):
+        self.init_value = init_value
+        self.reduce_fn = reduce_fn
+
 class TensorChunkSpec:
     def __init__(self, split_dim):
         self.split_dim = split_dim
@@ -212,6 +217,13 @@ def merge_chunks(chunks, chunk_spec, _debug_mask_minibatches : bool = False):
                 values_to_cat = partial_values
 
             args_flattened.append(torch.cat(values_to_cat, dim=arg.split_dim))
+        elif isinstance(arg, CustomReducer):
+            reduced_val = arg.init_value
+
+            for chunk_idx in range(len(chunks_flattened)):
+                reduced_val = arg.reduce_fn(reduced_val, chunks_flattened[chunk_idx][arg_idx])
+
+            args_flattened.append(reduced_val)
         else:
             value = chunks_flattened[0][arg_idx]
             for chunk_idx in range(1, len(chunks_flattened)):
