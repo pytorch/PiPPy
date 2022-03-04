@@ -32,6 +32,7 @@ if local_rank == 0:
     print(f'REPLICATE config: {REPLICATE} -> {MULTI_USE_PARAM_CONFIG}')
 
     bert = BertModel(BertConfig())
+    bert.eval()
     bert_input = torch.zeros(bs, seq_length, dtype=torch.long).random_(bert.config.vocab_size)
     bert(bert_input)
 
@@ -74,13 +75,13 @@ if local_rank == 0:
     if CHECK_NUMERIC_EQUIVALENCE:
         torch.testing.assert_allclose(out['last_hidden_state'], ref_out['last_hidden_state'])
         torch.testing.assert_allclose(out['pooler_output'], ref_out['pooler_output'])
-        print(f'equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}')
+        print(f'equivalence test passed {torch.sum(out["last_hidden_state"])} ref {torch.sum(ref_out["last_hidden_state"])}')
 
     # # Profiling runs
     with torch.autograd.profiler_legacy.profile(enabled=PROFILING_ENABLED) as prof:
         out = pipe_driver.run((bert_input,), {}, chunks=5, _debug_mask_minibatches=False)
         ref_out = bert_pipe(bert_input)
-        print(f'profiling run completed {torch.sum(ref_out)} ref {torch.sum(ref_out)}')
+        print(f'profiling run completed {torch.sum(out["last_hidden_state"])} ref {torch.sum(ref_out["last_hidden_state"])}')
     if PROFILING_ENABLED:
         prof.export_chrome_trace('pipe.csv')
 
