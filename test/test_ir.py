@@ -477,14 +477,14 @@ class TestIR(unittest.TestCase):
         for chunk_idx in range(NCHUNKS):
             model_out_chunks_mask.append(pipe(*args_split_masked[chunk_idx], **kwargs_split_masked[chunk_idx]))
 
-        assert len(model_out_chunks) == NCHUNKS
+        assert len(model_out_chunks_mask) == NCHUNKS
         catted_added = torch.cat(tuple(v['added'][i:i+1, :] for i, v in enumerate(model_out_chunks_mask)))
         catted_multiplied = torch.cat(tuple(v['multiplied'][i:i+1, :] for i, v in enumerate(model_out_chunks_mask)))
 
         torch.testing.assert_allclose(catted_added, ref_out['added'])
         torch.testing.assert_allclose(catted_multiplied, ref_out['multiplied'])
 
-        chunks_merged_masked = merge_chunks(model_out_chunks, {'added': TensorChunkSpec(0), 'multiplied': TensorChunkSpec(0)},
+        chunks_merged_masked = merge_chunks(model_out_chunks_mask, {'added': TensorChunkSpec(0), 'multiplied': TensorChunkSpec(0)},
                                             _debug_mask_minibatches=True)
 
         torch.testing.assert_allclose(chunks_merged_masked['added'], ref_out['added'])

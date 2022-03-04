@@ -204,6 +204,7 @@ def merge_chunks(chunks, chunk_spec, _debug_mask_minibatches : bool = False):
 
                 values_to_cat = []
                 chunk_start_idx = 0
+                assert len(partial_values) == len(meta_chunks)
                 for partial_value, meta_chunk in zip(partial_values, meta_chunks):
                     chunk_end_idx = chunk_start_idx + meta_chunk.size(arg.split_dim)
 
@@ -213,6 +214,7 @@ def merge_chunks(chunks, chunk_spec, _debug_mask_minibatches : bool = False):
                     values_to_cat.append(sliced)
 
                     chunk_start_idx = chunk_end_idx
+
             else:
                 values_to_cat = partial_values
 
