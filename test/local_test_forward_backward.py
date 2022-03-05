@@ -5,7 +5,7 @@ import copy
 
 from pippy.IR import MultiUseParameterConfig, Pipe, pipe_split
 from pippy.PipelineDriver import PipelineDriverFillDrain
-from pippy.microbatch import TensorChunkSpec, CustomReducer
+from pippy.microbatch import TensorChunkSpec, CustomReducer, split_args_kwargs_into_chunks
 
 # TODOs for implementing forward/backward/loss with schedules:
 # * ability to switch between full-batch loss vs. per-microbatch loss. shen mentioned
@@ -151,13 +151,12 @@ if local_rank == 0:
     optim = torch.optim.SGD(ec_pipe.split_gm.parameters(), lr=0.05)
     optim.zero_grad()
     if REF_USE_MICROBATCHES:
-        split_args, _ = PipelineDriverFillDrain._split_args_into_microbatches(input, target, chunks=CHUNKS,
-            batch_dims=[0, 0], _debug_mask_minibatches = DEBUG_MASK_MINIBATCHES)
+        args_split, kwargs_split = split_args_kwargs_into_chunks((input, target), {}, args_chunk_spec,
+                                                            kwargs_chunk_spec, CHUNKS,
+                                                            DEBUG_MASK_MINIBATCHES)
         ref_outs = []
         for chunk in range(CHUNKS):
-            input_chunk = split_args[0].chunks[chunk]
-            target_chunk = split_args[1].chunks[chunk]
-            ref_outs.append(ec_pipe(input_chunk, target_chunk))
+            ref_outs.append(ec_pipe(*args_split[chunk]))
         ref_out = torch.sum(torch.stack(ref_outs))
     else:
         ref_out = ec_pipe(input, target)

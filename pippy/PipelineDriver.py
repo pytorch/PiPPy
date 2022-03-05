@@ -411,71 +411,6 @@ class PipelineDriverBase:
         raise NotImplementedError('PipelineDriverBase is an abstract base class, please use a concrete '
                                   'implementation class.')
 
-    class MicroBatchSplitTensor(NamedTuple):
-        chunks : List[torch.Tensor]
-
-    @classmethod
-    def _split_args_into_microbatches(cls, *args, chunks : int, batch_dims : Optional[List[Optional[int]]] = None,
-                                      _debug_mask_minibatches : bool = False):
-        logging.info(f'[root] Splitting args with sizes '
-                     f'{[arg.shape if isinstance(arg, torch.Tensor) else arg for arg in args]} into {chunks} chunks.')
-        # Calculate full batch dims array
-        if batch_dims is None:
-            batch_dims = [0 if isinstance(arg, torch.Tensor) else None for arg in args]
-        assert isinstance(batch_dims, list)
-        logging.info(f'[root] Arguments have batch dims {batch_dims}')
-
-        if len(args) != len(batch_dims):
-            raise RuntimeError('Length of `batch_dims` must match')
-        split_args = []
-
-        # TODO: assuming input splits are the same as outputs
-        splits_per_arg = []
-        for i, (arg, batch_dim) in enumerate(zip(args, batch_dims)):
-            if isinstance(arg, torch.Tensor):
-                if batch_dim is None:
-                    raise RuntimeError(f'Batch dimension not specified for arg {i}')
-
-                logging.info(f'[root] Splitting arg {i} with size {arg.shape} into {chunks} chunks along dimension {batch_dim}')
-                chunk_tensors = torch.chunk(arg, chunks)
-
-                if _debug_mask_minibatches:
-                    splits = []
-                    chunk_tensors_debug = []
-                    predecessor = 0
-
-                    for t in chunk_tensors:
-                        successor = predecessor + t.shape[batch_dim]
-                        splits.append((predecessor, successor))
-
-                        new_tensor = torch.zeros_like(arg)
-                        new_tensor[predecessor:successor] = t
-                        chunk_tensors_debug.append(new_tensor)
-
-                        predecessor = successor
-
-                    logging.info(f'[root] splits {splits}')
-                    logging.info(f'[root] Chunk tensor sizes {[t.shape for t in chunk_tensors]}')
-
-                    splits_per_arg.append(splits)
-                    split_args.append(cls.MicroBatchSplitTensor(chunk_tensors_debug))
-
-                else:
-                    split_args.append(cls.MicroBatchSplitTensor(chunk_tensors))
-
-            else:
-                logging.info(f'[root] Arg {i} is a non-tensor value, not splitting')
-                split_args.append(arg)
-
-        def split_str(a):
-            if isinstance(a, cls.MicroBatchSplitTensor):
-                return f'MicrobatchSplitTensor(chunks={[c.shape for c in a.chunks]}'
-            else:
-                return str(a)
-        logging.info(f'[root] Final splits: {[split_str(a) for a in split_args]}')
-
-        return split_args, splits_per_arg
-
 class RemoteInterpreter(torch.fx.Interpreter):
     def __init__(self, remote_stage_executor_rrefs, module, cur_microbatch : int,   
                  args, kwargs, garbage_collect_values=True):
@@ -573,8 +508,6 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         # 3) Scheduling - Use control logic to advance interpreters to issue round-robin
         #       forward work items, then round-robin losses, then round-robin backwards
 
-        # split_args, splits_per_arg = PipelineDriverFillDrain._split_args_into_microbatches(
-        #     *args, chunks=chunks, batch_dims=batch_dims, _debug_mask_minibatches=_debug_mask_minibatches)
         args_split, kwargs_split = split_args_kwargs_into_chunks(args, kwargs, self.args_chunk_spec,
                                                                  self.kwargs_chunk_spec, chunks,
                                                                  _debug_mask_minibatches)
