@@ -3,6 +3,7 @@ import torch.distributed.rpc as rpc
 
 from pippy.IR import MultiUseParameterConfig, Pipe, pipe_split
 from pippy.PipelineDriver import PipelineDriverFillDrain
+from pippy.microbatch import TensorChunkSpec
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
@@ -41,7 +42,7 @@ if local_rank == 0:
             x = x + skip_connection
             x = torch.mm(x, self.mm_param2)
             x = self.lin(x)
-            return x
+            return {'out': x}
 
     ec = ExampleCode()
     ec(torch.randn(bs, d_hid))
@@ -50,23 +51,27 @@ if local_rank == 0:
 
     optimizer = torch.optim.SGD(ec_pipe.parameters(), 0.01)
 
-    pipe_driver = PipelineDriverFillDrain(ec_pipe, world_size)
+    args_chunk_spec = (TensorChunkSpec(0),)
+    kwargs_chunk_spec = {}
+    output_chunk_spec = {'out': TensorChunkSpec(0)}
+
+    pipe_driver = PipelineDriverFillDrain(ec_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size)
 
     input = torch.randn(bs, d_hid)
 
     # # Warm up and correctness runs
-    out = pipe_driver.run(input, chunks=5, _debug_mask_minibatches = True)
+    out = pipe_driver.run((input,), {}, chunks=5, _debug_mask_minibatches = True)
     ref_out = ec_pipe(input)
 
     if CHECK_NUMERIC_EQUIVALENCE:
-        torch.testing.assert_allclose(out, ref_out)
-        print(f'equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}')
+        torch.testing.assert_allclose(out['out'], ref_out['out'])
+        print(f'equivalence test passed {torch.sum(out["out"])} ref {torch.sum(ref_out["out"])}')
         
     # # Profiling runs
     with torch.autograd.profiler_legacy.profile(enabled=PROFILING_ENABLED) as prof:
-        out = pipe_driver.run(input, chunks=5, _debug_mask_minibatches = False)
+        out = pipe_driver.run((input,), {}, chunks=5, _debug_mask_minibatches = False)
         ref_out = ec_pipe(input)
-        print(f'profiling run completed {torch.sum(ref_out)} ref {torch.sum(ref_out)}')
+        print(f'profiling run completed {torch.sum(out["out"])} ref {torch.sum(ref_out["out"])}')
     if PROFILING_ENABLED:
         prof.export_chrome_trace('pipe.csv')
 

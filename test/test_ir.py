@@ -1,8 +1,10 @@
 import torch
 import copy
 import unittest
+from typing import NamedTuple
 
 from pippy.IR import Pipe, pipe_split, MultiUseParameterConfig, annotate_split_points, PipeSplitWrapper
+from pippy.microbatch import TensorChunkSpec, split_args_kwargs_into_chunks, merge_chunks
 
 class ExampleCode(torch.nn.Module):
     def __init__(self):
@@ -380,6 +382,124 @@ class TestIR(unittest.TestCase):
             pipe(2, x=3)
         with self.assertRaisesRegex(TypeError, "multiple values for argument 'x'"):
             pipe(1, 2, x=3, y=4)
+
+    def test_pipe_generalized_chunking(self):
+        class SpecialInputNamedTuple(NamedTuple):
+            my_tensor : torch.Tensor
+            my_integer : int
+
+        class TheModel(torch.nn.Module):
+            def forward(self, x : torch.Tensor, input_nt : SpecialInputNamedTuple):
+                added = x + input_nt.my_tensor + input_nt.my_integer
+                pipe_split()
+                multiplied = x * input_nt.my_integer
+                return {'added' : added, 'multiplied' : multiplied}
+
+        tm = TheModel()
+        x = torch.randn(5, 3)
+        input_nt = SpecialInputNamedTuple(torch.randn(5, 3), 42)
+        ref_out = tm(x, input_nt)
+
+        pipe = Pipe.from_tracing(tm)
+        pipe_out = pipe(x, input_nt)
+
+        torch.testing.assert_allclose(pipe_out['added'], ref_out['added'])
+        torch.testing.assert_allclose(pipe_out['multiplied'], ref_out['multiplied'])
+
+        NCHUNKS = 5
+
+        args_split, kwargs_split = split_args_kwargs_into_chunks(
+            (x,), {'input_nt': input_nt}, (None,), {'input_nt': SpecialInputNamedTuple(TensorChunkSpec(0), None)},
+            chunks=NCHUNKS)
+
+        # Args should have 5 chunks that all contain the single replicated `x` value
+        assert len(args_split) == NCHUNKS
+        for arg in args_split:
+            assert isinstance(arg, tuple) and len(arg) == 1
+            torch.testing.assert_allclose(arg[0], x)
+
+        # kwargs should have 5 chunks that contain a SpecialInputNamedTuple at the 'input_nt' key
+        # `input_nt` should have rows of `input_nt.my_tensor` split along dimension 0.
+        # `my_integer` should be the replicated value 42
+
+        assert len(kwargs_split) == NCHUNKS
+        for i, kwarg in enumerate(kwargs_split):
+            assert isinstance(kwarg, dict) and len(kwarg) == 1 and 'input_nt' in kwarg
+            input_nt_to_test = kwarg['input_nt']
+            assert isinstance(input_nt_to_test, SpecialInputNamedTuple)
+            torch.testing.assert_allclose(input_nt_to_test.my_tensor, input_nt.my_tensor[i:i+1, :])
+            assert input_nt_to_test.my_integer == 42
+
+        # Above test case is actually not valid for the example program, since it compels a
+        # broadcast across the sharded dimension
+
+        args_split, kwargs_split = split_args_kwargs_into_chunks(
+            (x,), {'input_nt': input_nt}, (TensorChunkSpec(0),),
+            {'input_nt': SpecialInputNamedTuple(TensorChunkSpec(0), None)}, chunks=NCHUNKS)
+
+        assert len(args_split) == NCHUNKS
+        for chunk_idx, arg in enumerate(args_split):
+            assert isinstance(arg, tuple) and len(arg) == 1
+            torch.testing.assert_allclose(arg[0], x[chunk_idx:chunk_idx + 1, :])
+
+        assert len(kwargs_split) == NCHUNKS
+        for i, kwarg in enumerate(kwargs_split):
+            assert isinstance(kwarg, dict) and len(kwarg) == 1 and 'input_nt' in kwarg
+            input_nt_to_test = kwarg['input_nt']
+            assert isinstance(input_nt_to_test, SpecialInputNamedTuple)
+            torch.testing.assert_allclose(input_nt_to_test.my_tensor, input_nt.my_tensor[i:i+1, :])
+            assert input_nt_to_test.my_integer == 42
+
+        # Test with _debug_mask_minibatches=True
+        args_split_masked, kwargs_split_masked = split_args_kwargs_into_chunks(
+            (x,), {'input_nt': input_nt}, (TensorChunkSpec(0),),
+            {'input_nt': SpecialInputNamedTuple(TensorChunkSpec(0), None)}, chunks=NCHUNKS,
+            _debug_mask_minibatches=True)
+
+        assert len(args_split_masked) == NCHUNKS
+        for chunk_idx, arg in enumerate(args_split_masked):
+            assert isinstance(arg, tuple) and len(arg) == 1
+            torch.testing.assert_allclose(arg[0][0:chunk_idx, :], torch.zeros(chunk_idx, arg[0].size(1)))
+            torch.testing.assert_allclose(arg[0][chunk_idx:chunk_idx + 1, :], x[chunk_idx:chunk_idx + 1, :])
+            torch.testing.assert_allclose(arg[0][chunk_idx + 1:, :], torch.zeros(arg[0].size(0) - chunk_idx - 1, arg[0].size(1)))
+
+        # Test execution w/ merge
+        model_out_chunks = []
+        for chunk_idx in range(NCHUNKS):
+            model_out_chunks.append(pipe(*args_split[chunk_idx], **kwargs_split[chunk_idx]))
+
+        assert len(model_out_chunks) == NCHUNKS
+        catted_added = torch.cat(tuple(v['added'] for v in model_out_chunks))
+        catted_multiplied = torch.cat(tuple(v['multiplied'] for v in model_out_chunks))
+
+        torch.testing.assert_allclose(catted_added, ref_out['added'])
+        torch.testing.assert_allclose(catted_multiplied, ref_out['multiplied'])
+
+        chunks_merged = merge_chunks(model_out_chunks, {'added': TensorChunkSpec(0), 'multiplied': TensorChunkSpec(0)})
+
+        torch.testing.assert_allclose(chunks_merged['added'], ref_out['added'])
+        torch.testing.assert_allclose(chunks_merged['multiplied'], ref_out['multiplied'])
+
+
+        # Test execution w/ merge w/ _debug_mask_minibatches=True
+        model_out_chunks_mask = []
+        for chunk_idx in range(NCHUNKS):
+            model_out_chunks_mask.append(pipe(*args_split_masked[chunk_idx], **kwargs_split_masked[chunk_idx]))
+
+        assert len(model_out_chunks_mask) == NCHUNKS
+        catted_added = torch.cat(tuple(v['added'][i:i+1, :] for i, v in enumerate(model_out_chunks_mask)))
+        catted_multiplied = torch.cat(tuple(v['multiplied'][i:i+1, :] for i, v in enumerate(model_out_chunks_mask)))
+
+        torch.testing.assert_allclose(catted_added, ref_out['added'])
+        torch.testing.assert_allclose(catted_multiplied, ref_out['multiplied'])
+
+        chunks_merged_masked = merge_chunks(model_out_chunks_mask, {'added': TensorChunkSpec(0), 'multiplied': TensorChunkSpec(0)},
+                                            _debug_mask_minibatches=True)
+
+        torch.testing.assert_allclose(chunks_merged_masked['added'], ref_out['added'])
+        torch.testing.assert_allclose(chunks_merged_masked['multiplied'], ref_out['multiplied'])
+
+
 
 if __name__ == '__main__':
     unittest.main()

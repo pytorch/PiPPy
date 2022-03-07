@@ -5,6 +5,7 @@ import copy
 
 from pippy.IR import MultiUseParameterConfig, Pipe, pipe_split
 from pippy.PipelineDriver import PipelineDriverFillDrain
+from pippy.microbatch import TensorChunkSpec, CustomReducer, split_args_kwargs_into_chunks
 
 # TODOs for implementing forward/backward/loss with schedules:
 # * ability to switch between full-batch loss vs. per-microbatch loss. shen mentioned
@@ -97,13 +98,17 @@ if local_rank == 0:
     ec_pipe = Pipe.from_tracing(ec, MULTI_USE_PARAM_CONFIG, loss_fn=mse_loss)
     print(ec_pipe.split_gm)
 
-    pipe_driver = PipelineDriverFillDrain(ec_pipe, world_size)
+    args_chunk_spec = (TensorChunkSpec(0), TensorChunkSpec(0))
+    kwargs_chunk_spec = {}
+    output_chunk_spec = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
+
+    pipe_driver = PipelineDriverFillDrain(ec_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size)
 
     input = torch.randn(bs, d_hid)
     target = torch.randn(bs, d_hid)
 
     # TODO: distributed optimizer
-    out = pipe_driver.run(input, target, chunks=CHUNKS, _debug_mask_minibatches = DEBUG_MASK_MINIBATCHES)
+    out = pipe_driver.run((input, target), {}, chunks=CHUNKS, _debug_mask_minibatches = DEBUG_MASK_MINIBATCHES)
 
     # TODO: barrier
     import time
@@ -146,13 +151,12 @@ if local_rank == 0:
     optim = torch.optim.SGD(ec_pipe.split_gm.parameters(), lr=0.05)
     optim.zero_grad()
     if REF_USE_MICROBATCHES:
-        split_args, _ = PipelineDriverFillDrain._split_args_into_microbatches(input, target, chunks=CHUNKS,
-            batch_dims=[0, 0], _debug_mask_minibatches = DEBUG_MASK_MINIBATCHES)
+        args_split, kwargs_split = split_args_kwargs_into_chunks((input, target), {}, args_chunk_spec,
+                                                            kwargs_chunk_spec, CHUNKS,
+                                                            DEBUG_MASK_MINIBATCHES)
         ref_outs = []
         for chunk in range(CHUNKS):
-            input_chunk = split_args[0].chunks[chunk]
-            target_chunk = split_args[1].chunks[chunk]
-            ref_outs.append(ec_pipe(input_chunk, target_chunk))
+            ref_outs.append(ec_pipe(*args_split[chunk]))
         ref_out = torch.sum(torch.stack(ref_outs))
     else:
         ref_out = ec_pipe(input, target)
