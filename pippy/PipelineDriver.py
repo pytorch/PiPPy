@@ -4,7 +4,7 @@ import torch.distributed.rpc as rpc
 from pippy.IR import Pipe, stage_backward
 from pippy.microbatch import split_args_kwargs_into_chunks, merge_chunks
 from enum import Enum
-from typing import Any, Callable, Dict, List, Tuple, NamedTuple, Optional
+from typing import Any, Callable, Dict, List, Tuple, Optional
 import logging
 import operator
 import threading
