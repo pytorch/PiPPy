@@ -46,6 +46,8 @@ def set_grad_in_executor(executor, qualname, value):
     param.grad = value
 
 if local_rank == 0:
+    torch.manual_seed(42)
+
     d_hid = 50
     bs = 503
     CHUNKS = 5

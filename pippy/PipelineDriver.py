@@ -1,7 +1,7 @@
 import torch
 import torch.fx
 import torch.distributed.rpc as rpc
-from pippy.IR import Pipe, stage_backward
+from pippy.IR import Pipe, stage_backward, sync_barrier
 from pippy.microbatch import split_args_kwargs_into_chunks, merge_chunks
 from enum import Enum
 from typing import Any, Callable, Dict, List, Tuple, Optional
@@ -52,6 +52,7 @@ class Phase(Enum):
     FORWARD = 0
     LOSS = 1
     BACKWARD = 2
+    SYNC_BARRIER = 3
 
 # TODO: do we need this?
 class SchedState(Enum):
@@ -270,6 +271,9 @@ class PipeStageExecutor:
             elif work_item.phase == Phase.BACKWARD:
                 logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running backward')
                 out_val = stage_backward(*args, **kwargs)
+            elif work_item.phase == Phase.SYNC_BARRIER:
+                logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running sync_barrier')
+                out_val = sync_barrier(*args, **kwargs)
             else:
                 assert False, f'Unrecognized phase {work_item.phase} encountered in execution'
 
@@ -463,7 +467,19 @@ class RemoteInterpreter(torch.fx.Interpreter):
             invocation_key = f'{self.cur_microbatch}_{node.name}'
             return stage_executor.remote().invoke(
                 invocation_key, Phase.BACKWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node())
-        return super().call_function(target, args, kwargs)
+        elif target is sync_barrier:
+            node = self.node_list[self.pc]
+            # TODO: just assuming the last executor is indeed the executor for the
+            # last stage. We should do this in a more principled way
+            executor_keys = list(self.remote_stage_executor_rrefs.keys())
+            rank, stage_executor = self.remote_stage_executor_rrefs[executor_keys[-1]]
+            logging.info(f'[root][{self.cur_microbatch}] Issuing sync invocation '
+                         f'on rank {rank}')
+            invocation_key = f'{self.cur_microbatch}_{node.name}'
+            return stage_executor.remote().invoke(
+                invocation_key, Phase.SYNC_BARRIER, args, kwargs, self.cur_microbatch, debug_str=node.format_node())
+        else:
+            raise AssertionError(f'Unknown operator {torch.typename(target)}')
 
     def run_until(self, predicate : Callable[[torch.fx.Node], bool]):
         for self.pc in range(self.pc, len(self.node_list)):
