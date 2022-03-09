@@ -110,10 +110,6 @@ if local_rank == 0:
     # TODO: distributed optimizer
     out = pipe_driver.run((input, target), {}, chunks=CHUNKS, _debug_mask_minibatches = DEBUG_MASK_MINIBATCHES)
 
-    # TODO: barrier
-    import time
-    time.sleep(10)
-
     all_grad_qualnames = {k: None for k, v in ec_pipe.named_parameters()}
 
     replicated_params_qualnames = {}
