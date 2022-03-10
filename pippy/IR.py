@@ -33,7 +33,11 @@ def stage_backward(stage_output, output_grads, input_values):
             grad_inputs.append(None)
         else:
             raise NotImplementedError(f'Cannot pass gradient for value {val}')
-    return grad_inputs
+    barrier_token = None
+    return grad_inputs, barrier_token
+
+def sync_barrier(loss, barrier_tokens):
+    return loss
 
 def _insert_stage_symbolic_backward(g : torch.fx.Graph):
     output_nodes = [n for n in g.nodes if n.op == 'output']
@@ -52,6 +56,8 @@ def _insert_stage_symbolic_backward(g : torch.fx.Graph):
         val_to_grad[forward_node] = grad_value
 
     with g.inserting_before(output_node):
+        barrier_tokens = []
+
         for node in reversed(g.nodes):
             if node.op == 'call_module':
                 grad_call = g.call_function(stage_backward, kwargs={
@@ -60,10 +66,14 @@ def _insert_stage_symbolic_backward(g : torch.fx.Graph):
                     'input_values' : list(node.all_input_nodes)
                 })
 
-                input_nodes = list(node.all_input_nodes)
                 grad_call_proxy = torch.fx.Proxy(grad_call)
+                grads, barrier_token = grad_call_proxy[0].node, grad_call_proxy[1].node
+                barrier_tokens.append(barrier_token)
+
+                input_nodes = list(node.all_input_nodes)
+                grads_proxy = torch.fx.Proxy(grads)
                 for i, input_node in enumerate(input_nodes):
-                    assign_or_accumulate_grad(input_node, grad_call_proxy[i].node)
+                    assign_or_accumulate_grad(input_node, grads_proxy[i].node)
             elif node.op == 'call_function':
                 assert node.target == operator.getitem
                 assert len(node.args) == 2
@@ -88,6 +98,10 @@ def _insert_stage_symbolic_backward(g : torch.fx.Graph):
                 reconstructed_list[node_idx] = grad_output
 
                 val_to_grad[indexed_value] = reconstructed_list
+
+        # Insert barrier call
+        barrier_call = g.call_function(sync_barrier, (loss_node, barrier_tokens))
+        output_node.args = (barrier_call,)
 
     return g
 
@@ -177,7 +191,8 @@ class Pipe(torch.nn.Module):
                    (node.op, node.target) == ('call_function', operator.getitem) or
                    (node.op, node.target) == ('call_method', 'backward') or
                    (node.op, node.target) == ('call_function', stage_backward) or
-                   (node.op, node.target) == ('call_function', torch.add))
+                   (node.op, node.target) == ('call_function', torch.add) or
+                   (node.op, node.target) == ('call_function', sync_barrier))
 
         # Detect replicated parameters so we know that we have to do an additional allreduce
         # before applying the optimizer
