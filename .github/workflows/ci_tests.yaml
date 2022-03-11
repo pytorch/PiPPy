@@ -40,7 +40,7 @@ jobs:
           pip install flake8 pytest pytest-cov numpy
           if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
       - name: Install pavel's huggingface fork
-        run: pip install git+https://github.com/pbelevich/transformers.git@compatible_with_pt_master sentencepiece
+        run: pip install git+https://github.com/jamesr66a/transformers.git@compatible_with_pt_master sentencepiece
       - name: Install pippy
         run: "python setup.py install"
       - name: Test with pytest
