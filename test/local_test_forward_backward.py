@@ -202,19 +202,23 @@ if local_rank == 0:
     torch.testing.assert_allclose(out, orig_loss)
 
     not_close_orig_grads = []
+    not_found_mappings = []
 
     for name in all_grad_qualnames:
         try:
             remapped_qualname = ec_pipe.remap_qualname(name)
         except KeyError:
-            # HACK: qualname remapping does not keep track of replicated params
-            continue
-        orig_grad = ec.get_parameter(remapped_qualname).grad
-        pipe_grad = pipe_grads[name]
-        if not torch.allclose(pipe_grad, orig_grad):
-            not_close_orig_grads.append(name)
-            print(name, torch.abs(pipe_grad - orig_grad) / orig_grad)
-            print(name, torch.max(torch.abs(pipe_grad - orig_grad) / orig_grad))
+            not_found_mappings.append(name)
+        else:
+            orig_grad = ec.get_parameter(remapped_qualname).grad
+            pipe_grad = pipe_grads[name]
+            if not torch.allclose(pipe_grad, orig_grad):
+                not_close_orig_grads.append(name)
+                print(name, torch.abs(pipe_grad - orig_grad) / orig_grad)
+                print(name, torch.max(torch.abs(pipe_grad - orig_grad) / orig_grad))
+
+    assert len(not_found_mappings) == 0, f'No qualname mapping found between pipelined and original ' \
+                                           f'model: {not_found_mappings}'
 
     assert len(not_close_orig_grads) == 0, f'Grads not close between pipelined and original ' \
                                            f'model: {not_close_orig_grads}'
