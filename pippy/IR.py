@@ -186,7 +186,7 @@ class Pipe(torch.nn.Module):
         self.has_loss_and_backwards = has_loss_and_backward
 
         for node in split_gm.graph.nodes:
-            assert (node.op in {'call_module', 'placeholder', 'output'} or 
+            assert (node.op in {'call_module', 'placeholder', 'output'} or
                    (node.op, node.target) == ('call_function', operator.getitem) or
                    (node.op, node.target) == ('call_method', 'backward') or
                    (node.op, node.target) == ('call_function', stage_backward) or
@@ -537,12 +537,12 @@ class Pipe(torch.nn.Module):
                     if isinstance(callee_output_node.args[0], tuple):
                         new_output_args = callee_output_node.args[0] + (callee_param_def,)
                         callee_output_node.args = (new_output_args,)
-                        new_output_idx = len(new_output_args) - 1                        
+                        new_output_idx = len(new_output_args) - 1
                         promoted_to_tuple = False
                     else:
                         new_output_args = (callee_output_node.args[0], callee_param_def)
                         callee_output_node.args = (new_output_args,)
-                        new_output_idx = len(new_output_args) - 1                        
+                        new_output_idx = len(new_output_args) - 1
                         promoted_to_tuple = True
 
                     submod.graph.lint()
