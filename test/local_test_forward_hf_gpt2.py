@@ -23,6 +23,9 @@ rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
 def torch_arange_wrapper(*args, **kwargs):
     return torch.arange(*args, **kwargs)
 
+# WAR for SEV remediation https://github.com/pytorch/pytorch/commit/2337d4e5036a87f473decd2b1f6fe0439499902c
+torch.fx.Tracer.proxy_buffer_attributes = True
+
 if local_rank == 0:
     bs = 20
     seq_length = 512

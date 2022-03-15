@@ -33,8 +33,8 @@ runner_types:
     max_available: 500
     disk_size: 150
     is_ephemeral: false
-  linux.4xlarge: # for binary-builds
-    instance_type: c5.4xlarge
+  linux.12xlarge:
+    instance_type: c5.12xlarge
     os: linux
     max_available: 250
     disk_size: 150
