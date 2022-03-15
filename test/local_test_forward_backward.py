@@ -45,6 +45,9 @@ def set_grad_in_executor(executor, qualname, value):
     param = executor.local_value().mod.get_parameter(qualname)
     param.grad = value
 
+# WAR for SEV remediation https://github.com/pytorch/pytorch/commit/2337d4e5036a87f473decd2b1f6fe0439499902c
+torch.fx.Tracer.proxy_buffer_attributes = True
+
 if local_rank == 0:
     torch.manual_seed(42)
 

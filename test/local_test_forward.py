@@ -14,6 +14,9 @@ world_size = int(os.environ["WORLD_SIZE"])
 
 rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
 
+# WAR for SEV remediation https://github.com/pytorch/pytorch/commit/2337d4e5036a87f473decd2b1f6fe0439499902c
+torch.fx.Tracer.proxy_buffer_attributes = True
+
 if local_rank == 0:
     d_hid = 512
     bs = 503
