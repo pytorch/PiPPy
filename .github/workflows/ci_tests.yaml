@@ -25,7 +25,7 @@ jobs:
           flake8 pippy
 
   pytest_tests:
-    runs-on: linux.2xlarge
+    runs-on: linux.12xlarge
     strategy:
       matrix:
         python-version: ["3.7", "3.8", "3.9"]
