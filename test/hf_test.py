@@ -132,7 +132,8 @@ splitters = {
 hf_tracer = fx.HFTracer()
 
 bs = 4
-seq_length = 512
+num_choices = 3
+seq_length = 32
 
 for model_cls in fx._SUPPORTED_MODELS:
     if model_cls in [T5Model, T5ForConditionalGeneration]:  # https://github.com/jamesr66a/PiPPy/issues/57
@@ -142,7 +143,8 @@ for model_cls in fx._SUPPORTED_MODELS:
     assert splitter is not None
     config_cls = model_cls.config_class
     config = config_cls()
-    if model_cls in [GPT2ForSequenceClassification, GPTNeoForSequenceClassification, GPTJForSequenceClassification]:
+    if model_cls in [GPT2ForSequenceClassification, GPTNeoForSequenceClassification,
+                     GPTJForSequenceClassification] or model_cls.__name__.startswith("Roberta"):
         config.pad_token_id = 0
     model = model_cls(config)
     # print(model)
@@ -159,9 +161,13 @@ for model_cls in fx._SUPPORTED_MODELS:
     # print(model_pipe)
     assert submodules_cnt == len(list(model_pipe.split_gm.children()))
 
-    if not model_cls.__name__.endswith('MultipleChoice') and not model_cls.__name__.startswith("Roberta"):
+    if model_cls.__name__.endswith('MultipleChoice'):
+        input = torch.zeros(bs, num_choices, seq_length, dtype=torch.long).random_(model.config.vocab_size)
+    elif model_cls.__name__.startswith("Roberta"):
+        input = torch.zeros(bs, seq_length, dtype=torch.long)
+    else:
         input = torch.zeros(bs, seq_length, dtype=torch.long).random_(model.config.vocab_size)
-        model_output = model(input)
-        model_pipe_output = model_pipe(input)
+    model_output = model(input)
+    model_pipe_output = model_pipe(input)
 
     print("OK")
