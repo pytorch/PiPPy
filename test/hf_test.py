@@ -178,9 +178,6 @@ for model_cls in fx._SUPPORTED_MODELS:
             model_output = model(input)
             model_pipe_output = model_pipe(input)
 
-            assert isinstance(model_output, dict) and isinstance(model_pipe_output, dict)
-            assert model_output.keys() == model_pipe_output.keys()
-
             def recursive_value_check(out, ref_out):
                 if isinstance(out, torch.Tensor):
                     assert isinstance(ref_out, torch.Tensor)
