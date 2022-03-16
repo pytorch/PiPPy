@@ -5,6 +5,7 @@ import torch
 import transformers.utils.fx as fx
 from pippy.IR import MultiUseParameterConfig, Pipe, annotate_split_points, PipeSplitWrapper
 from transformers import *
+import unittest
 
 
 def albert_splitter(model) -> int:
@@ -133,41 +134,51 @@ bs = 4
 num_choices = 3
 seq_length = 32
 
+class HFModelsTest(unittest.TestCase):
+    pass
+
 for model_cls in fx._SUPPORTED_MODELS:
-    if model_cls in [T5Model, T5ForConditionalGeneration]:  # https://github.com/jamesr66a/PiPPy/issues/57
-        continue
-    splitter = splitters.get(model_cls.base_model_prefix)
-    print(f"{model_cls.__name__:38} ", end='')
-    assert splitter is not None
-    config_cls = model_cls.config_class
-    config = config_cls()
-    if model_cls in [GPT2ForSequenceClassification, GPTNeoForSequenceClassification,
-                     GPTJForSequenceClassification] or model_cls.__name__.startswith("Roberta"):
-        config.pad_token_id = 0
-    model = model_cls(config)
-    # print(model)
+    def scope(model):
+        def test_case(self):
+            if model_cls in [T5Model, T5ForConditionalGeneration]:  # https://github.com/jamesr66a/PiPPy/issues/57
+                unittest.skip('Known bad model')
+            splitter = splitters.get(model_cls.base_model_prefix)
+            print(f"{model_cls.__name__:38} ", end='')
+            assert splitter is not None
+            config_cls = model_cls.config_class
+            config = config_cls()
+            if model_cls in [GPT2ForSequenceClassification, GPTNeoForSequenceClassification,
+                            GPTJForSequenceClassification] or model_cls.__name__.startswith("Roberta"):
+                config.pad_token_id = 0
+            model = model_cls(config)
+            # print(model)
 
-    submodules_cnt = splitter(model)
-    # print(model)
+            submodules_cnt = splitter(model)
+            # print(model)
 
-    input_names = model.dummy_inputs.keys()
-    sig = inspect.signature(model.forward)
-    concrete_args = {p.name: p.default for p in sig.parameters.values() if p.name not in input_names}
+            input_names = model.dummy_inputs.keys()
+            sig = inspect.signature(model.forward)
+            concrete_args = {p.name: p.default for p in sig.parameters.values() if p.name not in input_names}
 
-    hf_tracer = fx.HFTracer()
+            hf_tracer = fx.HFTracer()
 
-    model_pipe = Pipe.from_tracing(model, MultiUseParameterConfig.TRANSMIT, tracer=hf_tracer,
-                                   concrete_args=concrete_args)
-    # print(model_pipe)
-    assert submodules_cnt == len(list(model_pipe.split_gm.children()))
+            model_pipe = Pipe.from_tracing(model, MultiUseParameterConfig.TRANSMIT, tracer=hf_tracer,
+                                        concrete_args=concrete_args)
+            # print(model_pipe)
+            assert submodules_cnt == len(list(model_pipe.split_gm.children()))
 
-    if model_cls.__name__.endswith('MultipleChoice'):
-        input = torch.zeros(bs, num_choices, seq_length, dtype=torch.long).random_(model.config.vocab_size)
-    elif model_cls.__name__.startswith("Roberta"):
-        input = torch.zeros(bs, seq_length, dtype=torch.long)
-    else:
-        input = torch.zeros(bs, seq_length, dtype=torch.long).random_(model.config.vocab_size)
-    model_output = model(input)
-    model_pipe_output = model_pipe(input)
+            if model_cls.__name__.endswith('MultipleChoice'):
+                input = torch.zeros(bs, num_choices, seq_length, dtype=torch.long).random_(model.config.vocab_size)
+            elif model_cls.__name__.startswith("Roberta"):
+                input = torch.zeros(bs, seq_length, dtype=torch.long)
+            else:
+                input = torch.zeros(bs, seq_length, dtype=torch.long).random_(model.config.vocab_size)
+            model_output = model(input)
+            model_pipe_output = model_pipe(input)
 
-    print("OK")
+        return test_case
+
+    setattr(HFModelsTest, f'test_{model_cls.__name__}', scope(model_cls))
+
+if __name__ == '__main__':
+    unittest.main()

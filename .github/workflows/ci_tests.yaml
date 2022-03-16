@@ -37,7 +37,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install flake8 pytest pytest-cov numpy
+          pip install flake8 pytest pytest-cov pytest-xdist numpy
           if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
       - name: Install pavel's huggingface fork
         run: pip install git+https://github.com/jamesr66a/transformers.git@compatible_with_pt_master sentencepiece
@@ -45,7 +45,31 @@ jobs:
         run: "python setup.py install"
       - name: Test with pytest
         run: |
-          pytest --cov=pippy test/
+          pytest --cov=pippy --ignore=test/hf_test.py test/
+
+  hf_model_tests:
+    runs-on: linux.12xlarge
+    strategy:
+      matrix:
+        python-version: ["3.7", "3.8", "3.9"]
+    container:
+      image: python:${{ matrix.python-version }}
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 pytest pytest-cov pytest-xdist numpy
+          if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
+      - name: Install pavel's huggingface fork
+        run: pip install git+https://github.com/jamesr66a/transformers.git@compatible_with_pt_master sentencepiece
+      - name: Install pippy
+        run: "python setup.py install"
+      # Using 6 threads to run these tests. See if we hit OOM, if so, scale it down
+      - name: Test with pytest
+        run: |
+          pytest -n 6 --cov=pippy test/hf_test.py
 
   min_gpt_test:
     runs-on: linux.2xlarge
