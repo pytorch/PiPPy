@@ -5,7 +5,7 @@ import torch
 import transformers.utils.fx as fx
 from pippy.IR import MultiUseParameterConfig, Pipe, annotate_split_points, PipeSplitWrapper
 from transformers import *
-import logging
+import sys
 import unittest
 
 
@@ -138,13 +138,13 @@ seq_length = 32
 class HFModelsTest(unittest.TestCase):
     pass
 
-for model_cls in fx._SUPPORTED_MODELS:
-    def scope(model):
+for _model_cls in fx._SUPPORTED_MODELS:
+    def scope(model_cls):
         def test_case(self):
             if model_cls in [T5Model, T5ForConditionalGeneration]:  # https://github.com/jamesr66a/PiPPy/issues/57
                 unittest.skip('Known bad model')
             splitter = splitters.get(model_cls.base_model_prefix)
-            logging.info(f"{model_cls.__name__:38} ")
+            print(f"Testing {model_cls.__name__} ", file=sys.stderr)
             assert splitter is not None
             config_cls = model_cls.config_class
             config = config_cls()
@@ -195,11 +195,11 @@ for model_cls in fx._SUPPORTED_MODELS:
                     raise RuntimeError(f'Unsupported type {type(out)}')
 
             recursive_value_check(model_pipe_output, model_output)
-            logging.info(f'Correctness check for model {model_cls.__name__:38} passed')
+            print(f'Correctness check for model {model_cls.__name__} passed', file=sys.stderr)
 
         return test_case
 
-    setattr(HFModelsTest, f'test_{model_cls.__name__}', scope(model_cls))
+    setattr(HFModelsTest, f'test_{_model_cls.__name__}', scope(_model_cls))
 
 if __name__ == '__main__':
     unittest.main()
