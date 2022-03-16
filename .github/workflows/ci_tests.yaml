@@ -69,7 +69,7 @@ jobs:
       # Single thread to avoid OOM
       - name: Test with pytest
         run: |
-          pytest -sv --cov=pippy test/hf_test.py
+          /usr/bin/time -v pytest -sv --cov=pippy test/hf_test.py
 
   min_gpt_test:
     runs-on: linux.2xlarge

@@ -142,7 +142,7 @@ for _model_cls in fx._SUPPORTED_MODELS:
     def scope(model_cls):
         def test_case(self):
             if model_cls in [T5Model, T5ForConditionalGeneration]:  # https://github.com/jamesr66a/PiPPy/issues/57
-                unittest.skip('Known bad model')
+                self.skipTest('Known bad model')
             splitter = splitters.get(model_cls.base_model_prefix)
             print(f"Testing {model_cls.__name__} ", file=sys.stderr)
             assert splitter is not None
