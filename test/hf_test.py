@@ -5,6 +5,7 @@ import torch
 import transformers.utils.fx as fx
 from pippy.IR import MultiUseParameterConfig, Pipe, annotate_split_points, PipeSplitWrapper
 from transformers import *
+import logging
 import unittest
 
 
@@ -143,7 +144,7 @@ for model_cls in fx._SUPPORTED_MODELS:
             if model_cls in [T5Model, T5ForConditionalGeneration]:  # https://github.com/jamesr66a/PiPPy/issues/57
                 unittest.skip('Known bad model')
             splitter = splitters.get(model_cls.base_model_prefix)
-            print(f"{model_cls.__name__:38} ", end='')
+            logging.info(f"{model_cls.__name__:38} ")
             assert splitter is not None
             config_cls = model_cls.config_class
             config = config_cls()
@@ -151,6 +152,7 @@ for model_cls in fx._SUPPORTED_MODELS:
                             GPTJForSequenceClassification] or model_cls.__name__.startswith("Roberta"):
                 config.pad_token_id = 0
             model = model_cls(config)
+            model.eval()
             # print(model)
 
             submodules_cnt = splitter(model)
@@ -175,6 +177,28 @@ for model_cls in fx._SUPPORTED_MODELS:
                 input = torch.zeros(bs, seq_length, dtype=torch.long).random_(model.config.vocab_size)
             model_output = model(input)
             model_pipe_output = model_pipe(input)
+
+            assert isinstance(model_output, dict) and isinstance(model_pipe_output, dict)
+            assert model_output.keys() == model_pipe_output.keys()
+
+            def recursive_value_check(out, ref_out):
+                if isinstance(out, torch.Tensor):
+                    assert isinstance(ref_out, torch.Tensor)
+                    torch.testing.assert_allclose(out, ref_out)
+                elif isinstance(out, (tuple, list)):
+                    assert isinstance(ref_out, type(out))
+                    for a, b in zip(out, ref_out):
+                        recursive_value_check(a, b)
+                elif isinstance(out, dict):
+                    assert isinstance(ref_out, dict)
+                    assert set(out.keys()) == set(ref_out.keys())
+                    for k in out.keys():
+                        recursive_value_check(out[k], ref_out[k])
+                else:
+                    raise RuntimeError(f'Unsupported type {type(out)}')
+
+            recursive_value_check(model_pipe_output, model_output)
+            logging.info(f'Correctness check for model {model_cls.__name__:38} passed')
 
         return test_case
 

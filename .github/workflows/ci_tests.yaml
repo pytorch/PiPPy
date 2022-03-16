@@ -69,7 +69,7 @@ jobs:
       # Using 6 threads to run these tests. See if we hit OOM, if so, scale it down
       - name: Test with pytest
         run: |
-          pytest -n 6 --cov=pippy test/hf_test.py
+          pytest -v --log-cli-level=INFO -n 6 --cov=pippy test/hf_test.py
 
   min_gpt_test:
     runs-on: linux.2xlarge
