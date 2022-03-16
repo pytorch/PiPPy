@@ -129,8 +129,6 @@ splitters = {
     'roberta': roberta_splitter,
 }
 
-hf_tracer = fx.HFTracer()
-
 bs = 4
 num_choices = 3
 seq_length = 32
@@ -155,6 +153,8 @@ for model_cls in fx._SUPPORTED_MODELS:
     input_names = model.dummy_inputs.keys()
     sig = inspect.signature(model.forward)
     concrete_args = {p.name: p.default for p in sig.parameters.values() if p.name not in input_names}
+
+    hf_tracer = fx.HFTracer()
 
     model_pipe = Pipe.from_tracing(model, MultiUseParameterConfig.TRANSMIT, tracer=hf_tracer,
                                    concrete_args=concrete_args)
