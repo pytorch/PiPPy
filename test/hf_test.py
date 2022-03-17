@@ -139,7 +139,7 @@ class HFModelsTest(unittest.TestCase):
     pass
 
 for _model_cls in fx._SUPPORTED_MODELS:
-    def scope(model_cls):
+    def scope(model_cls, replicate):
         def test_case(self):
             if model_cls in [T5Model, T5ForConditionalGeneration]:  # https://github.com/jamesr66a/PiPPy/issues/57
                 self.skipTest('Known bad model')
@@ -164,7 +164,8 @@ for _model_cls in fx._SUPPORTED_MODELS:
 
             hf_tracer = fx.HFTracer()
 
-            model_pipe = Pipe.from_tracing(model, MultiUseParameterConfig.TRANSMIT, tracer=hf_tracer,
+            multi_use_param_config = MultiUseParameterConfig.REPLICATE if replicate else MultiUseParameterConfig.TRANSMIT
+            model_pipe = Pipe.from_tracing(model, multi_use_param_config, tracer=hf_tracer,
                                         concrete_args=concrete_args)
             # print(model_pipe)
             assert submodules_cnt == len(list(model_pipe.split_gm.children()))
@@ -195,11 +196,12 @@ for _model_cls in fx._SUPPORTED_MODELS:
                     raise RuntimeError(f'Unsupported type {type(out)}')
 
             recursive_value_check(model_pipe_output, model_output)
-            print(f'Correctness check for model {model_cls.__name__} passed', file=sys.stderr)
+            print(f'Correctness check for model {model_cls.__name__}_{multi_use_param_config} passed', file=sys.stderr)
 
         return test_case
 
-    setattr(HFModelsTest, f'test_{_model_cls.__name__}', scope(_model_cls))
+    setattr(HFModelsTest, f'test_{_model_cls.__name__}_transmit', scope(_model_cls, False))
+    setattr(HFModelsTest, f'test_{_model_cls.__name__}_replicate', scope(_model_cls, True))
 
 if __name__ == '__main__':
     unittest.main()
