@@ -64,7 +64,7 @@ if local_rank == 0:
     hf_tracer = HFGPT2Tracer()
 
     print('Instantiating GPT2 Pipeline')
-    gpt2_pipe = Pipe.from_tracin(gpt2, MULTI_USE_PARAM_CONFIG, tracer=hf_tracer, concrete_args=concrete_args)
+    gpt2_pipe = Pipe.from_tracing(gpt2, MULTI_USE_PARAM_CONFIG, tracer=hf_tracer, concrete_args=concrete_args)
 
     assert gpt2.config.n_layer + 2 == len(list(gpt2_pipe.split_gm.children()))
 
