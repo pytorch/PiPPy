@@ -61,6 +61,9 @@ if local_rank == 0:
 
     bert_pipe = Pipe._from_traced(bert, bert_traced, MULTI_USE_PARAM_CONFIG)
 
+    print(bert_pipe)
+    assert bert.config.num_hidden_layers + 2 == len(list(bert_pipe.split_gm.children()))
+
     # bert_pipe = Pipe.from_tracing(bert, MULTI_USE_PARAM_CONFIG, tracer=hf_tracer, concrete_args=concrete_args)
 
     optimizer = torch.optim.SGD(bert_pipe.parameters(), 0.01)

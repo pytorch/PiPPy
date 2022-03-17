@@ -62,6 +62,9 @@ if local_rank == 0:
     print('Instantiating GPT2 Pipeline')
     gpt2_pipe = Pipe._from_traced(gpt2, gpt2_traced, MULTI_USE_PARAM_CONFIG)
 
+    print(gpt2_pipe)
+    assert gpt2.config.n_layer + 2 == len(list(gpt2_pipe.split_gm.children()))
+
     optimizer = torch.optim.SGD(gpt2_pipe.parameters(), 0.01)
 
     args_chunk_spec = (TensorChunkSpec(0),)
