@@ -23,6 +23,19 @@ rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
 def torch_arange_wrapper(*args, **kwargs):
     return torch.arange(*args, **kwargs)
 
+
+class HFGPT2Tracer(fx.HFTracer):
+    def trace(self, root, concrete_args=None, method_names=None):
+        graph = super().trace(root, concrete_args, method_names)
+        # HACK to replace HF's non-resolvable wrappers with the original
+        # tensor constructor functions
+        # Requires this patch to HF: https://github.com/jamesr66a/transformers/commit/ede9d30f36f12be390692617ef76e2928b1612bd
+        for node in graph.nodes:
+            if node.op == 'call_function':
+                if getattr(node.target, '_orig', None) == torch.arange:
+                    node.target = torch_arange_wrapper
+        return graph
+
 # WAR for SEV remediation https://github.com/pytorch/pytorch/commit/2337d4e5036a87f473decd2b1f6fe0439499902c
 torch.fx.Tracer.proxy_buffer_attributes = True
 
@@ -48,21 +61,11 @@ if local_rank == 0:
     sig = inspect.signature(gpt2.forward)
     concrete_args = {p.name: p.default for p in sig.parameters.values() if p.name not in input_names}
 
-    print('Tracing GPT2')
-    gpt2_traced = fx.symbolic_trace(gpt2)
-
-    # HACK to replace HF's non-resolvable wrappers with the original
-    # tensor constructor functions
-    # Requires this patch to HF: https://github.com/jamesr66a/transformers/commit/ede9d30f36f12be390692617ef76e2928b1612bd
-    for node in gpt2_traced.graph.nodes:
-        if node.op == 'call_function':
-            if getattr(node.target, '_orig', None) == torch.arange:
-                node.target = torch_arange_wrapper
+    hf_tracer = HFGPT2Tracer()
 
     print('Instantiating GPT2 Pipeline')
-    gpt2_pipe = Pipe._from_traced(gpt2, gpt2_traced, MULTI_USE_PARAM_CONFIG)
+    gpt2_pipe = Pipe.from_tracin(gpt2, MULTI_USE_PARAM_CONFIG, tracer=hf_tracer, concrete_args=concrete_args)
 
-    print(gpt2_pipe)
     assert gpt2.config.n_layer + 2 == len(list(gpt2_pipe.split_gm.children()))
 
     optimizer = torch.optim.SGD(gpt2_pipe.parameters(), 0.01)
