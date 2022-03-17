@@ -43,7 +43,7 @@ torch.fx.Tracer.proxy_buffer_attributes = True
 
 if local_rank == 0:
     bs = 20
-    seq_length = 512
+    seq_length = 32
 
     REPLICATE = os.environ.get('REPLICATE', '0') != '0'
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if REPLICATE else MultiUseParameterConfig.TRANSMIT
