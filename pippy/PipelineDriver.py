@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 import torch.fx
 import torch.distributed.rpc as rpc

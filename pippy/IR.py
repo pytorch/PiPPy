@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 import torch.fx
 from torch.fx.passes.split_module import split_module
