@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 import distutils.command.clean
 import os
 from setuptools import setup, find_packages

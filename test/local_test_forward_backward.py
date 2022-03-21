@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 import torch.distributed.rpc as rpc
 import logging

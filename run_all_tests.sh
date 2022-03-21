@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 set -ex
 python test/min_gpt_tracing.py
 pytest --cov=pippy test

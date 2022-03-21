@@ -1,4 +1,5 @@
 #! torchrun --standalone --nnodes=1 --nproc_per_node=2
+# Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 import torch.distributed.rpc as rpc
 
