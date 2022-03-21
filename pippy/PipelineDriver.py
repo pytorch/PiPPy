@@ -424,9 +424,7 @@ class PipelineDriverBase:
                                   'implementation class.')
 
 
-    def sync_replicated_params(self):
-        replicated_params_qualnames = {}
-
+    def _sync_replicated_params(self):
         for param_set in self.pipe.replicated_params:
             grad_values = []
             for module_name, param_qualname in param_set.items():
@@ -441,9 +439,6 @@ class PipelineDriverBase:
                 assert module_name in self.remote_stage_executor_rrefs
                 rank, module_rref = self.remote_stage_executor_rrefs[module_name]
                 rpc.rpc_sync(rank, set_grad_in_executor, (module_rref, param_qualname, synced_value))
-                replicated_params_qualnames.setdefault(f'split_gm.{module_name}.{param_qualname}')
-
-        return replicated_params_qualnames
 
 
 class RemoteInterpreter(torch.fx.Interpreter):
@@ -591,6 +586,10 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 
         assert all(n == last_nodes[0] for n in last_nodes)
         assert last_nodes[0].op == 'output'
+
+        # Shared parameter sync
+        self._sync_replicated_params()
+
         return self._retrieve_output_values(microbatch_interpreters, last_nodes, _debug_mask_minibatches)
 
     def _retrieve_output_values(self, microbatch_interpreters, last_nodes, _debug_mask_minibatches):

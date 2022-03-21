@@ -117,12 +117,6 @@ if local_rank == 0:
 
     all_grad_qualnames = {k: None for k, v in ec_pipe.named_parameters()}
 
-    # Shared parameter sync
-    replicated_params_qualnames = pipe_driver.sync_replicated_params()
-
-    # Merge replicated params names into all_grad_qualnames
-    all_grad_qualnames.update(replicated_params_qualnames)
-
     pipe_grads = {}
 
     for name in all_grad_qualnames:
