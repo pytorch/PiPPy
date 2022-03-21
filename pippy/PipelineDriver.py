@@ -425,6 +425,7 @@ class PipelineDriverBase:
 
 
     def _sync_replicated_params(self):
+        logging.info(f'[root] Synchronizing gradients for {len(self.pipe.replicated_params)} sets of replicated parameters')
         for param_set in self.pipe.replicated_params:
             grad_values = []
             for module_name, param_qualname in param_set.items():
