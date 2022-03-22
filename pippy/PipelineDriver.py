@@ -578,7 +578,8 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         if last_nodes[0].op == 'output':
             logging.info('[root] Program does not have loss/backward, returning outputs directly')
             # Forward-only; return output values
-            return self._retrieve_output_values(microbatch_interpreters, last_nodes, _debug_mask_minibatches)
+            local_results = self._retrieve_output_values(microbatch_interpreters, last_nodes)
+            return merge_chunks(local_results, self.output_chunk_spec, _debug_mask_minibatches)
 
         logging.info('[root] Executing loss + backward stages')
         last_nodes = []
@@ -588,18 +589,20 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         assert all(n == last_nodes[0] for n in last_nodes)
         assert last_nodes[0].op == 'output'
 
+        local_results = self._retrieve_output_values(microbatch_interpreters, last_nodes)
+
         # Shared parameter sync
+        # At this point, all of the gradient jobs should have been run
+        # (by way of the synchronization dependency earlier)
         self._sync_replicated_params()
 
-        return self._retrieve_output_values(microbatch_interpreters, last_nodes, _debug_mask_minibatches)
+        return merge_chunks(local_results, self.output_chunk_spec, _debug_mask_minibatches)
 
-    def _retrieve_output_values(self, microbatch_interpreters, last_nodes, _debug_mask_minibatches):
-        logging.info(f'[root] Combining output values from {len(microbatch_interpreters)} chunks')
+    def _retrieve_output_values(self, microbatch_interpreters, last_nodes):
+        logging.info(f'[root] Retrieving output values from {len(microbatch_interpreters)} chunks')
         output_vals = []
         for interp, last_node in zip(microbatch_interpreters, last_nodes):
             interp.run_until(lambda n : False)
             output_vals.append(interp.env[last_node])
 
-        local_results = torch.fx.node.map_aggregate(output_vals, to_here)
-
-        return merge_chunks(local_results, self.output_chunk_spec, _debug_mask_minibatches)
+        return torch.fx.node.map_aggregate(output_vals, to_here)
