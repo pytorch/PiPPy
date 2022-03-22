@@ -341,6 +341,14 @@ class PipeStageExecutor:
         return future
 
 
+def get_grad_from_executor(executor, qualname):
+    return executor.local_value().mod.get_parameter(qualname).grad
+
+def set_grad_in_executor(executor, qualname, value):
+    param = executor.local_value().mod.get_parameter(qualname)
+    param.grad = value
+
+
 class PipelineDriverBase:
     def __init__(self, pipe : Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size : int,
                  all_ranks : List[int] = None):
@@ -415,6 +423,25 @@ class PipelineDriverBase:
             _debug_mask_minibatches : bool = False):
         raise NotImplementedError('PipelineDriverBase is an abstract base class, please use a concrete '
                                   'implementation class.')
+
+
+    def _sync_replicated_params(self):
+        logging.info(f'[root] Synchronizing gradients for {len(self.pipe.replicated_params)} sets of replicated parameters')
+        for param_set in self.pipe.replicated_params:
+            grad_values = []
+            for module_name, param_qualname in param_set.items():
+                assert module_name in self.remote_stage_executor_rrefs
+                rank, module_rref = self.remote_stage_executor_rrefs[module_name]
+                grad_value = rpc.rpc_sync(rank, get_grad_from_executor, (module_rref, param_qualname))
+                grad_values.append(grad_value)
+
+            synced_value = torch.sum(torch.stack(grad_values), dim=0)
+
+            for module_name, param_qualname in param_set.items():
+                assert module_name in self.remote_stage_executor_rrefs
+                rank, module_rref = self.remote_stage_executor_rrefs[module_name]
+                rpc.rpc_sync(rank, set_grad_in_executor, (module_rref, param_qualname, synced_value))
+
 
 class RemoteInterpreter(torch.fx.Interpreter):
     def __init__(self, remote_stage_executor_rrefs, module, cur_microbatch : int,   
@@ -552,7 +579,8 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         if last_nodes[0].op == 'output':
             logging.info('[root] Program does not have loss/backward, returning outputs directly')
             # Forward-only; return output values
-            return self._retrieve_output_values(microbatch_interpreters, last_nodes, _debug_mask_minibatches)
+            local_results = self._retrieve_output_values(microbatch_interpreters, last_nodes)
+            return merge_chunks(local_results, self.output_chunk_spec, _debug_mask_minibatches)
 
         logging.info('[root] Executing loss + backward stages')
         last_nodes = []
@@ -561,15 +589,21 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 
         assert all(n == last_nodes[0] for n in last_nodes)
         assert last_nodes[0].op == 'output'
-        return self._retrieve_output_values(microbatch_interpreters, last_nodes, _debug_mask_minibatches)
 
-    def _retrieve_output_values(self, microbatch_interpreters, last_nodes, _debug_mask_minibatches):
-        logging.info(f'[root] Combining output values from {len(microbatch_interpreters)} chunks')
+        local_results = self._retrieve_output_values(microbatch_interpreters, last_nodes)
+
+        # Shared parameter sync
+        # At this point, all of the gradient jobs should have been run
+        # (by way of the synchronization dependency earlier)
+        self._sync_replicated_params()
+
+        return merge_chunks(local_results, self.output_chunk_spec, _debug_mask_minibatches)
+
+    def _retrieve_output_values(self, microbatch_interpreters, last_nodes):
+        logging.info(f'[root] Retrieving output values from {len(microbatch_interpreters)} chunks')
         output_vals = []
         for interp, last_node in zip(microbatch_interpreters, last_nodes):
             interp.run_until(lambda n : False)
             output_vals.append(interp.env[last_node])
 
-        local_results = torch.fx.node.map_aggregate(output_vals, to_here)
-
-        return merge_chunks(local_results, self.output_chunk_spec, _debug_mask_minibatches)
+        return torch.fx.node.map_aggregate(output_vals, to_here)

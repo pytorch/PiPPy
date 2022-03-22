@@ -118,27 +118,6 @@ if local_rank == 0:
 
     all_grad_qualnames = {k: None for k, v in ec_pipe.named_parameters()}
 
-    replicated_params_qualnames = {}
-
-    # Shared parameter sync. TODO: move this to actual runtime
-    for param_set in ec_pipe.replicated_params:
-        grad_values = []
-        for module_name, param_qualname in param_set.items():
-            assert module_name in pipe_driver.remote_stage_executor_rrefs
-            rank, module_rref = pipe_driver.remote_stage_executor_rrefs[module_name]
-            grad_value = rpc.rpc_sync(rank, get_grad_from_executor, (module_rref, param_qualname))
-            grad_values.append(grad_value)
-            all_grad_qualnames.setdefault(f'split_gm.{module_name}.{param_qualname}')
-
-        synced_value = torch.sum(torch.stack(grad_values), dim=0)
-
-        for module_name, param_qualname in param_set.items():
-            assert module_name in pipe_driver.remote_stage_executor_rrefs
-            rank, module_rref = pipe_driver.remote_stage_executor_rrefs[module_name]
-            rpc.rpc_sync(rank, set_grad_in_executor, (module_rref, param_qualname, synced_value))
-
-            replicated_params_qualnames.setdefault(f'split_gm.{module_name}.{param_qualname}')
-
     pipe_grads = {}
 
     for name in all_grad_qualnames:
