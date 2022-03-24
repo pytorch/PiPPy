@@ -204,7 +204,7 @@ class Pipe(torch.nn.Module):
                    (node.op, node.target) == ('call_method', 'backward') or
                    (node.op, node.target) == ('call_function', stage_backward) or
                    (node.op, node.target) == ('call_function', torch.add) or
-                   (node.op, node.target) == ('call_function', sync_barrier))
+                   (node.op, node.target) == ('call_function', sync_barrier)), node
 
         # Detect replicated parameters so we know that we have to do an additional allreduce
         # before applying the optimizer
@@ -356,6 +356,8 @@ class Pipe(torch.nn.Module):
         # TODO: what does split do with module invocations? does it move the modules
         # into the submodules?
         split = split_module(traced, mod, split_callback, qualname_map)
+        # a (custom) tracer can produce dead code like orphan get_attr nodes
+        split.graph.eliminate_dead_code()
 
         # peephole to remove pipe_split
         for submodule in split.modules():
@@ -413,6 +415,8 @@ class Pipe(torch.nn.Module):
 
             return get_attr
 
+        to_delete = list()  # a list of nodes for deferral deletion
+
         for node in split.graph.nodes:
             if node.op == 'get_attr' and len(node.users) == 1:
                 user = list(node.users)[0]
@@ -429,7 +433,11 @@ class Pipe(torch.nn.Module):
 
                 move_param_to_callee(split, user.target, param_val, use_idx, is_buffer)
 
-                delattr(mod_itr, atoms[-1])
+                to_delete.append((mod_itr, atoms))
+
+        # deferral deletion
+        for (mod_itr, atoms) in to_delete:
+            delattr(mod_itr, atoms[-1])
 
         split.graph.lint()
         split.recompile()
@@ -559,14 +567,12 @@ class Pipe(torch.nn.Module):
                      tracer=None, **kwargs):
         # TODO: abstract partitioning policy
 
-        # TODO(pbelevich): Here we can add support for custom torch.fx tracers
-        #  https://github.com/jamesr66a/PiPPy/issues/15
-
         global _pipeline_tracer
         old__pipeline_tracer = _pipeline_tracer
         _pipeline_tracer = tracer or torch.fx.Tracer()
         try:
             # TODO: tracing policy
+            mod = copy.deepcopy(mod)  # because further pipe building activities can modify mod
             graph = _pipeline_tracer.trace(mod, **kwargs)
             traced = torch.fx.GraphModule(mod, graph)
         finally:

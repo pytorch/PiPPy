@@ -1,13 +1,13 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import inspect
+import sys
+import unittest
 
 import torch
 
 import transformers.utils.fx as fx
 from pippy.IR import MultiUseParameterConfig, Pipe, annotate_split_points, PipeSplitWrapper
 from transformers import *
-import sys
-import unittest
 
 
 def albert_splitter(model) -> int:
@@ -82,7 +82,7 @@ def transformer_splitter(model) -> int:
             annotate_split_points(model, {f'encoder.block.{i}': PipeSplitWrapper.SplitPoint.BEGINNING})
         for i in range(model.config.num_decoder_layers):
             annotate_split_points(model, {f'decoder.block.{i}': PipeSplitWrapper.SplitPoint.BEGINNING})
-        return model.config.num_layers + model.config.num_decoder_layers
+        return model.config.num_layers + model.config.num_decoder_layers + 1
     elif isinstance(model, GPTNeoPreTrainedModel):
         if isinstance(model, GPTNeoModel):
             for i in range(model.config.num_layers):
@@ -136,30 +136,30 @@ bs = 4
 num_choices = 3
 seq_length = 32
 
+
 class HFModelsTest(unittest.TestCase):
     pass
+
 
 for _model_cls in fx._SUPPORTED_MODELS:
     def scope(model_cls, replicate):
         def test_case(self):
-            if model_cls in [T5Model, T5ForConditionalGeneration]:  # https://github.com/jamesr66a/PiPPy/issues/57
-                self.skipTest('Known bad model')
             splitter = splitters.get(model_cls.base_model_prefix)
             print(f"Testing {model_cls.__name__} ", file=sys.stderr)
             assert splitter is not None
             config_cls = model_cls.config_class
             config = config_cls()
             if model_cls in [GPT2ForSequenceClassification, GPTNeoForSequenceClassification,
-                            GPTJForSequenceClassification] or model_cls.__name__.startswith("Roberta"):
+                             GPTJForSequenceClassification] or model_cls.__name__.startswith("Roberta"):
                 config.pad_token_id = 0
             model = model_cls(config)
             model.eval()
-            # print(model)
 
             submodules_cnt = splitter(model)
-            # print(model)
 
             input_names = model.dummy_inputs.keys()
+            if model_cls.__name__.startswith("T5"):
+                input_names -= ["decoder_attention_mask"]
             sig = inspect.signature(model.forward)
             concrete_args = {p.name: p.default for p in sig.parameters.values() if p.name not in input_names}
 
@@ -167,8 +167,7 @@ for _model_cls in fx._SUPPORTED_MODELS:
 
             multi_use_param_config = MultiUseParameterConfig.REPLICATE if replicate else MultiUseParameterConfig.TRANSMIT
             model_pipe = Pipe.from_tracing(model, multi_use_param_config, tracer=hf_tracer,
-                                        concrete_args=concrete_args)
-            # print(model_pipe)
+                                           concrete_args=concrete_args)
             assert submodules_cnt == len(list(model_pipe.split_gm.children()))
 
             if model_cls.__name__.endswith('MultipleChoice'):
@@ -177,8 +176,13 @@ for _model_cls in fx._SUPPORTED_MODELS:
                 input = torch.zeros(bs, seq_length, dtype=torch.long)
             else:
                 input = torch.zeros(bs, seq_length, dtype=torch.long).random_(model.config.vocab_size)
-            model_output = model(input)
-            model_pipe_output = model_pipe(input)
+
+            if model_cls.__name__.startswith("T5"):
+                model_output = model(input_ids=input, decoder_input_ids=input)
+                model_pipe_output = model_pipe(input_ids=input, decoder_input_ids=input)
+            else:
+                model_output = model(input)
+                model_pipe_output = model_pipe(input)
 
             def recursive_value_check(out, ref_out):
                 if isinstance(out, torch.Tensor):
@@ -200,6 +204,7 @@ for _model_cls in fx._SUPPORTED_MODELS:
             print(f'Correctness check for model {model_cls.__name__}_{multi_use_param_config} passed', file=sys.stderr)
 
         return test_case
+
 
     setattr(HFModelsTest, f'test_{_model_cls.__name__}_transmit', scope(_model_cls, False))
     setattr(HFModelsTest, f'test_{_model_cls.__name__}_replicate', scope(_model_cls, True))

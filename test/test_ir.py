@@ -301,8 +301,9 @@ class TestIR(unittest.TestCase):
         ec = ExampleCode()
         pipe = Pipe.from_tracing(ec)
         assert 'moved_buffer' in dict(pipe.split_gm.submod_1.named_buffers())
-        # NB: identity comparison
-        assert ec.buffer is pipe.split_gm.submod_1.moved_buffer
+        # NB: identity comparison is not possible because pipe has a deepcopy of the original parameters
+        assert ec.buffer is not pipe.split_gm.submod_1.moved_buffer
+        torch.testing.assert_allclose(ec.buffer, pipe.split_gm.submod_1.moved_buffer)
 
     def test_annotate_split_points_end(self):
         class Foo(torch.nn.Module):
