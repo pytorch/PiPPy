@@ -365,11 +365,11 @@ PiPPy is 3-clause BSD licensed, as found in the LICENSE file.
 # Work Items
 
 - [ ] Figure out how performance looks
-- [ ] Loss execution in runtime
-- [ ] backward() execution in runtime
+- [x] Loss execution in runtime
+- [x] backward() execution in runtime
 - [ ] gradient checkpointing in runtime
-- [ ] shared weights synchronization in runtime
-- [ ] CUDA device placement
+- [x] shared weights synchronization in runtime
+- [x] CUDA device placement
 - [ ] Beta integration into repos like HuggingFace transformers
 - [ ] Checkpointing as a configuration surface (manual & automated)
 
