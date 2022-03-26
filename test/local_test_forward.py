@@ -3,13 +3,14 @@ import torch
 import torch.distributed.rpc as rpc
 
 from pippy.IR import MultiUseParameterConfig, Pipe, pipe_split
-from pippy.PipelineDriver import PipelineDriverFillDrain
+from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B
 from pippy.microbatch import TensorChunkSpec
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
 
 import os
+import sys, getopt
 local_rank = int(os.environ["LOCAL_RANK"])
 world_size = int(os.environ["WORLD_SIZE"])
 
@@ -25,6 +26,24 @@ if local_rank == 0:
     REPLICATE = os.environ.get('REPLICATE', '0') != '0'
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if REPLICATE else MultiUseParameterConfig.TRANSMIT
     print(f'REPLICATE config: {REPLICATE} -> {MULTI_USE_PARAM_CONFIG}')
+
+    valid_schedules = ['FillDrain', '1F1B']
+    schedule = valid_schedules[0]
+
+    try:
+        opts, args = getopt.getopt(sys.argv[1:], "s:")
+    except getopt.GetoptError:
+        print("local_test_forward.py [-s <schedule>]")
+        sys.exit(2)
+    for opt, arg in opts:
+        if opt == '-s':
+            if arg in valid_schedules:
+                schedule = arg
+            else:
+                print(f"Valid values for schedule (-s): {valid_schedules}, given {arg}")
+                sys.exit(2)
+
+    print("Using schedule:", schedule)
 
     class ExampleCode(torch.nn.Module):
         def __init__(self):
@@ -52,6 +71,7 @@ if local_rank == 0:
     ec(torch.randn(bs, d_hid))
 
     ec_pipe = Pipe.from_tracing(ec, MULTI_USE_PARAM_CONFIG)
+    print(ec_pipe.split_gm)
 
     optimizer = torch.optim.SGD(ec_pipe.parameters(), 0.01)
 
@@ -59,7 +79,10 @@ if local_rank == 0:
     kwargs_chunk_spec = {}
     output_chunk_spec = {'out': TensorChunkSpec(0)}
 
-    pipe_driver = PipelineDriverFillDrain(ec_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size)
+    if schedule == '1F1B':
+        pipe_driver = PipelineDriver1F1B(ec_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size)
+    else:
+        pipe_driver = PipelineDriverFillDrain(ec_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size)
 
     input = torch.randn(bs, d_hid)
 
