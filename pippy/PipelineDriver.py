@@ -442,6 +442,15 @@ class PipelineDriverBase:
                 rank, module_rref = self.remote_stage_executor_rrefs[module_name]
                 rpc.rpc_sync(rank, set_grad_in_executor, (module_rref, param_qualname, synced_value))
 
+    def _retrieve_output_values(self, microbatch_interpreters, last_nodes):
+        logging.info(f'[root] Retrieving output values from {len(microbatch_interpreters)} chunks')
+        output_vals = []
+        for interp, last_node in zip(microbatch_interpreters, last_nodes):
+            interp.run_until(lambda n : False)
+            output_vals.append(interp.env[last_node])
+
+        return torch.fx.node.map_aggregate(output_vals, to_here)
+
 
 class RemoteInterpreter(torch.fx.Interpreter):
     def __init__(self, remote_stage_executor_rrefs, module, cur_microbatch : int,   
@@ -545,7 +554,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         if self.single_loss:
             raise NotImplementedError('Single minibatch loss not implemented')
 
-        logging.info('[root] Running pipeline')
+        logging.info('[root] Running pipeline FillDrain')
         # Roadmap:
         # 1) Micro-batch splitting - divide input arguments out into concrete chunk values
         # 2) Interpreter tiling - one interpreter per micro-batch
@@ -559,7 +568,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         microbatch_interpreters : List[self.RunUntilInterpreter] = []
 
         for chunk in range(chunks):
-            logging.info(f'[root] Instantiating microbatch interpreter for chunk {chunk}') 
+            logging.info(f'[root] Instantiating microbatch interpreter for chunk {chunk}')
             interp = RemoteInterpreter(self.remote_stage_executor_rrefs, self.pipe.split_gm, chunk, args_split[chunk],
                                        kwargs_split[chunk])
             microbatch_interpreters.append(interp)
@@ -599,11 +608,63 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 
         return merge_chunks(local_results, self.output_chunk_spec, _debug_mask_minibatches)
 
-    def _retrieve_output_values(self, microbatch_interpreters, last_nodes):
-        logging.info(f'[root] Retrieving output values from {len(microbatch_interpreters)} chunks')
-        output_vals = []
-        for interp, last_node in zip(microbatch_interpreters, last_nodes):
-            interp.run_until(lambda n : False)
-            output_vals.append(interp.env[last_node])
 
-        return torch.fx.node.map_aggregate(output_vals, to_here)
+class PipelineDriver1F1B(PipelineDriverBase):
+    def __init__(self, pipe : Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size : int,
+                 all_ranks : List[int] = None, single_loss : bool = False):
+        super().__init__(pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size, all_ranks)
+        self.single_loss = single_loss
+
+    def run(self, args, kwargs, chunks : int, _debug_mask_minibatches : bool = False):
+        if self.single_loss:
+            raise NotImplementedError('Single minibatch loss not implemented')
+
+        logging.info('[root] Running pipeline 1F1B')
+
+        args_split, kwargs_split = split_args_kwargs_into_chunks(args, kwargs, self.args_chunk_spec,
+                                                                 self.kwargs_chunk_spec, chunks,
+                                                                 _debug_mask_minibatches)
+
+        microbatch_interpreters : List[self.RunUntilInterpreter] = []
+
+        for chunk in range(chunks):
+            logging.info(f'[root] Instantiating microbatch interpreter for chunk {chunk}')
+            interp = RemoteInterpreter(self.remote_stage_executor_rrefs, self.pipe.split_gm, chunk, args_split[chunk],
+                                       kwargs_split[chunk])
+            microbatch_interpreters.append(interp)
+
+        logging.info(f'[root] {len(microbatch_interpreters)} instantiated')
+
+        last_nodes = []
+        local_results = []
+        inChunks = 0
+        for i, interp in enumerate(microbatch_interpreters[:self.pipe.num_stages]):
+            logging.info(f'[root] Executing stages for chunk {i}')
+            last_nodes.append(interp.run_until(lambda n: n.op == 'output'))
+            inChunks += 1
+
+        assert all(n == last_nodes[0] for n in last_nodes)
+        assert last_nodes[0].op == 'output'
+
+        outChunks = 0
+        while inChunks < chunks:
+            logging.info(f'[root] Retrieving output of chunk {outChunks}')
+            local_results.append(self._retrieve_output_values(microbatch_interpreters[outChunks:outChunks+1],
+                last_nodes[outChunks:outChunks+1]))
+            outChunks += 1
+            logging.info(f'[root] Executing stages for chunk {inChunks}')
+            interp = microbatch_interpreters[inChunks]
+            last_nodes.append(interp.run_until(lambda n: n.op == 'output'))
+            inChunks += 1
+
+        assert all(n == last_nodes[0] for n in last_nodes)
+
+        logging.info(f'[root] Retrieving output from chunk {outChunks} till the last')
+        local_results.extend(self._retrieve_output_values(microbatch_interpreters[outChunks:],
+            last_nodes[outChunks:]))
+
+        # There is backward pass, we should sync shared parameters
+        if self.pipe.has_loss_and_backwards:
+            self._sync_replicated_params()
+
+        return merge_chunks(local_results, self.output_chunk_spec, _debug_mask_minibatches)
