@@ -106,6 +106,18 @@ def _insert_stage_symbolic_backward(g : torch.fx.Graph):
 
     return g
 
+class PipeSequential(torch.nn.Sequential):
+    @staticmethod
+    def from_sequential(sequential_instance : torch.nn.Sequential):
+        return PipeSequential(*[copy.copy(m) for m in sequential_instance])
+
+    def forward(self, input):
+        for i, module in enumerate(self):
+            input = module(input)
+            if i != len(self) - 1:
+                pipe_split()
+        return input
+
 
 # Pipe model representation
 #
@@ -326,65 +338,6 @@ class Pipe(torch.nn.Module):
 
         gm.graph.lint()
         gm.recompile()
-
-    @staticmethod
-    def from_sequential(seq : torch.nn.Sequential, loss_fn : Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None):
-        # Deduplicate contained modules so we have a unique instance for each
-        # call in topological ordering. This is necessary so that detection of shared
-        # parameters across stages works.
-        new_seq_modules = []
-
-        seen_modules = {}
-        for module in seq:
-            if module in seen_modules:
-                to_append = copy.copy(module)
-            else:
-                to_append = module
-            new_seq_modules.append(to_append)
-            seen_modules.setdefault(to_append)
-
-        to_trace = torch.nn.Sequential(*new_seq_modules)
-
-        assert isinstance(seq, torch.nn.Sequential)
-
-        class AllModTracer(torch.fx.Tracer):
-            def is_leaf_module(self, *args, **kwargs):
-                return True
-
-        tracer = AllModTracer()
-        graph = tracer.trace(to_trace)
-
-        # Rename top-level submodules to align with the qualnames produced
-        # by split_module in the `from_tracing` frontend
-        copied_root_dict = dict(tracer.root.named_modules())
-        # Mapping from new qualname to old qualname
-        qualname_map : Dict[str, str] = {}
-
-        for node in graph.nodes:
-            if node.op == 'call_module':
-                new_target = f'submod_{node.target}'
-
-                # All submodules should be unique, even if they were aliased in the
-                # original Sequential, since we did a shallow copy of all modules above
-                assert new_target not in copied_root_dict
-                copied_root_dict[new_target] = copied_root_dict.pop(node.target)
-
-                # Map from new target name to old target name
-                qualname_map[new_target] = node.target
-
-                node.target = new_target
-
-        gm = torch.fx.GraphModule(copied_root_dict, graph)
-
-        num_stages = Pipe._number_and_count_forward_stages(gm)
-
-        if loss_fn is not None:
-            Pipe._append_traced_loss_fn_to_gm(gm, loss_fn)
-            has_loss_and_backward = True
-        else:
-            has_loss_and_backward = False
-
-        return Pipe(gm, qualname_map, num_stages, has_loss_and_backward)
 
     @staticmethod
     def _from_traced(mod : torch.nn.Module, traced : torch.fx.GraphModule,

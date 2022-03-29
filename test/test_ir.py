@@ -4,7 +4,7 @@ import copy
 import unittest
 from typing import NamedTuple
 
-from pippy.IR import Pipe, pipe_split, MultiUseParameterConfig, annotate_split_points, PipeSplitWrapper
+from pippy.IR import Pipe, PipeSequential, pipe_split, MultiUseParameterConfig, annotate_split_points, PipeSplitWrapper
 from pippy.microbatch import TensorChunkSpec, split_args_kwargs_into_chunks, merge_chunks
 
 class ExampleCode(torch.nn.Module):
@@ -47,16 +47,18 @@ class TestIR(unittest.TestCase):
         self.ec = ExampleCode()
 
     def test_sequential(self):
-        seq_pipe = Pipe.from_sequential(self.seq)
-        assert seq_pipe.replicated_params == [{'submod_0': 'weight', 'submod_5': 'weight'}, {'submod_0': 'bias', 'submod_5': 'bias'}]
+        pipe_seq = PipeSequential.from_sequential(self.seq)
+        pipe = Pipe.from_tracing(pipe_seq)
+        assert pipe.replicated_params == [{'submod_0': '0.weight', 'submod_5': '5.weight'}, {'submod_0': '0.bias', 'submod_5': '5.bias'}]
 
         x = torch.randn(50, 512)
-        torch.testing.assert_allclose(self.seq(x), seq_pipe(x))
+        torch.testing.assert_allclose(self.seq(x), pipe(x))
 
         # Check exact qualname mapping
         expected_map = {
-                'submod_0': '0', 'submod_1': '1', 'submod_2': '2', 'submod_3': '3', 'submod_4': '4', 'submod_5': '5'}
-        self.assertDictEqual(expected_map, seq_pipe.new_to_old_qualname_mapping)
+                'submod_0.0': '0', 'submod_1.1': '1', 'submod_2.2': '2', 'submod_3.3': '3',
+                'submod_4.4': '4', 'submod_5.5': '5'}
+        self.assertDictEqual(expected_map, pipe.new_to_old_qualname_mapping)
 
     def test_tracing_transmit(self):
         ec_pipe = Pipe.from_tracing(self.ec, MultiUseParameterConfig.TRANSMIT)
@@ -110,18 +112,19 @@ class TestIR(unittest.TestCase):
 
     def test_loss_backward_sequential(self):
         mse_loss = torch.nn.MSELoss()
-        seq_pipe_with_loss = Pipe.from_sequential(self.seq, mse_loss)
-        check_qualname_mapping(old=self.seq, new=seq_pipe_with_loss)
+        pipe_seq = PipeSequential.from_sequential(self.seq)
+        pipe = Pipe.from_tracing(pipe_seq, loss_fn=mse_loss)
+        check_qualname_mapping(old=self.seq, new=pipe)
 
-        test_optim = torch.optim.SGD(seq_pipe_with_loss.parameters(), lr=0.01, momentum=0.9)
+        test_optim = torch.optim.SGD(pipe.parameters(), lr=0.01, momentum=0.9)
         ref_optim = torch.optim.SGD(self.seq.parameters(), lr=0.01, momentum=0.9)
 
         x = torch.randn(5, 512)
         target = torch.zeros(5, 512)
 
         test_optim.zero_grad()
-        test_out = seq_pipe_with_loss(x, target)
-        test_grads = {seq_pipe_with_loss.remap_qualname(name): copy.copy(val.grad) for name, val in seq_pipe_with_loss.named_parameters()}
+        test_out = pipe(x, target)
+        test_grads = {pipe.remap_qualname(name): copy.copy(val.grad) for name, val in pipe.named_parameters()}
         torch.testing.assert_allclose(test_out, mse_loss(self.seq(x), target))
 
         ref_optim.zero_grad()
