@@ -418,29 +418,18 @@ class PipelineDriverBase:
         split_gm = self.pipe.split_gm
 
         executor_descriptors = []
-        seen_loss = False
-        seen_loss_backward = False
         bw_idx = -1
         for node in split_gm.graph.nodes:
             if node.op == 'call_module':
-                assert not seen_loss
                 target_mod = split_gm.get_submodule(node.target)
-                if node.target == '_loss':
-                    assert len(executor_descriptors) > 0
-                    executor_descriptors[-1].loss_mod = target_mod
-                else:
-                    descr = ExecutorDescriptor()
-                    descr.name = node.target
-                    descr.mod = target_mod
-                    executor_descriptors.append(descr)
+                descr = ExecutorDescriptor()
+                descr.name = node.target
+                descr.mod = target_mod
+                executor_descriptors.append(descr)
             elif (node.op, node.target) == ('call_function', stage_backward):
-                if not seen_loss_backward:
-                    seen_loss_backward = True
-                    node.meta['fw_stage'] = '_loss'
-                else:
-                    executor_descriptors[bw_idx].has_backward = True
-                    node.meta['fw_stage'] = executor_descriptors[bw_idx].name
-                    bw_idx -= 1
+                executor_descriptors[bw_idx].has_backward = True
+                node.meta['fw_stage'] = executor_descriptors[bw_idx].name
+                bw_idx -= 1
 
         assert all(d.has_backward for d in executor_descriptors) or all(not d.has_backward for d in executor_descriptors)
 
@@ -455,8 +444,6 @@ class PipelineDriverBase:
         self.loss_stage = None
         for rank, descr in zip(self.all_ranks, executor_descriptors):
             self.remote_stage_executor_rrefs[descr.name] = (rank, rpc.remote(rank, self.executor_class, (descr.mod, rank, descr.loss_mod, self.max_outstanding)))
-            if descr.loss_mod:
-                self.remote_stage_executor_rrefs['_loss'] = self.remote_stage_executor_rrefs[descr.name]
 
     def run(self, args, kwargs, chunks : int, _debug_mask_minibatches : bool = False):
         raise NotImplementedError('PipelineDriverBase is an abstract base class, please use a concrete '
@@ -520,12 +507,11 @@ class RemoteInterpreter(torch.fx.Interpreter):
 
         if target in self.remote_stage_executor_rrefs:
             rank, stage_executor = self.remote_stage_executor_rrefs[target]
-            phase = Phase.LOSS if target == '_loss' else Phase.FORWARD
-            logging.info(f'[root][{self.cur_microbatch}] Issuing {phase} '
+            logging.info(f'[root][{self.cur_microbatch}] Issuing {Phase.FORWARD} '
                          f'invocation for target {target} on rank {rank}')
             invocation_key = f'{self.cur_microbatch}_{node.name}'
             return stage_executor.remote().invoke(
-                invocation_key, phase, args, kwargs, self.cur_microbatch, debug_str=node.format_node())
+                invocation_key, Phase.FORWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node())
         else:
             logging.info(f'[root][{self.cur_microbatch}] Running local operation {target} from driver')
             return super().call_module(target, args, kwargs)
@@ -615,23 +601,6 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 
         logging.info(f'[root] {len(microbatch_interpreters)} instantiated')
 
-        def node_is_loss_or_output(n):
-            return (n.op == 'call_module' and n.target == '_loss') or n.op == 'output'
-
-        last_nodes = []
-        for i, interp in enumerate(microbatch_interpreters):
-            logging.info(f'[root][{i}] Executing forward stages')
-            last_nodes.append(interp.run_until(node_is_loss_or_output))
-
-        assert all(n == last_nodes[0] for n in last_nodes)
-
-        if last_nodes[0].op == 'output':
-            logging.info('[root] Program does not have loss/backward, returning outputs directly')
-            # Forward-only; return output values
-            local_results = self._retrieve_output_values(microbatch_interpreters, last_nodes)
-            return merge_chunks(local_results, self.output_chunk_spec, _debug_mask_minibatches)
-
-        logging.info('[root] Executing loss + backward stages')
         last_nodes = []
         for interp in microbatch_interpreters:
             last_nodes.append(interp.run_until(lambda n: n.op == 'output'))

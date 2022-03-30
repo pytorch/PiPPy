@@ -4,7 +4,7 @@ import copy
 import unittest
 from typing import NamedTuple
 
-from pippy.IR import Pipe, PipeSequential, LossWrapper, pipe_split, MultiUseParameterConfig, annotate_split_points, PipeSplitWrapper
+from pippy.IR import Pipe, PipeSequential, TrivialLossWrapper, pipe_split, MultiUseParameterConfig, annotate_split_points, PipeSplitWrapper
 from pippy.microbatch import TensorChunkSpec, split_args_kwargs_into_chunks, merge_chunks
 
 class ExampleCode(torch.nn.Module):
@@ -28,12 +28,6 @@ class ExampleCode(torch.nn.Module):
         x = torch.mm(x, self.mm_param2)
         x = self.lin(x)
         return x
-
-
-class TrivialLossWrapper(LossWrapper):
-    def forward(self, input, targets):
-        model_out = self.module(input)
-        return self.loss_fn(model_out, targets)
 
 
 def check_qualname_mapping(old, new):

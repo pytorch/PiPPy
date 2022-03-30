@@ -138,6 +138,12 @@ class LossWrapper(torch.nn.Module):
                                   'value.')
 
 
+class TrivialLossWrapper(LossWrapper):
+    def forward(self, input, targets):
+        model_out = self.module(input)
+        return self.loss_fn(model_out, targets)
+
+
 # Pipe model representation
 #
 # Pipe can be thought of as an `nn.Sequential++`. That is to say: it specifies
