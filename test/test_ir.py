@@ -4,7 +4,7 @@ import copy
 import unittest
 from typing import NamedTuple
 
-from pippy.IR import Pipe, PipeSequential, TrivialLossWrapper, pipe_split, MultiUseParameterConfig, annotate_split_points, PipeSplitWrapper
+from pippy.IR import Pipe, PipeSequential, TrivialLossWrapper, pipe_split, MultiUseParameterConfig, annotate_split_points, PipeSplitWrapper, _null_coalesce_accumulate
 from pippy.microbatch import TensorChunkSpec, split_args_kwargs_into_chunks, merge_chunks
 
 class ExampleCode(torch.nn.Module):
@@ -186,7 +186,7 @@ class TestIR(unittest.TestCase):
         mse_loss = torch.nn.MSELoss()
         wrapper = TrivialLossWrapper(c, mse_loss)
         accum_pipe = Pipe.from_tracing(wrapper)
-        assert any(n.target == torch.add for n in accum_pipe.split_gm.graph.nodes)
+        assert any(n.target == _null_coalesce_accumulate for n in accum_pipe.split_gm.graph.nodes)
         accum_pipe(torch.randn(5, 50), torch.randn(5, 50))
 
     def test_invoke_pipeline_error(self):
@@ -218,6 +218,44 @@ class TestIR(unittest.TestCase):
         ref_out.backward()
         ref_grads = {name: copy.copy(val.grad) for name, val in self.ec.named_parameters()}
 
+
+    def test_output_loss_value_spec(self):
+        class EmbeddedLossModule(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.lin = torch.nn.Linear(5, 5)
+                self.loss = torch.nn.MSELoss()
+            
+            def forward(self, x, target):
+                out = self.lin(x)
+                loss = self.loss(out, target)
+                # TODO: split_module doesn't properly handle dict outputs. Fix that
+                return (out, loss)
+
+
+        elm = EmbeddedLossModule()
+        elm.train()
+
+        optim = torch.optim.SGD(elm.parameters(), lr=0.001)
+        optim.zero_grad()
+        x, target = torch.randn(5, 5), torch.randn(5, 5)
+        ref_out_tup = elm(x, target)
+        ref_out_tup[1].backward()
+        ref_grads = {k: p.grad for k, p in elm.named_parameters()}
+
+
+        output_loss_value_spec = (False, True)
+        pipe = Pipe.from_tracing(elm, output_loss_value_spec=output_loss_value_spec)
+
+        pipe_optim = torch.optim.SGD(pipe.parameters(), lr=0.001)
+        pipe_optim.zero_grad()
+        pipe_out_tup = pipe(x, target)
+        test_grads = {k: p.grad for k, p in pipe.named_parameters()}
+
+        for k_test, v_test in test_grads.items():
+            k_ref = pipe.remap_qualname(k_test)
+            v_ref = ref_grads[k_ref]
+            torch.testing.assert_allclose(v_test, v_ref)
 
     def test_deeply_nested_parameter(self):
         class Nest(torch.nn.Module):

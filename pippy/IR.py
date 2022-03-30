@@ -24,46 +24,147 @@ def stage_backward(stage_output, output_grads, input_values):
     in the autograd trace) as well as return a list of the gradients for the
     input values
     """
-    torch.autograd.backward(stage_output, grad_tensors=output_grads)
+    # stage_output may be a composite datatype like dict. Extract all individual
+    # tensor values here
+    stage_output_tensors = []
+
+    def get_tensor(v):
+        if isinstance(v, torch.Tensor) and v.requires_grad:
+            stage_output_tensors.append(v)
+    torch.fx.node.map_aggregate(stage_output, get_tensor)
+
+    torch.autograd.backward(tuple(stage_output_tensors), grad_tensors=output_grads)
 
     grad_inputs = []
     for val in input_values:
         if isinstance(val, torch.Tensor):
             grad_inputs.append(val.grad)
-        elif val is None:
-            grad_inputs.append(None)
         else:
-            raise NotImplementedError(f'Cannot pass gradient for value {val}')
+            grad_inputs.append(None)
+
     barrier_token = None
     return grad_inputs, barrier_token
 
 def sync_barrier(loss, barrier_tokens):
     return loss
 
+# TODO: handling requires_grad=False dynamically. Can we analyze this during initial
+# IR emission?
+def _null_coalesce_accumulate(lhs, rhs):
+    if lhs is None:
+        return rhs
+    elif rhs is None:
+        return lhs
+    else:
+        return torch.add(lhs, rhs)
+
+def _find_loss_from_output_and_spec(output_val, spec_val):
+    if spec_val is False:
+        return None
+    if spec_val is True:
+        if not isinstance(output_val, torch.fx.Node):
+            raise RuntimeError(f'Loss spec must specify a dynamic value but got {output_val}')
+        return output_val
+
+    if isinstance(spec_val, (tuple, list)):
+        if not isinstance(spec_val, (tuple, list)):
+            raise RuntimeError(f'Output value {output_val} must match type of loss specification '
+                               f'{spec_val}')
+        if len(output_val) != len(spec_val):
+            raise RuntimeError(f'Output value {output_val} must match length of loss specification '
+                               f'{spec_val}')
+        for out, spec in zip(output_val, spec_val):
+            loss_val = _find_loss_from_output_and_spec(out, spec)
+            if loss_val is not None:
+                return loss_val
+        raise RuntimeError(f'Did not find loss value in specification {spec_val}')
+
+    if isinstance(spec_val, dict):
+        if not isinstance(spec_val, dict):
+            raise RuntimeError(f'Output value {output_val} must match type of loss specification '
+                               f'{spec_val}')
+        if set(output_val.keys()) != set(spec_val.keys()):
+            raise RuntimeError(f'Output value {output_val} must match keys of loss specification '
+                               f'{spec_val}')
+        for k in spec_val:
+            loss_val = _find_loss_from_output_and_spec(output_val[k], spec_val[k])
+            if loss_val is not None:
+                return loss_val
+        raise RuntimeError(f'Did not find loss value in specification {spec_val}')
+
+    raise RuntimeError(f'Unsupported type {type(spec_val)} in loss specification')
+
+
 def _insert_stage_symbolic_backward(g : torch.fx.Graph, output_loss_value_spec):
     output_nodes = [n for n in g.nodes if n.op == 'output']
     assert len(output_nodes) == 1
     output_node = output_nodes[0]
 
-    assert output_loss_value_spec is None, "Not yet implemented"
-    assert len(output_node.args) == 1
-    loss_node = output_node.args[0]
+    if output_loss_value_spec:
+        loss_node = _find_loss_from_output_and_spec(output_node.args[0], output_loss_value_spec)
+    else:
+        assert len(output_node.args) == 1
+        loss_node = output_node.args[0]
 
-    val_to_grad: Dict[torch.fx.Node, Any] = {loss_node : None}
+    # Collect metadata about tuple output values. TODO: move this to split_module or FX IR
+    tuples = {}
+    for node in reversed(g.nodes):
+        if node.op == 'call_function':
+            assert node.target == operator.getitem
+            assert len(node.args) == 2
+            indexed_value, node_idx = tuple(node.args)
+
+            # indexed_value is a collection that we are indexing into. It could
+            # exist in the tuples map if we've processed another `getitem`
+            # already.
+            existing_list_size = len(tuples[indexed_value]) if indexed_value in tuples else -1
+            new_list_size = max(node_idx + 1, existing_list_size)
+
+            reconstructed_list = [None for _ in range(new_list_size)]
+
+            # Copy over existing elements if present
+            if indexed_value in tuples:
+                for i, val in enumerate(tuples[indexed_value]):
+                    reconstructed_list[i] = val
+
+            # Populate value represented by this node
+            reconstructed_list[node_idx] = node
+
+            tuples[indexed_value] = reconstructed_list
+
+    # Keep track of nodes that dominate the loss node.
+    # We will only emit backward operations for nodes that can contribute
+    # to the specified loss value.
+    live_nodes = {loss_node: None}
+    val_to_grad = {loss_node : None}
 
     def assign_or_accumulate_grad(forward_node, grad_value):
         if forward_node in val_to_grad:
-            grad_value = g.call_function(torch.add, (val_to_grad[forward_node], grad_value))
+            grad_value = g.call_function(_null_coalesce_accumulate, (val_to_grad[forward_node], grad_value))
         val_to_grad[forward_node] = grad_value
 
     with g.inserting_before(output_node):
         barrier_tokens = []
 
         for node in reversed(g.nodes):
+            if node not in live_nodes:
+                continue
+
+            def add_to_live_nodes(n):
+                live_nodes.setdefault(n, None)
+            torch.fx.node.map_arg(node.args, add_to_live_nodes)
+            torch.fx.node.map_arg(node.kwargs, add_to_live_nodes)
             if node.op == 'call_module':
+                if node in tuples:
+                    stage_output = tuple(n for n in tuples[node] if n in live_nodes)
+                    output_grads = tuple(val_to_grad[n] for n in tuples[node] if n in live_nodes)
+                else:
+                    stage_output = node,
+                    output_grads = val_to_grad[node]
+
                 grad_call = g.call_function(stage_backward, kwargs={
-                    'stage_output' : node,
-                    'output_grads' : val_to_grad[node],
+                    'stage_output' : stage_output,
+                    'output_grads' : output_grads,
                     'input_values' : list(node.all_input_nodes)
                 })
 
@@ -75,33 +176,9 @@ def _insert_stage_symbolic_backward(g : torch.fx.Graph, output_loss_value_spec):
                 grads_proxy = torch.fx.Proxy(grads)
                 for i, input_node in enumerate(input_nodes):
                     assign_or_accumulate_grad(input_node, grads_proxy[i].node)
-            elif node.op == 'call_function':
-                assert node.target == operator.getitem
-                assert len(node.args) == 2
-                indexed_value, node_idx = tuple(node.args)
-
-                grad_output = val_to_grad[node]
-
-                # indexed_value is a collection that we are indexing into. It could
-                # exist in the val_to_grad map if we've processed another `getitem`
-                # already.
-                existing_list_size = len(val_to_grad[indexed_value]) if indexed_value in val_to_grad else -1
-                new_list_size = max(node_idx + 1, existing_list_size)
-
-                reconstructed_list = [None for _ in range(new_list_size)]
-
-                # Copy over existing elements if present
-                if indexed_value in val_to_grad:
-                    for i, val in enumerate(val_to_grad[indexed_value]):
-                        reconstructed_list[i] = val
-
-                # Populate value represented by this node
-                reconstructed_list[node_idx] = grad_output
-
-                val_to_grad[indexed_value] = reconstructed_list
 
         # Insert barrier call
-        barrier_call = g.call_function(sync_barrier, (loss_node, barrier_tokens))
+        barrier_call = g.call_function(sync_barrier, (output_node.args[0], barrier_tokens))
         output_node.args = (barrier_call,)
 
     return g
@@ -143,18 +220,11 @@ class LossWrapper(torch.nn.Module):
         wrapper = MyModelWrapper(model, loss_fn)
         pipe = Pipe.from_tracing(wrapper, ...)
 
-    Additionally, the ``output_loss_value_spec`` value can be specified to disambiguate
-    which value in the output of `forward` is the loss value on which PiPPy should apply
-    backpropagation. For example, if your ``forward`` returns a tuple ``(loss, model_out)``,
-    you can specify ``output_loss_value_spec=(True, False)``. Or, if your ``forward`` returns
-    a dict ``{'loss': loss_value, 'model_out': model_out}``, you can specify
-    ``output_loss_value_spec={'loss': True, 'model_out': False}``
     """
-    def __init__(self, module, loss_fn, output_loss_value_spec=None):
+    def __init__(self, module, loss_fn):
         super().__init__()
         self.module = module
         self.loss_fn = loss_fn
-        self.output_loss_value_spec = output_loss_value_spec
 
     def forward(self, *args, **kwargs):
         raise NotImplementedError('This instance of LossWrapper does not have an overridden'
@@ -253,7 +323,7 @@ class Pipe(torch.nn.Module):
                    (node.op, node.target) == ('call_function', operator.getitem) or
                    (node.op, node.target) == ('call_method', 'backward') or
                    (node.op, node.target) == ('call_function', stage_backward) or
-                   (node.op, node.target) == ('call_function', torch.add) or
+                   (node.op, node.target) == ('call_function', _null_coalesce_accumulate) or
                    (node.op, node.target) == ('call_function', sync_barrier)), node
 
         # Detect replicated parameters so we know that we have to do an additional allreduce
@@ -358,7 +428,16 @@ class Pipe(torch.nn.Module):
 
     @staticmethod
     def _from_traced(mod : torch.nn.Module, traced : torch.fx.GraphModule,
-                     multi_use_param_spec : Optional[MultiUseParamSpec] = None, **kwargs):
+                     multi_use_param_spec : Optional[MultiUseParamSpec] = None,
+                     output_loss_value_spec=None, **kwargs):
+        """
+        Additionally, the ``output_loss_value_spec`` value can be specified to disambiguate
+        which value in the output of `forward` is the loss value on which PiPPy should apply
+        backpropagation. For example, if your ``forward`` returns a tuple ``(loss, model_out)``,
+        you can specify ``output_loss_value_spec=(True, False)``. Or, if your ``forward`` returns
+        a dict ``{'loss': loss_value, 'model_out': model_out}``, you can specify
+        ``output_loss_value_spec={'loss': True, 'model_out': False}``
+        """
         part_idx = 0
 
         def split_callback(n : torch.fx.Node):
@@ -569,8 +648,8 @@ class Pipe(torch.nn.Module):
 
         num_stages = Pipe._number_and_count_forward_stages(split)
 
-        if isinstance(mod, LossWrapper):
-            _insert_stage_symbolic_backward(split.graph, mod.output_loss_value_spec)
+        if isinstance(mod, LossWrapper) or output_loss_value_spec:
+            _insert_stage_symbolic_backward(split.graph, output_loss_value_spec)
             split.recompile()
             has_loss_and_backward = True
         else:
@@ -580,7 +659,7 @@ class Pipe(torch.nn.Module):
 
     @staticmethod
     def from_tracing(mod : torch.nn.Module, multi_use_param_spec : Optional[MultiUseParamSpec] = None,
-                     tracer=None, **kwargs):
+                     tracer=None, output_loss_value_spec=None, **kwargs):
         # TODO: abstract partitioning policy
 
         global _pipeline_tracer
@@ -594,7 +673,8 @@ class Pipe(torch.nn.Module):
         finally:
             _pipeline_tracer = old__pipeline_tracer
 
-        return Pipe._from_traced(mod, traced, multi_use_param_spec, **kwargs)
+        return Pipe._from_traced(mod, traced, multi_use_param_spec, output_loss_value_spec=output_loss_value_spec,
+                                 **kwargs)
 
 
 class PipeSplitWrapper(torch.nn.Module):
