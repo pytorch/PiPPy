@@ -8,6 +8,10 @@ import torch
 import torch.fx
 from torch.fx.passes.split_module import split_module
 
+import copy
+import operator
+from typing import Dict, List, Optional, Union, cast
+from enum import Enum
 
 # TODO:
 # 1. investigate gradient sync for shared parameters. how does DDP do it?
@@ -121,7 +125,7 @@ class PipeSequential(torch.nn.Sequential):
 
 
 class LossWrapper(torch.nn.Module):
-    def __init__(self, module, loss_fn, output_loss_value_spec = None):
+    def __init__(self, module, loss_fn, output_loss_value_spec=None):
         super().__init__()
         self.module = module
         self.loss_fn = loss_fn
