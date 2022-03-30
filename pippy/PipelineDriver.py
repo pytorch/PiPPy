@@ -51,9 +51,8 @@ def to_here(a):
 
 class Phase(Enum):
     FORWARD = 0
-    LOSS = 1
-    BACKWARD = 2
-    SYNC_BARRIER = 3
+    BACKWARD = 1
+    SYNC_BARRIER = 2
 
 # TODO: do we need this?
 class SchedState(Enum):
@@ -151,7 +150,6 @@ class PipeStageExecutor:
         self.local_rank = local_rank
         logging.info(f'[{self.local_rank}] Instantiating PipeStageExecutor')
         self.mod = mod
-        self.loss_mod = loss_mod
         # Maximum outstanding micro-batches of the pipeline schedule
         self.max_outstanding = max_outstanding
         # Keeps track of the outstanding micro-batches in current executor
@@ -171,7 +169,6 @@ class PipeStageExecutor:
 
         # map microbatch ID to list of forward tensor args
         self.fwd_cache : Dict[int, Tuple[Any, List[torch.Tensor]]] = {}
-        self.loss_cache : Dict[int, Tuple[Any, List[torch.Tensor]]] = {}
 
     def _debug_print(self, to_file=False):
         # NB: this does not take the runlist locks. This method should only be
@@ -261,9 +258,8 @@ class PipeStageExecutor:
                 # HACK: here we are directly accessing the saved tensor outputs
                 # for closed-over outputs so that they still have the grad_fn
                 # from local autograd. Can we solve this more elegantly?
-                cache = self.loss_cache if len(self.loss_cache) > 0 else self.fwd_cache
                 kwargs = dict(kwargs)
-                kwargs['stage_output'], kwargs['input_values'] = cache.pop(microbatch_id)
+                kwargs['stage_output'], kwargs['input_values'] = self.fwd_cache.pop(microbatch_id)
 
             if work_item.phase == Phase.FORWARD:
                 self.outstanding += 1
@@ -282,23 +278,6 @@ class PipeStageExecutor:
                 logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running forward module')
                 out_val = self.mod(*args, **kwargs)
                 self.fwd_cache[microbatch_id] = (out_val, flat_tensor_args)
-            elif work_item.phase == Phase.LOSS:
-                assert self.loss_mod is not None
-                flat_tensor_args = []
-
-                def extract_tensor_args(a):
-                    if isinstance(a, torch.Tensor):
-                        nonlocal flat_tensor_args
-                        val = a.detach().requires_grad_(a.requires_grad)
-                        flat_tensor_args.append(val)
-                        return val
-                    else:
-                        return a
-                args = torch.fx.node.map_aggregate(args, extract_tensor_args)
-                kwargs = torch.fx.node.map_aggregate(kwargs, extract_tensor_args)
-                logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running loss module')
-                out_val = self.loss_mod(*args, **kwargs)
-                self.loss_cache[microbatch_id] = (out_val, flat_tensor_args)
             elif work_item.phase == Phase.BACKWARD:
                 logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running backward')
                 out_val = stage_backward(*args, **kwargs)
@@ -412,7 +391,6 @@ class PipelineDriverBase:
         class ExecutorDescriptor:
             name : str
             mod : torch.nn.Module
-            loss_mod : Optional[torch.nn.Module] = None
             has_backward : bool = False
 
         split_gm = self.pipe.split_gm
@@ -441,9 +419,8 @@ class PipelineDriverBase:
             warnings.warn(f'Running pipeline with {len(executor_descriptors)} stages on world_size of {self.world_size}. '
                           f'Remaining ranks will be idle.')
 
-        self.loss_stage = None
         for rank, descr in zip(self.all_ranks, executor_descriptors):
-            self.remote_stage_executor_rrefs[descr.name] = (rank, rpc.remote(rank, self.executor_class, (descr.mod, rank, descr.loss_mod, self.max_outstanding)))
+            self.remote_stage_executor_rrefs[descr.name] = (rank, rpc.remote(rank, self.executor_class, (descr.mod, rank, self.max_outstanding)))
 
     def run(self, args, kwargs, chunks : int, _debug_mask_minibatches : bool = False):
         raise NotImplementedError('PipelineDriverBase is an abstract base class, please use a concrete '
