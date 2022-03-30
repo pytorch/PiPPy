@@ -610,10 +610,11 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 
         local_results = self._retrieve_output_values(microbatch_interpreters, last_nodes)
 
-        # Shared parameter sync
-        # At this point, all of the gradient jobs should have been run
-        # (by way of the synchronization dependency earlier)
-        self._sync_replicated_params()
+        if self.pipe.has_loss_and_backwards:
+            # Shared parameter sync
+            # At this point, all of the gradient jobs should have been run
+            # (by way of the synchronization dependency earlier)
+            self._sync_replicated_params()
 
         return merge_chunks(local_results, self.output_chunk_spec, _debug_mask_minibatches)
 
