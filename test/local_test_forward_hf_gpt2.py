@@ -93,6 +93,6 @@ if local_rank == 0:
         ref_out = gpt2_pipe(gpt2_input)
         print(f'profiling run completed {torch.sum(out["last_hidden_state"])} ref {torch.sum(ref_out["last_hidden_state"])}')
     if PROFILING_ENABLED:
-        prof.export_chrome_trace('pipe.csv')
+        prof.export_chrome_trace(f'{os.path.splitext(os.path.basename(__file__))[0]}.json')
 
 rpc.shutdown()

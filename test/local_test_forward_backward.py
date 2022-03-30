@@ -215,6 +215,6 @@ if local_rank == 0:
     #     ref_out = ec_pipe.split_gm(input, target)
     #     print(f'profiling run completed {torch.sum(ref_out)} ref {torch.sum(ref_out)}')
     # if PROFILING_ENABLED:
-    #     prof.export_chrome_trace('pipe.csv')
+    #     prof.export_chrome_trace(f'{os.path.splitext(os.path.basename(__file__))[0]}.json')
 
 rpc.shutdown()
