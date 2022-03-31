@@ -46,8 +46,8 @@ def run_master():
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if REPLICATE else MultiUseParameterConfig.TRANSMIT
     print(f'REPLICATE config: {REPLICATE} -> {MULTI_USE_PARAM_CONFIG}')
 
-    bs = 20
-    seq_length = 32
+    bs = 140
+    seq_length = 64
     layers_per_rank = 1
 
     device = torch.device('cuda:0')
@@ -75,25 +75,38 @@ def run_master():
     pipe_driver = PipelineDriverFillDrain(gpt2_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec,
                                           world_size)
 
+    def merge_jsons(world_size):
+        with open("result.json", "w") as res:
+            lines = []
+            for i in range(world_size):
+                with open(f"{i}.json", "r") as f:
+                    lines.extend([l.rstrip() for l in f.readlines()])
+                os.remove(f"{i}.json")
+            res.write("[\n")
+            res.write(",\n".join(lines))
+            res.write("\n]\n")
+
     # Warm up and correctness runs
     print('Running GPT2 pipeline. NB: if this is too slow, set OMP_NUM_THREADS to a higher value')
-    out = pipe_driver.run((gpt2_input,), {}, chunks=5, _debug_mask_minibatches=True)
+    for i in range(10):
+        out = pipe_driver.run((gpt2_input,), {}, chunks=14, _debug_mask_minibatches=True)
+    merge_jsons(len(pipe_driver.remote_stage_executor_rrefs))
 
-    print('Running reference pipeline')
-    ref_out = gpt2_pipe(gpt2_input)
-    if CHECK_NUMERIC_EQUIVALENCE:
-        torch.testing.assert_allclose(out['last_hidden_state'], ref_out['last_hidden_state'])
-        print(
-            f'equivalence test passed {torch.sum(out["last_hidden_state"])} ref {torch.sum(ref_out["last_hidden_state"])}')
-
-    # Profiling runs
-    with torch.autograd.profiler_legacy.profile(enabled=PROFILING_ENABLED) as prof:
-        out = pipe_driver.run((gpt2_input,), {}, chunks=5, _debug_mask_minibatches=False)
-        ref_out = gpt2_pipe(gpt2_input)
-        print(
-            f'profiling run completed {torch.sum(out["last_hidden_state"])} ref {torch.sum(ref_out["last_hidden_state"])}')
-    if PROFILING_ENABLED:
-        prof.export_chrome_trace('pipe.csv')
+    # print('Running reference pipeline')
+    # ref_out = gpt2_pipe(gpt2_input)
+    # if CHECK_NUMERIC_EQUIVALENCE:
+    #     torch.testing.assert_allclose(out['last_hidden_state'], ref_out['last_hidden_state'])
+    #     print(
+    #         f'equivalence test passed {torch.sum(out["last_hidden_state"])} ref {torch.sum(ref_out["last_hidden_state"])}')
+    #
+    # # Profiling runs
+    # with torch.autograd.profiler_legacy.profile(enabled=PROFILING_ENABLED) as prof:
+    #     out = pipe_driver.run((gpt2_input,), {}, chunks=14, _debug_mask_minibatches=False)
+    #     ref_out = gpt2_pipe(gpt2_input)
+    #     print(
+    #         f'profiling run completed {torch.sum(out["last_hidden_state"])} ref {torch.sum(ref_out["last_hidden_state"])}')
+    # if PROFILING_ENABLED:
+    #     prof.export_chrome_trace('pipe.csv')
 
 
 if __name__ == '__main__':
