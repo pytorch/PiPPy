@@ -213,8 +213,8 @@ class PipeStageExecutor:
                     # of outstanding mciro-batches;
                     # If there are other READY WorkItems, the runloop executes as normally processing those
                     if (self.max_outstanding is not None and
-                        self.ready_runlist[key].state == SchedState.WAITING and
-                        self.outstanding >= self.max_outstanding):
+                            self.ready_runlist[key].state == SchedState.WAITING and
+                            self.outstanding >= self.max_outstanding):
                         continue
                     work_item = self.ready_runlist.pop(key)
                     break
