@@ -198,6 +198,7 @@ class PipeStageExecutor:
 
     def worker_loop(self):
         while True:
+            work_item = None
             with self.ready_runlist_cv:
                 while len(self.ready_runlist) == 0:
                     self.ready_runlist_cv.wait()
@@ -218,6 +219,10 @@ class PipeStageExecutor:
                     work_item = self.ready_runlist.pop(key)
                     break
 
+            # We may not fetch any actionable work item in the above loop, go
+            # back to the loop in this case
+            if work_item is None:
+                continue
             logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Got WorkItem {work_item}')
 
             work_item.state = SchedState.RUNNING
