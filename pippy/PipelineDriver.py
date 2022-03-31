@@ -1,16 +1,20 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-import torch
-import torch.fx
-import torch.distributed.rpc as rpc
-from pippy.IR import Pipe, stage_backward, sync_barrier
-from pippy.microbatch import split_args_kwargs_into_chunks, merge_chunks
-from enum import Enum
-from typing import Any, Callable, Dict, List, Tuple, Optional
 import logging
 import operator
+import socket
 import threading
+import time
 import warnings
+from enum import Enum
 from inspect import Parameter, Signature
+from typing import Any, Callable, Dict, List, Tuple, Optional
+
+import torch
+import torch.distributed.rpc as rpc
+import torch.fx
+
+from pippy.IR import Pipe, stage_backward, sync_barrier
+from pippy.microbatch import split_args_kwargs_into_chunks, merge_chunks
 
 # TODO: Define the strategy for replicating the computation. In particular, we will likely make the assumption
 # that the operations in the program are batch-wise commutative (my term), i.e. we can guarantee equivalence
@@ -117,6 +121,68 @@ def async_transfer(rank, microbatch, scheduler_rref, rref_arg, arg_idx, runlist_
 
     return fut.then(bottom_half)
 
+
+phase_to_str = {
+    Phase.FORWARD: 'F',
+    Phase.LOSS: 'L',
+    Phase.BACKWARD: 'B',
+    Phase.SYNC_BARRIER: 'S',
+}
+
+
+def generate_event_str(name=None, cat=None, ph=None, ts=None, tts=None, dur=None, pid=None, tid=None, args=None, cname=None):
+    items = []
+
+    def append_if_not_none(key, val):
+        if val is not None:
+            if type(val) == str:
+                items.append(f'"{key}": "{val}"')
+            else:
+                items.append(f'"{key}": {val}')
+
+    append_if_not_none('name', name)
+    append_if_not_none('cat', cat)
+    append_if_not_none('ph', ph)
+    append_if_not_none('ts', ts)
+    append_if_not_none('tts', tts)
+    append_if_not_none('dur', dur)
+    append_if_not_none('pid', pid)
+    append_if_not_none('tid', tid)
+    # append_if_not_none('args', args)
+    append_if_not_none('cname', cname)
+    if len(items):
+        return '{' + ', '.join(items) + '}'
+    else:
+        return None
+
+
+def write_event(rank: None, name=None, cat=None, ph=None, ts=None, tts=None, dur=None, pid=None, tid=None, args=None, cname=None):
+    content = generate_event_str(name, cat, ph, ts, tts, dur, pid, tid, args, cname)
+    if content is not None and rank is not None:
+        with open(f"{rank}.json", "a") as f:
+            f.write(content)
+            f.write('\n')
+
+
+def write_event_hostname_time_rank(rank: None, name=None, cat=None, ph=None):
+    write_event(rank=rank, name=name, cat=cat, ph=ph, ts=time.time() * 1_000_000, tts=None, dur=None, pid=socket.gethostname(), tid=f'rank {rank}')
+
+
+def write_begin_event(rank: None, name=None, cat=None):
+    write_event_hostname_time_rank(rank, name, cat, "B")
+
+
+def write_end_event(rank: None, name=None, cat=None):
+    write_event_hostname_time_rank(rank, name, cat, "E")
+
+
+def write_instant_event(rank: None, name=None, cat=None):
+    write_event_hostname_time_rank(rank, name, cat, "i")
+
+
+def write_dur_event(rank: None, name=None, cat=None, ts=None, dur=None):
+    write_event(rank=rank, name=name, cat=cat, ph="X", ts=ts * 1_000_000, tts=None, dur=dur * 1_000_000, pid=socket.gethostname(), tid=f'rank {rank}')
+
 class PipeStageExecutor:
     """
     PipeStageExecutor encapsulates the execution semantics of a fragment of
@@ -205,6 +271,7 @@ class PipeStageExecutor:
 
             logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Got WorkItem {work_item}')
 
+            write_begin_event(self.local_rank, f"{phase_to_str[work_item.phase]}_{self.local_rank},{work_item.microbatch_id}", "forward,execution")
             work_item.state = SchedState.RUNNING
             args_rrefs = work_item.args
             kwargs_rrefs = work_item.kwargs
@@ -224,8 +291,10 @@ class PipeStageExecutor:
                 else:
                     return a
 
+            write_begin_event(self.local_rank, f"RETR_RREFS_{self.local_rank},{work_item.microbatch_id}", "retrieve_rrefs")
             args = torch.fx.node.map_aggregate(args_rrefs, retrieve_rref_args_by_idx)
             kwargs = torch.fx.node.map_aggregate(kwargs_rrefs, retrieve_rref_args_by_idx)
+            write_end_event(self.local_rank, f"RETR_RREFS_{self.local_rank},{work_item.microbatch_id}", "retrieve_rrefs")
 
             if phase == Phase.BACKWARD:
                 logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running backward phase. Retrieving stashed values')
@@ -247,10 +316,21 @@ class PipeStageExecutor:
                         return val
                     else:
                         return a
+
+                write_begin_event(self.local_rank, f"EXT_TEN_{self.local_rank},{work_item.microbatch_id}", "extract_tensor_args")
                 args = torch.fx.node.map_aggregate(args, extract_tensor_args)
                 kwargs = torch.fx.node.map_aggregate(kwargs, extract_tensor_args)
+                write_end_event(self.local_rank, f"EXT_TEN_{self.local_rank},{work_item.microbatch_id}", "extract_tensor_args")
+                # print(f"{phase_to_str[work_item.phase]}_{self.local_rank},{work_item.microbatch_id}: {[a.shape for a in args]}")
                 logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running forward module')
+
+                # start_ts = time.time()
+                write_begin_event(self.local_rank, f"MOD_{self.local_rank},{work_item.microbatch_id}", "module_forward")
                 out_val = self.mod(*args, **kwargs)
+                write_end_event(self.local_rank, f"MOD_{self.local_rank},{work_item.microbatch_id}", "module_forward")
+                # end_ts = time.time()
+                # print(f"{phase_to_str[work_item.phase]}_{self.local_rank},{work_item.microbatch_id}: {(end_ts - start_ts) * 1000}")
+                # print(f"{phase_to_str[work_item.phase]}_{self.local_rank},{work_item.microbatch_id}: {self.mod}")
                 self.fwd_cache[microbatch_id] = (out_val, flat_tensor_args)
             elif work_item.phase == Phase.LOSS:
                 assert self.loss_mod is not None
@@ -282,9 +362,12 @@ class PipeStageExecutor:
                          f'for {first_key}')
             future.set_result(out_val)
             work_item.state = SchedState.DONE
+            write_end_event(self.local_rank, f"{phase_to_str[work_item.phase]}_{self.local_rank},{work_item.microbatch_id}", "forward,execution")
 
     @rpc.functions.async_execution
     def invoke(self, unique_key : str, phase : Phase, args, kwargs, cur_microbatch : int, debug_str : str):
+        # write_begin_event(self.local_rank, f"INV_{phase_to_str[phase]}_{self.local_rank},{cur_microbatch}", "invoke")
+        start_time = time.time()
         # TODO: do we need to serialize calls to invoke() to preserve the order in which WorkItems appear for
         # static schedules?
 
@@ -306,6 +389,7 @@ class PipeStageExecutor:
         future = torch.futures.Future()
         # TODO: increase blocked_args_count for extra things like scheduling
         work_item = WorkItem(phase, args, kwargs, future, cur_microbatch, len(rref_args), {}, debug_str=debug_str)
+        write_instant_event(self.local_rank, f"{phase_to_str[work_item.phase]}_{self.local_rank},{work_item.microbatch_id}", "forward,creation")
         logging.info(f'[{self.local_rank}][{cur_microbatch}] Invoke instantiated WorkItem {work_item} with key {unique_key}')
         if len(rref_args) == 0:
             # TODO: convert initial input into RRef?
@@ -338,6 +422,7 @@ class PipeStageExecutor:
             for fut in _futures:
                 fut.wait()
 
+        write_dur_event(self.local_rank, f"INV_{phase_to_str[phase]}_{self.local_rank},{cur_microbatch}", "invoke", start_time, time.time() - start_time)
         return future
 
 
@@ -576,10 +661,25 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 
         assert all(n == last_nodes[0] for n in last_nodes)
 
+        # def merge_jsons():
+        #     with open("result.json", "w") as res:
+        #         lines = []
+        #         for i in range(len(self.remote_stage_executor_rrefs)):
+        #             try:
+        #                 with open(f"{i}.json", "r") as f:
+        #                     lines.extend([l.rstrip() for l in f.readlines()])
+        #                 os.remove(f"{i}.json")
+        #             except FileNotFoundError:
+        #                 pass
+        #         res.write("[\n")
+        #         res.write(",\n".join(lines))
+        #         res.write("\n]\n")
+
         if last_nodes[0].op == 'output':
             logging.info('[root] Program does not have loss/backward, returning outputs directly')
             # Forward-only; return output values
             local_results = self._retrieve_output_values(microbatch_interpreters, last_nodes)
+            # merge_jsons()
             return merge_chunks(local_results, self.output_chunk_spec, _debug_mask_minibatches)
 
         logging.info('[root] Executing loss + backward stages')
@@ -597,6 +697,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         # (by way of the synchronization dependency earlier)
         self._sync_replicated_params()
 
+        # merge_jsons()
         return merge_chunks(local_results, self.output_chunk_spec, _debug_mask_minibatches)
 
     def _retrieve_output_values(self, microbatch_interpreters, last_nodes):
