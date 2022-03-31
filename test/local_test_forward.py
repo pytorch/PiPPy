@@ -1,4 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+import logging
 import torch
 import torch.distributed.rpc as rpc
 import torch.nn as nn
@@ -17,6 +18,11 @@ world_size = int(os.getenv("WORLD_SIZE", 1))
 
 rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
 
+VERBOSE = bool(os.environ.get('VERBOSE', False))
+
+if VERBOSE:
+    logging.getLogger().setLevel(logging.DEBUG)
+
 # WAR for SEV remediation https://github.com/pytorch/pytorch/commit/2337d4e5036a87f473decd2b1f6fe0439499902c
 torch.fx.Tracer.proxy_buffer_attributes = True
 
@@ -29,6 +35,7 @@ if local_rank == 0:
     d_hid = 100
     bs = 400
 
+    print(f'World size: {world_size}')
     REPLICATE = os.environ.get('REPLICATE', '0') != '0'
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if REPLICATE else MultiUseParameterConfig.TRANSMIT
     print(f'REPLICATE config: {REPLICATE} -> {MULTI_USE_PARAM_CONFIG}')

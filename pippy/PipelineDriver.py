@@ -603,18 +603,21 @@ class RemoteInterpreter(torch.fx.Interpreter):
 
             # TODO: hoist run() implementation
             logging.info(f'[{self.cur_microbatch}] Issue command to run {node.format_node()}')
-            self.env[node] = super().run_node(node)
+            self.env[node] = self.run_node(node)
 
             # TODO: we could potentially move this waiting to the use sites for an RRef
             # (i.e. during Interpreter.map_nodes_to_values or when we pass args/kwargs
             #  to the callees) as an optimization
             # TODO: is it possible for there to be a blocking version of this API?
-            def wait_for_confirmation(n):
-                if isinstance(n, torch._C._distributed_rpc.PyRRef):
-                    while not n.confirmed_by_owner():
-                        pass
+            # def wait_for_confirmation(n):
+            #     if isinstance(n, torch._C._distributed_rpc.PyRRef):
+            #         while not n.confirmed_by_owner():
+            #             pass
 
-            torch.fx.node.map_aggregate(self.env[node], wait_for_confirmation)
+            # s = time.time()
+            # torch.fx.node.map_aggregate(self.env[node], wait_for_confirmation)
+            # e = time.time()
+            # print(f'spent {e - s} seconds waiting for confirmation for {node}')
 
             if DEBUG and isinstance(self.env[node], torch._C._distributed_rpc.PyRRef):
                 print(node, self.env[node])
