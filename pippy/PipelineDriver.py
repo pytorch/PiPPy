@@ -138,7 +138,7 @@ class PipeStageExecutor:
     * TODO: gradient checkpointing
     """
 
-    def __init__(self, mod, local_rank, loss_mod=None, max_outstanding=0):
+    def __init__(self, mod, local_rank, loss_mod=None, max_outstanding=None):
         self.local_rank = local_rank
         logging.info(f'[{self.local_rank}] Instantiating PipeStageExecutor')
         self.mod = mod
@@ -204,11 +204,18 @@ class PipeStageExecutor:
 
                 logging.info(f'[{self.local_rank}] Dequeueing workitem from set of {len(self.ready_runlist)}')
                 # TODO: extra priorities
-                for first_key in iter(self.ready_runlist.keys()):
+                for key in iter(self.ready_runlist.keys()):
                     # Skip forward work items if we hit the max outstanding limit
-                    if self.ready_runlist[first_key].state == SchedState.WAITING and self.outstanding >= self.max_outstanding:
+                    # If there are no other READY WorkItems, the runloop wraps around to the beginning and blocks again,
+                    # waiting for another scheduled WorkItem to wake it back up. This works because the only condition
+                    # that can schedule a WAITING Workitem is if another backward WorkItem executes and reduces the number
+                    # of outstanding mciro-batches;
+                    # If there are other READY WorkItems, the runloop executes as normally processing those
+                    if (self.max_outstanding is not None and
+                        self.ready_runlist[key].state == SchedState.WAITING and
+                        self.outstanding >= self.max_outstanding):
                         continue
-                    work_item = self.ready_runlist.pop(first_key)
+                    work_item = self.ready_runlist.pop(key)
                     break
 
             logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Got WorkItem {work_item}')
@@ -290,7 +297,7 @@ class PipeStageExecutor:
                 assert False, f'Unrecognized phase {work_item.phase} encountered in execution'
 
             logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Populating result of type {type(out_val)} '
-                         f'for {first_key}')
+                         f'for {key}')
             future.set_result(out_val)
             work_item.state = SchedState.DONE
 
@@ -323,7 +330,7 @@ class PipeStageExecutor:
             # We always put this work item into the ready queue, though we mark
             # it with different state flags depending on whether the schedule
             # would hold it based on max outstanding allowed
-            if phase == Phase.FORWARD and self.max_outstanding > 0:
+            if phase == Phase.FORWARD and self.max_outstanding is not None:
                 logging.info(f'[{self.local_rank}][{cur_microbatch}] Schedule limits max outstanding micro-bactches. Initializing as WAITING workitem')
                 work_item.state = SchedState.WAITING
             else:
@@ -378,8 +385,8 @@ class PipelineDriverBase:
         self.kwargs_chunk_spec = kwargs_chunk_spec
         self.output_chunk_spec = output_chunk_spec
         # Maximum outstanding micro-batches allowed by the pipeline schedule
-        # 0 means no limit
-        self.max_outstanding = 0
+        # None means no limit
+        self.max_outstanding = None
 
     def _init_remote_executors(self):
         self.remote_stage_executor_rrefs : Dict[str, (int, torch.distributed.rpc.RRef)] = {}
