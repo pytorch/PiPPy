@@ -147,7 +147,7 @@ class PipeStageExecutor:
         self.waiting_runlist_lock = threading.Lock()
         # self.waiting_runlist (*and the contained WorkItems*) are guarded by
         # self.waiting_runlist_lock
-        self.waiting_runlist : Dict[WorkItem, None] = {}
+        self.waiting_runlist : Dict[str, WorkItem] = {}
 
         self.ready_runlist_lock = threading.Lock()
         self.ready_runlist_cv = threading.Condition(self.ready_runlist_lock)
@@ -324,7 +324,7 @@ class PipeStageExecutor:
                 self.waiting_runlist[unique_key] = work_item
 
 
-        # Spawn asyncronous data transfers for each of the RRef arguments.
+        # Spawn asynchronous data transfers for each of the RRef arguments.
         _futures = []
         for arg_idx, rref_arg in enumerate(rref_args):
             logging.info(f'[{self.local_rank}][{cur_microbatch}] Launching asynchronous data transfer for RRef {arg_idx} {rref_arg}')
@@ -419,8 +419,7 @@ class PipelineDriverBase:
             if descr.loss_mod:
                 self.remote_stage_executor_rrefs['_loss'] = self.remote_stage_executor_rrefs[descr.name]
 
-    def run(self, *args, chunks : int, batch_dims : Optional[List[Optional[int]]] = None,
-            _debug_mask_minibatches : bool = False):
+    def run(self, args, kwargs, chunks : int, _debug_mask_minibatches : bool = False):
         raise NotImplementedError('PipelineDriverBase is an abstract base class, please use a concrete '
                                   'implementation class.')
 
@@ -556,7 +555,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
                                                                  self.kwargs_chunk_spec, chunks,
                                                                  _debug_mask_minibatches)
 
-        microbatch_interpreters : List[self.RunUntilInterpreter] = []
+        microbatch_interpreters : List[RemoteInterpreter] = []
 
         for chunk in range(chunks):
             logging.info(f'[root] Instantiating microbatch interpreter for chunk {chunk}') 

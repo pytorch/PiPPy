@@ -404,15 +404,12 @@ above. The classes contained within this file are the following:
    schedule/execution semantics. ``PipelineDriverBase`` specifies the
    following methods:
 
-   -  ``def run(self, *args, chunks : int, batch_dims : Optional[List[Optional[int]]] = None, _debug_mask_minibatches : bool = False)``.
+   -  ``def run(self, args, kwargs, chunks : int, _debug_mask_minibatches : bool = False)``.
       This is the main entrypoint for running a mini-batch through the
-      pipeline. ``args`` are the input values to the model code (Tensor
-      values should have exactly one batch dimension along which to
-      divide). ``chunks`` is the number of chunks (micro-batches) to
-      split the minibatch into. ``batch-dims`` specifies–for each
-      ``Tensor`` input in the same order they appear in ``args``– what
-      the batch dimensions are for each Tensor (if ``None``, the 0th
-      dimension is assumed to be the batch dimension for each tensor).
+      pipeline. ``args`` and ``kwargs`` are the input values to the model
+      code (Tensor values should have exactly one batch dimension along
+      which to divide). ``chunks`` is the number of chunks (micro-batches)
+      to split the minibatch into.
       ``_debug_mask_minibatches`` specifies to send masked versions of
       the mini-batch through instead of micro-batch slices–this can be
       used for more stable numerical testing (see `A Note About
