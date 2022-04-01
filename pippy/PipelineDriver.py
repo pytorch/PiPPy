@@ -91,8 +91,16 @@ def _get_value_on_remote(caller_rank, callee_rank, runlist_key, microbatch, rref
                  f'{rref} initiated by rank {caller_rank} for {runlist_key}')
     return rref.local_value()
 
+def _set_work_item_init_state(work_item, max_outstanding):
+    if work_item.phase == Phase.FORWARD and max_outstanding is not None:
+        work_item.state = SchedState.WAITING
+    else:
+        work_item.state = SchedState.READY
+
+    return
+
 @rpc.functions.async_execution
-def async_transfer(rank, microbatch, scheduler_rref, rref_arg, arg_idx, runlist_key):
+def async_transfer(rank, microbatch, scheduler_rref, rref_arg, arg_idx, runlist_key, max_outstanding):
     logging.info(f'[{rank}][{microbatch}] Starting transfer')
     self = scheduler_rref.local_value()
     fut = rpc.rpc_async(to=rref_arg.owner(), func=_get_value_on_remote,
@@ -108,10 +116,11 @@ def async_transfer(rank, microbatch, scheduler_rref, rref_arg, arg_idx, runlist_
             work_item.blocked_args_count -= 1
             if work_item.blocked_args_count == 0:
                 with self.ready_runlist_cv:
-                    work_item.state = SchedState.READY
+                    _set_work_item_init_state(work_item, max_outstanding)
                     self.ready_runlist[runlist_key] = self.waiting_runlist.pop(runlist_key)
                     self.ready_runlist_cv.notify()
-                logging.info(f'[{rank}][{microbatch}] All operands ready')
+                state_str = 'WAITING' if work_item.state == SchedState.WAITING else 'READY'
+                logging.info(f'[{rank}][{microbatch}] All operands ready, initialize as {state_str} workitem')
             else:
                 logging.info(f'[{rank}][{microbatch}] Still waiting for {work_item.blocked_args_count} operands.')
 
@@ -138,11 +147,15 @@ class PipeStageExecutor:
     * TODO: gradient checkpointing
     """
 
-    def __init__(self, mod, local_rank, loss_mod=None):
+    def __init__(self, mod, local_rank, loss_mod=None, max_outstanding=None):
         self.local_rank = local_rank
         logging.info(f'[{self.local_rank}] Instantiating PipeStageExecutor')
         self.mod = mod
         self.loss_mod = loss_mod
+        # Maximum outstanding micro-batches of the pipeline schedule
+        self.max_outstanding = max_outstanding
+        # Keeps track of the outstanding micro-batches in current executor
+        self.outstanding = 0
 
         self.waiting_runlist_lock = threading.Lock()
         # self.waiting_runlist (*and the contained WorkItems*) are guarded by
@@ -194,15 +207,31 @@ class PipeStageExecutor:
 
     def worker_loop(self):
         while True:
+            work_item = None
             with self.ready_runlist_cv:
                 while len(self.ready_runlist) == 0:
                     self.ready_runlist_cv.wait()
 
                 logging.info(f'[{self.local_rank}] Dequeueing workitem from set of {len(self.ready_runlist)}')
                 # TODO: extra priorities
-                first_key = next(iter(self.ready_runlist.keys()))
-                work_item = self.ready_runlist.pop(first_key)
+                for key in iter(self.ready_runlist.keys()):
+                    # Skip forward work items if we hit the max outstanding limit
+                    # If there are no other READY WorkItems, the runloop wraps around to the beginning and blocks again,
+                    # waiting for another scheduled WorkItem to wake it back up. This works because the only condition
+                    # that can schedule a WAITING Workitem is if another backward WorkItem executes and reduces the number
+                    # of outstanding mciro-batches;
+                    # If there are other READY WorkItems, the runloop executes as normally processing those
+                    if (self.max_outstanding is not None and
+                            self.ready_runlist[key].state == SchedState.WAITING and
+                            self.outstanding >= self.max_outstanding):
+                        continue
+                    work_item = self.ready_runlist.pop(key)
+                    break
 
+            # We may not fetch any actionable work item in the above loop, go
+            # back to the loop in this case
+            if work_item is None:
+                continue
             logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Got WorkItem {work_item}')
 
             work_item.state = SchedState.RUNNING
@@ -237,6 +266,7 @@ class PipeStageExecutor:
                 kwargs['stage_output'], kwargs['input_values'] = cache.pop(microbatch_id)
 
             if work_item.phase == Phase.FORWARD:
+                self.outstanding += 1
                 flat_tensor_args = []
 
                 def extract_tensor_args(a):
@@ -272,6 +302,8 @@ class PipeStageExecutor:
             elif work_item.phase == Phase.BACKWARD:
                 logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running backward')
                 out_val = stage_backward(*args, **kwargs)
+                # Schedule forward stage of a new micro-batch
+                self.outstanding -= 1
             elif work_item.phase == Phase.SYNC_BARRIER:
                 logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running sync_barrier')
                 out_val = sync_barrier(*args, **kwargs)
@@ -279,7 +311,7 @@ class PipeStageExecutor:
                 assert False, f'Unrecognized phase {work_item.phase} encountered in execution'
 
             logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Populating result of type {type(out_val)} '
-                         f'for {first_key}')
+                         f'for {key}')
             future.set_result(out_val)
             work_item.state = SchedState.DONE
 
@@ -309,8 +341,14 @@ class PipeStageExecutor:
         logging.info(f'[{self.local_rank}][{cur_microbatch}] Invoke instantiated WorkItem {work_item} with key {unique_key}')
         if len(rref_args) == 0:
             # TODO: convert initial input into RRef?
-            logging.info(f'[{self.local_rank}][{cur_microbatch}] No RRef arguments. Scheduling directly as READY workitem')
-            work_item.state = SchedState.READY
+            # We always put this work item into the ready queue, though we mark
+            # it with different state flags depending on whether the schedule
+            # would hold it based on max outstanding allowed
+            _set_work_item_init_state(work_item, self.max_outstanding)
+            if work_item.state == SchedState.WAITING:
+                logging.info(f'[{self.local_rank}][{cur_microbatch}] Schedule limits max outstanding micro-bactches. Initializing as WAITING workitem')
+            else:
+                logging.info(f'[{self.local_rank}][{cur_microbatch}] No RRef arguments. Scheduling directly as READY workitem')
             with self.ready_runlist_cv:
                 logging.info(f'[{self.local_rank}][{cur_microbatch}] Current ready runlist keys: {self.ready_runlist.keys()}')
                 self.ready_runlist[unique_key] = work_item
@@ -331,7 +369,7 @@ class PipeStageExecutor:
             self_rref = rpc.RRef(self)
             _futures.append(rpc.rpc_async(
                 to=self.local_rank, func=async_transfer,
-                args=(self.local_rank, cur_microbatch, self_rref, rref_arg, arg_idx, unique_key)))
+                args=(self.local_rank, cur_microbatch, self_rref, rref_arg, arg_idx, unique_key, self.max_outstanding)))
 
         if DEBUG:
             # Make exceptions visible
@@ -359,8 +397,9 @@ class PipelineDriverBase:
         self.args_chunk_spec = args_chunk_spec
         self.kwargs_chunk_spec = kwargs_chunk_spec
         self.output_chunk_spec = output_chunk_spec
-
-        self._init_remote_executors()
+        # Maximum outstanding micro-batches allowed by the pipeline schedule
+        # None means no limit
+        self.max_outstanding = None
 
     def _init_remote_executors(self):
         self.remote_stage_executor_rrefs : Dict[str, (int, torch.distributed.rpc.RRef)] = {}
@@ -415,7 +454,7 @@ class PipelineDriverBase:
 
         self.loss_stage = None
         for rank, descr in zip(self.all_ranks, executor_descriptors):
-            self.remote_stage_executor_rrefs[descr.name] = (rank, rpc.remote(rank, self.executor_class, (descr.mod, rank, descr.loss_mod)))
+            self.remote_stage_executor_rrefs[descr.name] = (rank, rpc.remote(rank, self.executor_class, (descr.mod, rank, descr.loss_mod, self.max_outstanding)))
             if descr.loss_mod:
                 self.remote_stage_executor_rrefs['_loss'] = self.remote_stage_executor_rrefs[descr.name]
 
@@ -440,6 +479,15 @@ class PipelineDriverBase:
                 assert module_name in self.remote_stage_executor_rrefs
                 rank, module_rref = self.remote_stage_executor_rrefs[module_name]
                 rpc.rpc_sync(rank, set_grad_in_executor, (module_rref, param_qualname, synced_value))
+
+    def _retrieve_output_values(self, microbatch_interpreters, last_nodes):
+        logging.info(f'[root] Retrieving output values from {len(microbatch_interpreters)} chunks')
+        output_vals = []
+        for interp, last_node in zip(microbatch_interpreters, last_nodes):
+            interp.run_until(lambda n : False)
+            output_vals.append(interp.env[last_node])
+
+        return torch.fx.node.map_aggregate(output_vals, to_here)
 
 
 class RemoteInterpreter(torch.fx.Interpreter):
@@ -540,11 +588,13 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         super().__init__(pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size, all_ranks)
         self.single_loss = single_loss
 
+        self._init_remote_executors()
+
     def run(self, args, kwargs, chunks : int, _debug_mask_minibatches : bool = False):
         if self.single_loss:
             raise NotImplementedError('Single minibatch loss not implemented')
 
-        logging.info('[root] Running pipeline')
+        logging.info('[root] Running pipeline FillDrain')
         # Roadmap:
         # 1) Micro-batch splitting - divide input arguments out into concrete chunk values
         # 2) Interpreter tiling - one interpreter per micro-batch
@@ -558,7 +608,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         microbatch_interpreters : List[RemoteInterpreter] = []
 
         for chunk in range(chunks):
-            logging.info(f'[root] Instantiating microbatch interpreter for chunk {chunk}') 
+            logging.info(f'[root] Instantiating microbatch interpreter for chunk {chunk}')
             interp = RemoteInterpreter(self.remote_stage_executor_rrefs, self.pipe.split_gm, chunk, args_split[chunk],
                                        kwargs_split[chunk])
             microbatch_interpreters.append(interp)
@@ -598,11 +648,49 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 
         return merge_chunks(local_results, self.output_chunk_spec, _debug_mask_minibatches)
 
-    def _retrieve_output_values(self, microbatch_interpreters, last_nodes):
-        logging.info(f'[root] Retrieving output values from {len(microbatch_interpreters)} chunks')
-        output_vals = []
-        for interp, last_node in zip(microbatch_interpreters, last_nodes):
-            interp.run_until(lambda n : False)
-            output_vals.append(interp.env[last_node])
 
-        return torch.fx.node.map_aggregate(output_vals, to_here)
+class PipelineDriver1F1B(PipelineDriverBase):
+    def __init__(self, pipe : Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size : int,
+                 all_ranks : List[int] = None, single_loss : bool = False):
+        super().__init__(pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size, all_ranks)
+        self.single_loss = single_loss
+        # In 1F1B with backward stages, the maximum number of outstanding
+        # micro-batches equals the number of pipeline stages
+        if self.pipe.has_loss_and_backwards:
+            self.max_outstanding = self.pipe.num_stages
+
+        self._init_remote_executors()
+
+    def run(self, args, kwargs, chunks : int, _debug_mask_minibatches : bool = False):
+        if self.single_loss:
+            raise NotImplementedError('Single minibatch loss not implemented')
+
+        logging.info('[root] Running pipeline 1F1B')
+
+        args_split, kwargs_split = split_args_kwargs_into_chunks(args, kwargs, self.args_chunk_spec,
+                                                                 self.kwargs_chunk_spec, chunks,
+                                                                 _debug_mask_minibatches)
+
+        microbatch_interpreters : List[self.RunUntilInterpreter] = []
+
+        for chunk in range(chunks):
+            logging.info(f'[root] Instantiating microbatch interpreter for chunk {chunk}')
+            interp = RemoteInterpreter(self.remote_stage_executor_rrefs, self.pipe.split_gm, chunk, args_split[chunk],
+                                       kwargs_split[chunk])
+            microbatch_interpreters.append(interp)
+
+        logging.info(f'[root] {len(microbatch_interpreters)} instantiated')
+
+        last_nodes = []
+
+        for i, interp in enumerate(microbatch_interpreters):
+            logging.info(f'[root] Executing stages for chunk {i}')
+            last_nodes.append(interp.run_until(lambda n: n.op == 'output'))
+
+        local_results = self._retrieve_output_values(microbatch_interpreters, last_nodes)
+
+        # There is backward pass, we should sync shared parameters
+        if self.pipe.has_loss_and_backwards:
+            self._sync_replicated_params()
+
+        return merge_chunks(local_results, self.output_chunk_spec, _debug_mask_minibatches)
