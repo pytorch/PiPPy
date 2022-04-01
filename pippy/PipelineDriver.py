@@ -91,8 +91,16 @@ def _get_value_on_remote(caller_rank, callee_rank, runlist_key, microbatch, rref
                  f'{rref} initiated by rank {caller_rank} for {runlist_key}')
     return rref.local_value()
 
+def _set_work_item_init_state(work_item, max_outstanding):
+    if work_item.phase == Phase.FORWARD and max_outstanding is not None:
+        work_item.state = SchedState.WAITING
+    else:
+        work_item.state = SchedState.READY
+
+    return
+
 @rpc.functions.async_execution
-def async_transfer(rank, microbatch, scheduler_rref, rref_arg, arg_idx, runlist_key):
+def async_transfer(rank, microbatch, scheduler_rref, rref_arg, arg_idx, runlist_key, max_outstanding):
     logging.info(f'[{rank}][{microbatch}] Starting transfer')
     self = scheduler_rref.local_value()
     fut = rpc.rpc_async(to=rref_arg.owner(), func=_get_value_on_remote,
@@ -108,10 +116,11 @@ def async_transfer(rank, microbatch, scheduler_rref, rref_arg, arg_idx, runlist_
             work_item.blocked_args_count -= 1
             if work_item.blocked_args_count == 0:
                 with self.ready_runlist_cv:
-                    work_item.state = SchedState.READY
+                    _set_work_item_init_state(work_item, max_outstanding)
                     self.ready_runlist[runlist_key] = self.waiting_runlist.pop(runlist_key)
                     self.ready_runlist_cv.notify()
-                logging.info(f'[{rank}][{microbatch}] All operands ready')
+                state_str = 'WAITING' if work_item.state == SchedState.WAITING else 'READY'
+                logging.info(f'[{rank}][{microbatch}] All operands ready, initialize as {state_str} workitem')
             else:
                 logging.info(f'[{rank}][{microbatch}] Still waiting for {work_item.blocked_args_count} operands.')
 
@@ -335,12 +344,11 @@ class PipeStageExecutor:
             # We always put this work item into the ready queue, though we mark
             # it with different state flags depending on whether the schedule
             # would hold it based on max outstanding allowed
-            if phase == Phase.FORWARD and self.max_outstanding is not None:
+            _set_work_item_init_state(work_item, self.max_outstanding)
+            if work_item.state == SchedState.WAITING:
                 logging.info(f'[{self.local_rank}][{cur_microbatch}] Schedule limits max outstanding micro-bactches. Initializing as WAITING workitem')
-                work_item.state = SchedState.WAITING
             else:
                 logging.info(f'[{self.local_rank}][{cur_microbatch}] No RRef arguments. Scheduling directly as READY workitem')
-                work_item.state = SchedState.READY
             with self.ready_runlist_cv:
                 logging.info(f'[{self.local_rank}][{cur_microbatch}] Current ready runlist keys: {self.ready_runlist.keys()}')
                 self.ready_runlist[unique_key] = work_item
@@ -361,7 +369,8 @@ class PipeStageExecutor:
             self_rref = rpc.RRef(self)
             _futures.append(rpc.rpc_async(
                 to=self.local_rank, func=async_transfer,
-                args=(self.local_rank, cur_microbatch, self_rref, rref_arg, arg_idx, unique_key)))
+                args=(self.local_rank, cur_microbatch, self_rref, rref_arg,
+                    arg_idx, unique_key, self.max_outstanding)))
 
         if DEBUG:
             # Make exceptions visible
