@@ -369,8 +369,7 @@ class PipeStageExecutor:
             self_rref = rpc.RRef(self)
             _futures.append(rpc.rpc_async(
                 to=self.local_rank, func=async_transfer,
-                args=(self.local_rank, cur_microbatch, self_rref, rref_arg,
-                    arg_idx, unique_key, self.max_outstanding)))
+                args=(self.local_rank, cur_microbatch, self_rref, rref_arg, arg_idx, unique_key, self.max_outstanding)))
 
         if DEBUG:
             # Make exceptions visible
