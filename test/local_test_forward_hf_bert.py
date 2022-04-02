@@ -1,5 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import inspect
+from typing import Dict
 
 import torch
 import torch.distributed.rpc as rpc
@@ -73,7 +74,7 @@ if local_rank == 0:
     optimizer = torch.optim.SGD(bert_pipe.parameters(), 0.01)
 
     args_chunk_spec = (TensorChunkSpec(0),)
-    kwargs_chunk_spec = {}
+    kwargs_chunk_spec: Dict = {}
     output_chunk_spec = {'last_hidden_state': TensorChunkSpec(0), 'pooler_output': TensorChunkSpec(0)}
 
     pipe_driver = PipelineDriverFillDrain(bert_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size)

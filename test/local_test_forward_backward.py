@@ -1,4 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+from typing import Dict, Union
+
 import torch
 import torch.distributed.rpc as rpc
 import logging
@@ -124,9 +126,10 @@ if local_rank == 0:
     print(ec_pipe.split_gm)
 
     args_chunk_spec = (TensorChunkSpec(0), TensorChunkSpec(0))
-    kwargs_chunk_spec = {}
+    kwargs_chunk_spec: Dict = {}
     output_chunk_spec = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
 
+    pipe_driver: Union[PipelineDriver1F1B, PipelineDriverFillDrain]
     if schedule == '1F1B':
         pipe_driver = PipelineDriver1F1B(ec_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size)
     else:
