@@ -2,6 +2,7 @@
 import argparse
 import os
 import socket
+from typing import Dict
 
 import torch
 import torch.distributed.rpc as rpc
@@ -62,7 +63,7 @@ def run_main(args):
     print(ec_pipe.split_gm)
 
     args_chunk_spec = (TensorChunkSpec(0),)
-    kwargs_chunk_spec = {}
+    kwargs_chunk_spec: Dict = {}
     output_chunk_spec = {'out': TensorChunkSpec(0)}
 
     pipe_driver = schedules[args.schedule](ec_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec,

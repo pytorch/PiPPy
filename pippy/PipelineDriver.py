@@ -335,7 +335,7 @@ class PipeStageExecutor:
 
         # Construct WorkItem for this microbatch+phase and record it in the
         # waiting runlist
-        future = torch.futures.Future()
+        future: torch.futures.Future = torch.futures.Future()
         # TODO: increase blocked_args_count for extra things like scheduling
         work_item = WorkItem(phase, args, kwargs, future, cur_microbatch, len(rref_args), {}, debug_str=debug_str)
         logging.info(f'[{self.local_rank}][{cur_microbatch}] Invoke instantiated WorkItem {work_item} with key {unique_key}')
@@ -366,7 +366,7 @@ class PipeStageExecutor:
         _futures = []
         for arg_idx, rref_arg in enumerate(rref_args):
             logging.info(f'[{self.local_rank}][{cur_microbatch}] Launching asynchronous data transfer for RRef {arg_idx} {rref_arg}')
-            self_rref = rpc.RRef(self)
+            self_rref: rpc.RRef = rpc.RRef(self)
             _futures.append(rpc.rpc_async(
                 to=self.local_rank, func=async_transfer,
                 args=(self.local_rank, cur_microbatch, self_rref, rref_arg, arg_idx, unique_key, self.max_outstanding)))
@@ -399,7 +399,7 @@ class PipelineDriverBase:
         self.output_chunk_spec = output_chunk_spec
         # Maximum outstanding micro-batches allowed by the pipeline schedule
         # None means no limit
-        self.max_outstanding = None
+        self.max_outstanding: Optional[int] = None
 
     def _init_remote_executors(self):
         self.remote_stage_executor_rrefs : Dict[str, (int, torch.distributed.rpc.RRef)] = {}
@@ -671,7 +671,7 @@ class PipelineDriver1F1B(PipelineDriverBase):
                                                                  self.kwargs_chunk_spec, chunks,
                                                                  _debug_mask_minibatches)
 
-        microbatch_interpreters : List[self.RunUntilInterpreter] = []
+        microbatch_interpreters : List[RemoteInterpreter] = []
 
         for chunk in range(chunks):
             logging.info(f'[root] Instantiating microbatch interpreter for chunk {chunk}')

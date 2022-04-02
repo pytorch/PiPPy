@@ -49,17 +49,17 @@ def shard_dict_of_args(args_dict, args_chunk_spec, num_chunks, _debug_mask_minib
                     expanded_chunks = []
 
                     split_dim_idx = 0
-                    for chunk in chunk_tensors:
+                    for chunk_tensor in chunk_tensors:
                         new_val = torch.zeros_like(v)
-                        upper_idx = split_dim_idx + chunk.size(chunk_v.split_dim)
+                        upper_idx = split_dim_idx + chunk_tensor.size(chunk_v.split_dim)
 
                         slice_indices = [slice(None, None, None)] * new_val.ndim
                         slice_indices[chunk_v.split_dim] = slice(split_dim_idx, upper_idx)
-                        new_val[slice_indices] = chunk
+                        new_val[slice_indices] = chunk_tensor
 
                         expanded_chunks.append(new_val)
 
-                        split_dim_idx += chunk.size(chunk_v.split_dim)
+                        split_dim_idx += chunk_tensor.size(chunk_v.split_dim)
 
                     sharded_arg_flat.append(expanded_chunks)
                 else:

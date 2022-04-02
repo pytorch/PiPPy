@@ -1,12 +1,13 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+import copy
+import operator
+from enum import Enum
+from typing import Callable, Dict, List, Optional, Union, cast, Any
+
 import torch
 import torch.fx
 from torch.fx.passes.split_module import split_module
 
-import copy
-import operator
-from typing import Callable, Dict, List, Optional, Union, cast
-from enum import Enum
 
 # TODO:
 # 1. investigate gradient sync for shared parameters. how does DDP do it?
@@ -49,7 +50,7 @@ def _insert_stage_symbolic_backward(g : torch.fx.Graph):
     assert len(loss_nodes) == 1
     loss_node = loss_nodes[0]
 
-    val_to_grad = {loss_node : None}
+    val_to_grad: Dict[torch.fx.Node, Any] = {loss_node : None}
 
     def assign_or_accumulate_grad(forward_node, grad_value):
         if forward_node in val_to_grad:
@@ -242,7 +243,7 @@ class Pipe(torch.nn.Module):
 
         def throw(self, *args, **kwargs):
             raise RuntimeError('To run pipeline locally, invoke the Pipe object directly, not `split_gm`')
-        self.split_gm.forward = throw
+        self.split_gm.forward = throw  # type: ignore
 
     def forward(self, *args, **kwargs):
         executor_args = args
@@ -287,7 +288,7 @@ class Pipe(torch.nn.Module):
     @staticmethod
     def _number_and_count_forward_stages(gm : torch.fx.GraphModule):
         num_stages = 0
-        found_idxs = {}
+        found_idxs: Dict[int, None] = {}
         for node in gm.graph.nodes:
             if node.op == 'call_module' and node.target.startswith('submod_'):
                 node.meta['stage_idx'] = int(node.target[len('submod_'):])
@@ -299,7 +300,7 @@ class Pipe(torch.nn.Module):
         return num_stages
 
     @staticmethod
-    def _append_traced_loss_fn_to_gm(gm : torch.fx.GraphModule, loss_fn : Callable[[torch.Tensor], torch.Tensor]):
+    def _append_traced_loss_fn_to_gm(gm : torch.fx.GraphModule, loss_fn : Callable[[torch.Tensor, torch.Tensor], torch.Tensor]):
         last_ph_node = None
         for node in gm.graph.nodes:
             if node.op == 'placeholder':
@@ -602,7 +603,7 @@ class PipeSplitWrapper(torch.nn.Module):
                 pipe_split()
 
 
-def annotate_split_points(mod : torch.nn.Module, spec : Dict[str, Optional[PipeSplitWrapper.SplitPoint]]):
+def annotate_split_points(mod : torch.nn.Module, spec : Dict[str, PipeSplitWrapper.SplitPoint]):
     for qualname, split_type in spec.items():
         atoms = qualname.split('.')
         predecessor_module = mod

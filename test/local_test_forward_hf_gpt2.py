@@ -3,6 +3,7 @@ import argparse
 import inspect
 import os
 import socket
+from typing import Dict
 
 import torch
 import torch.distributed.rpc as rpc
@@ -74,10 +75,8 @@ def run_main(args):
 
     assert gpt2.config.n_layer + 2 == len(list(gpt2_pipe.split_gm.children()))
 
-    optimizer = torch.optim.SGD(gpt2_pipe.parameters(), 0.01)
-
     args_chunk_spec = (TensorChunkSpec(0),)
-    kwargs_chunk_spec = {}
+    kwargs_chunk_spec: Dict = {}
     output_chunk_spec = {'last_hidden_state': TensorChunkSpec(0)}
 
     pipe_driver = schedules[args.schedule](gpt2_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec,
