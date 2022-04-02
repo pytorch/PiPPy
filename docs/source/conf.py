@@ -24,7 +24,6 @@ import torch
 RELEASE = os.environ.get('RELEASE', False)
 
 import pytorch_sphinx_theme
-import sys
 
 # -- General configuration ------------------------------------------------
 
