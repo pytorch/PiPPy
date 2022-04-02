@@ -4,3 +4,4 @@ build
 pippy.egg-info
 pippy/version.py
 dist
+.idea/

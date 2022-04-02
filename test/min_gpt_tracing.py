@@ -13,8 +13,6 @@ set_seed(42)
 
 import numpy as np
 import torch
-import torch.nn as nn
-from torch.nn import functional as F
 
 from torch.utils.data import Dataset
 
@@ -82,7 +80,7 @@ ndigit = 2
 train_dataset = AdditionDataset(ndigit=ndigit, split='train')
 test_dataset = AdditionDataset(ndigit=ndigit, split='test')
 
-from minGPT.mingpt.model import GPT, GPTConfig, GPT1Config
+from minGPT.mingpt.model import GPT, GPTConfig
 
 # initialize a baby GPT model
 mconf = GPTConfig(train_dataset.vocab_size, train_dataset.block_size, 
