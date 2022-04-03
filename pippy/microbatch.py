@@ -9,13 +9,15 @@ class CustomReducer:
         self.init_value = init_value
         self.reduce_fn = reduce_fn
 
+
 class TensorChunkSpec:
     def __init__(self, split_dim):
         self.split_dim = split_dim
 
-    split_dim : int
+    split_dim: int
 
-def shard_dict_of_args(args_dict, args_chunk_spec, num_chunks, _debug_mask_minibatches : bool = False):
+
+def shard_dict_of_args(args_dict, args_chunk_spec, num_chunks, _debug_mask_minibatches: bool = False):
     # Stage 1+2: flatten and shard/replicate
 
     # args_sharded_replicated : [num args, num flat values, num chunks]
@@ -31,8 +33,9 @@ def shard_dict_of_args(args_dict, args_chunk_spec, num_chunks, _debug_mask_minib
         chunk_spec_flat, _ = tree_flatten(chunk_spec)
 
         if len(flat) != len(chunk_spec_flat):
-            raise ValueError(f'Argument value {arg} did not have the same number of '
-                             f'values as as chunk_tensor spec {chunk_spec}')
+            raise ValueError(
+                f"Argument value {arg} did not have the same number of " f"values as as chunk_tensor spec {chunk_spec}"
+            )
 
         sharded_arg_flat = []
 
@@ -80,7 +83,6 @@ def shard_dict_of_args(args_dict, args_chunk_spec, num_chunks, _debug_mask_minib
             chunk_args[key] = arg_single_chunk
         chunks_flat.append(chunk_args)
 
-
     # args_split : [num chunks, num args]
     args_split = []
 
@@ -94,8 +96,9 @@ def shard_dict_of_args(args_dict, args_chunk_spec, num_chunks, _debug_mask_minib
     return args_split
 
 
-def split_args_kwargs_into_chunks(args, kwargs, args_chunk_spec, kwargs_chunk_spec, chunks, 
-                                  _debug_mask_minibatches : bool = False):
+def split_args_kwargs_into_chunks(
+    args, kwargs, args_chunk_spec, kwargs_chunk_spec, chunks, _debug_mask_minibatches: bool = False
+):
     # Given `args` and `kwargs`, we want to yield a set of `chunks` args and kwargs such that
     # the constituent Tensor values have been sharded/replicated according to the `args_chunk_spec`
     # and `kwargs_chunk_spec` specifications. The steps are as follows:
@@ -131,7 +134,8 @@ def split_args_kwargs_into_chunks(args, kwargs, args_chunk_spec, kwargs_chunk_sp
     # TODO: _debug_mask_minibatches
 
     args_split_dict = shard_dict_of_args(
-        dict(enumerate(args)), dict(enumerate(args_chunk_spec)), chunks, _debug_mask_minibatches)
+        dict(enumerate(args)), dict(enumerate(args_chunk_spec)), chunks, _debug_mask_minibatches
+    )
     kwargs_split = shard_dict_of_args(kwargs, kwargs_chunk_spec, chunks, _debug_mask_minibatches)
 
     args_split = []
@@ -141,7 +145,7 @@ def split_args_kwargs_into_chunks(args, kwargs, args_chunk_spec, kwargs_chunk_sp
     return args_split, kwargs_split
 
 
-def merge_chunks(chunks, chunk_spec, _debug_mask_minibatches : bool = False):
+def merge_chunks(chunks, chunk_spec, _debug_mask_minibatches: bool = False):
     # Given a list of chunks and a chunk specification, merge the chunks
     # into a single value according to that chunk spec. This is essentially
     # the inverse of `split_args_kwargs_into_chunks`, so the steps are
@@ -183,7 +187,7 @@ def merge_chunks(chunks, chunk_spec, _debug_mask_minibatches : bool = False):
     for chunk in chunks:
         chunk_flattened, _ = tree_flatten(chunk)
         if len(chunk_flattened) != len(spec_flattened):
-            raise ValueError(f'Chunk {chunk} did not match chunk spec {chunk_spec}')
+            raise ValueError(f"Chunk {chunk} did not match chunk spec {chunk_spec}")
 
         chunks_flattened.append(chunk_flattened)
 
@@ -200,7 +204,9 @@ def merge_chunks(chunks, chunk_spec, _debug_mask_minibatches : bool = False):
                 overall_shape = partial_values[0].shape
                 for val in partial_values[1:]:
                     assert val.shape == overall_shape
-                meta_chunks = torch.chunk(torch.empty(*overall_shape, device='meta'), dim=arg.split_dim, chunks=len(partial_values))
+                meta_chunks = torch.chunk(
+                    torch.empty(*overall_shape, device="meta"), dim=arg.split_dim, chunks=len(partial_values)
+                )
 
                 values_to_cat = []
                 chunk_start_idx = 0

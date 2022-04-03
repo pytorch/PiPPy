@@ -33,23 +33,25 @@ def stage_backward(stage_output, output_grads, input_values):
         elif val is None:
             grad_inputs.append(None)
         else:
-            raise NotImplementedError(f'Cannot pass gradient for value {val}')
+            raise NotImplementedError(f"Cannot pass gradient for value {val}")
     barrier_token = None
     return grad_inputs, barrier_token
+
 
 def sync_barrier(loss, barrier_tokens):
     return loss
 
-def _insert_stage_symbolic_backward(g : torch.fx.Graph):
-    output_nodes = [n for n in g.nodes if n.op == 'output']
+
+def _insert_stage_symbolic_backward(g: torch.fx.Graph):
+    output_nodes = [n for n in g.nodes if n.op == "output"]
     assert len(output_nodes) == 1
     output_node = output_nodes[0]
 
-    loss_nodes = [n for n in g.nodes if (n.op, n.target) == ('call_module', '_loss')]
+    loss_nodes = [n for n in g.nodes if (n.op, n.target) == ("call_module", "_loss")]
     assert len(loss_nodes) == 1
     loss_node = loss_nodes[0]
 
-    val_to_grad: Dict = {loss_node : None}
+    val_to_grad: Dict = {loss_node: None}
 
     def assign_or_accumulate_grad(forward_node, grad_value):
         if forward_node in val_to_grad:
@@ -60,12 +62,15 @@ def _insert_stage_symbolic_backward(g : torch.fx.Graph):
         barrier_tokens = []
 
         for node in reversed(g.nodes):
-            if node.op == 'call_module':
-                grad_call = g.call_function(stage_backward, kwargs={
-                    'stage_output' : node,
-                    'output_grads' : val_to_grad[node],
-                    'input_values' : list(node.all_input_nodes)
-                })
+            if node.op == "call_module":
+                grad_call = g.call_function(
+                    stage_backward,
+                    kwargs={
+                        "stage_output": node,
+                        "output_grads": val_to_grad[node],
+                        "input_values": list(node.all_input_nodes),
+                    },
+                )
 
                 grad_call_proxy = torch.fx.Proxy(grad_call)
                 grads, barrier_token = grad_call_proxy[0].node, grad_call_proxy[1].node
@@ -75,7 +80,7 @@ def _insert_stage_symbolic_backward(g : torch.fx.Graph):
                 grads_proxy = torch.fx.Proxy(grads)
                 for i, input_node in enumerate(input_nodes):
                     assign_or_accumulate_grad(input_node, grads_proxy[i].node)
-            elif node.op == 'call_function':
+            elif node.op == "call_function":
                 assert node.target == operator.getitem
                 assert len(node.args) == 2
                 indexed_value, node_idx = tuple(node.args)
@@ -106,9 +111,10 @@ def _insert_stage_symbolic_backward(g : torch.fx.Graph):
 
     return g
 
+
 class PipeSequential(torch.nn.Sequential):
     @staticmethod
-    def from_sequential(sequential_instance : torch.nn.Sequential):
+    def from_sequential(sequential_instance: torch.nn.Sequential):
         return PipeSequential(*[copy.copy(m) for m in sequential_instance])
 
     def forward(self, input):
@@ -141,15 +147,19 @@ class PipeSequential(torch.nn.Sequential):
 
 _pipeline_tracer = None
 
+
 def pipe_split():
-    if _pipeline_tracer is not None and hasattr(_pipeline_tracer, 'graph'):
+    if _pipeline_tracer is not None and hasattr(_pipeline_tracer, "graph"):
         _pipeline_tracer.graph.call_function(pipe_split, (), {})
+
 
 class MultiUseParameterConfig(Enum):
     TRANSMIT = 1
     REPLICATE = 2
 
+
 MultiUseParamSpec = Union[MultiUseParameterConfig, Dict[str, MultiUseParameterConfig]]
+
 
 class DetachExecutor(torch.fx.Interpreter):
     """
@@ -157,6 +167,7 @@ class DetachExecutor(torch.fx.Interpreter):
     a module invocation. This is needed so that the values at the boundary are
     leaf modules in autograd execution.
     """
+
     def __init__(self, module, garbage_collect_values=True):
         garbage_collect_values = False
         super().__init__(module, garbage_collect_values)
@@ -185,26 +196,33 @@ class DetachExecutor(torch.fx.Interpreter):
         # HACK to reroute saved input tensors to point to the detach()ed version
         if target == stage_backward:
             kwargs = dict(kwargs)
-            kwargs['input_values'] = [self.value_remap.get(v, v) for v in kwargs['input_values']]
+            kwargs["input_values"] = [self.value_remap.get(v, v) for v in kwargs["input_values"]]
         return super().call_function(target, args, kwargs)
 
 
 class Pipe(torch.nn.Module):
-    def __init__(self, split_gm : torch.fx.GraphModule, qualname_mapping : Dict[str, str],
-                 num_stages : int, has_loss_and_backward : bool):
+    def __init__(
+        self,
+        split_gm: torch.fx.GraphModule,
+        qualname_mapping: Dict[str, str],
+        num_stages: int,
+        has_loss_and_backward: bool,
+    ):
         super().__init__()
-        self.split_gm : torch.fx.GraphModule = split_gm
-        self.executor : DetachExecutor = DetachExecutor(self.split_gm)
-        self.num_stages : int = num_stages
+        self.split_gm: torch.fx.GraphModule = split_gm
+        self.executor: DetachExecutor = DetachExecutor(self.split_gm)
+        self.num_stages: int = num_stages
         self.has_loss_and_backwards = has_loss_and_backward
 
         for node in split_gm.graph.nodes:
-            assert (node.op in {'call_module', 'placeholder', 'output'} or
-                   (node.op, node.target) == ('call_function', operator.getitem) or
-                   (node.op, node.target) == ('call_method', 'backward') or
-                   (node.op, node.target) == ('call_function', stage_backward) or
-                   (node.op, node.target) == ('call_function', torch.add) or
-                   (node.op, node.target) == ('call_function', sync_barrier)), node
+            assert (
+                node.op in {"call_module", "placeholder", "output"}
+                or (node.op, node.target) == ("call_function", operator.getitem)
+                or (node.op, node.target) == ("call_method", "backward")
+                or (node.op, node.target) == ("call_function", stage_backward)
+                or (node.op, node.target) == ("call_function", torch.add)
+                or (node.op, node.target) == ("call_function", sync_barrier)
+            ), node
 
         # Detect replicated parameters so we know that we have to do an additional allreduce
         # before applying the optimizer
@@ -215,15 +233,16 @@ class Pipe(torch.nn.Module):
 
         # Map parameter value to a dictionary that maps the user pipeline module
         # to the local qualname within that module
-        params_to_users : Dict[torch.nn.Parameter, Dict[str, str]] = {}
+        params_to_users: Dict[torch.nn.Parameter, Dict[str, str]] = {}
 
         for m_qualname, mod in self.split_gm.named_children():
             for p_qualname, param in mod.named_parameters():
                 params_to_users.setdefault(param, {})
                 params_to_users[param][m_qualname] = p_qualname
 
-        self.replicated_params : List[Dict[str, str]] = [
-            use_mapping for _, use_mapping in params_to_users.items() if len(use_mapping) > 1]
+        self.replicated_params: List[Dict[str, str]] = [
+            use_mapping for _, use_mapping in params_to_users.items() if len(use_mapping) > 1
+        ]
 
         # We must break the aliasing relationship between the replicated parameters for correct
         # numerics in reference runs. If we do not do this, the autograd tape in separate stages
@@ -233,7 +252,7 @@ class Pipe(torch.nn.Module):
         for param_mapping in self.replicated_params:
             for submod_name, param_qualname in param_mapping.items():
                 submod = getattr(self.split_gm, submod_name)
-                atoms = param_qualname.split('.')
+                atoms = param_qualname.split(".")
                 for atom in atoms[:-1]:
                     submod = getattr(submod, atom)
                 setattr(submod, atoms[-1], copy.deepcopy(getattr(submod, atoms[-1])))
@@ -241,16 +260,18 @@ class Pipe(torch.nn.Module):
         self.new_to_old_qualname_mapping = qualname_mapping
 
         def throw(self, *args, **kwargs):
-            raise RuntimeError('To run pipeline locally, invoke the Pipe object directly, not `split_gm`')
-        setattr(self.split_gm, 'forward', throw)
+            raise RuntimeError("To run pipeline locally, invoke the Pipe object directly, not `split_gm`")
+
+        setattr(self.split_gm, "forward", throw)
 
     def forward(self, *args, **kwargs):
         executor_args = args
         if len(kwargs) > 0:
             from inspect import Signature, Parameter
+
             parameters = []
             for node in self.split_gm.graph.nodes:
-                if node.op == 'placeholder':
+                if node.op == "placeholder":
                     if node.args and len(node.args) > 0:
                         parameters.append(Parameter(node.target, Parameter.POSITIONAL_OR_KEYWORD, default=node.args[0]))
                     else:
@@ -264,34 +285,34 @@ class Pipe(torch.nn.Module):
 
     def remap_qualname(self, qualname):
         # TODO: annoying
-        if qualname.startswith('split_gm.'):
-            qualname = qualname[len('split_gm.'):]
+        if qualname.startswith("split_gm."):
+            qualname = qualname[len("split_gm.") :]
 
         # The qualname map does not store recursive items, thus,
         # when passed a qualname with leaves, we need to perform longest prefix match
         if qualname not in self.new_to_old_qualname_mapping:
             # Split from the right, one each time
-            split_names = qualname.rsplit('.', 1)
+            split_names = qualname.rsplit(".", 1)
             leaf = split_names[-1]
-            while(len(split_names) > 1):
+            while len(split_names) > 1:
                 prefix = split_names[0]
                 if prefix in self.new_to_old_qualname_mapping:
                     old_prefix = self.new_to_old_qualname_mapping[prefix]
-                    return '.'.join([old_prefix, leaf])
-                split_names = prefix.rsplit('.', 1)
-                leaf = '.'.join([split_names[-1], leaf])
+                    return ".".join([old_prefix, leaf])
+                split_names = prefix.rsplit(".", 1)
+                leaf = ".".join([split_names[-1], leaf])
 
         # Either full name match, or key not found
         return self.new_to_old_qualname_mapping[qualname]
 
     @staticmethod
-    def _number_and_count_forward_stages(gm : torch.fx.GraphModule):
+    def _number_and_count_forward_stages(gm: torch.fx.GraphModule):
         num_stages = 0
         found_idxs: Dict = {}
         for node in gm.graph.nodes:
-            if node.op == 'call_module' and node.target.startswith('submod_'):
-                node.meta['stage_idx'] = int(node.target[len('submod_'):])
-                found_idxs.setdefault(node.meta['stage_idx'])
+            if node.op == "call_module" and node.target.startswith("submod_"):
+                node.meta["stage_idx"] = int(node.target[len("submod_") :])
+                found_idxs.setdefault(node.meta["stage_idx"])
                 num_stages += 1
 
         assert all(i in found_idxs for i in range(num_stages))
@@ -299,37 +320,39 @@ class Pipe(torch.nn.Module):
         return num_stages
 
     @staticmethod
-    def _append_traced_loss_fn_to_gm(gm : torch.fx.GraphModule, loss_fn : Callable[[torch.Tensor, torch.Tensor], torch.Tensor]):
+    def _append_traced_loss_fn_to_gm(
+        gm: torch.fx.GraphModule, loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
+    ):
         last_ph_node = None
         for node in gm.graph.nodes:
-            if node.op == 'placeholder':
+            if node.op == "placeholder":
                 last_ph_node = node
 
         assert last_ph_node is not None
         with gm.graph.inserting_after(last_ph_node):
-            target_ph_node = gm.graph.placeholder('target')
+            target_ph_node = gm.graph.placeholder("target")
 
         output_node = None
         for node in gm.graph.nodes:
-            if node.op == 'output':
+            if node.op == "output":
                 output_node = node
                 break
 
         if isinstance(loss_fn, torch.nn.Module):
-            assert not hasattr(gm, '_loss')
-            gm.add_module('_loss', loss_fn)
+            assert not hasattr(gm, "_loss")
+            gm.add_module("_loss", loss_fn)
         else:
             # Trace loss computation into a new _loss submodule
             # TODO: configurable tracing
             traced_loss_submod = torch.fx.symbolic_trace(loss_fn)
-            assert not hasattr(gm, '_loss')
-            gm.add_module('_loss', traced_loss_submod)
+            assert not hasattr(gm, "_loss")
+            gm.add_module("_loss", traced_loss_submod)
 
         assert output_node is not None
         assert len(output_node.args) == 1
         output_val = output_node.args[0]
         with gm.graph.inserting_after(output_node):
-            loss_node = gm.graph.call_module('_loss', (output_val, target_ph_node))
+            loss_node = gm.graph.call_module("_loss", (output_val, target_ph_node))
         gm.graph.erase_node(output_node)
         gm.graph.output(loss_node)
 
@@ -340,19 +363,23 @@ class Pipe(torch.nn.Module):
         gm.recompile()
 
     @staticmethod
-    def _from_traced(mod : torch.nn.Module, traced : torch.fx.GraphModule,
-                     multi_use_param_spec : Optional[MultiUseParamSpec] = None,
-                     loss_fn : Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None, **kwargs):
+    def _from_traced(
+        mod: torch.nn.Module,
+        traced: torch.fx.GraphModule,
+        multi_use_param_spec: Optional[MultiUseParamSpec] = None,
+        loss_fn: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
+        **kwargs,
+    ):
         part_idx = 0
 
-        def split_callback(n : torch.fx.Node):
+        def split_callback(n: torch.fx.Node):
             nonlocal part_idx
-            if (n.op, n.target) == ('call_function', pipe_split):
+            if (n.op, n.target) == ("call_function", pipe_split):
                 part_idx += 1
             return part_idx
 
         # Ask split_module to return mapping from new qualname to old qualname
-        qualname_map : Dict[str, str] = {}
+        qualname_map: Dict[str, str] = {}
         # TODO: what does split do with module invocations? does it move the modules
         # into the submodules?
         split = split_module(traced, mod, split_callback, qualname_map)
@@ -363,7 +390,7 @@ class Pipe(torch.nn.Module):
         for submodule in split.modules():
             if isinstance(submodule, torch.fx.GraphModule):
                 for node in submodule.graph.nodes:
-                    if (node.op, node.target) == ('call_function', pipe_split):
+                    if (node.op, node.target) == ("call_function", pipe_split):
                         submodule.graph.erase_node(node)
                 submodule.recompile()
 
@@ -403,7 +430,7 @@ class Pipe(torch.nn.Module):
 
             ph_counter = 0
             for sn in callee.graph.nodes:
-                if sn.op == 'placeholder':
+                if sn.op == "placeholder":
                     if ph_counter == use_idx:
                         with callee.graph.inserting_before(sn):
                             get_attr = callee.graph.get_attr(new_param_name)
@@ -418,13 +445,13 @@ class Pipe(torch.nn.Module):
         to_delete = list()  # a list of nodes for deferral deletion
 
         for node in split.graph.nodes:
-            if node.op == 'get_attr' and len(node.users) == 1:
+            if node.op == "get_attr" and len(node.users) == 1:
                 user = list(node.users)[0]
-                assert user.op == 'call_module'
+                assert user.op == "call_module"
                 use_idx = delete_user_reference(node, user)
 
                 # Move parameter into submodule and replace PH with a get_attr
-                atoms = node.target.split('.')
+                atoms = node.target.split(".")
                 mod_itr = split
                 for atom in atoms[:-1]:
                     mod_itr = getattr(mod_itr, atom)
@@ -446,9 +473,9 @@ class Pipe(torch.nn.Module):
         # TODO: generalize this to sequential
         multi_use_param_spec = multi_use_param_spec or {}
 
-        multi_use_params_qualnames : Dict[str, Optional[MultiUseParameterConfig]] = {}
+        multi_use_params_qualnames: Dict[str, Optional[MultiUseParameterConfig]] = {}
         for node in split.graph.nodes:
-            if node.op == 'get_attr' and len(node.users) > 1:
+            if node.op == "get_attr" and len(node.users) > 1:
                 multi_use_params_qualnames.setdefault(node.target)
 
         for param in multi_use_params_qualnames:
@@ -457,27 +484,27 @@ class Pipe(torch.nn.Module):
             elif isinstance(multi_use_param_spec, dict):
                 multi_use_params_qualnames[param] = multi_use_param_spec.get(param, MultiUseParameterConfig.TRANSMIT)
             else:
-                raise ValueError('multi_use_param_spec must be MultiUseParamSpec enum or dict')
+                raise ValueError("multi_use_param_spec must be MultiUseParamSpec enum or dict")
 
         multi_use_params_qualnames = cast(Dict[str, Optional[MultiUseParameterConfig]], multi_use_params_qualnames)
 
         # TODO: do we maintain the invariant that `Node.users` is topologically ordered? I don't think so
-        node_to_first_user : Dict[torch.fx.Node, torch.fx.Node] = {}
+        node_to_first_user: Dict[torch.fx.Node, torch.fx.Node] = {}
         for node in split.graph.nodes:
             for input in node.all_input_nodes:
                 if input not in node_to_first_user:
                     node_to_first_user[input] = node
 
         for node in split.graph.nodes:
-            if node.op == 'get_attr' and node.target in multi_use_params_qualnames:
+            if node.op == "get_attr" and node.target in multi_use_params_qualnames:
                 reuse_type = multi_use_params_qualnames[node.target]
                 if reuse_type == MultiUseParameterConfig.TRANSMIT:
                     first_user = node_to_first_user[node]
-                    assert first_user.op == 'call_module'
+                    assert first_user.op == "call_module"
 
                     use_idx = delete_user_reference(node, first_user, delete_node=False)
 
-                    atoms = node.target.split('.')
+                    atoms = node.target.split(".")
                     mod_itr = split
                     for atom in atoms[:-1]:
                         mod_itr = getattr(mod_itr, atom)
@@ -491,7 +518,7 @@ class Pipe(torch.nn.Module):
                     # Add extra output to the callee and switch references to the parameter
                     # access in the pipeline graph to use this.
                     submod = split.get_submodule(first_user.target)
-                    callee_output_nodes = [n for n in submod.graph.nodes if n.op == 'output']
+                    callee_output_nodes = [n for n in submod.graph.nodes if n.op == "output"]
                     assert len(callee_output_nodes) == 1
                     callee_output_node = callee_output_nodes[0]
 
@@ -520,13 +547,14 @@ class Pipe(torch.nn.Module):
                             orig_output_getitem.args = (first_user,) + orig_output_getitem.args[1:]
 
                         transmitted_value_getitem = split.graph.call_function(
-                            operator.getitem, (first_user, new_output_idx))
+                            operator.getitem, (first_user, new_output_idx)
+                        )
                         node.replace_all_uses_with(transmitted_value_getitem)
                         split.graph.erase_node(node)
                 elif reuse_type == MultiUseParameterConfig.REPLICATE:
                     for user in copy.copy(node.users):
                         use_idx = delete_user_reference(node, user, delete_node=False)
-                        atoms = node.target.split('.')
+                        atoms = node.target.split(".")
                         mod_itr = split
                         for atom in atoms[:-1]:
                             mod_itr = getattr(mod_itr, atom)
@@ -535,7 +563,7 @@ class Pipe(torch.nn.Module):
 
                         move_param_to_callee(split, user.target, param_val, use_idx, is_buffer)
 
-                    atoms = node.target.split('.')
+                    atoms = node.target.split(".")
                     mod_itr = split
                     for atom in atoms[:-1]:
                         mod_itr = getattr(mod_itr, atom)
@@ -544,7 +572,7 @@ class Pipe(torch.nn.Module):
 
                     split.graph.erase_node(node)
                 else:
-                    raise ValueError(f'Unknown multi-use config value {reuse_type} specified for {node.target}')
+                    raise ValueError(f"Unknown multi-use config value {reuse_type} specified for {node.target}")
 
         split.delete_all_unused_submodules()
 
@@ -562,9 +590,13 @@ class Pipe(torch.nn.Module):
         return Pipe(split, qualname_map, num_stages, has_loss_and_backward)
 
     @staticmethod
-    def from_tracing(mod : torch.nn.Module, multi_use_param_spec : Optional[MultiUseParamSpec] = None,
-                     loss_fn : Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
-                     tracer=None, **kwargs):
+    def from_tracing(
+        mod: torch.nn.Module,
+        multi_use_param_spec: Optional[MultiUseParamSpec] = None,
+        loss_fn: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
+        tracer=None,
+        **kwargs,
+    ):
         # TODO: abstract partitioning policy
 
         global _pipeline_tracer
@@ -586,7 +618,7 @@ class PipeSplitWrapper(torch.nn.Module):
         BEGINNING = 1
         END = 2
 
-    def __init__(self, mod : torch.nn.Module, split_point : SplitPoint = SplitPoint.BEGINNING):
+    def __init__(self, mod: torch.nn.Module, split_point: SplitPoint = SplitPoint.BEGINNING):
         super().__init__()
         self.mod = mod
         self.split_point = split_point
@@ -602,15 +634,17 @@ class PipeSplitWrapper(torch.nn.Module):
                 pipe_split()
 
 
-def annotate_split_points(mod : torch.nn.Module, spec : Dict[str, PipeSplitWrapper.SplitPoint]):
+def annotate_split_points(mod: torch.nn.Module, spec: Dict[str, PipeSplitWrapper.SplitPoint]):
     for qualname, split_type in spec.items():
-        atoms = qualname.split('.')
+        atoms = qualname.split(".")
         predecessor_module = mod
         for i, atom in enumerate(atoms[:-1]):
             try:
                 predecessor_module = getattr(predecessor_module, atom)
             except AttributeError as e:
-                raise AttributeError(f'Specified target {qualname} referenced nonexistent module {".".join(atoms[:i+1])}')
+                raise AttributeError(
+                    f'Specified target {qualname} referenced nonexistent module {".".join(atoms[:i+1])}'
+                )
 
         mod_to_wrap = getattr(predecessor_module, atoms[-1])
         wrapped_mod = PipeSplitWrapper(mod_to_wrap, split_type)

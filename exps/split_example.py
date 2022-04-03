@@ -3,6 +3,7 @@ import torch
 
 d_hid = 512
 
+
 class ExampleCode(torch.nn.Module):
     def __init__(self):
         super().__init__()
@@ -22,6 +23,7 @@ class ExampleCode(torch.nn.Module):
         x = self.lin(x)
         return x
 
+
 ec = ExampleCode()
 
 input = torch.randn(53, 512)
@@ -34,7 +36,8 @@ ref_out = ec(input)
 USE_WHOLE_BATCH = False
 
 if USE_WHOLE_BATCH:
-    def _calc_microbatch_split_sizes(chunks : int, dim_size : int):
+
+    def _calc_microbatch_split_sizes(chunks: int, dim_size: int):
         # TODO: this splits with the last one bigger because i can't
         # figure out the math to make the last one smaller
         chunk_size = dim_size // chunks
@@ -44,7 +47,7 @@ if USE_WHOLE_BATCH:
         for i in range(chunks):
             if i == chunks - 1:
                 sizes.append(dim_size - examples_counted)
-                examples_counted += (dim_size - examples_counted)
+                examples_counted += dim_size - examples_counted
             else:
                 sizes.append(chunk_size)
                 examples_counted += chunk_size

@@ -7,29 +7,31 @@ from typing import Dict
 from setuptools import setup, find_packages
 
 # Package name
-package_name = 'pippy'
+package_name = "pippy"
 
 # Version information
 cwd = os.path.dirname(os.path.abspath(__file__))
-version_txt = os.path.join(cwd, 'version.txt')
-with open(version_txt, 'r') as f:
+version_txt = os.path.join(cwd, "version.txt")
+with open(version_txt, "r") as f:
     version = f.readline().strip()
 
 try:
-    sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=cwd).decode('ascii').strip()
+    sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=cwd).decode("ascii").strip()
 except Exception:
-    sha = 'Unknown'
+    sha = "Unknown"
 
-if os.getenv('BUILD_VERSION'):
-    version = os.getenv('BUILD_VERSION', version)
-elif sha != 'Unknown':
-    version += '+' + sha[:7]
+if os.getenv("BUILD_VERSION"):
+    version = os.getenv("BUILD_VERSION", version)
+elif sha != "Unknown":
+    version += "+" + sha[:7]
+
 
 def write_version_file():
-    version_path = os.path.join(cwd, 'pippy', 'version.py')
-    with open(version_path, 'w') as f:
+    version_path = os.path.join(cwd, "pippy", "version.py")
+    with open(version_path, "w") as f:
         f.write("__version__ = '{}'\n".format(version))
         f.write("git_version = {}\n".format(repr(sha)))
+
 
 # Package requirements
 requirements = [
@@ -39,6 +41,7 @@ requirements = [
 ]
 
 extras: Dict = {}
+
 
 class clean(distutils.command.clean.clean):  # type: ignore
     def run(self):
@@ -55,22 +58,23 @@ class clean(distutils.command.clean.clean):  # type: ignore
         # It's an old-style class in Python 2.7...
         distutils.command.clean.clean.run(self)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     write_version_file()
 
     setup(
         # Metadata
         name=package_name,
         version=version,
-        author='PiPPy Team',
+        author="PiPPy Team",
         url="https://github.com/jamesr66a/pippy",
-        description='Pipeline Parallelism for PyTorch',
-        license='BSD',
-
+        description="Pipeline Parallelism for PyTorch",
+        license="BSD",
         # Package info
         packages=find_packages(),
         install_requires=requirements,
         extras_require=extras,
         cmdclass={
-            'clean': clean,
-        })
+            "clean": clean,
+        },
+    )
