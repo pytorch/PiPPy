@@ -125,6 +125,36 @@ class PipeSequential(torch.nn.Sequential):
 
 
 class LossWrapper(torch.nn.Module):
+    """
+    LossWrapper is a convenient abstract class that allows you to wrap up both
+    your model as well as its loss function and specify the connectivity between
+    the inputs, model, loss function, and output value. Example::
+
+        class MyModelWrapper(LossWrapper):
+            def forward(self, x, targets):
+                model_out = self.module(x)
+                loss_value = self.loss_fn(model_out, targets)
+                return loss_value
+
+    The above example defines a connectivity where we expect the forward/loss/backward
+    training procedure to take two arguments (x and targets), pass x into the module
+    to get the output of the feedforward computation, pass the model output and the
+    targets value into the loss function, and get and return the loss value, which will
+    be backpropagated by PiPPy. The above class would then be instantiated like::
+
+        model = ... # instantiate the model
+        loss_fn = torch.nn.MSELoss() # for the sake of demonstration
+
+        wrapper = MyModelWrapper(model, loss_fn)
+        pipe = Pipe.from_tracing(wrapper, ...)
+
+    Additionally, the ``output_loss_value_spec`` value can be specified to disambiguate
+    which value in the output of `forward` is the loss value on which PiPPy should apply
+    backpropagation. For example, if your ``forward`` returns a tuple ``(loss, model_out)``,
+    you can specify ``output_loss_value_spec=(True, False)``. Or, if your ``forward`` returns
+    a dict ``{'loss': loss_value, 'model_out': model_out}``, you can specify
+    ``output_loss_value_spec={'loss': True, 'model_out': False}``
+    """
     def __init__(self, module, loss_fn, output_loss_value_spec=None):
         super().__init__()
         self.module = module
