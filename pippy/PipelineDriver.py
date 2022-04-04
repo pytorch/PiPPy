@@ -1,16 +1,19 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-import torch
-import torch.fx
-import torch.distributed.rpc as rpc
-from pippy.IR import Pipe, stage_backward, sync_barrier
-from pippy.microbatch import split_args_kwargs_into_chunks, merge_chunks
-from enum import Enum
-from typing import Any, Callable, Dict, List, Tuple, Optional
 import logging
 import operator
 import threading
 import warnings
+from enum import Enum
 from inspect import Parameter, Signature
+from typing import Any, Callable, Dict, List, Tuple, Optional
+
+import torch
+import torch.distributed.rpc as rpc
+import torch.fx
+
+from pippy.IR import Pipe, stage_backward, sync_barrier
+from pippy.microbatch import split_args_kwargs_into_chunks, merge_chunks
+from pippy.profiler import record_event
 
 # TODO: Define the strategy for replicating the computation. In particular, we will likely make the assumption
 # that the operations in the program are batch-wise commutative (my term), i.e. we can guarantee equivalence
@@ -61,6 +64,20 @@ class SchedState(Enum):
     READY = 1
     RUNNING = 2
     DONE = 3
+
+phase_to_str = {
+    Phase.FORWARD: 'forward',
+    Phase.LOSS: 'loss',
+    Phase.BACKWARD: 'backward',
+    Phase.SYNC_BARRIER: 'sync barrier',
+}
+
+phase_to_short_str = {
+    Phase.FORWARD: 'F',
+    Phase.LOSS: 'L',
+    Phase.BACKWARD: 'B',
+    Phase.SYNC_BARRIER: 'S',
+}
 
 class WorkItem:
     def __init__(
@@ -234,86 +251,108 @@ class PipeStageExecutor:
                 continue
             logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Got WorkItem {work_item}')
 
-            work_item.state = SchedState.RUNNING
-            args_rrefs = work_item.args
-            kwargs_rrefs = work_item.kwargs
-            future = work_item.future
-            microbatch_id = work_item.microbatch_id
-            ready_args = work_item.ready_args
-            phase = work_item.phase
+            def name(ph, rank, mbid):
+                return f"{phase_to_short_str[ph]}_{rank},{mbid}"
 
-            rref_arg_idx = 0
+            def cat(ph):
+                return f"{phase_to_str[ph]}"
 
-            def retrieve_rref_args_by_idx(a):
-                if isinstance(a, torch._C._distributed_rpc.PyRRef):
-                    nonlocal rref_arg_idx
-                    val = ready_args[rref_arg_idx]
-                    rref_arg_idx += 1
-                    return val
+            def prev_name(ph, rank, mbid):
+                if ph == Phase.FORWARD:
+                    return None if rank == 0 else f"{phase_to_short_str[ph]}_{rank - 1},{mbid}"
+                elif ph == Phase.BACKWARD:
+                    return f"{phase_to_short_str[ph]}_{rank + 1},{mbid}"
+
+            def next_name(ph, rank, mbid):
+                if ph == Phase.FORWARD:
+                    return f"{phase_to_short_str[ph]}_{rank + 1},{mbid}"
+                elif ph == Phase.BACKWARD:
+                    return None if rank == 0 else f"{phase_to_short_str[ph]}_{rank - 1},{mbid}"
+
+            with record_event(rank=self.local_rank, cat=cat(work_item.phase),
+                              name=name(work_item.phase, self.local_rank, work_item.microbatch_id),
+                              prev_name=prev_name(work_item.phase, self.local_rank, work_item.microbatch_id),
+                              next_name=next_name(work_item.phase, self.local_rank, work_item.microbatch_id)):
+                work_item.state = SchedState.RUNNING
+                args_rrefs = work_item.args
+                kwargs_rrefs = work_item.kwargs
+                future = work_item.future
+                microbatch_id = work_item.microbatch_id
+                ready_args = work_item.ready_args
+                phase = work_item.phase
+
+                rref_arg_idx = 0
+
+                def retrieve_rref_args_by_idx(a):
+                    if isinstance(a, torch._C._distributed_rpc.PyRRef):
+                        nonlocal rref_arg_idx
+                        val = ready_args[rref_arg_idx]
+                        rref_arg_idx += 1
+                        return val
+                    else:
+                        return a
+
+                args = torch.fx.node.map_aggregate(args_rrefs, retrieve_rref_args_by_idx)
+                kwargs = torch.fx.node.map_aggregate(kwargs_rrefs, retrieve_rref_args_by_idx)
+
+                if phase == Phase.BACKWARD:
+                    logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running backward phase. Retrieving stashed values')
+                    # HACK: here we are directly accessing the saved tensor outputs
+                    # for closed-over outputs so that they still have the grad_fn
+                    # from local autograd. Can we solve this more elegantly?
+                    cache = self.loss_cache if len(self.loss_cache) > 0 else self.fwd_cache
+                    kwargs = dict(kwargs)
+                    kwargs['stage_output'], kwargs['input_values'] = cache.pop(microbatch_id)
+
+                if work_item.phase == Phase.FORWARD:
+                    self.outstanding += 1
+                    flat_tensor_args = []
+
+                    def extract_tensor_args(a):
+                        if isinstance(a, torch.Tensor):
+                            nonlocal flat_tensor_args
+                            val = a.detach().requires_grad_(a.requires_grad)
+                            flat_tensor_args.append(val)
+                            return val
+                        else:
+                            return a
+                    args = torch.fx.node.map_aggregate(args, extract_tensor_args)
+                    kwargs = torch.fx.node.map_aggregate(kwargs, extract_tensor_args)
+                    logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running forward module')
+                    out_val = self.mod(*args, **kwargs)
+                    self.fwd_cache[microbatch_id] = (out_val, flat_tensor_args)
+                elif work_item.phase == Phase.LOSS:
+                    assert self.loss_mod is not None
+                    flat_tensor_args = []
+
+                    def extract_tensor_args(a):
+                        if isinstance(a, torch.Tensor):
+                            nonlocal flat_tensor_args
+                            val = a.detach().requires_grad_(a.requires_grad)
+                            flat_tensor_args.append(val)
+                            return val
+                        else:
+                            return a
+                    args = torch.fx.node.map_aggregate(args, extract_tensor_args)
+                    kwargs = torch.fx.node.map_aggregate(kwargs, extract_tensor_args)
+                    logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running loss module')
+                    out_val = self.loss_mod(*args, **kwargs)
+                    self.loss_cache[microbatch_id] = (out_val, flat_tensor_args)
+                elif work_item.phase == Phase.BACKWARD:
+                    logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running backward')
+                    out_val = stage_backward(*args, **kwargs)
+                    # Schedule forward stage of a new micro-batch
+                    self.outstanding -= 1
+                elif work_item.phase == Phase.SYNC_BARRIER:
+                    logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running sync_barrier')
+                    out_val = sync_barrier(*args, **kwargs)
                 else:
-                    return a
+                    assert False, f'Unrecognized phase {work_item.phase} encountered in execution'
 
-            args = torch.fx.node.map_aggregate(args_rrefs, retrieve_rref_args_by_idx)
-            kwargs = torch.fx.node.map_aggregate(kwargs_rrefs, retrieve_rref_args_by_idx)
-
-            if phase == Phase.BACKWARD:
-                logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running backward phase. Retrieving stashed values')
-                # HACK: here we are directly accessing the saved tensor outputs
-                # for closed-over outputs so that they still have the grad_fn
-                # from local autograd. Can we solve this more elegantly?
-                cache = self.loss_cache if len(self.loss_cache) > 0 else self.fwd_cache
-                kwargs = dict(kwargs)
-                kwargs['stage_output'], kwargs['input_values'] = cache.pop(microbatch_id)
-
-            if work_item.phase == Phase.FORWARD:
-                self.outstanding += 1
-                flat_tensor_args = []
-
-                def extract_tensor_args(a):
-                    if isinstance(a, torch.Tensor):
-                        nonlocal flat_tensor_args
-                        val = a.detach().requires_grad_(a.requires_grad)
-                        flat_tensor_args.append(val)
-                        return val
-                    else:
-                        return a
-                args = torch.fx.node.map_aggregate(args, extract_tensor_args)
-                kwargs = torch.fx.node.map_aggregate(kwargs, extract_tensor_args)
-                logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running forward module')
-                out_val = self.mod(*args, **kwargs)
-                self.fwd_cache[microbatch_id] = (out_val, flat_tensor_args)
-            elif work_item.phase == Phase.LOSS:
-                assert self.loss_mod is not None
-                flat_tensor_args = []
-
-                def extract_tensor_args(a):
-                    if isinstance(a, torch.Tensor):
-                        nonlocal flat_tensor_args
-                        val = a.detach().requires_grad_(a.requires_grad)
-                        flat_tensor_args.append(val)
-                        return val
-                    else:
-                        return a
-                args = torch.fx.node.map_aggregate(args, extract_tensor_args)
-                kwargs = torch.fx.node.map_aggregate(kwargs, extract_tensor_args)
-                logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running loss module')
-                out_val = self.loss_mod(*args, **kwargs)
-                self.loss_cache[microbatch_id] = (out_val, flat_tensor_args)
-            elif work_item.phase == Phase.BACKWARD:
-                logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running backward')
-                out_val = stage_backward(*args, **kwargs)
-                # Schedule forward stage of a new micro-batch
-                self.outstanding -= 1
-            elif work_item.phase == Phase.SYNC_BARRIER:
-                logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running sync_barrier')
-                out_val = sync_barrier(*args, **kwargs)
-            else:
-                assert False, f'Unrecognized phase {work_item.phase} encountered in execution'
-
-            logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Populating result of type {type(out_val)} '
-                         f'for {key}')
-            future.set_result(out_val)
-            work_item.state = SchedState.DONE
+                logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Populating result of type {type(out_val)} '
+                             f'for {key}')
+                future.set_result(out_val)
+                work_item.state = SchedState.DONE
 
     @rpc.functions.async_execution
     def invoke(self, unique_key : str, phase : Phase, args, kwargs, cur_microbatch : int, debug_str : str):
@@ -491,7 +530,7 @@ class PipelineDriverBase:
 
 
 class RemoteInterpreter(torch.fx.Interpreter):
-    def __init__(self, remote_stage_executor_rrefs, module, cur_microbatch : int,   
+    def __init__(self, remote_stage_executor_rrefs, module, cur_microbatch : int,
                  args, kwargs, garbage_collect_values=True):
         super().__init__(module, garbage_collect_values)
         self.remote_stage_executor_rrefs = remote_stage_executor_rrefs
@@ -565,18 +604,18 @@ class RemoteInterpreter(torch.fx.Interpreter):
 
             # TODO: hoist run() implementation
             logging.info(f'[{self.cur_microbatch}] Issue command to run {node.format_node()}')
-            self.env[node] = super().run_node(node)
+            self.env[node] = self.run_node(node)
 
             # TODO: we could potentially move this waiting to the use sites for an RRef
             # (i.e. during Interpreter.map_nodes_to_values or when we pass args/kwargs
             #  to the callees) as an optimization
             # TODO: is it possible for there to be a blocking version of this API?
-            def wait_for_confirmation(n):
-                if isinstance(n, torch._C._distributed_rpc.PyRRef):
-                    while not n.confirmed_by_owner():
-                        pass
-
-            torch.fx.node.map_aggregate(self.env[node], wait_for_confirmation)
+            # def wait_for_confirmation(n):
+            #     if isinstance(n, torch._C._distributed_rpc.PyRRef):
+            #         while not n.confirmed_by_owner():
+            #             pass
+            #
+            # torch.fx.node.map_aggregate(self.env[node], wait_for_confirmation)
 
             if DEBUG and isinstance(self.env[node], torch._C._distributed_rpc.PyRRef):
                 print(node, self.env[node])
