@@ -2,7 +2,7 @@
 import copy
 import operator
 from enum import Enum
-from typing import Dict, List, Optional, Union, cast, Any
+from typing import Dict, List, Optional, Union, cast
 
 import torch
 import torch.fx
