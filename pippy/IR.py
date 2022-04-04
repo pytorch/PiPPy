@@ -2,7 +2,7 @@
 import copy
 import operator
 from enum import Enum
-from typing import Dict, List, Optional, Union, cast
+from typing import Dict, List, Optional, Tuple, Union, cast
 
 import torch
 import torch.fx
@@ -107,7 +107,7 @@ def _insert_stage_symbolic_backward(g : torch.fx.Graph, output_loss_value_spec):
         loss_node = output_node.args[0]
 
     # Collect metadata about tuple output values. TODO: move this to split_module or FX IR
-    tuples = {}
+    tuples : Dict[torch.fx.Node, Tuple] = {}
     for node in reversed(g.nodes):
         if node.op == 'call_function':
             assert node.target == operator.getitem
@@ -130,13 +130,13 @@ def _insert_stage_symbolic_backward(g : torch.fx.Graph, output_loss_value_spec):
             # Populate value represented by this node
             reconstructed_list[node_idx] = node
 
-            tuples[indexed_value] = reconstructed_list
+            tuples[indexed_value] = tuple(reconstructed_list)
 
     # Keep track of nodes that dominate the loss node.
     # We will only emit backward operations for nodes that can contribute
     # to the specified loss value.
     live_nodes = {loss_node: None}
-    val_to_grad = {loss_node : None}
+    val_to_grad : Dict[torch.fx.Node, Optional[torch.fx.Node]] = {loss_node : None}
 
     def assign_or_accumulate_grad(forward_node, grad_value):
         if forward_node in val_to_grad:
@@ -155,6 +155,7 @@ def _insert_stage_symbolic_backward(g : torch.fx.Graph, output_loss_value_spec):
             torch.fx.node.map_arg(node.args, add_to_live_nodes)
             torch.fx.node.map_arg(node.kwargs, add_to_live_nodes)
             if node.op == 'call_module':
+                output_grads : Union[Tuple[Optional[torch.fx.Node], ...], Optional[torch.fx.Node]]
                 if node in tuples:
                     stage_output = tuple(n for n in tuples[node] if n in live_nodes)
                     output_grads = tuple(val_to_grad[n] for n in tuples[node] if n in live_nodes)
