@@ -39,6 +39,12 @@ runner_types:
     max_available: 250
     disk_size: 150
     is_ephemeral: false
+  linux.24xlarge:
+    instance_type: c5.24xlarge
+    os: linux
+    max_available: 250
+    disk_size: 150
+    is_ephemeral: false
   linux.8xlarge.nvidia.gpu:
     instance_type: g3.8xlarge
     os: linux
