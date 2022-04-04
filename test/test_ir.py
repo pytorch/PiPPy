@@ -310,6 +310,24 @@ class TestIR(unittest.TestCase):
         assert ec.buffer is not pipe.split_gm.submod_1.moved_buffer
         torch.testing.assert_allclose(ec.buffer, pipe.split_gm.submod_1.moved_buffer)
 
+    def test_kwarg_invoke_with_double_star(self):
+        class MyModelWithKwarg(torch.nn.Module):
+            def forward(self, x, **kwargs):
+                return torch.relu(x)
+
+        m = MyModelWithKwarg()
+        pipe = Pipe.from_tracing(m)
+
+        x = torch.randn(5, 3)
+        ref_out = m(x)
+        test_out = pipe(x)
+
+        torch.testing.assert_close(test_out, ref_out)
+
+        star_ref_out = m(x=x)
+        star_test_out = pipe(x=x)
+        torch.testing.assert_close(star_test_out, star_ref_out)
+
     def test_annotate_split_points_end(self):
         class Foo(torch.nn.Module):
             def __init__(self):
