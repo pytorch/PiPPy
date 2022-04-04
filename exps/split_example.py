@@ -1,6 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
-import math
 
 d_hid = 512
 
