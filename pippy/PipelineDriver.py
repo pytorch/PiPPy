@@ -51,9 +51,8 @@ def to_here(a):
 
 class Phase(Enum):
     FORWARD = 0
-    LOSS = 1
-    BACKWARD = 2
-    SYNC_BARRIER = 3
+    BACKWARD = 1
+    SYNC_BARRIER = 2
 
 # TODO: do we need this?
 class SchedState(Enum):
@@ -151,7 +150,6 @@ class PipeStageExecutor:
         self.local_rank = local_rank
         logging.info(f'[{self.local_rank}] Instantiating PipeStageExecutor')
         self.mod = mod
-        self.loss_mod = loss_mod
         # Maximum outstanding micro-batches of the pipeline schedule
         self.max_outstanding = max_outstanding
         # Keeps track of the outstanding micro-batches in current executor
@@ -171,7 +169,6 @@ class PipeStageExecutor:
 
         # map microbatch ID to list of forward tensor args
         self.fwd_cache : Dict[int, Tuple[Any, List[torch.Tensor]]] = {}
-        self.loss_cache : Dict[int, Tuple[Any, List[torch.Tensor]]] = {}
 
     def _debug_print(self, to_file=False):
         # NB: this does not take the runlist locks. This method should only be
@@ -261,9 +258,8 @@ class PipeStageExecutor:
                 # HACK: here we are directly accessing the saved tensor outputs
                 # for closed-over outputs so that they still have the grad_fn
                 # from local autograd. Can we solve this more elegantly?
-                cache = self.loss_cache if len(self.loss_cache) > 0 else self.fwd_cache
                 kwargs = dict(kwargs)
-                kwargs['stage_output'], kwargs['input_values'] = cache.pop(microbatch_id)
+                kwargs['stage_output'], kwargs['input_values'] = self.fwd_cache.pop(microbatch_id)
 
             if work_item.phase == Phase.FORWARD:
                 self.outstanding += 1
@@ -282,23 +278,6 @@ class PipeStageExecutor:
                 logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running forward module')
                 out_val = self.mod(*args, **kwargs)
                 self.fwd_cache[microbatch_id] = (out_val, flat_tensor_args)
-            elif work_item.phase == Phase.LOSS:
-                assert self.loss_mod is not None
-                flat_tensor_args = []
-
-                def extract_tensor_args(a):
-                    if isinstance(a, torch.Tensor):
-                        nonlocal flat_tensor_args
-                        val = a.detach().requires_grad_(a.requires_grad)
-                        flat_tensor_args.append(val)
-                        return val
-                    else:
-                        return a
-                args = torch.fx.node.map_aggregate(args, extract_tensor_args)
-                kwargs = torch.fx.node.map_aggregate(kwargs, extract_tensor_args)
-                logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running loss module')
-                out_val = self.loss_mod(*args, **kwargs)
-                self.loss_cache[microbatch_id] = (out_val, flat_tensor_args)
             elif work_item.phase == Phase.BACKWARD:
                 logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running backward')
                 out_val = stage_backward(*args, **kwargs)
@@ -412,35 +391,23 @@ class PipelineDriverBase:
         class ExecutorDescriptor:
             name : str
             mod : torch.nn.Module
-            loss_mod : Optional[torch.nn.Module] = None
             has_backward : bool = False
 
         split_gm = self.pipe.split_gm
 
         executor_descriptors = []
-        seen_loss = False
-        seen_loss_backward = False
         bw_idx = -1
         for node in split_gm.graph.nodes:
             if node.op == 'call_module':
-                assert not seen_loss
                 target_mod = split_gm.get_submodule(node.target)
-                if node.target == '_loss':
-                    assert len(executor_descriptors) > 0
-                    executor_descriptors[-1].loss_mod = target_mod
-                else:
-                    descr = ExecutorDescriptor()
-                    descr.name = node.target
-                    descr.mod = target_mod
-                    executor_descriptors.append(descr)
+                descr = ExecutorDescriptor()
+                descr.name = node.target
+                descr.mod = target_mod
+                executor_descriptors.append(descr)
             elif (node.op, node.target) == ('call_function', stage_backward):
-                if not seen_loss_backward:
-                    seen_loss_backward = True
-                    node.meta['fw_stage'] = '_loss'
-                else:
-                    executor_descriptors[bw_idx].has_backward = True
-                    node.meta['fw_stage'] = executor_descriptors[bw_idx].name
-                    bw_idx -= 1
+                executor_descriptors[bw_idx].has_backward = True
+                node.meta['fw_stage'] = executor_descriptors[bw_idx].name
+                bw_idx -= 1
 
         assert all(d.has_backward for d in executor_descriptors) or all(not d.has_backward for d in executor_descriptors)
 
@@ -452,11 +419,8 @@ class PipelineDriverBase:
             warnings.warn(f'Running pipeline with {len(executor_descriptors)} stages on world_size of {self.world_size}. '
                           f'Remaining ranks will be idle.')
 
-        self.loss_stage = None
         for rank, descr in zip(self.all_ranks, executor_descriptors):
-            self.remote_stage_executor_rrefs[descr.name] = (rank, rpc.remote(rank, self.executor_class, (descr.mod, rank, descr.loss_mod, self.max_outstanding)))
-            if descr.loss_mod:
-                self.remote_stage_executor_rrefs['_loss'] = self.remote_stage_executor_rrefs[descr.name]
+            self.remote_stage_executor_rrefs[descr.name] = (rank, rpc.remote(rank, self.executor_class, (descr.mod, rank, self.max_outstanding)))
 
     def run(self, args, kwargs, chunks : int, _debug_mask_minibatches : bool = False):
         raise NotImplementedError('PipelineDriverBase is an abstract base class, please use a concrete '
@@ -520,12 +484,11 @@ class RemoteInterpreter(torch.fx.Interpreter):
 
         if target in self.remote_stage_executor_rrefs:
             rank, stage_executor = self.remote_stage_executor_rrefs[target]
-            phase = Phase.LOSS if target == '_loss' else Phase.FORWARD
-            logging.info(f'[root][{self.cur_microbatch}] Issuing {phase} '
+            logging.info(f'[root][{self.cur_microbatch}] Issuing {Phase.FORWARD} '
                          f'invocation for target {target} on rank {rank}')
             invocation_key = f'{self.cur_microbatch}_{node.name}'
             return stage_executor.remote().invoke(
-                invocation_key, phase, args, kwargs, self.cur_microbatch, debug_str=node.format_node())
+                invocation_key, Phase.FORWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node())
         else:
             logging.info(f'[root][{self.cur_microbatch}] Running local operation {target} from driver')
             return super().call_module(target, args, kwargs)
@@ -615,23 +578,6 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 
         logging.info(f'[root] {len(microbatch_interpreters)} instantiated')
 
-        def node_is_loss_or_output(n):
-            return (n.op == 'call_module' and n.target == '_loss') or n.op == 'output'
-
-        last_nodes = []
-        for i, interp in enumerate(microbatch_interpreters):
-            logging.info(f'[root][{i}] Executing forward stages')
-            last_nodes.append(interp.run_until(node_is_loss_or_output))
-
-        assert all(n == last_nodes[0] for n in last_nodes)
-
-        if last_nodes[0].op == 'output':
-            logging.info('[root] Program does not have loss/backward, returning outputs directly')
-            # Forward-only; return output values
-            local_results = self._retrieve_output_values(microbatch_interpreters, last_nodes)
-            return merge_chunks(local_results, self.output_chunk_spec, _debug_mask_minibatches)
-
-        logging.info('[root] Executing loss + backward stages')
         last_nodes = []
         for interp in microbatch_interpreters:
             last_nodes.append(interp.run_until(lambda n: n.op == 'output'))
@@ -641,10 +587,11 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 
         local_results = self._retrieve_output_values(microbatch_interpreters, last_nodes)
 
-        # Shared parameter sync
-        # At this point, all of the gradient jobs should have been run
-        # (by way of the synchronization dependency earlier)
-        self._sync_replicated_params()
+        if self.pipe.has_loss_and_backwards:
+            # Shared parameter sync
+            # At this point, all of the gradient jobs should have been run
+            # (by way of the synchronization dependency earlier)
+            self._sync_replicated_params()
 
         return merge_chunks(local_results, self.output_chunk_spec, _debug_mask_minibatches)
 

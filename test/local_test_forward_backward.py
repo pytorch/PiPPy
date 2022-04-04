@@ -10,7 +10,7 @@ import torch
 import torch.distributed.rpc as rpc
 import torch.multiprocessing as mp
 
-from pippy.IR import MultiUseParameterConfig, Pipe, pipe_split
+from pippy.IR import MultiUseParameterConfig, Pipe, TrivialLossWrapper, pipe_split
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B
 from pippy.microbatch import TensorChunkSpec, CustomReducer, split_args_kwargs_into_chunks
 
@@ -111,8 +111,8 @@ def run_main(args):
 
     # TODO: works with sum, need to define semantics for e.g. mean
     mse_loss = torch.nn.MSELoss(reduction='sum')
-
-    ec_pipe = Pipe.from_tracing(ec, MULTI_USE_PARAM_CONFIG, loss_fn=mse_loss)
+    wrapper = TrivialLossWrapper(ec, mse_loss)
+    ec_pipe = Pipe.from_tracing(wrapper, MULTI_USE_PARAM_CONFIG)
     print(ec_pipe.split_gm)
 
     args_chunk_spec = (TensorChunkSpec(0), TensorChunkSpec(0))
@@ -205,7 +205,7 @@ def run_main(args):
         except KeyError:
             not_found_mappings.append(name)
         else:
-            orig_grad = ec.get_parameter(remapped_qualname).grad
+            orig_grad = wrapper.get_parameter(remapped_qualname).grad
             pipe_grad = pipe_grads[name]
             if not torch.allclose(pipe_grad, orig_grad):
                 not_close_orig_grads.append(name)

@@ -2,12 +2,11 @@
 import copy
 import operator
 from enum import Enum
-from typing import Callable, Dict, List, Optional, Union, cast, Any
+from typing import Dict, List, Optional, Union, cast, Any
 
 import torch
 import torch.fx
 from torch.fx.passes.split_module import split_module
-
 
 # TODO:
 # 1. investigate gradient sync for shared parameters. how does DDP do it?
@@ -41,14 +40,14 @@ def stage_backward(stage_output, output_grads, input_values):
 def sync_barrier(loss, barrier_tokens):
     return loss
 
-def _insert_stage_symbolic_backward(g : torch.fx.Graph):
+def _insert_stage_symbolic_backward(g : torch.fx.Graph, output_loss_value_spec):
     output_nodes = [n for n in g.nodes if n.op == 'output']
     assert len(output_nodes) == 1
     output_node = output_nodes[0]
 
-    loss_nodes = [n for n in g.nodes if (n.op, n.target) == ('call_module', '_loss')]
-    assert len(loss_nodes) == 1
-    loss_node = loss_nodes[0]
+    assert output_loss_value_spec is None, "Not yet implemented"
+    assert len(output_node.args) == 1
+    loss_node = output_node.args[0]
 
     val_to_grad: Dict[torch.fx.Node, Any] = {loss_node : None}
 
@@ -118,6 +117,56 @@ class PipeSequential(torch.nn.Sequential):
             if i != len(self) - 1:
                 pipe_split()
         return input
+
+
+class LossWrapper(torch.nn.Module):
+    """
+    LossWrapper is a convenient abstract class that allows you to wrap up both
+    your model as well as its loss function and specify the connectivity between
+    the inputs, model, loss function, and output value. Example::
+
+        class MyModelWrapper(LossWrapper):
+            def forward(self, x, targets):
+                model_out = self.module(x)
+                loss_value = self.loss_fn(model_out, targets)
+                return loss_value
+
+    The above example defines a connectivity where we expect the forward/loss/backward
+    training procedure to take two arguments (x and targets), pass x into the module
+    to get the output of the feedforward computation, pass the model output and the
+    targets value into the loss function, and get and return the loss value, which will
+    be backpropagated by PiPPy. The above class would then be instantiated like::
+
+        model = ... # instantiate the model
+        loss_fn = torch.nn.MSELoss() # for the sake of demonstration
+
+        wrapper = MyModelWrapper(model, loss_fn)
+        pipe = Pipe.from_tracing(wrapper, ...)
+
+    Additionally, the ``output_loss_value_spec`` value can be specified to disambiguate
+    which value in the output of `forward` is the loss value on which PiPPy should apply
+    backpropagation. For example, if your ``forward`` returns a tuple ``(loss, model_out)``,
+    you can specify ``output_loss_value_spec=(True, False)``. Or, if your ``forward`` returns
+    a dict ``{'loss': loss_value, 'model_out': model_out}``, you can specify
+    ``output_loss_value_spec={'loss': True, 'model_out': False}``
+    """
+    def __init__(self, module, loss_fn, output_loss_value_spec=None):
+        super().__init__()
+        self.module = module
+        self.loss_fn = loss_fn
+        self.output_loss_value_spec = output_loss_value_spec
+
+    def forward(self, *args, **kwargs):
+        raise NotImplementedError('This instance of LossWrapper does not have an overridden'
+                                  'forward(). Please implement forward() to specify the arguments, '
+                                  'connection between the module and loss, and loss output '
+                                  'value.')
+
+
+class TrivialLossWrapper(LossWrapper):
+    def forward(self, x, targets):
+        model_out = self.module(x)
+        return self.loss_fn(model_out, targets)
 
 
 # Pipe model representation
@@ -300,50 +349,8 @@ class Pipe(torch.nn.Module):
         return num_stages
 
     @staticmethod
-    def _append_traced_loss_fn_to_gm(gm : torch.fx.GraphModule, loss_fn : Callable[[torch.Tensor, torch.Tensor], torch.Tensor]):
-        last_ph_node = None
-        for node in gm.graph.nodes:
-            if node.op == 'placeholder':
-                last_ph_node = node
-
-        assert last_ph_node is not None
-        with gm.graph.inserting_after(last_ph_node):
-            target_ph_node = gm.graph.placeholder('target')
-
-        output_node = None
-        for node in gm.graph.nodes:
-            if node.op == 'output':
-                output_node = node
-                break
-
-        if isinstance(loss_fn, torch.nn.Module):
-            assert not hasattr(gm, '_loss')
-            gm.add_module('_loss', loss_fn)
-        else:
-            # Trace loss computation into a new _loss submodule
-            # TODO: configurable tracing
-            traced_loss_submod = torch.fx.symbolic_trace(loss_fn)
-            assert not hasattr(gm, '_loss')
-            gm.add_module('_loss', traced_loss_submod)
-
-        assert output_node is not None
-        assert len(output_node.args) == 1
-        output_val = output_node.args[0]
-        with gm.graph.inserting_after(output_node):
-            loss_node = gm.graph.call_module('_loss', (output_val, target_ph_node))
-        gm.graph.erase_node(output_node)
-        gm.graph.output(loss_node)
-
-        # TODO: make this configurable. Do users want to call forward + loss w/o backward?
-        _insert_stage_symbolic_backward(gm.graph)
-
-        gm.graph.lint()
-        gm.recompile()
-
-    @staticmethod
     def _from_traced(mod : torch.nn.Module, traced : torch.fx.GraphModule,
-                     multi_use_param_spec : Optional[MultiUseParamSpec] = None,
-                     loss_fn : Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None, **kwargs):
+                     multi_use_param_spec : Optional[MultiUseParamSpec] = None, **kwargs):
         part_idx = 0
 
         def split_callback(n : torch.fx.Node):
@@ -554,8 +561,9 @@ class Pipe(torch.nn.Module):
 
         num_stages = Pipe._number_and_count_forward_stages(split)
 
-        if loss_fn is not None:
-            Pipe._append_traced_loss_fn_to_gm(split, loss_fn)
+        if isinstance(mod, LossWrapper):
+            _insert_stage_symbolic_backward(split.graph, mod.output_loss_value_spec)
+            split.recompile()
             has_loss_and_backward = True
         else:
             has_loss_and_backward = False
@@ -564,7 +572,6 @@ class Pipe(torch.nn.Module):
 
     @staticmethod
     def from_tracing(mod : torch.nn.Module, multi_use_param_spec : Optional[MultiUseParamSpec] = None,
-                     loss_fn : Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
                      tracer=None, **kwargs):
         # TODO: abstract partitioning policy
 
@@ -579,7 +586,7 @@ class Pipe(torch.nn.Module):
         finally:
             _pipeline_tracer = old__pipeline_tracer
 
-        return Pipe._from_traced(mod, traced, multi_use_param_spec, loss_fn, **kwargs)
+        return Pipe._from_traced(mod, traced, multi_use_param_spec, **kwargs)
 
 
 class PipeSplitWrapper(torch.nn.Module):

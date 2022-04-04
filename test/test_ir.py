@@ -4,7 +4,7 @@ import copy
 import unittest
 from typing import NamedTuple
 
-from pippy.IR import Pipe, PipeSequential, pipe_split, MultiUseParameterConfig, annotate_split_points, PipeSplitWrapper
+from pippy.IR import Pipe, PipeSequential, TrivialLossWrapper, pipe_split, MultiUseParameterConfig, annotate_split_points, PipeSplitWrapper
 from pippy.microbatch import TensorChunkSpec, split_args_kwargs_into_chunks, merge_chunks
 
 class ExampleCode(torch.nn.Module):
@@ -28,6 +28,7 @@ class ExampleCode(torch.nn.Module):
         x = torch.mm(x, self.mm_param2)
         x = self.lin(x)
         return x
+
 
 def check_qualname_mapping(old, new):
     seen_old_qns = {}
@@ -113,7 +114,8 @@ class TestIR(unittest.TestCase):
     def test_loss_backward_sequential(self):
         mse_loss = torch.nn.MSELoss()
         pipe_seq = PipeSequential.from_sequential(self.seq)
-        pipe = Pipe.from_tracing(pipe_seq, loss_fn=mse_loss)
+        loss_wrapper = TrivialLossWrapper(pipe_seq, mse_loss)
+        pipe = Pipe.from_tracing(loss_wrapper)
         check_qualname_mapping(old=self.seq, new=pipe)
 
         test_optim = torch.optim.SGD(pipe.parameters(), lr=0.01, momentum=0.9)
@@ -126,11 +128,12 @@ class TestIR(unittest.TestCase):
         test_out = pipe(x, target)
         test_grads = {pipe.remap_qualname(name): copy.copy(val.grad) for name, val in pipe.named_parameters()}
         torch.testing.assert_allclose(test_out, mse_loss(self.seq(x), target))
+        torch.testing.assert_allclose(test_out, loss_wrapper(x, target))
 
         ref_optim.zero_grad()
-        ref_out = mse_loss(self.seq(x), target)
+        ref_out = loss_wrapper(x, target)
         ref_out.backward()
-        ref_grads = {name: copy.copy(val.grad) for name, val in self.seq.named_parameters()}
+        ref_grads = {name: copy.copy(val.grad) for name, val in loss_wrapper.named_parameters()}
 
         for name, ref_grad in ref_grads.items():
             assert name in test_grads
@@ -138,8 +141,9 @@ class TestIR(unittest.TestCase):
 
     def test_loss_backward_tracing(self):
         mse_loss = torch.nn.MSELoss()
-        ec_pipe_with_loss = Pipe.from_tracing(self.ec, loss_fn=mse_loss)
-        check_qualname_mapping(old=self.ec, new=ec_pipe_with_loss)
+        wrapper = TrivialLossWrapper(self.ec, mse_loss)
+        ec_pipe_with_loss = Pipe.from_tracing(wrapper)
+        check_qualname_mapping(old=wrapper, new=ec_pipe_with_loss)
 
         test_optim = torch.optim.SGD(ec_pipe_with_loss.parameters(), lr=0.01, momentum=0.9)
         ref_optim = torch.optim.SGD(self.ec.parameters(), lr=0.01, momentum=0.9)
@@ -155,7 +159,7 @@ class TestIR(unittest.TestCase):
         ref_optim.zero_grad()
         ref_out = mse_loss(self.ec(x), target)
         ref_out.backward()
-        ref_grads = {name: copy.copy(val.grad) for name, val in self.ec.named_parameters()}
+        ref_grads = {name: copy.copy(val.grad) for name, val in wrapper.named_parameters()}
 
         for name, ref_grad in ref_grads.items():
             assert name in test_grads
@@ -180,8 +184,8 @@ class TestIR(unittest.TestCase):
         c = Code()
         c.train()
         mse_loss = torch.nn.MSELoss()
-        accum_pipe = Pipe.from_tracing(c, loss_fn=mse_loss)
-        print(accum_pipe.split_gm)
+        wrapper = TrivialLossWrapper(c, mse_loss)
+        accum_pipe = Pipe.from_tracing(wrapper)
         assert any(n.target == torch.add for n in accum_pipe.split_gm.graph.nodes)
         accum_pipe(torch.randn(5, 50), torch.randn(5, 50))
 
@@ -194,8 +198,9 @@ class TestIR(unittest.TestCase):
         def mse_loss(output, target):
             return torch.mean((output - target) ** 2)
 
-        ec_pipe_with_loss = Pipe.from_tracing(self.ec, loss_fn=mse_loss)
-        check_qualname_mapping(old=self.ec, new=ec_pipe_with_loss)
+        wrapper = TrivialLossWrapper(self.ec, mse_loss)
+        ec_pipe_with_loss = Pipe.from_tracing(wrapper)
+        check_qualname_mapping(old=wrapper, new=ec_pipe_with_loss)
 
         test_optim = torch.optim.SGD(ec_pipe_with_loss.parameters(), lr=0.01, momentum=0.9)
         ref_optim = torch.optim.SGD(self.ec.parameters(), lr=0.01, momentum=0.9)
