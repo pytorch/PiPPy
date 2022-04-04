@@ -2,16 +2,11 @@
 import copy
 import operator
 from enum import Enum
-from typing import Callable, Dict, List, Optional, Union, cast, Any
+from typing import Dict, List, Optional, Union, cast, Any
 
 import torch
 import torch.fx
 from torch.fx.passes.split_module import split_module
-
-import copy
-import operator
-from typing import Dict, List, Optional, Union, cast
-from enum import Enum
 
 # TODO:
 # 1. investigate gradient sync for shared parameters. how does DDP do it?
