@@ -1,24 +1,26 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+import argparse
 import inspect
+import os
+import socket
 
 import torch
 import torch.distributed.rpc as rpc
+import torch.multiprocessing as mp
 
 import transformers.utils.fx as fx
 from pippy.IR import MultiUseParameterConfig, Pipe, PipeSplitWrapper, annotate_split_points
-from pippy.PipelineDriver import PipelineDriverFillDrain
+from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B
 from pippy.microbatch import TensorChunkSpec
 from transformers import *
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
 
-import os
-
-local_rank = int(os.environ["LOCAL_RANK"])
-world_size = int(os.environ["WORLD_SIZE"])
-
-rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
+schedules = {
+    'FillDrain': PipelineDriverFillDrain,
+    '1F1B': PipelineDriver1F1B,
+}
 
 
 @torch.fx.wrap
@@ -42,13 +44,16 @@ class HFBertTracer(fx.HFTracer):
 # WAR for SEV remediation https://github.com/pytorch/pytorch/commit/2337d4e5036a87f473decd2b1f6fe0439499902c
 torch.fx.Tracer.proxy_buffer_attributes = True
 
-if local_rank == 0:
+
+def run_main(args):
     bs = 20
     seq_length = 32
 
     REPLICATE = os.environ.get('REPLICATE', '0') != '0'
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if REPLICATE else MultiUseParameterConfig.TRANSMIT
     print(f'REPLICATE config: {REPLICATE} -> {MULTI_USE_PARAM_CONFIG}')
+
+    print("Using schedule:", args.schedule)
 
     bert = BertModel(BertConfig())
     bert.eval()
@@ -70,21 +75,20 @@ if local_rank == 0:
 
     assert bert.config.num_hidden_layers + 2 == len(list(bert_pipe.split_gm.children()))
 
-    optimizer = torch.optim.SGD(bert_pipe.parameters(), 0.01)
-
     args_chunk_spec = (TensorChunkSpec(0),)
     kwargs_chunk_spec = {}
     output_chunk_spec = {'last_hidden_state': TensorChunkSpec(0), 'pooler_output': TensorChunkSpec(0)}
 
-    pipe_driver = PipelineDriverFillDrain(bert_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size)
+    pipe_driver = schedules[args.schedule](bert_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec,
+                                           args.world_size)
 
     # # Warm up and correctness runs
     out = pipe_driver.run((bert_input,), {}, chunks=5, _debug_mask_minibatches=True)
     ref_out = bert_pipe(bert_input)
 
     if CHECK_NUMERIC_EQUIVALENCE:
-        torch.testing.assert_allclose(out['last_hidden_state'], ref_out['last_hidden_state'])
-        torch.testing.assert_allclose(out['pooler_output'], ref_out['pooler_output'])
+        torch.testing.assert_close(out['last_hidden_state'], ref_out['last_hidden_state'])
+        torch.testing.assert_close(out['pooler_output'], ref_out['pooler_output'])
         print(
             f'equivalence test passed {torch.sum(out["last_hidden_state"])} ref {torch.sum(ref_out["last_hidden_state"])}')
 
@@ -97,4 +101,35 @@ if local_rank == 0:
     if PROFILING_ENABLED:
         prof.export_chrome_trace('pipe.csv')
 
-rpc.shutdown()
+
+def run_worker(rank, world_size, args):
+    print(f"rank = {rank} host/pid = {socket.gethostname()}/{os.getpid()}")
+    os.environ['MASTER_ADDR'] = args.master_addr
+    os.environ['MASTER_PORT'] = args.master_port
+    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256)
+    rpc.init_rpc(
+        f"worker{rank}",
+        rank=rank,
+        world_size=world_size,
+        rpc_backend_options=options
+    )
+    if rank == 0:
+        run_main(args)
+    rpc.shutdown()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 14)))
+    parser.add_argument('--rank', type=int, default=int(os.getenv("RANK", -1)))
+    parser.add_argument('--master_addr', type=str, default=os.getenv('MASTER_ADDR', 'localhost'))
+    parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
+    parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
+    args = parser.parse_args()
+
+    if args.rank == -1:
+        mp.spawn(run_worker, args=(args.world_size, args,), nprocs=args.world_size, join=True)
+    elif args.rank < args.world_size:
+        run_worker(args.rank, args.world_size, args)
+    else:
+        print("I'm unused, exiting")

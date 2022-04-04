@@ -1,24 +1,27 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+import argparse
 import inspect
+import os
+import socket
 
 import torch
 import torch.distributed.rpc as rpc
+import torch.multiprocessing as mp
 
 import transformers.utils.fx as fx
 from pippy.IR import MultiUseParameterConfig, Pipe, PipeSplitWrapper, annotate_split_points
+from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B
 from pippy.microbatch import TensorChunkSpec
-from pippy.PipelineDriver import PipelineDriverFillDrain
 from transformers import *
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
 
-import os
+schedules = {
+    'FillDrain': PipelineDriverFillDrain,
+    '1F1B': PipelineDriver1F1B,
+}
 
-local_rank = int(os.environ["LOCAL_RANK"])
-world_size = int(os.environ["WORLD_SIZE"])
-
-rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
 
 @torch.fx.wrap
 def torch_arange_wrapper(*args, **kwargs):
@@ -37,10 +40,12 @@ class HFGPT2Tracer(fx.HFTracer):
                     node.target = torch_arange_wrapper
         return graph
 
+
 # WAR for SEV remediation https://github.com/pytorch/pytorch/commit/2337d4e5036a87f473decd2b1f6fe0439499902c
 torch.fx.Tracer.proxy_buffer_attributes = True
 
-if local_rank == 0:
+
+def run_main(args):
     bs = 20
     seq_length = 32
 
@@ -48,9 +53,9 @@ if local_rank == 0:
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if REPLICATE else MultiUseParameterConfig.TRANSMIT
     print(f'REPLICATE config: {REPLICATE} -> {MULTI_USE_PARAM_CONFIG}')
 
-    config = GPT2Config()
-    config.use_cache = False
-    gpt2 = GPT2Model(config)
+    print("Using schedule:", args.schedule)
+
+    gpt2 = GPT2Model(GPT2Config(use_cache=False))
     gpt2.eval()
     gpt2_input = torch.zeros(bs, seq_length, dtype=torch.long).random_(gpt2.config.vocab_size)
 
@@ -73,9 +78,10 @@ if local_rank == 0:
 
     args_chunk_spec = (TensorChunkSpec(0),)
     kwargs_chunk_spec = {}
-    output_chunk_spec = {'last_hidden_state' : TensorChunkSpec(0)}
+    output_chunk_spec = {'last_hidden_state': TensorChunkSpec(0)}
 
-    pipe_driver = PipelineDriverFillDrain(gpt2_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size)
+    pipe_driver = schedules[args.schedule](gpt2_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec,
+                                           args.world_size)
 
     # # Warm up and correctness runs
     print('Running GPT2 pipeline. NB: if this is too slow, set OMP_NUM_THREADS to a higher value')
@@ -84,15 +90,48 @@ if local_rank == 0:
     ref_out = gpt2_pipe(gpt2_input)
 
     if CHECK_NUMERIC_EQUIVALENCE:
-        torch.testing.assert_allclose(out['last_hidden_state'], ref_out['last_hidden_state'])
-        print(f'equivalence test passed {torch.sum(out["last_hidden_state"])} ref {torch.sum(ref_out["last_hidden_state"])}')
+        torch.testing.assert_close(out['last_hidden_state'], ref_out['last_hidden_state'])
+        print(
+            f'equivalence test passed {torch.sum(out["last_hidden_state"])} ref {torch.sum(ref_out["last_hidden_state"])}')
 
     # # Profiling runs
     with torch.autograd.profiler_legacy.profile(enabled=PROFILING_ENABLED) as prof:
         out = pipe_driver.run((gpt2_input,), {}, chunks=5, _debug_mask_minibatches=False)
         ref_out = gpt2_pipe(gpt2_input)
-        print(f'profiling run completed {torch.sum(out["last_hidden_state"])} ref {torch.sum(ref_out["last_hidden_state"])}')
+        print(
+            f'profiling run completed {torch.sum(out["last_hidden_state"])} ref {torch.sum(ref_out["last_hidden_state"])}')
     if PROFILING_ENABLED:
         prof.export_chrome_trace('pipe.csv')
 
-rpc.shutdown()
+
+def run_worker(rank, world_size, args):
+    print(f"rank = {rank} host/pid = {socket.gethostname()}/{os.getpid()}")
+    os.environ['MASTER_ADDR'] = args.master_addr
+    os.environ['MASTER_PORT'] = args.master_port
+    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256)
+    rpc.init_rpc(
+        f"worker{rank}",
+        rank=rank,
+        world_size=world_size,
+        rpc_backend_options=options
+    )
+    if rank == 0:
+        run_main(args)
+    rpc.shutdown()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 14)))
+    parser.add_argument('--rank', type=int, default=int(os.getenv("RANK", -1)))
+    parser.add_argument('--master_addr', type=str, default=os.getenv('MASTER_ADDR', 'localhost'))
+    parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
+    parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
+    args = parser.parse_args()
+
+    if args.rank == -1:
+        mp.spawn(run_worker, args=(args.world_size, args,), nprocs=args.world_size, join=True)
+    elif args.rank < args.world_size:
+        run_worker(args.rank, args.world_size, args)
+    else:
+        print("I'm unused, exiting")

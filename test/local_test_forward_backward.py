@@ -1,8 +1,13 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+import argparse
+import copy
+import logging
+import os
+import socket
+
 import torch
 import torch.distributed.rpc as rpc
-import logging
-import copy
+import torch.multiprocessing as mp
 
 from pippy.IR import MultiUseParameterConfig, Pipe, pipe_split
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B
@@ -16,17 +21,16 @@ from pippy.microbatch import TensorChunkSpec, CustomReducer, split_args_kwargs_i
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
 
-import os
-import sys, getopt
-local_rank = int(os.environ["LOCAL_RANK"])
-world_size = int(os.environ["WORLD_SIZE"])
+schedules = {
+    'FillDrain': PipelineDriverFillDrain,
+    '1F1B': PipelineDriver1F1B,
+}
 
 VERBOSE = bool(os.environ.get('VERBOSE', False))
 
 if VERBOSE:
     logging.getLogger().setLevel(logging.DEBUG)
 
-rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
 
 # import ctypes
 # libc = ctypes.cdll.LoadLibrary("libc.so.6")
@@ -43,14 +47,17 @@ rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
 def get_grad_from_executor(executor, qualname):
     return executor.local_value().mod.get_parameter(qualname).grad
 
+
 def set_grad_in_executor(executor, qualname, value):
     param = executor.local_value().mod.get_parameter(qualname)
     param.grad = value
 
+
 # WAR for SEV remediation https://github.com/pytorch/pytorch/commit/2337d4e5036a87f473decd2b1f6fe0439499902c
 torch.fx.Tracer.proxy_buffer_attributes = True
 
-if local_rank == 0:
+
+def run_main(args):
     torch.manual_seed(42)
 
     d_hid = 50
@@ -62,23 +69,7 @@ if local_rank == 0:
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if REPLICATE else MultiUseParameterConfig.TRANSMIT
     print(f'REPLICATE config: {REPLICATE} -> {MULTI_USE_PARAM_CONFIG}')
 
-    valid_schedules = ['FillDrain', '1F1B']
-    schedule = valid_schedules[0]
-
-    try:
-        opts, args = getopt.getopt(sys.argv[1:], "s:")
-    except getopt.GetoptError:
-        print("local_test_forward_backward.py [-s <schedule>]")
-        sys.exit(2)
-    for opt, arg in opts:
-        if opt == '-s':
-            if arg in valid_schedules:
-                schedule = arg
-            else:
-                print(f"Valid values for schedule (-s): {valid_schedules}, given {arg}")
-                sys.exit(2)
-
-    print("Using schedule:", schedule)
+    print("Using schedule:", args.schedule)
 
     def rand_zeros_or_ones(shape):
         return torch.randint(0, 2, shape).float()
@@ -127,16 +118,14 @@ if local_rank == 0:
     kwargs_chunk_spec = {}
     output_chunk_spec = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
 
-    if schedule == '1F1B':
-        pipe_driver = PipelineDriver1F1B(ec_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size)
-    else:
-        pipe_driver = PipelineDriverFillDrain(ec_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size)
+    pipe_driver = schedules[args.schedule](ec_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec,
+                                           args.world_size)
 
     input = torch.randn(bs, d_hid)
     target = torch.randn(bs, d_hid)
 
     # TODO: distributed optimizer
-    out = pipe_driver.run((input, target), {}, chunks=CHUNKS, _debug_mask_minibatches = DEBUG_MASK_MINIBATCHES)
+    out = pipe_driver.run((input, target), {}, chunks=CHUNKS, _debug_mask_minibatches=DEBUG_MASK_MINIBATCHES)
 
     all_grad_qualnames = {k: None for k, v in ec_pipe.named_parameters()}
 
@@ -155,8 +144,8 @@ if local_rank == 0:
     optim.zero_grad()
     if REF_USE_MICROBATCHES:
         args_split, kwargs_split = split_args_kwargs_into_chunks((input, target), {}, args_chunk_spec,
-                                                            kwargs_chunk_spec, CHUNKS,
-                                                            DEBUG_MASK_MINIBATCHES)
+                                                                 kwargs_chunk_spec, CHUNKS,
+                                                                 DEBUG_MASK_MINIBATCHES)
         ref_outs = []
         for chunk in range(CHUNKS):
             ref_outs.append(ec_pipe(*args_split[chunk]))
@@ -177,7 +166,7 @@ if local_rank == 0:
 
     # TODO: scale output
     if CHECK_NUMERIC_EQUIVALENCE:
-        torch.testing.assert_allclose(out, ref_out)
+        torch.testing.assert_close(out, ref_out)
         print(f'equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}')
 
     not_close_grads = []
@@ -204,7 +193,7 @@ if local_rank == 0:
     orig_optim.zero_grad()
     orig_loss = mse_loss(ec(input), target)
     orig_loss.backward()
-    torch.testing.assert_allclose(out, orig_loss)
+    torch.testing.assert_close(out, orig_loss)
 
     not_close_orig_grads = []
     not_found_mappings = []
@@ -223,14 +212,13 @@ if local_rank == 0:
                 print(name, torch.max(torch.abs(pipe_grad - orig_grad) / orig_grad))
 
     assert len(not_found_mappings) == 0, f'No qualname mapping found between pipelined and original ' \
-                                           f'model: {not_found_mappings}'
+                                         f'model: {not_found_mappings}'
 
     assert len(not_close_orig_grads) == 0, f'Grads not close between pipelined and original ' \
                                            f'model: {not_close_orig_grads}'
 
     print('correctness checks with original module passed')
 
-        
     # # # Profiling runs
     # with torch.autograd.profiler_legacy.profile(enabled=PROFILING_ENABLED) as prof:
     #     out = pipe_driver.run(input, target, chunks=5, _debug_mask_minibatches = False)
@@ -239,4 +227,35 @@ if local_rank == 0:
     # if PROFILING_ENABLED:
     #     prof.export_chrome_trace('pipe.csv')
 
-rpc.shutdown()
+
+def run_worker(rank, world_size, args):
+    print(f"rank = {rank} host/pid = {socket.gethostname()}/{os.getpid()}")
+    os.environ['MASTER_ADDR'] = args.master_addr
+    os.environ['MASTER_PORT'] = args.master_port
+    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256)
+    rpc.init_rpc(
+        f"worker{rank}",
+        rank=rank,
+        world_size=world_size,
+        rpc_backend_options=options
+    )
+    if rank == 0:
+        run_main(args)
+    rpc.shutdown()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 3)))
+    parser.add_argument('--rank', type=int, default=int(os.getenv("RANK", -1)))
+    parser.add_argument('--master_addr', type=str, default=os.getenv('MASTER_ADDR', 'localhost'))
+    parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
+    parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
+    args = parser.parse_args()
+
+    if args.rank == -1:
+        mp.spawn(run_worker, args=(args.world_size, args,), nprocs=args.world_size, join=True)
+    elif args.rank < args.world_size:
+        run_worker(args.rank, args.world_size, args)
+    else:
+        print("I'm unused, exiting")
