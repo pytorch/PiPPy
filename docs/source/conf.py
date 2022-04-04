@@ -18,12 +18,13 @@ import os
 
 # source code directory, relative to this file, for sphinx-autobuild
 # sys.path.insert(0, os.path.abspath('../..'))
+from typing import List, Dict
 
 import torch
 
 RELEASE = os.environ.get('RELEASE', False)
 
-import pytorch_sphinx_theme
+import pytorch_sphinx_theme  # type: ignore
 
 # -- General configuration ------------------------------------------------
 
@@ -121,7 +122,7 @@ language = None
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
 # This patterns also effect to html_static_path and html_extra_path
-exclude_patterns = []
+exclude_patterns: List = []
 
 # The name of the Pygments (syntax highlighting) style to use.
 pygments_style = 'sphinx'
@@ -201,7 +202,7 @@ htmlhelp_basename = 'PyTorchdoc'
 
 # -- Options for LaTeX output ---------------------------------------------
 
-latex_elements = {
+latex_elements: Dict = {
     # The paper size ('letterpaper' or 'a4paper').
     #
     # 'papersize': 'letterpaper',
@@ -320,7 +321,7 @@ def patched_make_field(self, types, domain, items, **kw):
     fieldbody = nodes.field_body('', bodynode)
     return nodes.field('', fieldname, fieldbody)
 
-TypedField.make_field = patched_make_field
+setattr(TypedField, 'make_field', patched_make_field)
 
 copybutton_prompt_text = r'>>> |\.\.\. '
 copybutton_prompt_is_regexp = True

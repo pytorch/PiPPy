@@ -3,6 +3,7 @@ import argparse
 import inspect
 import os
 import socket
+from typing import Dict
 
 import torch
 import torch.distributed.rpc as rpc
@@ -76,7 +77,7 @@ def run_main(args):
     assert bert.config.num_hidden_layers + 2 == len(list(bert_pipe.split_gm.children()))
 
     args_chunk_spec = (TensorChunkSpec(0),)
-    kwargs_chunk_spec = {}
+    kwargs_chunk_spec: Dict = {}
     output_chunk_spec = {'last_hidden_state': TensorChunkSpec(0), 'pooler_output': TensorChunkSpec(0)}
 
     pipe_driver = schedules[args.schedule](bert_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec,

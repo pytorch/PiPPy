@@ -106,7 +106,7 @@ def transformer_splitter(model) -> int:
         return model.config.n_layer + 2
 
 
-def roberta_splitter(model: GPT2PreTrainedModel) -> int:
+def roberta_splitter(model) -> int:
     if isinstance(model, RobertaModel):
         for i in range(model.config.num_hidden_layers):
             annotate_split_points(model, {f'encoder.layer.{i}': PipeSplitWrapper.SplitPoint.BEGINNING})

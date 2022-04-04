@@ -1,6 +1,9 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import distutils.command.clean
 import os
+import subprocess
+from typing import Dict
+
 from setuptools import setup, find_packages
 
 # Package name
@@ -18,7 +21,7 @@ except Exception:
     sha = 'Unknown'
 
 if os.getenv('BUILD_VERSION'):
-    version = os.getenv('BUILD_VERSION')
+    version = os.getenv('BUILD_VERSION', version)
 elif sha != 'Unknown':
     version += '+' + sha[:7]
 
@@ -35,9 +38,9 @@ requirements = [
     "torch>=1.10.0.dev",
 ]
 
-extras = {}
+extras: Dict = {}
 
-class clean(distutils.command.clean.clean):
+class clean(distutils.command.clean.clean):  # type: ignore
     def run(self):
 
         with open(".gitignore", "r") as f:

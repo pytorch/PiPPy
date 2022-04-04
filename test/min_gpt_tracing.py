@@ -8,7 +8,7 @@ logging.basicConfig(
         level=logging.INFO,
 )
 
-from minGPT.mingpt.utils import set_seed
+from minGPT.mingpt.utils import set_seed  # type: ignore
 set_seed(42)
 
 import numpy as np
@@ -80,7 +80,7 @@ ndigit = 2
 train_dataset = AdditionDataset(ndigit=ndigit, split='train')
 test_dataset = AdditionDataset(ndigit=ndigit, split='test')
 
-from minGPT.mingpt.model import GPT, GPTConfig
+from minGPT.mingpt.model import GPT, GPTConfig  # type: ignore
 
 # initialize a baby GPT model
 mconf = GPTConfig(train_dataset.vocab_size, train_dataset.block_size, 
