@@ -169,8 +169,8 @@ class LossWrapper(torch.nn.Module):
 
 
 class TrivialLossWrapper(LossWrapper):
-    def forward(self, input, targets):
-        model_out = self.module(input)
+    def forward(self, x, targets):
+        model_out = self.module(x)
         return self.loss_fn(model_out, targets)
 
 
