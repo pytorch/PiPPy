@@ -85,18 +85,18 @@ class WorkItem:
     def __str__(self):
         return f'WorkItem({self.debug_str})'
 
+    def set_trigger_state(self, max_outstanding):
+        if self.phase == Phase.FORWARD and max_outstanding is not None:
+            # The pipe schedule has a max outstanding limitation, we will let
+            # worker_loop decide whether this forward item can start to run
+            self.state = SchedState.WAITING
+        else:
+            self.state = SchedState.READY
+
 def _get_value_on_remote(caller_rank, callee_rank, runlist_key, microbatch, rref):
     logging.info(f'[{callee_rank}][{microbatch}] Executing async transfer of value '
                  f'{rref} initiated by rank {caller_rank} for {runlist_key}')
     return rref.local_value()
-
-def _set_work_item_init_state(work_item, max_outstanding):
-    if work_item.phase == Phase.FORWARD and max_outstanding is not None:
-        work_item.state = SchedState.WAITING
-    else:
-        work_item.state = SchedState.READY
-
-    return
 
 @rpc.functions.async_execution
 def async_transfer(rank, microbatch, scheduler_rref, rref_arg, arg_idx, runlist_key, max_outstanding):
@@ -115,7 +115,7 @@ def async_transfer(rank, microbatch, scheduler_rref, rref_arg, arg_idx, runlist_
             work_item.blocked_args_count -= 1
             if work_item.blocked_args_count == 0:
                 with self.ready_runlist_cv:
-                    _set_work_item_init_state(work_item, max_outstanding)
+                    work_item.set_trigger_state(max_outstanding)
                     self.ready_runlist[runlist_key] = self.waiting_runlist.pop(runlist_key)
                     self.ready_runlist_cv.notify()
                 state_str = 'WAITING' if work_item.state == SchedState.WAITING else 'READY'
@@ -323,7 +323,7 @@ class PipeStageExecutor:
             # We always put this work item into the ready queue, though we mark
             # it with different state flags depending on whether the schedule
             # would hold it based on max outstanding allowed
-            _set_work_item_init_state(work_item, self.max_outstanding)
+            work_item.set_trigger_state(self.max_outstanding)
             if work_item.state == SchedState.WAITING:
                 logging.info(f'[{self.local_rank}][{cur_microbatch}] Schedule limits max outstanding micro-bactches. Initializing as WAITING workitem')
             else:
