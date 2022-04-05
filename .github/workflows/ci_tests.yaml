@@ -133,3 +133,27 @@ jobs:
         run: VERBOSE=${{ matrix.verbose }} python examples/slurm/hf/gpt2/pippy_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: Run visualizer test
         run: VERBOSE=${{ matrix.verbose }} python test/local_test_visualizer.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+
+  ddp_test:
+    runs-on: linux.2xlarge
+    strategy:
+      matrix:
+        python-version: ["3.7", "3.8", "3.9"]
+    container:
+      image: python:${{ matrix.python-version }}
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 pytest pytest-cov numpy
+          if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
+      - name: Install pavel's huggingface fork
+        run: pip install git+https://github.com/pbelevich/transformers.git@compatible_with_pt_master sentencepiece
+      - name: Install pippy
+        run: "python setup.py install"
+      - name: Run PP + DDP test - Transmitted parameters
+        run: REPLICATE=0 python test/local_test_ddp.py
+      - name: Run PP + DDP test - Replicated parameters
+        run: REPLICATE=1 python test/local_test_ddp.py
