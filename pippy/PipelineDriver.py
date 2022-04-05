@@ -146,7 +146,7 @@ class PipeStageExecutor:
     * TODO: gradient checkpointing
     """
 
-    def __init__(self, mod, local_rank, loss_mod=None, max_outstanding=None):
+    def __init__(self, mod, local_rank, max_outstanding=None):
         self.local_rank = local_rank
         logging.info(f'[{self.local_rank}] Instantiating PipeStageExecutor')
         self.mod = mod
@@ -420,7 +420,9 @@ class PipelineDriverBase:
                           f'Remaining ranks will be idle.')
 
         for rank, descr in zip(self.all_ranks, executor_descriptors):
-            self.remote_stage_executor_rrefs[descr.name] = (rank, rpc.remote(rank, self.executor_class, (descr.mod, rank, self.max_outstanding)))
+            kwargs = {'mod': descr.mod, 'local_rank': rank, 'max_outstanding': self.max_outstanding}
+            self.remote_stage_executor_rrefs[descr.name] = (
+                rank, rpc.remote(rank, self.executor_class, args=(), kwargs=kwargs))
 
     def run(self, args, kwargs, chunks : int, _debug_mask_minibatches : bool = False):
         raise NotImplementedError('PipelineDriverBase is an abstract base class, please use a concrete '
