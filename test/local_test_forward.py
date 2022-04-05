@@ -28,9 +28,8 @@ def run_main(args):
     d_hid = 512
     bs = 503
 
-    REPLICATE = os.environ.get('REPLICATE', '0') != '0'
-    MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if REPLICATE else MultiUseParameterConfig.TRANSMIT
-    print(f'REPLICATE config: {REPLICATE} -> {MULTI_USE_PARAM_CONFIG}')
+    MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if args.replicate else MultiUseParameterConfig.TRANSMIT
+    print(f'REPLICATE config: {args.replicate} -> {MULTI_USE_PARAM_CONFIG}')
 
     print("Using schedule:", args.schedule)
 
@@ -111,6 +110,7 @@ if __name__ == "__main__":
     parser.add_argument('--master_addr', type=str, default=os.getenv('MASTER_ADDR', 'localhost'))
     parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
     parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
+    parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
     args = parser.parse_args()
 
     if args.rank == -1:
