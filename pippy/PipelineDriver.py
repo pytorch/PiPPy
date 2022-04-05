@@ -174,10 +174,17 @@ class PipeStageExecutor:
     * TODO: gradient checkpointing
     """
 
-    def __init__(self, mod, local_rank, max_outstanding=None):
+    def __init__(self, mod, local_rank, max_outstanding=None, dp_pg_cb=None, pp_rank=None):
         self.local_rank = local_rank
         logging.info(f'[{self.local_rank}] Instantiating PipeStageExecutor')
-        self.mod = mod
+        self.dp_pg_cb = dp_pg_cb
+
+        if self.dp_pg_cb is not None:
+            assert pp_rank is not None
+            self.mod = torch.nn.parallel.DistributedDataParallel(mod, process_group=self.dp_pg_cb(pp_rank))
+        else:
+            self.mod = mod
+
         # Maximum outstanding micro-batches of the pipeline schedule
         self.max_outstanding = max_outstanding
         # Keeps track of the outstanding micro-batches in current executor
@@ -293,6 +300,8 @@ class PipeStageExecutor:
                 kwargs = dict(kwargs)
                 kwargs['stage_output'], kwargs['input_values'] = self.fwd_cache.pop(microbatch_id)
 
+            HACK_fwd_bwd_semaphore = 0
+
             if work_item.phase == Phase.FORWARD:
                 self.outstanding += 1
                 flat_tensor_args = []
@@ -310,9 +319,18 @@ class PipeStageExecutor:
                 logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running forward module')
                 out_val = self.mod(*args, **kwargs)
                 self.fwd_cache[microbatch_id] = (out_val, flat_tensor_args)
+
+                HACK_fwd_bwd_semaphore += 1
             elif work_item.phase == Phase.BACKWARD:
                 logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running backward')
-                out_val = stage_backward(*args, **kwargs)
+                HACK_fwd_bwd_semaphore -= 1
+
+                if not isinstance(self.mod, torch.nn.parallel.distributed.DistributedDataParallel) or HACK_fwd_bwd_semaphore == 0:
+                    out_val = stage_backward(*args, **kwargs)
+                else:
+                    with self.mod.no_sync():
+                        out_val = stage_backward(*args, **kwargs)
+
                 # Schedule forward stage of a new micro-batch
                 self.outstanding -= 1
             elif work_item.phase == Phase.SYNC_BARRIER:
@@ -416,16 +434,23 @@ class PipeStageExecutor:
 
 
 def get_grad_from_executor(executor, qualname):
-    return executor.local_value().mod.get_parameter(qualname).grad
+    mod = executor.local_value().mod
+    if isinstance(mod, torch.nn.parallel.DistributedDataParallel):
+        mod = mod.module
+    return mod.get_parameter(qualname).grad
 
 def set_grad_in_executor(executor, qualname, value):
-    param = executor.local_value().mod.get_parameter(qualname)
+    mod = executor.local_value().mod
+    if isinstance(mod, torch.nn.parallel.DistributedDataParallel):
+        mod = mod.module
+    param = mod.get_parameter(qualname)
     param.grad = value
 
 
 class PipelineDriverBase:
     def __init__(self, pipe : Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size : int,
-                 all_ranks : List[int] = None, _debug_mask_minibatches : bool = False):
+                 all_ranks : List[int] = None, _debug_mask_minibatches : bool = False,
+                 dp_pg_cb=None):
         self.pipe = pipe
         self.world_size = world_size
         self.all_ranks = all_ranks
@@ -437,6 +462,7 @@ class PipelineDriverBase:
         # None means no limit
         self.max_outstanding: Optional[int] = None
         self._debug_mask_minibatches = _debug_mask_minibatches
+        self.dp_pg_cb = dp_pg_cb
 
     def _init_remote_executors(self):
         self.remote_stage_executor_rrefs : Dict[str, (int, torch.distributed.rpc.RRef)] = {}
@@ -477,10 +503,13 @@ class PipelineDriverBase:
             warnings.warn(f'Running pipeline with {len(executor_descriptors)} stages on world_size of {self.world_size}. '
                           f'Remaining ranks will be idle.')
 
+        pp_rank = 0
         for rank, descr in zip(self.all_ranks, executor_descriptors):
-            kwargs = {'mod': descr.mod, 'local_rank': rank, 'max_outstanding': self.max_outstanding}
+            kwargs = {'mod': descr.mod, 'local_rank': rank, 'max_outstanding': self.max_outstanding,
+                      'dp_pg_cb': self.dp_pg_cb, 'pp_rank': pp_rank}
             self.remote_stage_executor_rrefs[descr.name] = (
                 rank, rpc.remote(rank, self.executor_class, args=(), kwargs=kwargs))
+            pp_rank += 1
 
     def run(self, chunks: int, *args, **kwargs):
         raise NotImplementedError('PipelineDriverBase is an abstract base class, please use a concrete '
@@ -614,9 +643,10 @@ class RemoteInterpreter(torch.fx.Interpreter):
 
 class PipelineDriverFillDrain(PipelineDriverBase):
     def __init__(self, pipe: Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size: int,
-                 all_ranks: List[int] = None, single_loss: bool = False, _debug_mask_minibatches: bool = False):
+                 all_ranks: List[int] = None, single_loss: bool = False, _debug_mask_minibatches: bool = False,
+                 dp_pg_cb=None):
         super().__init__(pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size, all_ranks,
-                         _debug_mask_minibatches)
+                         _debug_mask_minibatches, dp_pg_cb=dp_pg_cb)
         self.single_loss = single_loss
 
         self._init_remote_executors()
@@ -666,9 +696,10 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 
 class PipelineDriver1F1B(PipelineDriverBase):
     def __init__(self, pipe: Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size: int,
-                 all_ranks: List[int] = None, single_loss: bool = False, _debug_mask_minibatches: bool = False):
+                 all_ranks: List[int] = None, single_loss: bool = False, _debug_mask_minibatches: bool = False,
+                 dp_pg_cb=None):
         super().__init__(pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size, all_ranks,
-                         _debug_mask_minibatches)
+                         _debug_mask_minibatches, dp_pg_cb=dp_pg_cb)
         self.single_loss = single_loss
         # In 1F1B with backward stages, the maximum number of outstanding
         # micro-batches equals the number of pipeline stages
