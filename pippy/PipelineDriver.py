@@ -1,16 +1,19 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-import torch
-import torch.fx
-import torch.distributed.rpc as rpc
-from pippy.IR import Pipe, stage_backward, sync_barrier
-from pippy.microbatch import split_args_kwargs_into_chunks, merge_chunks
-from enum import Enum
-from typing import Any, Callable, Dict, List, Tuple, Optional
 import logging
 import operator
 import threading
+import time
 import warnings
+from enum import Enum
 from inspect import Parameter, Signature
+from typing import Any, Callable, Dict, List, Tuple, Optional
+
+import torch
+import torch.distributed.rpc as rpc
+import torch.fx
+
+from pippy.IR import Pipe, stage_backward, sync_barrier
+from pippy.microbatch import split_args_kwargs_into_chunks, merge_chunks
 
 # TODO: Define the strategy for replicating the computation. In particular, we will likely make the assumption
 # that the operations in the program are batch-wise commutative (my term), i.e. we can guarantee equivalence
@@ -93,6 +96,31 @@ class WorkItem:
         else:
             self.state = SchedState.READY
 
+
+class Event:
+    def __init__(self,
+                 rank: int,
+                 start_ts: float,
+                 finish_ts: float,
+                 id: Optional[str] = None,
+                 name: Optional[str] = None,
+                 type: Optional[Any] = None,
+                 mbid: Optional[Any] = None
+                 ):
+        args_to_fwd = ['rank', 'start_ts', 'finish_ts', 'id', 'name', 'type', 'mbid']
+
+        for arg in args_to_fwd:
+            setattr(self, arg, locals()[arg])
+
+    rank: int
+    start_ts: float
+    finish_ts: float
+    id: Optional[str]
+    name: Optional[str]
+    type: Optional[Any]
+    mbid: Optional[Any]
+
+
 def _get_value_on_remote(caller_rank, callee_rank, runlist_key, microbatch, rref):
     logging.info(f'[{callee_rank}][{microbatch}] Executing async transfer of value '
                  f'{rref} initiated by rank {caller_rank} for {runlist_key}')
@@ -170,6 +198,8 @@ class PipeStageExecutor:
         # map microbatch ID to list of forward tensor args
         self.fwd_cache : Dict[int, Tuple[Any, List[torch.Tensor]]] = {}
 
+        self.events: List[Event] = []
+
     def _debug_print(self, to_file=False):
         # NB: this does not take the runlist locks. This method should only be
         # called when the system is stalled
@@ -239,6 +269,8 @@ class PipeStageExecutor:
             ready_args = work_item.ready_args
             phase = work_item.phase
 
+            start_ts = time.time()
+
             rref_arg_idx = 0
 
             def retrieve_rref_args_by_idx(a):
@@ -293,6 +325,18 @@ class PipeStageExecutor:
                          f'for {key}')
             future.set_result(out_val)
             work_item.state = SchedState.DONE
+
+            def name(ph, rank, mbid):
+                phase_to_short_str = {
+                    Phase.FORWARD: 'F',
+                    Phase.BACKWARD: 'B',
+                    Phase.SYNC_BARRIER: 'S',
+                }
+                return f"{phase_to_short_str[ph]}_{rank},{mbid}"
+
+            name = name(work_item.phase, self.local_rank, work_item.microbatch_id)
+            self.record_event(rank=self.local_rank, start_ts=start_ts, finish_ts=time.time(), id=name, name=name,
+                              type=work_item.phase, mbid=work_item.microbatch_id)
 
     @rpc.functions.async_execution
     def invoke(self, unique_key : str, phase : Phase, args, kwargs, cur_microbatch : int, debug_str : str):
@@ -356,6 +400,14 @@ class PipeStageExecutor:
                 fut.wait()
 
         return future
+
+    def record_event(self, rank: int, start_ts: float, finish_ts: float, id: str, name: str, type: Optional[Any], mbid: Optional[Any]):
+        self.events.append(Event(rank=rank, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name, type=type, mbid=mbid))
+
+    def retrieve_events(self):
+        events = self.events
+        self.events = []
+        return events
 
 
 def get_grad_from_executor(executor, qualname):
@@ -452,6 +504,12 @@ class PipelineDriverBase:
             output_vals.append(interp.env[last_node])
 
         return torch.fx.node.map_aggregate(output_vals, to_here)
+
+    def retrieve_events(self) -> List[Event]:
+        events = []
+        for descr_name, (rank, stage_executor) in self.remote_stage_executor_rrefs.items():
+            events.extend(stage_executor.rpc_sync().retrieve_events())
+        return events
 
 
 class RemoteInterpreter(torch.fx.Interpreter):
