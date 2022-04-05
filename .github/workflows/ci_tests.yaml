@@ -116,3 +116,11 @@ jobs:
         run: test/launch_local_test_forward_hf_gpt2.sh --replicate 0
       - name: Run HF GPT2 forward-only integration test - Replicated parameters
         run: test/launch_local_test_forward_hf_gpt2.sh --replicate 1
+      - name: Run visualizer test - Transmitted parameters - Fill Drain
+        run: python test/local_test_visualizer.py --replicate 0 -s FillDrain
+      - name: Run visualizer test - Replicated parameters - Fill Drain
+        run: python test/local_test_visualizer.py --replicate 1 -s FillDrain
+      - name: Run visualizer test - Transmitted parameters - 1F1B
+        run: python test/local_test_visualizer.py --replicate 0 -s 1F1B
+      - name: Run visualizer test - Replicated parameters - 1F1B
+        run: python test/local_test_visualizer.py --replicate 1 -s 1F1B
