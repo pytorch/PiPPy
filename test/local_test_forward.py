@@ -110,7 +110,7 @@ if __name__ == "__main__":
     parser.add_argument('--master_addr', type=str, default=os.getenv('MASTER_ADDR', 'localhost'))
     parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
     parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
-    parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", 0)))
+    parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
     args = parser.parse_args()
 
     if args.rank == -1:
