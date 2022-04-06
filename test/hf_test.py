@@ -296,7 +296,7 @@ class HFModelsForwardBackwardTest(unittest.TestCase):
     pass
 
 
-# Forward-backard tests
+# Forward-backward tests
 for _model_cls in fx._SUPPORTED_MODELS:
     def scope(model_cls, replicate):
         def test_case(self):
