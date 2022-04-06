@@ -6,7 +6,7 @@ import time
 import warnings
 from enum import Enum
 from inspect import Parameter, Signature
-from typing import Any, Callable, Dict, List, Tuple, Optional
+from typing import Any, Callable, Dict, List, NamedTuple, Tuple, Optional
 
 import torch
 import torch.distributed.rpc as rpc
@@ -45,12 +45,6 @@ from pippy.microbatch import split_args_kwargs_into_chunks, merge_chunks
 #   Decision: We can easily convert (a) to (c), so let's go with (a).
 
 DEBUG = False
-
-def to_here(a):
-    if isinstance(a, torch._C._distributed_rpc.PyRRef):
-        return a.to_here()
-    else:
-        return a
 
 class Phase(Enum):
     FORWARD = 0
@@ -121,20 +115,55 @@ class Event:
     mbid: Optional[Any]
 
 
-def _get_value_on_remote(caller_rank, callee_rank, runlist_key, microbatch, rref):
+class ValueReference:
+    def __init__(self, rank, unique_key):
+        self.rank = rank
+        self.unique_key = unique_key
+
+    rank : int
+    unique_key : str
+
+
+class RefcountedFuture:
+    future : torch.futures.Future
+    refcount : int
+
+    def __init__(self, future, refcount):
+        self.future, self.refcount = future, refcount
+
+    def release(self):
+        """
+        Decrement refcount by 1. Return True if this instance should be freed
+        """
+        self.refcount -= 1
+        return self.refcount == 0
+
+
+def _get_value_on_remote(caller_rank, callee_rank, runlist_key, microbatch, value_ref_arg, value_ref_executor_rref):
     logging.info(f'[{callee_rank}][{microbatch}] Executing async transfer of value '
-                 f'{rref} initiated by rank {caller_rank} for {runlist_key}')
-    return rref.local_value()
+                 f'{value_ref_arg} initiated by rank {caller_rank} for {runlist_key}')
+
+    executor = value_ref_executor_rref.local_value()
+    with executor.value_store_lock:
+        refcounted_future = executor.value_store[value_ref_arg.unique_key]
+
+    value = refcounted_future.future.wait()
+
+    with executor.value_store_lock:
+        if refcounted_future.release():
+            executor.value_store.pop(value_ref_arg.unique_key)
+
+
+    return value
 
 @rpc.functions.async_execution
-def async_transfer(rank, microbatch, scheduler_rref, rref_arg, arg_idx, runlist_key, max_outstanding):
-    logging.info(f'[{rank}][{microbatch}] Starting transfer')
-    self = scheduler_rref.local_value()
-    fut = rpc.rpc_async(to=rref_arg.owner(), func=_get_value_on_remote,
-                        args=(rank, rref_arg.owner().id, runlist_key, microbatch, rref_arg,))
+def async_transfer(caller_rank, microbatch, self_rref, value_ref_arg, value_ref_executor_rref, arg_idx, runlist_key, max_outstanding):
+    logging.info(f'[{caller_rank}][{microbatch}] Starting transfer')
+    self = self_rref.local_value()
+    fut = rpc.rpc_async(to=value_ref_arg.rank, func=_get_value_on_remote, args=(caller_rank, value_ref_arg.rank, runlist_key, microbatch, value_ref_arg, value_ref_executor_rref))
 
     def bottom_half(fut):
-        logging.info(f'[{rank}][{microbatch}] Completing transfer of value {rref_arg} from {rref_arg.owner().id} '
+        logging.info(f'[{caller_rank}][{microbatch}] Completing transfer of value {value_ref_arg} '
                      f'for runlist item {runlist_key}')
         value = fut.value()
         with self.waiting_runlist_lock:
@@ -147,10 +176,10 @@ def async_transfer(rank, microbatch, scheduler_rref, rref_arg, arg_idx, runlist_
                     self.ready_runlist[runlist_key] = self.waiting_runlist.pop(runlist_key)
                     self.ready_runlist_cv.notify()
                 state_str = 'WAITING' if work_item.state == SchedState.WAITING else 'READY'
-                logging.info(f'[{rank}][{microbatch}] All operands ready, initialize as {state_str} workitem')
+                logging.info(f'[{caller_rank}][{microbatch}] All operands ready, initialize as {state_str} workitem')
             else:
-                logging.info(f'[{rank}][{microbatch}] Still waiting for {work_item.blocked_args_count} operands.')
-
+                logging.info(f'[{caller_rank}][{microbatch}] Still waiting for {work_item.blocked_args_count} operands.')
+ 
     return fut.then(bottom_half)
 
 class PipeStageExecutor:
@@ -200,37 +229,15 @@ class PipeStageExecutor:
 
         self.events: List[Event] = []
 
-    def _debug_print(self, to_file=False):
-        # NB: this does not take the runlist locks. This method should only be
-        # called when the system is stalled
-        s = f'Executor instance {id(self)} for rank {self.local_rank}.\n' \
-            f'\tWaiting WorkItems: {self.waiting_runlist.keys()}\n' \
-            f'\tReady WorkItems: {self.ready_runlist.keys()}\n'
+        self.value_store_lock = threading.Lock()
+        self.value_store : Dict[str, torch.futures.Future] = {}
 
-        blocked_args = {}
-        ready_args = {}
-        for name, workitem in self.waiting_runlist.items():
-            if workitem.blocked_args_count > 0:
-                pass
-                rref_args = []
+        self.peer_executors : Dict[int, torch._C._distributed_rpc.PyRRef] = None
 
-                def retrieve_rref_args_by_idx(a):
-                    if isinstance(a, torch._C._distributed_rpc.PyRRef):
-                        rref_args.append(a)
-                torch.fx.node.map_aggregate(workitem.args, retrieve_rref_args_by_idx)
-                torch.fx.node.map_aggregate(workitem.kwargs, retrieve_rref_args_by_idx)
-                blocked_rref_idxs = set(range(len(rref_args))) - set(workitem.ready_args.keys())
-                blocked_args[name] = blocked_rref_idxs
-                ready_args[name] = workitem.ready_args.keys()
-
-        s += f'\tBlocked args: {blocked_args}\n'
-        s += f'\tReady args: {ready_args}\n'
-
-        if to_file:
-            with open(f'{self.local_rank}.log', 'w') as f:
-                f.write(s)
-
-        return s
+    def install_peer_executors(self, peer_executors):
+        assert self.peer_executors is None
+        self.peer_executors = peer_executors
+        return None
 
     def worker_loop(self):
         while True:
@@ -271,19 +278,19 @@ class PipeStageExecutor:
 
             start_ts = time.time()
 
-            rref_arg_idx = 0
+            value_ref_arg_idx = 0
 
-            def retrieve_rref_args_by_idx(a):
-                if isinstance(a, torch._C._distributed_rpc.PyRRef):
-                    nonlocal rref_arg_idx
-                    val = ready_args[rref_arg_idx]
-                    rref_arg_idx += 1
+            def retrieve_value_ref_args_by_idx(a):
+                if isinstance(a, ValueReference):
+                    nonlocal value_ref_arg_idx
+                    val = ready_args[value_ref_arg_idx]
+                    value_ref_arg_idx += 1
                     return val
                 else:
                     return a
 
-            args = torch.fx.node.map_aggregate(args_rrefs, retrieve_rref_args_by_idx)
-            kwargs = torch.fx.node.map_aggregate(kwargs_rrefs, retrieve_rref_args_by_idx)
+            args = torch.fx.node.map_aggregate(args_rrefs, retrieve_value_ref_args_by_idx)
+            kwargs = torch.fx.node.map_aggregate(kwargs_rrefs, retrieve_value_ref_args_by_idx)
 
             if phase == Phase.BACKWARD:
                 logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running backward phase. Retrieving stashed values')
@@ -338,32 +345,31 @@ class PipeStageExecutor:
             self.record_event(rank=self.local_rank, start_ts=start_ts, finish_ts=time.time(), id=name, name=name,
                               type=work_item.phase, mbid=work_item.microbatch_id)
 
-    @rpc.functions.async_execution
-    def invoke(self, unique_key : str, phase : Phase, args, kwargs, cur_microbatch : int, debug_str : str):
+    def invoke(self, output_unique_key : str, phase : Phase, args, kwargs, cur_microbatch : int, debug_str : str, output_refcount : int):
         # TODO: do we need to serialize calls to invoke() to preserve the order in which WorkItems appear for
         # static schedules?
 
         logging.info(f'[{self.local_rank}][{cur_microbatch}] Received invoke call for {debug_str}')
         # Extract all RRef arguments so we can spawn asynchronous data transfers
         # for each of them
-        rref_args : List[torch._C._distributed_rpc.PyRRef] = []
+        value_ref_args : List[ValueReference] = []
 
-        def extract_rref_args(arg):
-            if isinstance(arg, torch._C._distributed_rpc.PyRRef):
-                rref_args.append(arg)
-        torch.fx.node.map_aggregate(args, extract_rref_args)
-        torch.fx.node.map_aggregate(kwargs, extract_rref_args)
+        def extract_value_ref_args(arg):
+            if isinstance(arg, ValueReference):
+                value_ref_args.append(arg)
+        torch.fx.node.map_aggregate(args, extract_value_ref_args)
+        torch.fx.node.map_aggregate(kwargs, extract_value_ref_args)
 
-        logging.info(f'[{self.local_rank}][{cur_microbatch}] Invoke call found {len(rref_args)} RRef arguments')
+        logging.info(f'[{self.local_rank}][{cur_microbatch}] Invoke call found {len(value_ref_args)} ValueReference arguments')
 
         # Construct WorkItem for this microbatch+phase and record it in the
         # waiting runlist
         future: torch.futures.Future = torch.futures.Future()
         # TODO: increase blocked_args_count for extra things like scheduling
-        work_item = WorkItem(phase, args, kwargs, future, cur_microbatch, len(rref_args), {}, debug_str=debug_str)
-        logging.info(f'[{self.local_rank}][{cur_microbatch}] Invoke instantiated WorkItem {work_item} with key {unique_key}')
-        if len(rref_args) == 0:
-            # TODO: convert initial input into RRef?
+        work_item = WorkItem(phase, args, kwargs, future, cur_microbatch, len(value_ref_args), {}, debug_str=debug_str)
+        logging.info(f'[{self.local_rank}][{cur_microbatch}] Invoke instantiated WorkItem {work_item} with key {output_unique_key}')
+        if len(value_ref_args) == 0:
+            # TODO: convert initial input into ValueRef?
             # We always put this work item into the ready queue, though we mark
             # it with different state flags depending on whether the schedule
             # would hold it based on max outstanding allowed
@@ -376,33 +382,50 @@ class PipeStageExecutor:
                              f'Scheduling directly as READY workitem')
             with self.ready_runlist_cv:
                 logging.info(f'[{self.local_rank}][{cur_microbatch}] Current ready runlist keys: {self.ready_runlist.keys()}')
-                self.ready_runlist[unique_key] = work_item
+                self.ready_runlist[output_unique_key] = work_item
                 self.ready_runlist_cv.notify()
         else:
             logging.info(f'[{self.local_rank}][{cur_microbatch}] Scheduling WorkItem as WAITING workitem')
             work_item.state = SchedState.WAITING
             with self.waiting_runlist_lock:
                 logging.info(f'[{self.local_rank}][{cur_microbatch}] Current waiting runlist keys: {self.waiting_runlist.keys()}')
-                assert unique_key not in self.waiting_runlist, f'key {unique_key} already in waiting runlist {self.waiting_runlist}'
-                self.waiting_runlist[unique_key] = work_item
+                assert output_unique_key not in self.waiting_runlist, f'key {output_unique_key} already in waiting runlist {self.waiting_runlist}'
+                self.waiting_runlist[output_unique_key] = work_item
 
 
         # Spawn asynchronous data transfers for each of the RRef arguments.
         _futures = []
-        for arg_idx, rref_arg in enumerate(rref_args):
-            logging.info(f'[{self.local_rank}][{cur_microbatch}] Launching asynchronous data transfer '
-                         f'for RRef {arg_idx} {rref_arg}')
+        for arg_idx, value_ref_arg in enumerate(value_ref_args):
+            logging.info(f'[{self.local_rank}][{cur_microbatch}] Launching asynchronous data transfer for ValueReference {arg_idx} {value_ref_arg}')
+            assert self.peer_executors is not None
             self_rref: rpc.RRef = rpc.RRef(self)
             _futures.append(rpc.rpc_async(
                 to=self.local_rank, func=async_transfer,
-                args=(self.local_rank, cur_microbatch, self_rref, rref_arg, arg_idx, unique_key, self.max_outstanding)))
+                args=(self.local_rank, cur_microbatch, self_rref, value_ref_arg, self.peer_executors[value_ref_arg.rank], arg_idx, output_unique_key, self.max_outstanding)))
 
         if DEBUG:
             # Make exceptions visible
             for fut in _futures:
                 fut.wait()
 
-        return future
+        with self.value_store_lock:
+            assert output_unique_key not in self.value_store
+            self.value_store[output_unique_key] = RefcountedFuture(future, output_refcount)
+
+        return ValueReference(self.local_rank, output_unique_key)
+
+    def index_value(self, output_unique_key : str, output_refcount : int, value_ref, idx):
+        # For the purposes of refcounting, decrement this use
+        with self.value_store_lock:
+            refcounted_future = self.value_store[value_ref.unique_key]
+            if refcounted_future.release():
+                self.value_store.pop(value_ref.unique_key)
+
+            indexed = refcounted_future.future.then(lambda f: f.value()[idx])
+
+            self.value_store[output_unique_key] = RefcountedFuture(indexed, output_refcount)
+
+        return ValueReference(self.local_rank, output_unique_key)
 
     def record_event(self, rank: int, start_ts: float, finish_ts: float, id: str, name: str, type: Optional[Any],
                      mbid: Optional[Any]):
@@ -477,10 +500,17 @@ class PipelineDriverBase:
             warnings.warn(f'Running pipeline with {len(executor_descriptors)} stages on world_size of {self.world_size}. '
                           f'Remaining ranks will be idle.')
 
+        self.rank_to_executor : Dict = {}
+
         for rank, descr in zip(self.all_ranks, executor_descriptors):
             kwargs = {'mod': descr.mod, 'local_rank': rank, 'max_outstanding': self.max_outstanding}
             self.remote_stage_executor_rrefs[descr.name] = (
                 rank, rpc.remote(rank, self.executor_class, args=(), kwargs=kwargs))
+            self.rank_to_executor[rank] = self.remote_stage_executor_rrefs[descr.name][1]
+
+        # Inform executors of their peers
+        for rank, executor in self.rank_to_executor.items():
+            executor.remote().install_peer_executors(self.rank_to_executor).to_here()
 
     def run(self, chunks: int, *args, **kwargs):
         raise NotImplementedError('PipelineDriverBase is an abstract base class, please use a concrete '
@@ -511,7 +541,18 @@ class PipelineDriverBase:
             interp.run_until(lambda n : False)
             output_vals.append(interp.env[last_node])
 
-        return torch.fx.node.map_aggregate(output_vals, to_here)
+        # First kick of async transfers to retrieve ValueReference values
+        def initiate_async_transfer(a):
+            if isinstance(a, ValueReference):
+                value_ref_executor_rref = self.rank_to_executor[a.rank]
+                return rpc.rpc_async(to=a.rank, func=_get_value_on_remote, args=('root', a.rank, 'collect', -1, a, value_ref_executor_rref))
+            else:
+                return a
+
+        output_vals = torch.fx.node.map_aggregate(output_vals, initiate_async_transfer)
+
+        # Then wait for futures to be ready
+        return torch.fx.node.map_aggregate(output_vals, lambda a: a.wait() if isinstance(a, torch._C.Future) else a)
 
     def retrieve_events(self) -> List[Event]:
         events = []
@@ -554,34 +595,43 @@ class RemoteInterpreter(torch.fx.Interpreter):
                          f'invocation for target {target} on rank {rank}')
             invocation_key = f'{self.cur_microbatch}_{node.name}'
             return stage_executor.remote().invoke(
-                invocation_key, Phase.FORWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node())
+                invocation_key, Phase.FORWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
+                output_refcount=len(node.users)).to_here()
         else:
             logging.info(f'[root][{self.cur_microbatch}] Running local operation {target} from driver')
             return super().call_module(target, args, kwargs)
 
     def call_function(self, target, args, kwargs):
-        if target is operator.getitem and isinstance(args[0], torch._C._distributed_rpc.PyRRef):
-            return args[0].remote().__getitem__(args[1])
+        node = self.node_list[self.pc]
+        invocation_key = f'{self.cur_microbatch}_{node.name}'
+        if target is operator.getitem and isinstance(args[0], ValueReference):
+            # lol
+            stage_executor = None
+            for _, (rank, executor) in self.remote_stage_executor_rrefs.items():
+                if rank == args[0].rank:
+                    stage_executor = executor
+            assert stage_executor is not None
+            return stage_executor.remote().index_value(
+                output_unique_key=invocation_key, value_ref=args[0], output_refcount=len(node.users),
+                idx=args[1]).to_here()
         elif target is stage_backward:
-            node = self.node_list[self.pc]
             assert 'fw_stage' in node.meta
             rank, stage_executor = self.remote_stage_executor_rrefs[node.meta['fw_stage']]
             logging.info(f'[root][{self.cur_microbatch}] Issuing BW invocation '
                          f'for target {node.meta["fw_stage"]} on rank {rank}')
-            invocation_key = f'{self.cur_microbatch}_{node.name}'
             return stage_executor.remote().invoke(
-                invocation_key, Phase.BACKWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node())
+                invocation_key, Phase.BACKWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
+                output_refcount=len(node.users)).to_here()
         elif target is sync_barrier:
-            node = self.node_list[self.pc]
             # TODO: just assuming the last executor is indeed the executor for the
             # last stage. We should do this in a more principled way
             executor_keys = list(self.remote_stage_executor_rrefs.keys())
             rank, stage_executor = self.remote_stage_executor_rrefs[executor_keys[-1]]
             logging.info(f'[root][{self.cur_microbatch}] Issuing sync invocation '
                          f'on rank {rank}')
-            invocation_key = f'{self.cur_microbatch}_{node.name}'
             return stage_executor.remote().invoke(
-                invocation_key, Phase.SYNC_BARRIER, args, kwargs, self.cur_microbatch, debug_str=node.format_node())
+                invocation_key, Phase.SYNC_BARRIER, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
+                output_refcount=len(node.users)).to_here()
         else:
             raise AssertionError(f'Unknown operator {torch.typename(target)}')
 

@@ -173,7 +173,7 @@ def run_main(args):
     for i in range(1):
         pipe_driver.run(chunks, input, target)
         events = pipe_driver.retrieve_events()
-        check_events_for_single_batch(events, args.world_size, chunks, pipe_visualized_filename)
+        # check_events_for_single_batch(events, args.world_size, chunks, pipe_visualized_filename)
         all_events.extend(events)
     with open(pipe_visualized_filename, "w") as f:
         f.write(events_to_json(all_events))
