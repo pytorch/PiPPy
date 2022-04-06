@@ -67,7 +67,7 @@ def _find_loss_from_output_and_spec(output_val, spec_val):
         return output_val
 
     if isinstance(spec_val, (tuple, list)):
-        if not isinstance(spec_val, (tuple, list)):
+        if not isinstance(output_val, (tuple, list)):
             raise RuntimeError(f'Output value {output_val} must match type of loss specification '
                                f'{spec_val}')
         if len(output_val) != len(spec_val):
@@ -80,7 +80,7 @@ def _find_loss_from_output_and_spec(output_val, spec_val):
         raise RuntimeError(f'Did not find loss value in specification {spec_val}')
 
     if isinstance(spec_val, dict):
-        if not isinstance(spec_val, dict):
+        if not isinstance(output_val, dict):
             raise RuntimeError(f'Output value {output_val} must match type of loss specification '
                                f'{spec_val}')
         if set(output_val.keys()) != set(spec_val.keys()):
