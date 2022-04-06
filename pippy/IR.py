@@ -33,7 +33,7 @@ def stage_backward(stage_output, output_grads, input_values):
             stage_output_tensors.append(v)
     torch.fx.node.map_aggregate(stage_output, get_tensor)
 
-    torch.autograd.backward(tuple(stage_output_tensors), grad_tensors=output_grads)
+    torch.autograd.backward(stage_output_tensors, grad_tensors=output_grads)
 
     grad_inputs = []
     for val in input_values:
@@ -110,8 +110,12 @@ def _insert_stage_symbolic_backward(g : torch.fx.Graph, output_loss_value_spec):
     tuples : Dict[torch.fx.Node, Tuple] = {}
     for node in reversed(g.nodes):
         if node.op == 'call_function':
-            assert node.target == operator.getitem
-            assert len(node.args) == 2
+            # In the forward pass, only emit placeholder, module calls, and
+            # getitem calls. If we have a target other than getitem in this
+            # (forward-only) code, there is a bug.
+            assert node.target == operator.getitem, 'Found non-getitem call in forward pass. '\
+                                                    'Please report a bug to PiPPy'
+            assert len(node.args) == 2, 'Found malformed getitem call. Please report a bug to PiPPy'
             indexed_value, node_idx = tuple(node.args)
 
             # indexed_value is a collection that we are indexing into. It could
@@ -178,7 +182,12 @@ def _insert_stage_symbolic_backward(g : torch.fx.Graph, output_loss_value_spec):
                 for i, input_node in enumerate(input_nodes):
                     assign_or_accumulate_grad(input_node, grads_proxy[i].node)
 
-        # Insert barrier call
+        # Insert barrier call - reconnect the original pipeline output (output_node.args[0])
+        # to go through the `sync_barrier` call, then make the pipeline output the output
+        # of the sync_barrier call. When the driver gets the pipeline output, it is
+        # guaranteed that all backwards jobs for that micro-batch have been executed.
+        # When all micro-batch pipeline outputs are ready, gradients have been fully
+        # computed and synchronized and the optimizer step can be applied.
         barrier_call = g.call_function(sync_barrier, (output_node.args[0], barrier_tokens))
         output_node.args = (barrier_call,)
 
