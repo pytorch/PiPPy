@@ -249,7 +249,7 @@ class TestIR(unittest.TestCase):
 
         pipe_optim = torch.optim.SGD(pipe.parameters(), lr=0.001)
         pipe_optim.zero_grad()
-        pipe_out_tup = pipe(x, target)
+        pipe(x, target)
         test_grads = {k: p.grad for k, p in pipe.named_parameters()}
 
         for k_test, v_test in test_grads.items():
