@@ -6,7 +6,7 @@ import time
 import warnings
 from enum import Enum
 from inspect import Parameter, Signature
-from typing import Any, Callable, Dict, List, NamedTuple, Tuple, Optional
+from typing import Any, Callable, Dict, List, Tuple, Optional
 
 import torch
 import torch.distributed.rpc as rpc
@@ -179,7 +179,7 @@ def async_transfer(caller_rank, microbatch, self_rref, value_ref_arg, value_ref_
                 logging.info(f'[{caller_rank}][{microbatch}] All operands ready, initialize as {state_str} workitem')
             else:
                 logging.info(f'[{caller_rank}][{microbatch}] Still waiting for {work_item.blocked_args_count} operands.')
- 
+
     return fut.then(bottom_half)
 
 class PipeStageExecutor:
@@ -230,7 +230,7 @@ class PipeStageExecutor:
         self.events: List[Event] = []
 
         self.value_store_lock = threading.Lock()
-        self.value_store : Dict[str, torch.futures.Future] = {}
+        self.value_store : Dict[str, RefcountedFuture] = {}
 
         self.peer_executors : Dict[int, torch._C._distributed_rpc.PyRRef] = None
 
