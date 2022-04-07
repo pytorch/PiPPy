@@ -160,7 +160,8 @@ def _get_value_on_remote(caller_rank, callee_rank, runlist_key, microbatch, valu
 def async_transfer(caller_rank, microbatch, self_rref, value_ref_arg, value_ref_executor_rref, arg_idx, runlist_key, max_outstanding):
     logging.info(f'[{caller_rank}][{microbatch}] Starting transfer')
     self = self_rref.local_value()
-    fut = rpc.rpc_async(to=value_ref_arg.rank, func=_get_value_on_remote, args=(caller_rank, value_ref_arg.rank, runlist_key, microbatch, value_ref_arg, value_ref_executor_rref))
+    fut = rpc.rpc_async(to=value_ref_arg.rank, func=_get_value_on_remote, args=(caller_rank, value_ref_arg.rank, runlist_key, microbatch, value_ref_arg, value_ref_executor_rref),
+                        timeout=0)
 
     def bottom_half(fut):
         logging.info(f'[{caller_rank}][{microbatch}] Completing transfer of value {value_ref_arg} '
@@ -545,7 +546,8 @@ class PipelineDriverBase:
         def initiate_async_transfer(a):
             if isinstance(a, ValueReference):
                 value_ref_executor_rref = self.rank_to_executor[a.rank]
-                return rpc.rpc_async(to=a.rank, func=_get_value_on_remote, args=('root', a.rank, 'collect', -1, a, value_ref_executor_rref))
+                return rpc.rpc_async(to=a.rank, func=_get_value_on_remote,
+                                     args=('root', a.rank, 'collect', -1, a, value_ref_executor_rref), timeout=0)
             else:
                 return a
 
