@@ -14,6 +14,8 @@ from pippy.IR import MultiUseParameterConfig, Pipe, PipeSplitWrapper, annotate_s
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverBase
 from pippy.microbatch import TensorChunkSpec
 from transformers import *
+import logging
+
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
@@ -23,6 +25,10 @@ schedules = {
     '1F1B': PipelineDriver1F1B,
 }
 
+VERBOSE = bool(os.environ.get('VERBOSE', False))
+
+if VERBOSE:
+    logging.getLogger().setLevel(logging.DEBUG)
 
 @torch.fx.wrap
 def torch_ones_wrapper(*args, **kwargs):

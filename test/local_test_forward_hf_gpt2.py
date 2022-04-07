@@ -4,6 +4,7 @@ import inspect
 import os
 import socket
 from typing import Dict
+import logging
 
 import torch
 import torch.distributed.rpc as rpc
@@ -23,6 +24,10 @@ schedules = {
     '1F1B': PipelineDriver1F1B,
 }
 
+VERBOSE = bool(os.environ.get('VERBOSE', False))
+
+if VERBOSE:
+    logging.getLogger().setLevel(logging.DEBUG)
 
 @torch.fx.wrap
 def torch_arange_wrapper(*args, **kwargs):

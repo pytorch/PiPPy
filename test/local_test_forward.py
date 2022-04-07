@@ -3,6 +3,7 @@ import argparse
 import os
 import socket
 from typing import Dict
+import logging
 
 import torch
 import torch.distributed.rpc as rpc
@@ -19,6 +20,11 @@ schedules = {
     'FillDrain': PipelineDriverFillDrain,
     '1F1B': PipelineDriver1F1B,
 }
+
+VERBOSE = bool(os.environ.get('VERBOSE', False))
+
+if VERBOSE:
+    logging.getLogger().setLevel(logging.DEBUG)
 
 # WAR for SEV remediation https://github.com/pytorch/pytorch/commit/2337d4e5036a87f473decd2b1f6fe0439499902c
 torch.fx.Tracer.proxy_buffer_attributes = True
