@@ -439,7 +439,7 @@ class Pipe(torch.nn.Module):
     @staticmethod
     def _from_traced(mod : torch.nn.Module, traced : torch.fx.GraphModule,
                      multi_use_param_spec : Optional[MultiUseParamSpec] = None,
-                     output_loss_value_spec=None, **kwargs):
+                     output_loss_value_spec=None):
         """
         Additionally, the ``output_loss_value_spec`` value can be specified to disambiguate
         which value in the output of `forward` is the loss value on which PiPPy should apply
@@ -683,8 +683,7 @@ class Pipe(torch.nn.Module):
         finally:
             _pipeline_tracer = old__pipeline_tracer
 
-        return Pipe._from_traced(mod, traced, multi_use_param_spec, output_loss_value_spec=output_loss_value_spec,
-                                 **kwargs)
+        return Pipe._from_traced(mod, traced, multi_use_param_spec, output_loss_value_spec=output_loss_value_spec)
 
 
 class PipeSplitWrapper(torch.nn.Module):
