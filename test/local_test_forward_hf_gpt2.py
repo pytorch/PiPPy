@@ -24,7 +24,7 @@ schedules = {
     '1F1B': PipelineDriver1F1B,
 }
 
-VERBOSE = bool(os.environ.get('VERBOSE', False))
+VERBOSE = bool(int(os.environ.get('VERBOSE', False)))
 
 if VERBOSE:
     logging.getLogger().setLevel(logging.DEBUG)
