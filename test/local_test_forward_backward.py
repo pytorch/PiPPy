@@ -11,7 +11,7 @@ import torch.distributed.rpc as rpc
 import torch.multiprocessing as mp
 
 from pippy.IR import MultiUseParameterConfig, Pipe, TrivialLossWrapper, pipe_split
-from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B
+from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverBase
 from pippy.microbatch import TensorChunkSpec, CustomReducer, split_args_kwargs_into_chunks
 
 # TODOs for implementing forward/backward/loss with schedules:
@@ -118,14 +118,16 @@ def run_main(args):
     kwargs_chunk_spec: Dict = {}
     output_chunk_spec = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
 
-    pipe_driver = schedules[args.schedule](ec_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec,
-                                           args.world_size)
+    pipe_driver: PipelineDriverBase = schedules[args.schedule](ec_pipe, args_chunk_spec, kwargs_chunk_spec,
+                                                               output_chunk_spec,
+                                                               args.world_size,
+                                                               _debug_mask_minibatches=DEBUG_MASK_MINIBATCHES)
 
     input = torch.randn(bs, d_hid)
     target = torch.randn(bs, d_hid)
 
     # TODO: distributed optimizer
-    out = pipe_driver.run((input, target), {}, chunks=CHUNKS, _debug_mask_minibatches=DEBUG_MASK_MINIBATCHES)
+    out = pipe_driver.run(CHUNKS, input, target)
 
     all_grad_qualnames = {k: None for k, v in ec_pipe.named_parameters()}
 
@@ -221,7 +223,8 @@ def run_main(args):
 
     # # # Profiling runs
     # with torch.autograd.profiler_legacy.profile(enabled=PROFILING_ENABLED) as prof:
-    #     out = pipe_driver.run(input, target, chunks=5, _debug_mask_minibatches = False)
+    #     pipe_driver._debug_mask_minibatches = False
+    #     out = pipe_driver.run(CHUNKS, input, target)
     #     ref_out = ec_pipe.split_gm(input, target)
     #     print(f'profiling run completed {torch.sum(ref_out)} ref {torch.sum(ref_out)}')
     # if PROFILING_ENABLED:

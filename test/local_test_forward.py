@@ -9,7 +9,7 @@ import torch.distributed.rpc as rpc
 import torch.multiprocessing as mp
 
 from pippy.IR import MultiUseParameterConfig, Pipe, pipe_split
-from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B
+from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverBase
 from pippy.microbatch import TensorChunkSpec
 
 PROFILING_ENABLED = True
@@ -65,13 +65,14 @@ def run_main(args):
     kwargs_chunk_spec: Dict = {}
     output_chunk_spec = {'out': TensorChunkSpec(0)}
 
-    pipe_driver = schedules[args.schedule](ec_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec,
-                                           args.world_size)
+    pipe_driver: PipelineDriverBase = schedules[args.schedule](ec_pipe, args_chunk_spec, kwargs_chunk_spec,
+                                                               output_chunk_spec,
+                                                               args.world_size, _debug_mask_minibatches=True)
 
     input = torch.randn(bs, d_hid)
 
     # # Warm up and correctness runs
-    out = pipe_driver.run((input,), {}, chunks=5, _debug_mask_minibatches=True)
+    out = pipe_driver.run(5, input)
     ref_out = ec_pipe(input)
 
     if CHECK_NUMERIC_EQUIVALENCE:
@@ -80,7 +81,7 @@ def run_main(args):
 
     # # Profiling runs
     with torch.autograd.profiler_legacy.profile(enabled=PROFILING_ENABLED) as prof:
-        out = pipe_driver.run((input,), {}, chunks=5, _debug_mask_minibatches=False)
+        out = pipe_driver.run(5, input)
         ref_out = ec_pipe(input)
         print(f'profiling run completed {torch.sum(out["out"])} ref {torch.sum(ref_out["out"])}')
     if PROFILING_ENABLED:
