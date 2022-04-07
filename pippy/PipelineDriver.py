@@ -1,6 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import logging
 import operator
+import random
 import threading
 import time
 import warnings
@@ -67,9 +68,9 @@ class SchedState(Enum):
 class WorkItem:
     def __init__(
             self, phase, args, kwargs, future, microbatch_id, blocked_args_count, ready_args,
-            state=SchedState.WAITING, debug_str=''):
+            batch_id, num_microbatches, state=SchedState.WAITING, debug_str=''):
         args_to_fwd = ['phase', 'args', 'kwargs', 'future', 'microbatch_id', 'blocked_args_count',
-                       'ready_args', 'state', 'debug_str']
+                       'ready_args', 'batch_id', 'num_microbatches', 'state', 'debug_str']
 
         for arg in args_to_fwd:
             setattr(self, arg, locals()[arg])
@@ -84,6 +85,9 @@ class WorkItem:
     ready_args : Dict[int, Any]
     state : SchedState
     debug_str : str
+
+    batch_id : int
+    num_microbatches : int
 
     def __str__(self):
         return f'WorkItem({self.debug_str})'
@@ -240,6 +244,8 @@ class PipeStageExecutor:
         return s
 
     def worker_loop(self):
+        batch_id_to_remaining_backwards_stages : Dict[int, int] = {}
+
         while True:
             work_item = None
             with self.ready_runlist_cv:
@@ -276,6 +282,12 @@ class PipeStageExecutor:
             ready_args = work_item.ready_args
             phase = work_item.phase
 
+            batch_id = work_item.batch_id
+            num_microbatches = work_item.num_microbatches
+
+            if batch_id not in batch_id_to_remaining_backwards_stages:
+                batch_id_to_remaining_backwards_stages[batch_id] = num_microbatches
+
             start_ts = time.time()
 
             rref_arg_idx = 0
@@ -300,8 +312,6 @@ class PipeStageExecutor:
                 kwargs = dict(kwargs)
                 kwargs['stage_output'], kwargs['input_values'] = self.fwd_cache.pop(microbatch_id)
 
-            HACK_fwd_bwd_semaphore = 0
-
             if work_item.phase == Phase.FORWARD:
                 self.outstanding += 1
                 flat_tensor_args = []
@@ -320,12 +330,13 @@ class PipeStageExecutor:
                 out_val = self.mod(*args, **kwargs)
                 self.fwd_cache[microbatch_id] = (out_val, flat_tensor_args)
 
-                HACK_fwd_bwd_semaphore += 1
             elif work_item.phase == Phase.BACKWARD:
                 logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running backward')
-                HACK_fwd_bwd_semaphore -= 1
 
-                if not isinstance(self.mod, torch.nn.parallel.distributed.DistributedDataParallel) or HACK_fwd_bwd_semaphore == 0:
+                batch_id_to_remaining_backwards_stages[batch_id] -= 1
+
+                if not isinstance(self.mod, torch.nn.parallel.distributed.DistributedDataParallel) or\
+                        batch_id_to_remaining_backwards_stages[batch_id] == 0:
                     out_val = stage_backward(*args, **kwargs)
                 else:
                     with self.mod.no_sync():
@@ -357,7 +368,7 @@ class PipeStageExecutor:
                               type=work_item.phase, mbid=work_item.microbatch_id)
 
     @rpc.functions.async_execution
-    def invoke(self, unique_key : str, phase : Phase, args, kwargs, cur_microbatch : int, debug_str : str):
+    def invoke(self, unique_key : str, phase : Phase, args, kwargs, cur_microbatch : int, debug_str : str, batch_id : int, num_microbatches : int):
         # TODO: do we need to serialize calls to invoke() to preserve the order in which WorkItems appear for
         # static schedules?
 
@@ -378,7 +389,8 @@ class PipeStageExecutor:
         # waiting runlist
         future: torch.futures.Future = torch.futures.Future()
         # TODO: increase blocked_args_count for extra things like scheduling
-        work_item = WorkItem(phase, args, kwargs, future, cur_microbatch, len(rref_args), {}, debug_str=debug_str)
+        work_item = WorkItem(phase, args, kwargs, future, cur_microbatch, len(rref_args), {}, batch_id=batch_id,
+                             num_microbatches=num_microbatches, debug_str=debug_str)
         logging.info(f'[{self.local_rank}][{cur_microbatch}] Invoke instantiated WorkItem {work_item} with key {unique_key}')
         if len(rref_args) == 0:
             # TODO: convert initial input into RRef?
@@ -551,7 +563,7 @@ class PipelineDriverBase:
 
 class RemoteInterpreter(torch.fx.Interpreter):
     def __init__(self, remote_stage_executor_rrefs, module, cur_microbatch : int,   
-                 args, kwargs, garbage_collect_values=True):
+                 args, kwargs, batch_id : int, num_microbatches : int, garbage_collect_values=True):
         super().__init__(module, garbage_collect_values)
         self.remote_stage_executor_rrefs = remote_stage_executor_rrefs
         self.cur_microbatch = cur_microbatch
@@ -572,6 +584,8 @@ class RemoteInterpreter(torch.fx.Interpreter):
         bound_args.apply_defaults()
         self.args = bound_args.args
         self.args_iter = iter(self.args)
+        self.batch_id = batch_id
+        self.num_microbatches = num_microbatches
 
     def call_module(self, target, args, kwargs):
         assert isinstance(target, str)
@@ -583,7 +597,8 @@ class RemoteInterpreter(torch.fx.Interpreter):
                          f'invocation for target {target} on rank {rank}')
             invocation_key = f'{self.cur_microbatch}_{node.name}'
             return stage_executor.remote().invoke(
-                invocation_key, Phase.FORWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node())
+                invocation_key, Phase.FORWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
+                batch_id=self.batch_id, num_microbatches=self.num_microbatches)
         else:
             logging.info(f'[root][{self.cur_microbatch}] Running local operation {target} from driver')
             return super().call_module(target, args, kwargs)
@@ -599,7 +614,8 @@ class RemoteInterpreter(torch.fx.Interpreter):
                          f'for target {node.meta["fw_stage"]} on rank {rank}')
             invocation_key = f'{self.cur_microbatch}_{node.name}'
             return stage_executor.remote().invoke(
-                invocation_key, Phase.BACKWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node())
+                invocation_key, Phase.BACKWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
+                batch_id=self.batch_id, num_microbatches=self.num_microbatches)
         elif target is sync_barrier:
             node = self.node_list[self.pc]
             # TODO: just assuming the last executor is indeed the executor for the
@@ -610,7 +626,8 @@ class RemoteInterpreter(torch.fx.Interpreter):
                          f'on rank {rank}')
             invocation_key = f'{self.cur_microbatch}_{node.name}'
             return stage_executor.remote().invoke(
-                invocation_key, Phase.SYNC_BARRIER, args, kwargs, self.cur_microbatch, debug_str=node.format_node())
+                invocation_key, Phase.SYNC_BARRIER, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
+                batch_id=self.batch_id, num_microbatches=self.num_microbatches)
         else:
             raise AssertionError(f'Unknown operator {torch.typename(target)}')
 
@@ -668,10 +685,12 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 
         microbatch_interpreters : List[RemoteInterpreter] = []
 
+        batch_id = random.randint(0, 2**32)
+
         for chunk in range(chunks):
             logging.info(f'[root] Instantiating microbatch interpreter for chunk {chunk}')
             interp = RemoteInterpreter(self.remote_stage_executor_rrefs, self.pipe.split_gm, chunk, args_split[chunk],
-                                       kwargs_split[chunk])
+                                       kwargs_split[chunk], batch_id=batch_id, num_microbatches=chunks)
             microbatch_interpreters.append(interp)
 
         logging.info(f'[root] {len(microbatch_interpreters)} instantiated')
@@ -720,10 +739,12 @@ class PipelineDriver1F1B(PipelineDriverBase):
 
         microbatch_interpreters : List[RemoteInterpreter] = []
 
+        batch_id = random.randint(0, 2**32)
+
         for chunk in range(chunks):
             logging.info(f'[root] Instantiating microbatch interpreter for chunk {chunk}')
             interp = RemoteInterpreter(self.remote_stage_executor_rrefs, self.pipe.split_gm, chunk, args_split[chunk],
-                                       kwargs_split[chunk])
+                                       kwargs_split[chunk], batch_id=batch_id, num_microbatches=chunks)
             microbatch_interpreters.append(interp)
 
         logging.info(f'[root] {len(microbatch_interpreters)} instantiated')
