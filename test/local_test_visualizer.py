@@ -13,7 +13,7 @@ import torch.nn as nn
 from torch.autograd import Function
 
 from pippy.IR import MultiUseParameterConfig, Pipe, pipe_split, TrivialLossWrapper
-from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, Event, Phase
+from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, Event, Phase, PipelineDriverBase
 from pippy.microbatch import TensorChunkSpec, CustomReducer
 from pippy.visualizer import events_to_json
 
@@ -161,8 +161,9 @@ def run_main(args):
     kwargs_chunk_spec = {}
     output_chunk_spec = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
 
-    pipe_driver = PipelineDriverFillDrain(ec_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec,
-                                          args.world_size)
+    pipe_driver: PipelineDriverBase = PipelineDriverFillDrain(ec_pipe, args_chunk_spec, kwargs_chunk_spec,
+                                                              output_chunk_spec,
+                                                              args.world_size, _debug_mask_minibatches=True)
 
     input = torch.randn(bs, d_hid)
     target = torch.randn(bs, d_hid)
@@ -170,7 +171,7 @@ def run_main(args):
     pipe_visualized_filename = "pipe_visualized.json"
     all_events = []
     for i in range(1):
-        pipe_driver.run((input, target), {}, chunks=chunks, _debug_mask_minibatches=True)
+        pipe_driver.run(chunks, input, target)
         events = pipe_driver.retrieve_events()
         check_events_for_single_batch(events, args.world_size, chunks, pipe_visualized_filename)
         all_events.extend(events)

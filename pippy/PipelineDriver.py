@@ -369,9 +369,11 @@ class PipeStageExecutor:
             # would hold it based on max outstanding allowed
             work_item.set_trigger_state(self.max_outstanding)
             if work_item.state == SchedState.WAITING:
-                logging.info(f'[{self.local_rank}][{cur_microbatch}] Schedule limits max outstanding micro-bactches. Initializing as WAITING workitem')
+                logging.info(f'[{self.local_rank}][{cur_microbatch}] Schedule limits max outstanding micro-bactches. '
+                             f'Initializing as WAITING workitem')
             else:
-                logging.info(f'[{self.local_rank}][{cur_microbatch}] No RRef arguments. Scheduling directly as READY workitem')
+                logging.info(f'[{self.local_rank}][{cur_microbatch}] No RRef arguments. '
+                             f'Scheduling directly as READY workitem')
             with self.ready_runlist_cv:
                 logging.info(f'[{self.local_rank}][{cur_microbatch}] Current ready runlist keys: {self.ready_runlist.keys()}')
                 self.ready_runlist[unique_key] = work_item
@@ -388,7 +390,8 @@ class PipeStageExecutor:
         # Spawn asynchronous data transfers for each of the RRef arguments.
         _futures = []
         for arg_idx, rref_arg in enumerate(rref_args):
-            logging.info(f'[{self.local_rank}][{cur_microbatch}] Launching asynchronous data transfer for RRef {arg_idx} {rref_arg}')
+            logging.info(f'[{self.local_rank}][{cur_microbatch}] Launching asynchronous data transfer '
+                         f'for RRef {arg_idx} {rref_arg}')
             self_rref: rpc.RRef = rpc.RRef(self)
             _futures.append(rpc.rpc_async(
                 to=self.local_rank, func=async_transfer,
@@ -401,8 +404,10 @@ class PipeStageExecutor:
 
         return future
 
-    def record_event(self, rank: int, start_ts: float, finish_ts: float, id: str, name: str, type: Optional[Any], mbid: Optional[Any]):
-        self.events.append(Event(rank=rank, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name, type=type, mbid=mbid))
+    def record_event(self, rank: int, start_ts: float, finish_ts: float, id: str, name: str, type: Optional[Any],
+                     mbid: Optional[Any]):
+        self.events.append(
+            Event(rank=rank, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name, type=type, mbid=mbid))
 
     def retrieve_events(self):
         events = self.events
@@ -420,7 +425,7 @@ def set_grad_in_executor(executor, qualname, value):
 
 class PipelineDriverBase:
     def __init__(self, pipe : Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size : int,
-                 all_ranks : List[int] = None):
+                 all_ranks : List[int] = None, _debug_mask_minibatches : bool = False):
         self.pipe = pipe
         self.world_size = world_size
         self.all_ranks = all_ranks
@@ -431,6 +436,7 @@ class PipelineDriverBase:
         # Maximum outstanding micro-batches allowed by the pipeline schedule
         # None means no limit
         self.max_outstanding: Optional[int] = None
+        self._debug_mask_minibatches = _debug_mask_minibatches
 
     def _init_remote_executors(self):
         self.remote_stage_executor_rrefs : Dict[str, (int, torch.distributed.rpc.RRef)] = {}
@@ -476,7 +482,7 @@ class PipelineDriverBase:
             self.remote_stage_executor_rrefs[descr.name] = (
                 rank, rpc.remote(rank, self.executor_class, args=(), kwargs=kwargs))
 
-    def run(self, args, kwargs, chunks : int, _debug_mask_minibatches : bool = False):
+    def run(self, chunks: int, *args, **kwargs):
         raise NotImplementedError('PipelineDriverBase is an abstract base class, please use a concrete '
                                   'implementation class.')
 
@@ -605,15 +611,17 @@ class RemoteInterpreter(torch.fx.Interpreter):
                 print(node, self.env[node])
                 self.env[node].to_here()
 
+
 class PipelineDriverFillDrain(PipelineDriverBase):
-    def __init__(self, pipe : Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size : int,
-                 all_ranks : List[int] = None, single_loss : bool = False):
-        super().__init__(pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size, all_ranks)
+    def __init__(self, pipe: Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size: int,
+                 all_ranks: List[int] = None, single_loss: bool = False, _debug_mask_minibatches: bool = False):
+        super().__init__(pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size, all_ranks,
+                         _debug_mask_minibatches)
         self.single_loss = single_loss
 
         self._init_remote_executors()
 
-    def run(self, args, kwargs, chunks : int, _debug_mask_minibatches : bool = False):
+    def run(self, chunks: int, *args, **kwargs):
         if self.single_loss:
             raise NotImplementedError('Single minibatch loss not implemented')
 
@@ -626,7 +634,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 
         args_split, kwargs_split = split_args_kwargs_into_chunks(args, kwargs, self.args_chunk_spec,
                                                                  self.kwargs_chunk_spec, chunks,
-                                                                 _debug_mask_minibatches)
+                                                                 self._debug_mask_minibatches)
 
         microbatch_interpreters : List[RemoteInterpreter] = []
 
@@ -653,13 +661,14 @@ class PipelineDriverFillDrain(PipelineDriverBase):
             # (by way of the synchronization dependency earlier)
             self._sync_replicated_params()
 
-        return merge_chunks(local_results, self.output_chunk_spec, _debug_mask_minibatches)
+        return merge_chunks(local_results, self.output_chunk_spec, self._debug_mask_minibatches)
 
 
 class PipelineDriver1F1B(PipelineDriverBase):
-    def __init__(self, pipe : Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size : int,
-                 all_ranks : List[int] = None, single_loss : bool = False):
-        super().__init__(pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size, all_ranks)
+    def __init__(self, pipe: Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size: int,
+                 all_ranks: List[int] = None, single_loss: bool = False, _debug_mask_minibatches: bool = False):
+        super().__init__(pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size, all_ranks,
+                         _debug_mask_minibatches)
         self.single_loss = single_loss
         # In 1F1B with backward stages, the maximum number of outstanding
         # micro-batches equals the number of pipeline stages
@@ -668,7 +677,7 @@ class PipelineDriver1F1B(PipelineDriverBase):
 
         self._init_remote_executors()
 
-    def run(self, args, kwargs, chunks : int, _debug_mask_minibatches : bool = False):
+    def run(self, chunks: int, *args, **kwargs):
         if self.single_loss:
             raise NotImplementedError('Single minibatch loss not implemented')
 
@@ -676,7 +685,7 @@ class PipelineDriver1F1B(PipelineDriverBase):
 
         args_split, kwargs_split = split_args_kwargs_into_chunks(args, kwargs, self.args_chunk_spec,
                                                                  self.kwargs_chunk_spec, chunks,
-                                                                 _debug_mask_minibatches)
+                                                                 self._debug_mask_minibatches)
 
         microbatch_interpreters : List[RemoteInterpreter] = []
 
@@ -700,4 +709,4 @@ class PipelineDriver1F1B(PipelineDriverBase):
         if self.pipe.has_loss_and_backwards:
             self._sync_replicated_params()
 
-        return merge_chunks(local_results, self.output_chunk_spec, _debug_mask_minibatches)
+        return merge_chunks(local_results, self.output_chunk_spec, self._debug_mask_minibatches)

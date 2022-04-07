@@ -82,11 +82,11 @@ def run_main(args):
     kwargs_chunk_spec = {}
     output_chunk_spec = {'last_hidden_state': TensorChunkSpec(0)}
     pipe_driver = PipelineDriverFillDrain(gpt2_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec,
-                                          args.world_size)
+                                          args.world_size, _debug_mask_minibatches=True)
 
     # Warm up and correctness runs
     print('Running GPT2 pipeline. NB: if this is too slow, set OMP_NUM_THREADS to a higher value')
-    out = pipe_driver.run((gpt2_input,), {}, chunks=5, _debug_mask_minibatches=True)
+    out = pipe_driver.run(5, gpt2_input)
 
     print('Running reference pipeline')
     ref_out = gpt2_pipe(gpt2_input)
@@ -97,7 +97,8 @@ def run_main(args):
 
     # Profiling runs
     with torch.autograd.profiler_legacy.profile(enabled=PROFILING_ENABLED) as prof:
-        out = pipe_driver.run((gpt2_input,), {}, chunks=5, _debug_mask_minibatches=False)
+        pipe_driver._debug_mask_minibatches=False
+        out = pipe_driver.run(5, gpt2_input)
         ref_out = gpt2_pipe(gpt2_input)
         print(
             f'profiling run completed {torch.sum(out["last_hidden_state"])} ref {torch.sum(ref_out["last_hidden_state"])}')

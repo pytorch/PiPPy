@@ -11,7 +11,7 @@ import torch.multiprocessing as mp
 
 import transformers.utils.fx as fx
 from pippy.IR import MultiUseParameterConfig, Pipe, PipeSplitWrapper, annotate_split_points
-from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B
+from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverBase
 from pippy.microbatch import TensorChunkSpec
 from transformers import *
 
@@ -79,11 +79,12 @@ def run_main(args):
     kwargs_chunk_spec: Dict = {}
     output_chunk_spec = {'last_hidden_state': TensorChunkSpec(0), 'pooler_output': TensorChunkSpec(0)}
 
-    pipe_driver = schedules[args.schedule](bert_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec,
-                                           args.world_size)
+    pipe_driver: PipelineDriverBase = schedules[args.schedule](bert_pipe, args_chunk_spec, kwargs_chunk_spec,
+                                                               output_chunk_spec,
+                                                               args.world_size, _debug_mask_minibatches=True)
 
     # # Warm up and correctness runs
-    out = pipe_driver.run((bert_input,), {}, chunks=5, _debug_mask_minibatches=True)
+    out = pipe_driver.run(5, bert_input)
     ref_out = bert_pipe(bert_input)
 
     if CHECK_NUMERIC_EQUIVALENCE:
@@ -94,7 +95,8 @@ def run_main(args):
 
     # # Profiling runs
     with torch.autograd.profiler_legacy.profile(enabled=PROFILING_ENABLED) as prof:
-        out = pipe_driver.run((bert_input,), {}, chunks=5, _debug_mask_minibatches=False)
+        pipe_driver._debug_mask_minibatches = False
+        out = pipe_driver.run(5, bert_input)
         ref_out = bert_pipe(bert_input)
         print(
             f'profiling run completed {torch.sum(out["last_hidden_state"])} ref {torch.sum(ref_out["last_hidden_state"])}')
