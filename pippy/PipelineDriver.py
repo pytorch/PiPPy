@@ -66,14 +66,15 @@ class SchedState(Enum):
 
 class WorkItem:
     def __init__(
-            self, phase, args, kwargs, future, microbatch_id, blocked_args_count, ready_args,
+            self, stage_id, phase, args, kwargs, future, microbatch_id, blocked_args_count, ready_args,
             state=SchedState.WAITING, debug_str=''):
-        args_to_fwd = ['phase', 'args', 'kwargs', 'future', 'microbatch_id', 'blocked_args_count',
+        args_to_fwd = ['stage_id', 'phase', 'args', 'kwargs', 'future', 'microbatch_id', 'blocked_args_count',
                        'ready_args', 'state', 'debug_str']
 
         for arg in args_to_fwd:
             setattr(self, arg, locals()[arg])
 
+    stage_id : int
     phase : Phase
     args : Tuple[Any]
     kwargs : Dict[str, Any]
@@ -87,14 +88,6 @@ class WorkItem:
 
     def __str__(self):
         return f'WorkItem({self.debug_str})'
-
-    def set_trigger_state(self, max_outstanding):
-        if self.phase == Phase.FORWARD and max_outstanding is not None:
-            # The pipe schedule has a max outstanding limitation, we will let
-            # worker_loop decide whether this forward item can start to run
-            self.state = SchedState.WAITING
-        else:
-            self.state = SchedState.READY
 
 
 class Event:
@@ -121,20 +114,20 @@ class Event:
     mbid: Optional[Any]
 
 
-def _get_value_on_remote(caller_rank, callee_rank, runlist_key, microbatch, rref):
+def _get_value_on_remote(caller_stage, callee_rank, runlist_key, microbatch, rref):
     logging.info(f'[{callee_rank}][{microbatch}] Executing async transfer of value '
-                 f'{rref} initiated by rank {caller_rank} for {runlist_key}')
+                 f'{rref} initiated by stage {caller_stage} for {runlist_key}')
     return rref.local_value()
 
 @rpc.functions.async_execution
-def async_transfer(rank, microbatch, scheduler_rref, rref_arg, arg_idx, runlist_key, max_outstanding):
-    logging.info(f'[{rank}][{microbatch}] Starting transfer')
-    self = scheduler_rref.local_value()
+def async_transfer(stage_id, microbatch, worker_rref, rref_arg, arg_idx, runlist_key):
+    logging.info(f'[{stage_id}][{microbatch}] Starting transfer')
+    self = worker_rref.local_value()
     fut = rpc.rpc_async(to=rref_arg.owner(), func=_get_value_on_remote,
-                        args=(rank, rref_arg.owner().id, runlist_key, microbatch, rref_arg,))
+                        args=(stage_id, rref_arg.owner().id, runlist_key, microbatch, rref_arg,))
 
     def bottom_half(fut):
-        logging.info(f'[{rank}][{microbatch}] Completing transfer of value {rref_arg} from {rref_arg.owner().id} '
+        logging.info(f'[{stage_id}][{microbatch}] Completing transfer of value {rref_arg} from {rref_arg.owner().id} '
                      f'for runlist item {runlist_key}')
         value = fut.value()
         with self.waiting_runlist_lock:
@@ -143,23 +136,22 @@ def async_transfer(rank, microbatch, scheduler_rref, rref_arg, arg_idx, runlist_
             work_item.blocked_args_count -= 1
             if work_item.blocked_args_count == 0:
                 with self.ready_runlist_cv:
-                    work_item.set_trigger_state(max_outstanding)
+                    work_item.state = SchedState.READY
                     self.ready_runlist[runlist_key] = self.waiting_runlist.pop(runlist_key)
                     self.ready_runlist_cv.notify()
-                state_str = 'WAITING' if work_item.state == SchedState.WAITING else 'READY'
-                logging.info(f'[{rank}][{microbatch}] All operands ready, initialize as {state_str} workitem')
+                logging.info(f'[{stage_id}][{microbatch}] All operands ready')
             else:
-                logging.info(f'[{rank}][{microbatch}] Still waiting for {work_item.blocked_args_count} operands.')
+                logging.info(f'[{stage_id}][{microbatch}] Still waiting for {work_item.blocked_args_count} operands.')
 
     return fut.then(bottom_half)
 
-class PipeStageExecutor:
+class RankWorker:
     """
-    PipeStageExecutor encapsulates the execution semantics of a fragment of
-    code on a pipeline stage. PipeStageExecutor handles:
+    RankWorker is the underlying WorkItem processing engine for pipeline stages
+    resident on this rank. WorkItems of multiple stages would share the same
+    queue in the RankWorker. RankWorker will also maintain states like the
+    number of outstanding WorkItems.
 
-    * Ownership of the stage's module and its recursive submodules/parameters
-    * Serving as an entrypoint for the driver to push jobs into its queue
     * TODO: in-order execution
     * Queueing of jobs and execution schedule, e.g.
         * Static Schedules
@@ -171,17 +163,17 @@ class PipeStageExecutor:
             * TODO: Varuna dynamic schedule
             * TODO: dynamic scheduling via registers and back-pressure (TODO: how to
                     specify resource limits and how to implement backpressure?)
-    * TODO: gradient checkpointing
     """
 
-    def __init__(self, mod, local_rank, max_outstanding=None):
+    def __init__(self, local_rank, max_outstanding=None):
         self.local_rank = local_rank
-        logging.info(f'[{self.local_rank}] Instantiating PipeStageExecutor')
-        self.mod = mod
+        logging.info(f'[{self.local_rank}] Instantiating RankWorker')
         # Maximum outstanding micro-batches of the pipeline schedule
         self.max_outstanding = max_outstanding
-        # Keeps track of the outstanding micro-batches in current executor
+        # Keeps track of the outstanding micro-batches in current rank executor
         self.outstanding = 0
+        self.stage_executors : Dict[int, PipeStageExecutor] = {}
+        self.events: List[Event] = []
 
         self.waiting_runlist_lock = threading.Lock()
         # self.waiting_runlist (*and the contained WorkItems*) are guarded by
@@ -192,18 +184,14 @@ class PipeStageExecutor:
         self.ready_runlist_cv = threading.Condition(self.ready_runlist_lock)
         self.ready_runlist : Dict[str, WorkItem] = {}
 
-        self.worker_thread = threading.Thread(target=self.worker_loop, name=f'worker_{self.mod}', daemon=True)
+        self.worker_thread = threading.Thread(target=self.worker_loop,
+                name=f'worker_{self.local_rank}', daemon=True)
         self.worker_thread.start()
-
-        # map microbatch ID to list of forward tensor args
-        self.fwd_cache : Dict[int, Tuple[Any, List[torch.Tensor]]] = {}
-
-        self.events: List[Event] = []
 
     def _debug_print(self, to_file=False):
         # NB: this does not take the runlist locks. This method should only be
         # called when the system is stalled
-        s = f'Executor instance {id(self)} for rank {self.local_rank}.\n' \
+        s = f'RankWorker instance {id(self)} for rank {self.local_rank}.\n' \
             f'\tWaiting WorkItems: {self.waiting_runlist.keys()}\n' \
             f'\tReady WorkItems: {self.ready_runlist.keys()}\n'
 
@@ -232,6 +220,25 @@ class PipeStageExecutor:
 
         return s
 
+    def create_stage_executor(self, stage_id, mod):
+        if stage_id in self.stage_executors:
+            raise AssertionError(f'Rank {local_rank} already has stage {stage_id}')
+        self.stage_executors[stage_id] = PipeStageExecutor(stage_id=stage_id,
+                mod=mod, rank_worker=self)
+        return self.stage_executors[stage_id]
+
+    def enqueue_ready_runlist(self, unique_key, work_item):
+        with self.ready_runlist_cv:
+            logging.info(f'[{self.local_rank}] Current ready runlist keys: {self.ready_runlist.keys()}')
+            self.ready_runlist[unique_key] = work_item
+            self.ready_runlist_cv.notify()
+
+    def enqueue_waiting_runlist(self, unique_key, work_item):
+        with self.waiting_runlist_lock:
+            logging.info(f'[{self.local_rank}] Current waiting runlist keys: {self.waiting_runlist.keys()}')
+            assert unique_key not in self.waiting_runlist, f'key {unique_key} already in waiting runlist {self.waiting_runlist}'
+            self.waiting_runlist[unique_key] = work_item
+
     def worker_loop(self):
         while True:
             work_item = None
@@ -248,8 +255,8 @@ class PipeStageExecutor:
                     # that can schedule a WAITING Workitem is if another backward WorkItem executes and reduces the number
                     # of outstanding mciro-batches;
                     # If there are other READY WorkItems, the runloop executes as normally processing those
-                    if (self.max_outstanding is not None and
-                            self.ready_runlist[key].state == SchedState.WAITING and
+                    if (self.ready_runlist[key].phase == Phase.FORWARD and
+                            self.max_outstanding is not None and
                             self.outstanding >= self.max_outstanding):
                         continue
                     work_item = self.ready_runlist.pop(key)
@@ -268,6 +275,11 @@ class PipeStageExecutor:
             microbatch_id = work_item.microbatch_id
             ready_args = work_item.ready_args
             phase = work_item.phase
+            try:
+                stage_executor = self.stage_executors[work_item.stage_id]
+            except KeyError:
+                raise RuntimeError(f'Rank {self.local_rank} does not have stage {work_item.stage_id}'
+                                   f'Current keys {self.stage_executors.keys()}')
 
             start_ts = time.time()
 
@@ -291,7 +303,7 @@ class PipeStageExecutor:
                 # for closed-over outputs so that they still have the grad_fn
                 # from local autograd. Can we solve this more elegantly?
                 kwargs = dict(kwargs)
-                kwargs['stage_output'], kwargs['input_values'] = self.fwd_cache.pop(microbatch_id)
+                kwargs['stage_output'], kwargs['input_values'] = stage_executor.fwd_cache.pop(microbatch_id)
 
             if work_item.phase == Phase.FORWARD:
                 self.outstanding += 1
@@ -308,8 +320,8 @@ class PipeStageExecutor:
                 args = torch.fx.node.map_aggregate(args, extract_tensor_args)
                 kwargs = torch.fx.node.map_aggregate(kwargs, extract_tensor_args)
                 logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running forward module')
-                out_val = self.mod(*args, **kwargs)
-                self.fwd_cache[microbatch_id] = (out_val, flat_tensor_args)
+                out_val = stage_executor.mod(*args, **kwargs)
+                stage_executor.fwd_cache[microbatch_id] = (out_val, flat_tensor_args)
             elif work_item.phase == Phase.BACKWARD:
                 logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running backward')
                 out_val = stage_backward(*args, **kwargs)
@@ -326,24 +338,50 @@ class PipeStageExecutor:
             future.set_result(out_val)
             work_item.state = SchedState.DONE
 
-            def name(ph, rank, mbid):
+            def name(ph, stage_id, mbid):
                 phase_to_short_str = {
                     Phase.FORWARD: 'F',
                     Phase.BACKWARD: 'B',
                     Phase.SYNC_BARRIER: 'S',
                 }
-                return f"{phase_to_short_str[ph]}_{rank},{mbid}"
+                return f"{phase_to_short_str[ph]}_{stage_id},{mbid}"
 
-            name = name(work_item.phase, self.local_rank, work_item.microbatch_id)
+            name = name(work_item.phase, work_item.stage_id, work_item.microbatch_id)
             self.record_event(rank=self.local_rank, start_ts=start_ts, finish_ts=time.time(), id=name, name=name,
                               type=work_item.phase, mbid=work_item.microbatch_id)
+
+    def record_event(self, rank: int, start_ts: float, finish_ts: float, id: str, name: str, type: Optional[Any], mbid: Optional[Any]):
+        self.events.append(Event(rank=rank, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name, type=type, mbid=mbid))
+
+    def retrieve_events(self):
+        events = self.events
+        self.events = []
+        return events
+
+class PipeStageExecutor:
+    """
+    PipeStageExecutor encapsulates the execution semantics of a fragment of
+    code on a pipeline stage. PipeStageExecutor handles:
+
+    * Ownership of the stage's module and its recursive submodules/parameters
+    * Serving as an entrypoint for the driver to push jobs into RankWorker's queue
+    * TODO: gradient checkpointing
+    """
+
+    def __init__(self, stage_id, mod, rank_worker):
+        logging.info(f'Instantiating PipeStageExecutor for stage {stage_id}')
+        self.stage_id = stage_id
+        self.mod = mod
+        self.rank_worker = rank_worker
+        # map microbatch ID to list of forward tensor args
+        self.fwd_cache : Dict[int, Tuple[Any, List[torch.Tensor]]] = {}
 
     @rpc.functions.async_execution
     def invoke(self, unique_key : str, phase : Phase, args, kwargs, cur_microbatch : int, debug_str : str):
         # TODO: do we need to serialize calls to invoke() to preserve the order in which WorkItems appear for
         # static schedules?
 
-        logging.info(f'[{self.local_rank}][{cur_microbatch}] Received invoke call for {debug_str}')
+        logging.info(f'[{self.stage_id}][{cur_microbatch}] Received invoke call for {debug_str}')
         # Extract all RRef arguments so we can spawn asynchronous data transfers
         # for each of them
         rref_args : List[torch._C._distributed_rpc.PyRRef] = []
@@ -354,45 +392,32 @@ class PipeStageExecutor:
         torch.fx.node.map_aggregate(args, extract_rref_args)
         torch.fx.node.map_aggregate(kwargs, extract_rref_args)
 
-        logging.info(f'[{self.local_rank}][{cur_microbatch}] Invoke call found {len(rref_args)} RRef arguments')
+        logging.info(f'[{self.stage_id}][{cur_microbatch}] Invoke call found {len(rref_args)} RRef arguments')
 
         # Construct WorkItem for this microbatch+phase and record it in the
         # waiting runlist
         future: torch.futures.Future = torch.futures.Future()
         # TODO: increase blocked_args_count for extra things like scheduling
-        work_item = WorkItem(phase, args, kwargs, future, cur_microbatch, len(rref_args), {}, debug_str=debug_str)
-        logging.info(f'[{self.local_rank}][{cur_microbatch}] Invoke instantiated WorkItem {work_item} with key {unique_key}')
+        work_item = WorkItem(self.stage_id, phase, args, kwargs, future, cur_microbatch, len(rref_args), {}, debug_str=debug_str)
+        logging.info(f'[{self.stage_id}][{cur_microbatch}] Invoke instantiated WorkItem {work_item} with key {unique_key}')
         if len(rref_args) == 0:
             # TODO: convert initial input into RRef?
-            # We always put this work item into the ready queue, though we mark
-            # it with different state flags depending on whether the schedule
-            # would hold it based on max outstanding allowed
-            work_item.set_trigger_state(self.max_outstanding)
-            if work_item.state == SchedState.WAITING:
-                logging.info(f'[{self.local_rank}][{cur_microbatch}] Schedule limits max outstanding micro-bactches. Initializing as WAITING workitem')
-            else:
-                logging.info(f'[{self.local_rank}][{cur_microbatch}] No RRef arguments. Scheduling directly as READY workitem')
-            with self.ready_runlist_cv:
-                logging.info(f'[{self.local_rank}][{cur_microbatch}] Current ready runlist keys: {self.ready_runlist.keys()}')
-                self.ready_runlist[unique_key] = work_item
-                self.ready_runlist_cv.notify()
+            work_item.state = SchedState.READY
+            logging.info(f'[{self.stage_id}][{cur_microbatch}] No RRef arguments. Scheduling directly as READY workitem')
+            self.rank_worker.enqueue_ready_runlist(unique_key, work_item)
         else:
-            logging.info(f'[{self.local_rank}][{cur_microbatch}] Scheduling WorkItem as WAITING workitem')
+            logging.info(f'[{self.stage_id}][{cur_microbatch}] Scheduling WorkItem as WAITING workitem')
             work_item.state = SchedState.WAITING
-            with self.waiting_runlist_lock:
-                logging.info(f'[{self.local_rank}][{cur_microbatch}] Current waiting runlist keys: {self.waiting_runlist.keys()}')
-                assert unique_key not in self.waiting_runlist, f'key {unique_key} already in waiting runlist {self.waiting_runlist}'
-                self.waiting_runlist[unique_key] = work_item
-
+            self.rank_worker.enqueue_waiting_runlist(unique_key, work_item)
 
         # Spawn asynchronous data transfers for each of the RRef arguments.
         _futures = []
         for arg_idx, rref_arg in enumerate(rref_args):
-            logging.info(f'[{self.local_rank}][{cur_microbatch}] Launching asynchronous data transfer for RRef {arg_idx} {rref_arg}')
-            self_rref: rpc.RRef = rpc.RRef(self)
+            logging.info(f'[{self.stage_id}][{cur_microbatch}] Launching asynchronous data transfer for RRef {arg_idx} {rref_arg}')
+            worker_rref: rpc.RRef = rpc.RRef(self.rank_worker)
             _futures.append(rpc.rpc_async(
-                to=self.local_rank, func=async_transfer,
-                args=(self.local_rank, cur_microbatch, self_rref, rref_arg, arg_idx, unique_key, self.max_outstanding)))
+                to=self.rank_worker.local_rank, func=async_transfer,
+                args=(self.stage_id, cur_microbatch, worker_rref, rref_arg, arg_idx, unique_key)))
 
         if DEBUG:
             # Make exceptions visible
@@ -400,14 +425,6 @@ class PipeStageExecutor:
                 fut.wait()
 
         return future
-
-    def record_event(self, rank: int, start_ts: float, finish_ts: float, id: str, name: str, type: Optional[Any], mbid: Optional[Any]):
-        self.events.append(Event(rank=rank, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name, type=type, mbid=mbid))
-
-    def retrieve_events(self):
-        events = self.events
-        self.events = []
-        return events
 
 
 def get_grad_from_executor(executor, qualname):
@@ -424,15 +441,16 @@ class PipelineDriverBase:
         self.pipe = pipe
         self.world_size = world_size
         self.all_ranks = all_ranks
-        self.executor_class = PipeStageExecutor
         self.args_chunk_spec = args_chunk_spec
         self.kwargs_chunk_spec = kwargs_chunk_spec
         self.output_chunk_spec = output_chunk_spec
         # Maximum outstanding micro-batches allowed by the pipeline schedule
         # None means no limit
         self.max_outstanding: Optional[int] = None
+        self.interleave_stages = False
 
     def _init_remote_executors(self):
+        self.rank_worker_rrefs : Dict[int, torch.distributed.rpc.RRef] = {}
         self.remote_stage_executor_rrefs : Dict[str, (int, torch.distributed.rpc.RRef)] = {}
 
         if self.all_ranks is not None:
@@ -464,17 +482,29 @@ class PipelineDriverBase:
         assert all(d.has_backward for d in executor_descriptors) or all(not d.has_backward for d in executor_descriptors)
 
         if len(executor_descriptors) > self.world_size:
-            raise RuntimeError(f'Tried to run pipeline with {len(executor_descriptors)} stages with a world size of '
-                               f'{self.world_size}. Please ensure world_size is large enough to accommodate your pipeline.')
+            if not self.interleave_stages:
+                raise RuntimeError(f'Tried to run pipeline with {len(executor_descriptors)} stages with a world size of '
+                                   f'{self.world_size}. Please ensure world_size is large enough to accommodate your pipeline.')
 
+        ranks_to_launch = self.world_size
         if len(executor_descriptors) < self.world_size:
+            ranks_to_launch = len(executor_descriptors)
             warnings.warn(f'Running pipeline with {len(executor_descriptors)} stages on world_size of {self.world_size}. '
                           f'Remaining ranks will be idle.')
 
-        for rank, descr in zip(self.all_ranks, executor_descriptors):
-            kwargs = {'mod': descr.mod, 'local_rank': rank, 'max_outstanding': self.max_outstanding}
-            self.remote_stage_executor_rrefs[descr.name] = (
-                rank, rpc.remote(rank, self.executor_class, args=(), kwargs=kwargs))
+        # Fire up rank workers
+        for rank in self.all_ranks[:ranks_to_launch]:
+            kwargs = {'local_rank': rank,
+                      'max_outstanding': self.max_outstanding}
+            self.rank_worker_rrefs[rank] = rpc.remote(rank, RankWorker, args=(), kwargs=kwargs)
+
+        for stage_id, descr in enumerate(executor_descriptors):
+            # Assign stages to rank workers in a round-robin fashion
+            rank = stage_id % self.world_size
+            self.remote_stage_executor_rrefs[descr.name] = (rank,
+                self.rank_worker_rrefs[rank].remote().create_stage_executor(
+                    stage_id=stage_id,
+                    mod=descr.mod))
 
     def run(self, args, kwargs, chunks : int, _debug_mask_minibatches : bool = False):
         raise NotImplementedError('PipelineDriverBase is an abstract base class, please use a concrete '
@@ -509,8 +539,8 @@ class PipelineDriverBase:
 
     def retrieve_events(self) -> List[Event]:
         events = []
-        for descr_name, (rank, stage_executor) in self.remote_stage_executor_rrefs.items():
-            events.extend(stage_executor.rpc_sync().retrieve_events())
+        for rank, worker_rref in self.rank_worker_rrefs.items():
+            events.extend(worker_rref.rpc_sync().retrieve_events())
         return events
 
 
