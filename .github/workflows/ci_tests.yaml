@@ -102,6 +102,8 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.7", "3.8", "3.9"]
+        replicate: ["0", "1"]
+        schedule: ["FillDrain", "1F1B"]
     container:
       image: python:${{ matrix.python-version }}
 
@@ -116,35 +118,13 @@ jobs:
         run: pip install git+https://github.com/pbelevich/transformers.git@compatible_with_pt_master sentencepiece
       - name: Install pippy
         run: "python setup.py install"
-      - name: Run forward-only integration test - Transmitted parameters - Fill Drain
-        run: test/launch_local_test_forward.sh --replicate 0 -s FillDrain
-      - name: Run forward-only integration test - Transmitted parameters - 1F1B
-        run: test/launch_local_test_forward.sh --replicate 0 -s 1F1B
-      - name: Run forward-only integration test - Replicated parameters - Fill Drain
-        run: test/launch_local_test_forward.sh --replicate 1 -s FillDrain
-      - name: Run forward-only integration test - Replicated parameters - 1F1B
-        run: test/launch_local_test_forward.sh --replicate 1 -s 1F1B
-      - name: Run forward-loss-backward integration test - Transmitted parameters - Fill Drain
-        run: test/launch_local_test_forward_backward.sh --replicate 0 -s FillDrain
-      - name: Run forward-loss-backward integration test - Transmitted parameters - 1F1B
-        run: test/launch_local_test_forward_backward.sh --replicate 0 -s 1F1B
-      - name: Run forward-loss-backward integration test - Replicated parameters - Fill Drain
-        run: test/launch_local_test_forward_backward.sh --replicate 1 -s FillDrain
-      - name: Run forward-loss-backward integration test - Replicated parameters - 1F1B
-        run: test/launch_local_test_forward_backward.sh --replicate 1 -s 1F1B
-      - name: Run HF BERT forward-only integration test - Transmitted parameters
-        run: test/launch_local_test_forward_hf_bert.sh --replicate 0
-      - name: Run HF BERT forward-only integration test - Replicated parameters
-        run: test/launch_local_test_forward_hf_bert.sh --replicate 1
-      - name: Run HF GPT2 forward-only integration test - Transmitted parameters
-        run: test/launch_local_test_forward_hf_gpt2.sh --replicate 0
-      - name: Run HF GPT2 forward-only integration test - Replicated parameters
-        run: test/launch_local_test_forward_hf_gpt2.sh --replicate 1
-      - name: Run visualizer test - Transmitted parameters - Fill Drain
-        run: python test/local_test_visualizer.py --replicate 0 -s FillDrain
-      - name: Run visualizer test - Replicated parameters - Fill Drain
-        run: python test/local_test_visualizer.py --replicate 1 -s FillDrain
-      - name: Run visualizer test - Transmitted parameters - 1F1B
-        run: python test/local_test_visualizer.py --replicate 0 -s 1F1B
-      - name: Run visualizer test - Replicated parameters - 1F1B
-        run: python test/local_test_visualizer.py --replicate 1 -s 1F1B
+      - name: Run forward-only integration test
+        run: python test/local_test_forward.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+      - name: Run forward-loss-backward integration test
+        run: python test/local_test_forward_backward.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+      - name: Run HF BERT forward-only integration test
+        run: python test/local_test_forward_hf_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+      - name: Run HF GPT2 forward-only integration test
+        run: python test/local_test_forward_hf_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+      - name: Run visualizer test
+        run: python test/local_test_visualizer.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
