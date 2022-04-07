@@ -130,3 +130,5 @@ jobs:
         run: python test/local_test_forward_hf_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: Run visualizer test
         run: python test/local_test_visualizer.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+      - name: Run GPT2 slurm example without slurm
+        run: python examples/slurm/hf/gpt2/pippy_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
