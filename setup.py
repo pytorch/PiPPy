@@ -63,7 +63,7 @@ if __name__ == '__main__':
         name=package_name,
         version=version,
         author='PiPPy Team',
-        url="https://github.com/jamesr66a/pippy",
+        url="https://github.com/pytorch/PiPPy",
         description='Pipeline Parallelism for PyTorch',
         license='BSD',
 
