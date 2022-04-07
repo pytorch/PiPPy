@@ -4,7 +4,6 @@ import inspect
 import os
 import socket
 from typing import Dict
-import logging
 
 import torch
 import torch.distributed.rpc as rpc
@@ -15,6 +14,7 @@ from pippy.IR import MultiUseParameterConfig, Pipe, PipeSplitWrapper, annotate_s
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverBase
 from pippy.microbatch import TensorChunkSpec
 from transformers import *
+import logging
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
