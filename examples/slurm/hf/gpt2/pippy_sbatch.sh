@@ -18,4 +18,4 @@
 
 #SBATCH --time=1:00:00
 
-srun --label pippy.sh
+srun --label pippy_wrapper.sh

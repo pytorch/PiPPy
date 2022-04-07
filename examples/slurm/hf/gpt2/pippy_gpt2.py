@@ -1,17 +1,26 @@
+import argparse
 import inspect
 import os
+import socket
 
 import torch
 import torch.distributed.rpc as rpc
+import torch.multiprocessing as mp
 
 import transformers.utils.fx as fx
 from pippy.IR import MultiUseParameterConfig, Pipe, PipeSplitWrapper, annotate_split_points
-from pippy.PipelineDriver import PipelineDriverFillDrain
+from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B
 from pippy.microbatch import TensorChunkSpec
 from transformers import *
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
+SLURM = os.getenv('SLURM_PROCID') is not None
+
+schedules = {
+    'FillDrain': PipelineDriverFillDrain,
+    '1F1B': PipelineDriver1F1B,
+}
 
 # WAR for SEV remediation https://github.com/pytorch/pytorch/commit/2337d4e5036a87f473decd2b1f6fe0439499902c
 torch.fx.Tracer.proxy_buffer_attributes = True
@@ -41,7 +50,7 @@ def add_split_points(gpt2, layers_per_rank):
     annotate_split_points(gpt2, {'ln_f': PipeSplitWrapper.SplitPoint.BEGINNING})
 
 
-def run_master():
+def run_main(args):
     REPLICATE = os.environ.get('REPLICATE', '0') != '0'
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if REPLICATE else MultiUseParameterConfig.TRANSMIT
     print(f'REPLICATE config: {REPLICATE} -> {MULTI_USE_PARAM_CONFIG}')
@@ -50,7 +59,7 @@ def run_master():
     seq_length = 32
     layers_per_rank = 1
 
-    device = torch.device('cuda:0')
+    device = torch.device('cuda:0' if SLURM and torch.cuda.is_available() else 'cpu')
 
     gpt2 = GPT2Model(GPT2Config(use_cache=False))
     gpt2.to(device)
@@ -73,7 +82,7 @@ def run_master():
     kwargs_chunk_spec = {}
     output_chunk_spec = {'last_hidden_state': TensorChunkSpec(0)}
     pipe_driver = PipelineDriverFillDrain(gpt2_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec,
-                                          world_size)
+                                          args.world_size)
 
     # Warm up and correctness runs
     print('Running GPT2 pipeline. NB: if this is too slow, set OMP_NUM_THREADS to a higher value')
@@ -96,16 +105,38 @@ def run_master():
         prof.export_chrome_trace(f'{os.path.splitext(os.path.basename(__file__))[0]}.json')
 
 
-if __name__ == '__main__':
-    rank = int(os.environ["RANK"])
-    world_size = int(os.environ["WORLD_SIZE"])
-
+def run_worker(rank, world_size, args):
+    print(f"rank = {rank} host/pid = {socket.gethostname()}/{os.getpid()}")
+    os.environ['MASTER_ADDR'] = args.master_addr
+    os.environ['MASTER_PORT'] = args.master_port
     options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256, _transports=["uv"])
-    for i in range(world_size):
-        options.set_device_map(f"worker{i}", {0: 0})
-    rpc.init_rpc(f'worker{rank}', rank=rank, world_size=world_size, rpc_backend_options=options)
-
+    if SLURM and torch.cuda.is_available():
+        for i in range(world_size):
+            options.set_device_map(f"worker{i}", {0: 0})
+    rpc.init_rpc(
+        f"worker{rank}",
+        rank=rank,
+        world_size=world_size,
+        rpc_backend_options=options
+    )
     if rank == 0:
-        run_master()
-
+        run_main(args)
     rpc.shutdown()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 14)))
+    parser.add_argument('--rank', type=int, default=int(os.getenv("RANK", -1)))
+    parser.add_argument('--master_addr', type=str, default=os.getenv('MASTER_ADDR', 'localhost'))
+    parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
+    parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
+    parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
+    args = parser.parse_args()
+
+    if args.rank == -1:
+        mp.spawn(run_worker, args=(args.world_size, args,), nprocs=args.world_size, join=True)
+    elif args.rank < args.world_size:
+        run_worker(args.rank, args.world_size, args)
+    else:
+        print("I'm unused, exiting")

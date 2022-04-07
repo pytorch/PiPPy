@@ -7,4 +7,4 @@ export CUDA_VISIBLE_DEVICES=${SLURM_LOCALID}
 export WORLD_SIZE=${SLURM_NTASKS}
 export RANK=${SLURM_PROCID}
 
-python -u pippy_cuda_rpc.py
+python -u pippy_gpt2.py
