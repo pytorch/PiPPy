@@ -13,7 +13,7 @@ import transformers.utils.fx as fx
 from pippy.IR import MultiUseParameterConfig, Pipe, PipeSplitWrapper, annotate_split_points
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverBase
 from pippy.microbatch import TensorChunkSpec
-from transformers import *
+from transformers import BertModel, BertConfig
 import logging
 
 
