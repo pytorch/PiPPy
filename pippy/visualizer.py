@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 from typing import List
 
 from pippy.PipelineDriver import Event
