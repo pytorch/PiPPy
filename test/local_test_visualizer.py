@@ -36,7 +36,7 @@ def sleep(x, t=1.0):
 
 class SlowMSELoss(nn.MSELoss):
     def forward(self, input, target):
-        return super().forward(sleep(input, t=0.1), target)
+        return super().forward(sleep(input), target)
 
 
 # Inherit from Function
@@ -128,6 +128,7 @@ def run_main(args):
     d_hid = 100
     bs = 400
     chunks = 4
+    batches = 1
 
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if args.replicate else MultiUseParameterConfig.TRANSMIT
     print(f'REPLICATE config: {args.replicate} -> {MULTI_USE_PARAM_CONFIG}')
@@ -168,14 +169,19 @@ def run_main(args):
     target = torch.randn(bs, d_hid)
 
     pipe_visualized_filename = "pipe_visualized.json"
-    all_events = []
-    for i in range(1):
+    batches_events = []
+    for i in range(batches):
         pipe_driver.run(chunks, input, target)
-        events = pipe_driver.retrieve_events()
-        check_events_for_single_batch(events, args.world_size, chunks, pipe_visualized_filename)
-        all_events.extend(events)
+        batches_events.append(pipe_driver.retrieve_events())
+
+    # first: save file
+    all_events = [event for events in batches_events for event in events]
     with open(pipe_visualized_filename, "w") as f:
         f.write(events_to_json(all_events))
+
+    # second: perform checks
+    for events in batches_events:
+        check_events_for_single_batch(events, args.world_size, chunks, pipe_visualized_filename)
 
 
 def check_events_for_single_batch(events: List[Event], all_ranks: int, chunks: int, pipe_visualized_filename: str):
