@@ -361,21 +361,3 @@ During the training loop, we should focus on a few important elements:
 
 ## License
 PiPPy is 3-clause BSD licensed, as found in the LICENSE file.
-
-# Work Items
-
-- [ ] Figure out how performance looks
-- [x] Loss execution in runtime
-- [x] backward() execution in runtime
-- [ ] gradient checkpointing in runtime
-- [x] shared weights synchronization in runtime
-- [x] CUDA device placement
-- [ ] Beta integration into repos like HuggingFace transformers
-- [ ] Checkpointing as a configuration surface (manual & automated)
-
-low-pri
-- [ ] Shape-specialized tracing
-- [ ] More APIs and algorithms for splitting in the front-end
-- [ ] TRANSMIT synchronization type for leaf modules
-- [ ] Yield running coroutines when I/O bound (e.g. when running a collective)
-- [ ] Model side-effectful operations (resource semaphore, RNG state mutation, etc)
