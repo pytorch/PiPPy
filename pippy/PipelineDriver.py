@@ -1,6 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import logging
 import operator
+import socket
 import threading
 import time
 import warnings
@@ -100,25 +101,31 @@ class WorkItem:
 class Event:
     def __init__(self,
                  rank: int,
+                 host: str,
                  start_ts: float,
                  finish_ts: float,
                  id: Optional[str] = None,
                  name: Optional[str] = None,
                  type: Optional[Any] = None,
-                 mbid: Optional[Any] = None
+                 mbid: Optional[Any] = None,
+                 prev: Optional[str] = None,
+                 next: Optional[str] = None
                  ):
-        args_to_fwd = ['rank', 'start_ts', 'finish_ts', 'id', 'name', 'type', 'mbid']
+        args_to_fwd = ['rank', 'host', 'start_ts', 'finish_ts', 'id', 'name', 'type', 'mbid', 'prev', 'next']
 
         for arg in args_to_fwd:
             setattr(self, arg, locals()[arg])
 
     rank: int
+    host: str
     start_ts: float
     finish_ts: float
     id: Optional[str]
     name: Optional[str]
     type: Optional[Any]
     mbid: Optional[Any]
+    prev: Optional[str]
+    next: Optional[str]
 
 
 def _get_value_on_remote(caller_rank, callee_rank, runlist_key, microbatch, rref):
@@ -334,9 +341,28 @@ class PipeStageExecutor:
                 }
                 return f"{phase_to_short_str[ph]}_{rank},{mbid}"
 
-            name = name(work_item.phase, self.local_rank, work_item.microbatch_id)
-            self.record_event(rank=self.local_rank, start_ts=start_ts, finish_ts=time.time(), id=name, name=name,
-                              type=work_item.phase, mbid=work_item.microbatch_id)
+            def prev_name(ph, rank, mbid):
+                if ph == Phase.FORWARD:
+                    return name(ph, rank - 1, mbid) if rank > 0 else None
+                elif ph == Phase.BACKWARD:
+                    return name(ph, rank + 1, mbid)
+                else:
+                    return None
+
+            def next_name(ph, rank, mbid):
+                if ph == Phase.FORWARD:
+                    return name(ph, rank + 1, mbid)
+                elif ph == Phase.BACKWARD:
+                    return name(ph, rank - 1, mbid) if rank > 0 else None
+                else:
+                    return None
+
+            event_name = name(work_item.phase, self.local_rank, work_item.microbatch_id)
+            prev_event_name = prev_name(work_item.phase, self.local_rank, work_item.microbatch_id)
+            next_event_name = next_name(work_item.phase, self.local_rank, work_item.microbatch_id)
+            self.record_event(rank=self.local_rank, start_ts=start_ts, finish_ts=time.time(), id=event_name,
+                              name=event_name, type=work_item.phase, mbid=work_item.microbatch_id,
+                              prev=prev_event_name, next=next_event_name)
 
     @rpc.functions.async_execution
     def invoke(self, unique_key : str, phase : Phase, args, kwargs, cur_microbatch : int, debug_str : str):
@@ -405,9 +431,10 @@ class PipeStageExecutor:
         return future
 
     def record_event(self, rank: int, start_ts: float, finish_ts: float, id: str, name: str, type: Optional[Any],
-                     mbid: Optional[Any]):
+                     mbid: Optional[Any], prev: Optional[str], next: Optional[str]):
         self.events.append(
-            Event(rank=rank, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name, type=type, mbid=mbid))
+            Event(rank=rank, host=socket.gethostname(), start_ts=start_ts, finish_ts=finish_ts, id=id, name=name,
+                  type=type, mbid=mbid, prev=prev, next=next))
 
     def retrieve_events(self):
         events = self.events
@@ -521,7 +548,7 @@ class PipelineDriverBase:
 
 
 class RemoteInterpreter(torch.fx.Interpreter):
-    def __init__(self, remote_stage_executor_rrefs, module, cur_microbatch : int,   
+    def __init__(self, remote_stage_executor_rrefs, module, cur_microbatch : int,
                  args, kwargs, garbage_collect_values=True):
         super().__init__(module, garbage_collect_values)
         self.remote_stage_executor_rrefs = remote_stage_executor_rrefs

@@ -33,19 +33,48 @@ def generate_event_str(name=None, id=None, cat=None, ph=None, bp=None, ts=None, 
 
 
 def event_to_json(event: Event) -> str:
-    return generate_event_str(
-        pid=f"{0}",
+    lines = []
+    if event.prev is not None:
+        lines.append(generate_event_str(
+            pid=f"{event.host}",
+            tid=f"{event.rank}",
+            name=f"{event.prev} -> {event.name}",
+            id=f"{event.prev} -> {event.name}",
+            ph="f",
+            cat="transfer",
+            ts=event.start_ts * 1_000_000
+        ))
+    lines.append(generate_event_str(
+        pid=f"{event.host}",
         tid=f"{event.rank}",
         name=event.name,
         id=event.id,
-        ph="X",
-        ts=event.start_ts * 1_000_000,
-        dur=(event.finish_ts - event.start_ts) * 1_000_000
-    )
+        ph="B",
+        ts=event.start_ts * 1_000_000
+    ))
+    if event.next is not None:
+        lines.append(generate_event_str(
+            pid=f"{event.host}",
+            tid=f"{event.rank}",
+            name=f"{event.name} -> {event.next}",
+            id=f"{event.name} -> {event.next}",
+            ph="s",
+            cat="transfer",
+            ts=event.finish_ts * 1_000_000
+        ))
+    lines.append(generate_event_str(
+        pid=f"{event.host}",
+        tid=f"{event.rank}",
+        name=event.name,
+        id=event.id,
+        ph="E",
+        ts=event.finish_ts * 1_000_000
+    ))
+    return ',\n'.join(lines)
 
 
 def events_to_json(events: List[Event]) -> str:
     result = '[\n'
     result += ',\n'.join([event_to_json(event) for event in events])
-    result += '\n]'
+    result += '\n]\n'
     return result
