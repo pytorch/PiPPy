@@ -138,13 +138,14 @@ bs = 4
 num_choices = 3
 seq_length = 32
 
+
 def generate_hf_model(model_cls):
     splitter = splitters.get(model_cls.base_model_prefix)
     assert splitter is not None
     config_cls = model_cls.config_class
     config = config_cls()
     if model_cls in [GPT2ForSequenceClassification, GPTNeoForSequenceClassification,
-                    GPTJForSequenceClassification] or model_cls.__name__.startswith("Roberta"):
+                     GPTJForSequenceClassification] or model_cls.__name__.startswith("Roberta"):
         config.pad_token_id = 0
     model = model_cls(config)
     model.eval()
@@ -237,6 +238,10 @@ def recursive_value_check(out, ref_out):
         raise RuntimeError(f'Unsupported type {type(out)}')
 
 
+def get_number_of_params(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
 class HFModelsForwardTest(unittest.TestCase):
     pass
 
@@ -257,6 +262,8 @@ for _model_cls in fx._SUPPORTED_MODELS:
             model_pipe = Pipe.from_tracing(model, multi_use_param_config, tracer=hf_tracer,
                                            concrete_args=concrete_args)
             assert submodules_cnt == len(list(model_pipe.split_gm.children()))
+            assert get_number_of_params(model) == sum(
+                [get_number_of_params(sm) for sm in model_pipe.split_gm.children()])
 
             model_output = model(**input_dict)
             model_pipe_output = model_pipe(**input_dict)
@@ -288,7 +295,6 @@ def get_output_loss_value_spec_for_model(model_cls):
     if model_cls in [BertForPreTraining, MegatronBertForPreTraining, MobileBertForPreTraining]:
         return {'loss': True, 'prediction_logits': False, 'seq_relationship_logits': False}
 
-
     return {'loss': True, 'logits': False}
 
 
@@ -306,7 +312,7 @@ for _model_cls in fx._SUPPORTED_MODELS:
                 self.skipTest('Known bad model')
 
             model, splitter = generate_hf_model(model_cls)
-            model.eval() # Disable nondeterminism for testing
+            model.eval()  # Disable nondeterminism for testing
             submodules_cnt = splitter(model)
 
             try:
@@ -335,6 +341,8 @@ for _model_cls in fx._SUPPORTED_MODELS:
                                            output_loss_value_spec=output_loss_value_spec)
 
             assert submodules_cnt == len(list(model_pipe.split_gm.children()))
+            assert get_number_of_params(model) == sum(
+                [get_number_of_params(sm) for sm in model_pipe.split_gm.children()])
             assert any(n.target == stage_backward for n in model_pipe.split_gm.graph.nodes)
 
             ref_optim = torch.optim.SGD(model.parameters(), lr=0.001)
@@ -375,6 +383,7 @@ for _model_cls in fx._SUPPORTED_MODELS:
             print(f'Correctness check for model {model_cls.__name__}_{multi_use_param_config} passed', file=sys.stderr)
 
         return test_case
+
 
     setattr(HFModelsForwardBackwardTest, f'test_{_model_cls.__name__}_backward_transmit', scope(_model_cls, False))
     setattr(HFModelsForwardBackwardTest, f'test_{_model_cls.__name__}_backward_replicate', scope(_model_cls, True))
