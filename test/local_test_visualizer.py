@@ -124,7 +124,7 @@ class MyLinear(nn.Module):
         )
 
 
-def run_main(args):
+def run_master(args):
     d_hid = 100
     bs = 400
     chunks = 4
@@ -250,7 +250,7 @@ def run_worker(rank, world_size, args):
         rpc_backend_options=options
     )
     if rank == 0:
-        run_main(args)
+        run_master(args)
     rpc.shutdown()
 
 
