@@ -487,6 +487,11 @@ class Pipe(torch.nn.Module):
             return use_idxs[0]
 
         def move_param_to_callee(root, callee_name, param_val, use_idx, is_buffer):
+            assert isinstance(param_val, torch.Tensor), \
+                f"Expected '{node.target}' to be {torch.Tensor} but got {type(param_val)}." + \
+                (f" It might happen if module '{node.target}' was passed to some 'leaf function'"
+                 f"(see https://pytorch.org/docs/stable/fx.html#torch.fx.wrap). Please inspect "
+                 f"usages of '{node.target}' in the traced graph." if isinstance(param_val, torch.nn.Module) else "")
             callee = root.get_submodule(callee_name)
             new_param_name = f"moved_{node.target.replace('.', '_')}"
             assert not hasattr(callee, new_param_name)
