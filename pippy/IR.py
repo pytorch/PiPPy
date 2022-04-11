@@ -757,6 +757,12 @@ class Pipe(torch.nn.Module):
         return Pipe._from_traced(mod, traced, multi_use_param_spec, output_loss_value_spec=output_loss_value_spec)
 
 
+    def __str__(self):
+        return self.split_gm.__str__()
+
+    def __repr__(self):
+        return self.split_gm.__repr__()
+
 class PipeSplitWrapper(torch.nn.Module):
     class SplitPoint(Enum):
         BEGINNING = 1
@@ -779,6 +785,7 @@ class PipeSplitWrapper(torch.nn.Module):
 
 
 def annotate_split_points(mod : torch.nn.Module, spec : Dict[str, PipeSplitWrapper.SplitPoint]):
+    # TODO: make this implementation out-of-place?
     for qualname, split_type in spec.items():
         atoms = qualname.split('.')
         predecessor_module = mod

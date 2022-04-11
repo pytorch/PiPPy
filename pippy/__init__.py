@@ -1,5 +1,10 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-import pippy.IR as IR
-import pippy.PipelineDriver as PipelineDriver
+from pippy.IR import (
+    PipeSequential, LossWrapper, TrivialLossWrapper, pipe_split, Pipe, PipeSplitWrapper, annotate_split_points
+)
+from pippy.PipelineDriver import (
+    PipelineDriverFillDrain, PipelineDriver1F1B
+)
 
-__all__ = ['IR', 'PipelineDriver']
+__all__ = ['PipeSequential', 'LossWrapper', 'TrivialLossWrapper', 'Pipe', 'pipe_split',
+           'PipeSplitWrapper', 'annotate_split_points', 'PipelineDriverFillDrain', 'PipelineDriver1F1B']
