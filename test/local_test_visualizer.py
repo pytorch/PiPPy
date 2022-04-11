@@ -178,7 +178,7 @@ def run_master(args):
     for i in range(1):
         pipe_driver.run(chunks, input, target)
         events = pipe_driver.retrieve_events()
-        # check_events_for_single_batch(events, args.world_size, chunks, pipe_visualized_filename)
+        check_events_for_single_batch(events, args.world_size, chunks, pipe_visualized_filename)
         all_events.extend(events)
     with open(pipe_visualized_filename, "w") as f:
         f.write(events_to_json(all_events))
@@ -232,15 +232,13 @@ def check_events_for_single_batch(events: List[Event], all_ranks: int, chunks: i
         last_forward = events_by_type_by_rank_by_mbid[Phase.FORWARD][all_ranks - 1][mbid]
         first_next_forward = events_by_type_by_rank_by_mbid[Phase.FORWARD][0][next_mbid]
         # cross-microbatch forward overlap check
-        # TODO: INVERT CONDITION TO >= AFTER OVERLAP FIX!!!
-        assert last_forward.finish_ts <= first_next_forward.start_ts, \
+        assert last_forward.finish_ts >= first_next_forward.start_ts, \
             f"Forward microbatch {mbid} doesn't overlap with next microbatch {next_mbid}"
 
-        last_backward = events_by_type_by_rank_by_mbid[Phase.BACKWARD][all_ranks - 1][mbid]
-        first_next_backward = events_by_type_by_rank_by_mbid[Phase.BACKWARD][0][mbid + 1]
+        last_backward = events_by_type_by_rank_by_mbid[Phase.BACKWARD][0][mbid]
+        first_next_backward = events_by_type_by_rank_by_mbid[Phase.BACKWARD][all_ranks - 1][next_mbid]
         # cross-microbatch forward overlap check
-        # TODO: INVERT CONDITION TO >= AFTER OVERLAP FIX!!!
-        assert last_backward.finish_ts <= first_next_backward.start_ts, \
+        assert last_backward.finish_ts >= first_next_backward.start_ts, \
             f"Backward microbatch {mbid} doesn't overlap with next microbatch {next_mbid}"
 
 
