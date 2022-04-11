@@ -23,7 +23,7 @@ schedules = {
 torch.fx.Tracer.proxy_buffer_attributes = True
 
 
-def run_main(args):
+def run_master(args):
     d_hid = 512
     bs = 503
 
@@ -99,7 +99,7 @@ def run_worker(rank, world_size, args):
         rpc_backend_options=options
     )
     if rank == 0:
-        run_main(args)
+        run_master(args)
     rpc.shutdown()
 
 

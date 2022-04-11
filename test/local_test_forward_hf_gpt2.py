@@ -45,7 +45,7 @@ class HFGPT2Tracer(fx.HFTracer):
 torch.fx.Tracer.proxy_buffer_attributes = True
 
 
-def run_main(args):
+def run_master(args):
     bs = 20
     seq_length = 32
 
@@ -115,7 +115,7 @@ def run_worker(rank, world_size, args):
         rpc_backend_options=options
     )
     if rank == 0:
-        run_main(args)
+        run_master(args)
     rpc.shutdown()
 
 
