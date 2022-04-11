@@ -1,7 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import List
+from typing import Dict, List
 
-from pippy.PipelineDriver import Event
+from pippy.events import Event, EventDependency, EventsContext
 
 
 def generate_event_str(name=None, id=None, cat=None, ph=None, bp=None, ts=None, tts=None, dur=None, pid=None, tid=None,
@@ -25,7 +25,7 @@ def generate_event_str(name=None, id=None, cat=None, ph=None, bp=None, ts=None, 
     append_if_not_none('dur', dur)
     append_if_not_none('pid', pid)
     append_if_not_none('tid', tid)
-    # append_if_not_none('args', args)
+    # append_if_not_none('args', args) # TODO!
     append_if_not_none('cname', cname)
     if len(items):
         return '{' + ', '.join(items) + '}'
@@ -33,18 +33,20 @@ def generate_event_str(name=None, id=None, cat=None, ph=None, bp=None, ts=None, 
         return None
 
 
-def event_to_json(event: Event) -> str:
+def event_to_json(event: Event, prev_events: Dict[str, List[EventDependency]],
+                  next_events: Dict[str, List[EventDependency]]) -> str:
     lines = []
-    if event.prev is not None:
-        lines.append(generate_event_str(
-            pid=f"{event.host}",
-            tid=f"{event.rank}",
-            name=f"{event.prev} -> {event.name}",
-            id=f"{event.prev} -> {event.name}",
-            ph="f",
-            cat="transfer",
-            ts=event.start_ts * 1_000_000
-        ))
+    if event.id is not None:
+        for prev_event in prev_events[event.id]:
+            lines.append(generate_event_str(
+                pid=f"{event.host}",
+                tid=f"{event.rank}",
+                name=f"{prev_event.from_id} -> {prev_event.to_id}",
+                id=f"{prev_event.from_id} -> {prev_event.to_id}",
+                ph="f",
+                cat=f"{prev_event.type}",
+                ts=event.start_ts * 1_000_000
+            ))
     lines.append(generate_event_str(
         pid=f"{event.host}",
         tid=f"{event.rank}",
@@ -53,16 +55,17 @@ def event_to_json(event: Event) -> str:
         ph="B",
         ts=event.start_ts * 1_000_000
     ))
-    if event.next is not None:
-        lines.append(generate_event_str(
-            pid=f"{event.host}",
-            tid=f"{event.rank}",
-            name=f"{event.name} -> {event.next}",
-            id=f"{event.name} -> {event.next}",
-            ph="s",
-            cat="transfer",
-            ts=event.finish_ts * 1_000_000
-        ))
+    if event.id is not None:
+        for next_event in next_events[event.id]:
+            lines.append(generate_event_str(
+                pid=f"{event.host}",
+                tid=f"{event.rank}",
+                name=f"{next_event.from_id} -> {next_event.to_id}",
+                id=f"{next_event.from_id} -> {next_event.to_id}",
+                ph="s",
+                cat=f"{next_event.type}",
+                ts=event.finish_ts * 1_000_000
+            ))
     lines.append(generate_event_str(
         pid=f"{event.host}",
         tid=f"{event.rank}",
@@ -74,8 +77,10 @@ def event_to_json(event: Event) -> str:
     return ',\n'.join(lines)
 
 
-def events_to_json(events: List[Event]) -> str:
+def events_to_json(events_context: EventsContext) -> str:
     result = '[\n'
-    result += ',\n'.join([event_to_json(event) for event in events])
+    result += ',\n'.join(
+        [event_to_json(event, events_context.prev_events, events_context.next_events) for event in
+         events_context.events])
     result += '\n]\n'
     return result
