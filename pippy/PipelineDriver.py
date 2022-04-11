@@ -135,6 +135,7 @@ class RefcountedFuture:
         """
         Decrement refcount by 1. Return True if this instance should be freed
         """
+        assert self.refcount != 0, 'Detected reference counting inconsistency. Please report a bug to PiPPy'
         self.refcount -= 1
         return self.refcount == 0
 
@@ -272,8 +273,8 @@ class PipeStageExecutor:
             logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Got WorkItem {work_item}')
 
             work_item.state = SchedState.RUNNING
-            args_rrefs = work_item.args
-            kwargs_rrefs = work_item.kwargs
+            args_value_refs = work_item.args
+            kwargs_value_refs = work_item.kwargs
             future = work_item.future
             microbatch_id = work_item.microbatch_id
             ready_args = work_item.ready_args
@@ -292,8 +293,8 @@ class PipeStageExecutor:
                 else:
                     return a
 
-            args = torch.fx.node.map_aggregate(args_rrefs, retrieve_value_ref_args_by_idx)
-            kwargs = torch.fx.node.map_aggregate(kwargs_rrefs, retrieve_value_ref_args_by_idx)
+            args = torch.fx.node.map_aggregate(args_value_refs, retrieve_value_ref_args_by_idx)
+            kwargs = torch.fx.node.map_aggregate(kwargs_value_refs, retrieve_value_ref_args_by_idx)
 
             if phase == Phase.BACKWARD:
                 logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running backward phase. Retrieving stashed values')
@@ -353,7 +354,7 @@ class PipeStageExecutor:
         # static schedules?
 
         logging.info(f'[{self.local_rank}][{cur_microbatch}] Received invoke call for {debug_str}')
-        # Extract all RRef arguments so we can spawn asynchronous data transfers
+        # Extract all ValueRef arguments so we can spawn asynchronous data transfers
         # for each of them
         value_ref_args : List[ValueReference] = []
 
@@ -396,15 +397,15 @@ class PipeStageExecutor:
                 self.waiting_runlist[output_unique_key] = work_item
 
 
-        # Spawn asynchronous data transfers for each of the RRef arguments.
+        # Spawn asynchronous data transfers for each of the ValueRef arguments.
         _futures = []
         for arg_idx, value_ref_arg in enumerate(value_ref_args):
             logging.info(f'[{self.local_rank}][{cur_microbatch}] Launching asynchronous data transfer for ValueReference {arg_idx} {value_ref_arg}')
             assert self.peer_executors is not None
             self_rref: rpc.RRef = rpc.RRef(self)
-            _futures.append(rpc.rpc_async(
-                to=self.local_rank, func=async_transfer,
-                args=(self.local_rank, cur_microbatch, self_rref, value_ref_arg, self.peer_executors[value_ref_arg.rank], arg_idx, output_unique_key, self.max_outstanding)))
+            _futures.append(async_transfer(self.local_rank, cur_microbatch, self_rref, value_ref_arg,
+                                                    self.peer_executors[value_ref_arg.rank], arg_idx, output_unique_key,
+                                                    self.max_outstanding))
 
         if DEBUG:
             # Make exceptions visible
@@ -513,7 +514,7 @@ class PipelineDriverBase:
 
         # Inform executors of their peers
         for rank, executor in self.rank_to_executor.items():
-            executor.remote().install_peer_executors(self.rank_to_executor).to_here()
+            executor.rpc_sync().install_peer_executors(self.rank_to_executor)
 
     def run(self, chunks: int, *args, **kwargs):
         raise NotImplementedError('PipelineDriverBase is an abstract base class, please use a concrete '
@@ -566,10 +567,11 @@ class PipelineDriverBase:
 
 
 class RemoteInterpreter(torch.fx.Interpreter):
-    def __init__(self, remote_stage_executor_rrefs, module, cur_microbatch : int,   
+    def __init__(self, remote_stage_executor_rrefs, rank_to_executor, module, cur_microbatch : int,
                  args, kwargs, garbage_collect_values=True):
         super().__init__(module, garbage_collect_values)
         self.remote_stage_executor_rrefs = remote_stage_executor_rrefs
+        self.rank_to_executor = rank_to_executor
         self.cur_microbatch = cur_microbatch
         self.pc = 0
         self.node_list = list(self.module.graph.nodes)
@@ -598,9 +600,9 @@ class RemoteInterpreter(torch.fx.Interpreter):
             logging.info(f'[root][{self.cur_microbatch}] Issuing {Phase.FORWARD} '
                          f'invocation for target {target} on rank {rank}')
             invocation_key = f'{self.cur_microbatch}_{node.name}'
-            return stage_executor.remote().invoke(
+            return stage_executor.rpc_sync().invoke(
                 invocation_key, Phase.FORWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
-                output_refcount=len(node.users)).to_here()
+                output_refcount=len(node.users))
         else:
             logging.info(f'[root][{self.cur_microbatch}] Running local operation {target} from driver')
             return super().call_module(target, args, kwargs)
@@ -609,23 +611,18 @@ class RemoteInterpreter(torch.fx.Interpreter):
         node = self.node_list[self.pc]
         invocation_key = f'{self.cur_microbatch}_{node.name}'
         if target is operator.getitem and isinstance(args[0], ValueReference):
-            # lol
-            stage_executor = None
-            for _, (rank, executor) in self.remote_stage_executor_rrefs.items():
-                if rank == args[0].rank:
-                    stage_executor = executor
-            assert stage_executor is not None
-            return stage_executor.remote().index_value(
+            stage_executor = self.rank_to_executor[args[0].rank]
+            return stage_executor.rpc_sync().index_value(
                 output_unique_key=invocation_key, value_ref=args[0], output_refcount=len(node.users),
-                idx=args[1]).to_here()
+                idx=args[1])
         elif target is stage_backward:
             assert 'fw_stage' in node.meta
             rank, stage_executor = self.remote_stage_executor_rrefs[node.meta['fw_stage']]
             logging.info(f'[root][{self.cur_microbatch}] Issuing BW invocation '
                          f'for target {node.meta["fw_stage"]} on rank {rank}')
-            return stage_executor.remote().invoke(
+            return stage_executor.rpc_sync().invoke(
                 invocation_key, Phase.BACKWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
-                output_refcount=len(node.users)).to_here()
+                output_refcount=len(node.users))
         elif target is sync_barrier:
             # TODO: just assuming the last executor is indeed the executor for the
             # last stage. We should do this in a more principled way
@@ -633,9 +630,9 @@ class RemoteInterpreter(torch.fx.Interpreter):
             rank, stage_executor = self.remote_stage_executor_rrefs[executor_keys[-1]]
             logging.info(f'[root][{self.cur_microbatch}] Issuing sync invocation '
                          f'on rank {rank}')
-            return stage_executor.remote().invoke(
+            return stage_executor.rpc_sync().invoke(
                 invocation_key, Phase.SYNC_BARRIER, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
-                output_refcount=len(node.users)).to_here()
+                output_refcount=len(node.users))
         else:
             raise AssertionError(f'Unknown operator {torch.typename(target)}')
 
@@ -694,8 +691,8 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 
         for chunk in range(chunks):
             logging.info(f'[root] Instantiating microbatch interpreter for chunk {chunk}')
-            interp = RemoteInterpreter(self.remote_stage_executor_rrefs, self.pipe.split_gm, chunk, args_split[chunk],
-                                       kwargs_split[chunk])
+            interp = RemoteInterpreter(self.remote_stage_executor_rrefs, self.rank_to_executor, self.pipe.split_gm,
+                                       chunk, args_split[chunk], kwargs_split[chunk])
             microbatch_interpreters.append(interp)
 
         logging.info(f'[root] {len(microbatch_interpreters)} instantiated')
@@ -745,8 +742,8 @@ class PipelineDriver1F1B(PipelineDriverBase):
 
         for chunk in range(chunks):
             logging.info(f'[root] Instantiating microbatch interpreter for chunk {chunk}')
-            interp = RemoteInterpreter(self.remote_stage_executor_rrefs, self.pipe.split_gm, chunk, args_split[chunk],
-                                       kwargs_split[chunk])
+            interp = RemoteInterpreter(self.remote_stage_executor_rrefs, self.rank_to_executor, self.pipe.split_gm,
+                                       chunk, args_split[chunk], kwargs_split[chunk])
             microbatch_interpreters.append(interp)
 
         logging.info(f'[root] {len(microbatch_interpreters)} instantiated')
