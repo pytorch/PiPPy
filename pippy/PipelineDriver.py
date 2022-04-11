@@ -404,8 +404,8 @@ class PipeStageExecutor:
             assert self.peer_executors is not None
             self_rref: rpc.RRef = rpc.RRef(self)
             _futures.append(async_transfer(self.local_rank, cur_microbatch, self_rref, value_ref_arg,
-                                                    self.peer_executors[value_ref_arg.rank], arg_idx, output_unique_key,
-                                                    self.max_outstanding))
+                                           self.peer_executors[value_ref_arg.rank], arg_idx, output_unique_key,
+                                           self.max_outstanding))
 
         if DEBUG:
             # Make exceptions visible
