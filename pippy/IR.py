@@ -39,7 +39,7 @@ def stage_backward(stage_output, output_grads, input_values, stage_info : str):
             if isinstance(output_val, torch.Tensor):
                 if not output_val.requires_grad and output_val.grad_fn is None:
                     return
-                assert isinstance(grad_val, (torch.Tensor, type(None)))
+                assert isinstance(grad_val, (torch.Tensor, type(None))), f'Expected Tensor or None gradient but got {type(grad_val)}'
                 stage_output_tensors.append(output_val)
                 output_grad_tensors.append(grad_val)
             elif isinstance(output_val, (tuple, list)):

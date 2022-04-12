@@ -337,7 +337,7 @@ class RankWorker(EventRecorder):
                 kwargs = torch.fx.node.map_aggregate(kwargs, extract_tensor_args)
                 logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running forward module')
                 out_val = stage_executor.mod(*args, **kwargs)
-                stage_executor.fwd_cache[microbatch_id] = (out_val, flat_tensor_args)
+                stage_executor.fwd_cache[microbatch_id] = (out_val if isinstance(out_val, tuple) else (out_val,), flat_tensor_args)
             elif work_item.phase == Phase.BACKWARD:
                 logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running backward')
                 out_val = stage_backward(*args, **kwargs)
