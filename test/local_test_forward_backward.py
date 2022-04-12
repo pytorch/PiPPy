@@ -27,7 +27,7 @@ schedules = {
     '1F1B': PipelineDriver1F1B,
 }
 
-VERBOSE = bool(os.environ.get('VERBOSE', False))
+VERBOSE = bool(int(os.environ.get('VERBOSE', False)))
 
 if VERBOSE:
     logging.getLogger().setLevel(logging.DEBUG)
@@ -57,7 +57,7 @@ def set_grad_in_executor(executor, qualname, value):
 torch.fx.Tracer.proxy_buffer_attributes = True
 
 
-def run_main(args):
+def run_master(args):
     torch.manual_seed(42)
 
     d_hid = 50
@@ -242,7 +242,7 @@ def run_worker(rank, world_size, args):
         rpc_backend_options=options
     )
     if rank == 0:
-        run_main(args)
+        run_master(args)
     rpc.shutdown()
 
 
