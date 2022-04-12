@@ -104,7 +104,9 @@ def run_master(args):
             return x
 
     ec = ExampleCode()
-    ec(torch.randn(bs, d_hid))
+    ec.to(args.device)
+    ec_input = torch.randn(bs, d_hid, device=args.device)
+    ec(ec_input)
     ec.train()
 
     # TODO: works with sum, need to define semantics for e.g. mean
@@ -122,11 +124,10 @@ def run_master(args):
                                                                args.world_size,
                                                                _debug_mask_minibatches=DEBUG_MASK_MINIBATCHES)
 
-    input = torch.randn(bs, d_hid)
-    target = torch.randn(bs, d_hid)
+    target = torch.randn(bs, d_hid, device=args.device)
 
     # TODO: distributed optimizer
-    out = pipe_driver.run(CHUNKS, input, target)
+    out = pipe_driver.run(CHUNKS, ec_input, target)
 
     all_grad_qualnames = {k: None for k, v in ec_pipe.named_parameters()}
 
@@ -144,7 +145,7 @@ def run_master(args):
     optim = torch.optim.SGD(ec_pipe.split_gm.parameters(), lr=0.05)
     optim.zero_grad()
     if REF_USE_MICROBATCHES:
-        args_split, kwargs_split = split_args_kwargs_into_chunks((input, target), {}, args_chunk_spec,
+        args_split, kwargs_split = split_args_kwargs_into_chunks((ec_input, target), {}, args_chunk_spec,
                                                                  kwargs_chunk_spec, CHUNKS,
                                                                  DEBUG_MASK_MINIBATCHES)
         ref_outs = []
@@ -152,7 +153,7 @@ def run_master(args):
             ref_outs.append(ec_pipe(*args_split[chunk]))
         ref_out = torch.sum(torch.stack(ref_outs))
     else:
-        ref_out = ec_pipe(input, target)
+        ref_out = ec_pipe(ec_input, target)
 
     # Shared parameter sync for reference. TODO: move this to actual runtime
     for param_set in ec_pipe.replicated_params:
@@ -192,7 +193,7 @@ def run_master(args):
     # Test equivalence with initial code as well
     orig_optim = torch.optim.SGD(ec.parameters(), lr=0.05)
     orig_optim.zero_grad()
-    orig_loss = mse_loss(ec(input), target)
+    orig_loss = mse_loss(ec(ec_input), target)
     orig_loss.backward()
     torch.testing.assert_close(out, orig_loss)
 
@@ -223,18 +224,30 @@ def run_master(args):
     # # # Profiling runs
     # with torch.autograd.profiler_legacy.profile(enabled=PROFILING_ENABLED) as prof:
     #     pipe_driver._debug_mask_minibatches = False
-    #     out = pipe_driver.run(CHUNKS, input, target)
-    #     ref_out = ec_pipe.split_gm(input, target)
+    #     out = pipe_driver.run(CHUNKS, ec_input, target)
+    #     ref_out = ec_pipe.split_gm(ec_input, target)
     #     print(f'profiling run completed {torch.sum(ref_out)} ref {torch.sum(ref_out)}')
     # if PROFILING_ENABLED:
     #     prof.export_chrome_trace(f'{os.path.splitext(os.path.basename(__file__))[0]}.json')
 
 
 def run_worker(rank, world_size, args):
-    print(f"rank = {rank} host/pid = {socket.gethostname()}/{os.getpid()}")
+    # Fill in correct rank in case args.rank = -1
+    if args.rank == -1:
+        args.rank = rank
     os.environ['MASTER_ADDR'] = args.master_addr
     os.environ['MASTER_PORT'] = args.master_port
     options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256)
+    if args.cuda:
+        n_devs = torch.cuda.device_count()
+        dev_id = rank % n_devs
+        options.set_devices([dev_id])
+        for i in range(world_size):
+            options.set_device_map(f"worker{i}", {dev_id: i % n_devs})
+    args.device = f'cuda:{dev_id}' if args.cuda else 'cpu'
+    print(f"rank = {rank} host/pid/device = "
+          f"{socket.gethostname()}/{os.getpid()}/{args.device}")
+
     rpc.init_rpc(
         f"worker{rank}",
         rank=rank,
@@ -254,6 +267,7 @@ if __name__ == "__main__":
     parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
     parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
     parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
+    parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
     args = parser.parse_args()
 
     if args.rank == -1:

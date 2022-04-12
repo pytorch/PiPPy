@@ -55,7 +55,9 @@ def run_master(args):
             return {'out': x}
 
     ec = ExampleCode()
-    ec(torch.randn(bs, d_hid))
+    ec.to(args.device)
+    ec_input = torch.randn(bs, d_hid, device=args.device)
+    ec(ec_input)
 
     ec_pipe = Pipe.from_tracing(ec, MULTI_USE_PARAM_CONFIG)
     print(ec_pipe.split_gm)
@@ -68,11 +70,9 @@ def run_master(args):
                                                                output_chunk_spec,
                                                                args.world_size, _debug_mask_minibatches=True)
 
-    input = torch.randn(bs, d_hid)
-
     # # Warm up and correctness runs
-    out = pipe_driver.run(5, input)
-    ref_out = ec_pipe(input)
+    out = pipe_driver.run(5, ec_input)
+    ref_out = ec_pipe(ec_input)
 
     if CHECK_NUMERIC_EQUIVALENCE:
         torch.testing.assert_close(out['out'], ref_out['out'])
@@ -80,18 +80,30 @@ def run_master(args):
 
     # # Profiling runs
     with torch.autograd.profiler_legacy.profile(enabled=PROFILING_ENABLED) as prof:
-        out = pipe_driver.run(5, input)
-        ref_out = ec_pipe(input)
+        out = pipe_driver.run(5, ec_input)
+        ref_out = ec_pipe(ec_input)
         print(f'profiling run completed {torch.sum(out["out"])} ref {torch.sum(ref_out["out"])}')
     if PROFILING_ENABLED:
         prof.export_chrome_trace(f'{os.path.splitext(os.path.basename(__file__))[0]}.json')
 
 
 def run_worker(rank, world_size, args):
-    print(f"rank = {rank} host/pid = {socket.gethostname()}/{os.getpid()}")
+    # Fill in correct rank in case args.rank = -1
+    if args.rank == -1:
+        args.rank = rank
     os.environ['MASTER_ADDR'] = args.master_addr
     os.environ['MASTER_PORT'] = args.master_port
     options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256)
+    if args.cuda:
+        n_devs = torch.cuda.device_count()
+        dev_id = rank % n_devs
+        options.set_devices([dev_id])
+        for i in range(world_size):
+            options.set_device_map(f"worker{i}", {dev_id: i % n_devs})
+    args.device = f'cuda:{dev_id}' if args.cuda else 'cpu'
+    print(f"rank = {rank} host/pid/device = "
+          f"{socket.gethostname()}/{os.getpid()}/{args.device}")
+
     rpc.init_rpc(
         f"worker{rank}",
         rank=rank,
@@ -111,6 +123,7 @@ if __name__ == "__main__":
     parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
     parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
     parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
+    parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
     args = parser.parse_args()
 
     if args.rank == -1:
