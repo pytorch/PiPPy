@@ -4,6 +4,7 @@ import os
 import socket
 import time
 from collections import defaultdict
+from functools import reduce
 from typing import List, Dict, Any
 
 import torch
@@ -13,7 +14,9 @@ import torch.nn as nn
 from torch.autograd import Function
 
 from pippy.IR import MultiUseParameterConfig, Pipe, pipe_split, TrivialLossWrapper
-from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, Event, Phase, PipelineDriverBase
+from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, Phase, PipelineDriverBase, \
+    EventsContext
+from pippy.events import Event
 from pippy.microbatch import TensorChunkSpec, CustomReducer
 from pippy.visualizer import events_to_json
 
@@ -161,38 +164,42 @@ def run_main(args):
     kwargs_chunk_spec = {}
     output_chunk_spec = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
 
+    all_ranks = [1, 2, 3, 4]
     pipe_driver: PipelineDriverBase = PipelineDriverFillDrain(ec_pipe, args_chunk_spec, kwargs_chunk_spec,
-                                                              output_chunk_spec,
-                                                              args.world_size, _debug_mask_minibatches=True)
+                                                              output_chunk_spec, args.world_size - 1, all_ranks,
+                                                              _debug_mask_minibatches=True)
 
     input = torch.randn(bs, d_hid)
     target = torch.randn(bs, d_hid)
 
     pipe_visualized_filename = "pipe_visualized.json"
-    batches_events = []
+    batches_events_contexts = []
     for i in range(batches):
         pipe_driver.run(chunks, input, target)
-        batches_events.append(pipe_driver.retrieve_events())
+        batches_events_contexts.append(pipe_driver.retrieve_events())
 
     # first: save file
-    all_events = [event for events in batches_events for event in events]
+    all_events_contexts: EventsContext = reduce(lambda c1, c2: EventsContext().update(c1).update(c2),
+                                                batches_events_contexts, EventsContext())
     with open(pipe_visualized_filename, "w") as f:
-        f.write(events_to_json(all_events))
+        f.write(events_to_json(all_events_contexts))
 
     # second: perform checks
-    for events in batches_events:
-        check_events_for_single_batch(events, args.world_size, chunks, pipe_visualized_filename)
+    for events_context in batches_events_contexts:
+        check_events_for_single_batch(events_context.events, all_ranks, chunks, pipe_visualized_filename)
 
 
-def check_events_for_single_batch(events: List[Event], all_ranks: int, chunks: int, pipe_visualized_filename: str):
+def check_events_for_single_batch(events: List[Event], all_ranks: List[int], chunks: int,
+                                  pipe_visualized_filename: str):
     events_by_type_by_rank_by_mbid: Dict[Any, Dict[Any, Dict[Any, Event]]] = \
         defaultdict(lambda: defaultdict(lambda: dict()))
     for event in events:
         events_by_type_by_rank_by_mbid[event.type][event.rank][event.mbid] = event
 
     # Basic happens-before cross rank checks
-    for rank in range(all_ranks - 1):
-        next_rank = rank + 1
+    for i in range(len(all_ranks) - 1):
+        rank = all_ranks[i]
+        next_rank = all_ranks[i + 1]
         for mbid in range(chunks):
             rank_forward = events_by_type_by_rank_by_mbid[Phase.FORWARD][rank][mbid]
             next_rank_forward = events_by_type_by_rank_by_mbid[Phase.FORWARD][next_rank][mbid]
@@ -211,7 +218,8 @@ def check_events_for_single_batch(events: List[Event], all_ranks: int, chunks: i
     # Basic happens-before cross-microbatch checks
     for mbid in range(chunks - 1):
         next_mbid = mbid + 1
-        for rank in range(all_ranks):
+        for i in range(len(all_ranks) - 1):
+            rank = all_ranks[i]
             rank_forward = events_by_type_by_rank_by_mbid[Phase.FORWARD][rank][mbid]
             next_mbid_forward = events_by_type_by_rank_by_mbid[Phase.FORWARD][rank][next_mbid]
             # happens-before cross-microbatch forward check
@@ -229,15 +237,15 @@ def check_events_for_single_batch(events: List[Event], all_ranks: int, chunks: i
     # Overlap checks
     for mbid in range(chunks - 1):
         next_mbid = mbid + 1
-        last_forward = events_by_type_by_rank_by_mbid[Phase.FORWARD][all_ranks - 1][mbid]
-        first_next_forward = events_by_type_by_rank_by_mbid[Phase.FORWARD][0][next_mbid]
+        last_forward = events_by_type_by_rank_by_mbid[Phase.FORWARD][all_ranks[-1]][mbid]
+        first_next_forward = events_by_type_by_rank_by_mbid[Phase.FORWARD][all_ranks[0]][next_mbid]
         # cross-microbatch forward overlap check
         # TODO: INVERT CONDITION TO >= AFTER OVERLAP FIX!!!
         assert last_forward.finish_ts <= first_next_forward.start_ts, \
             f"Forward microbatch {mbid} doesn't overlap with next microbatch {next_mbid}"
 
-        last_backward = events_by_type_by_rank_by_mbid[Phase.BACKWARD][all_ranks - 1][mbid]
-        first_next_backward = events_by_type_by_rank_by_mbid[Phase.BACKWARD][0][mbid + 1]
+        last_backward = events_by_type_by_rank_by_mbid[Phase.BACKWARD][all_ranks[-1]][mbid]
+        first_next_backward = events_by_type_by_rank_by_mbid[Phase.BACKWARD][all_ranks[0]][mbid + 1]
         # cross-microbatch forward overlap check
         # TODO: INVERT CONDITION TO >= AFTER OVERLAP FIX!!!
         assert last_backward.finish_ts <= first_next_backward.start_ts, \
@@ -262,7 +270,7 @@ def run_worker(rank, world_size, args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 4)))
+    parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 5)))
     parser.add_argument('--rank', type=int, default=int(os.getenv("RANK", -1)))
     parser.add_argument('--master_addr', type=str, default=os.getenv('MASTER_ADDR', 'localhost'))
     parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
