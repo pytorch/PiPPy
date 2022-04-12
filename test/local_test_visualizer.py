@@ -38,14 +38,14 @@ torch.fx.Tracer.proxy_buffer_attributes = True
 
 
 @torch.fx.wrap
-def sleep(x, t=0.01):
+def sleep(x, t=1.0):
     time.sleep(t)
     return x
 
 
 class SlowMSELoss(nn.MSELoss):
     def forward(self, input, target):
-        return super().forward(sleep(input, 0.001), target)
+        return super().forward(sleep(input, t=0.01), target)
 
 
 # Inherit from Function
@@ -56,7 +56,7 @@ class MyLinearFunction(Function):
     # bias is an optional argument
     def forward(ctx, input, weight, bias=None):
         # print("my forward")
-        input = sleep(input)
+        input = sleep(input, t=0.1)
         ctx.save_for_backward(input, weight, bias)
         output = input.mm(weight.t())
         if bias is not None:
@@ -67,7 +67,7 @@ class MyLinearFunction(Function):
     @staticmethod
     def backward(ctx, grad_output):
         # print("my backward")
-        grad_output = sleep(grad_output)
+        grad_output = sleep(grad_output, t=0.3)
         # This is a pattern that is very convenient - at the top of backward
         # unpack saved_tensors and initialize all gradients w.r.t. inputs to
         # None. Thanks to the fact that additional trailing Nones are
@@ -203,10 +203,10 @@ def check_events_for_single_batch(events: List[Event], all_ranks: List[int], chu
     for event in events:
         events_by_type_by_rank_by_mbid[event.type][event.rank][event.mbid] = event
 
-    def start_ts(e: Event, eps=0.01):
+    def start_ts(e: Event, eps=0.1):
         return e.start_ts + (e.finish_ts - e.start_ts) * eps
 
-    def finish_ts(e: Event, eps=0.01):
+    def finish_ts(e: Event, eps=0.1):
         return e.finish_ts - (e.finish_ts - e.start_ts) * eps
 
     # Basic happens-before cross rank checks
