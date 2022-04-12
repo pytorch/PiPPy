@@ -5,6 +5,7 @@ import socket
 import time
 from collections import defaultdict
 from typing import List, Dict, Any
+import logging
 
 import torch
 import torch.distributed.rpc as rpc
@@ -24,6 +25,11 @@ schedules = {
     'FillDrain': PipelineDriverFillDrain,
     '1F1B': PipelineDriver1F1B,
 }
+
+VERBOSE = bool(int(os.environ.get('VERBOSE', False)))
+
+if VERBOSE:
+    logging.getLogger().setLevel(logging.DEBUG)
 
 torch.fx.Tracer.proxy_buffer_attributes = True
 
@@ -184,6 +190,12 @@ def check_events_for_single_batch(events: List[Event], all_ranks: int, chunks: i
     for event in events:
         events_by_type_by_rank_by_mbid[event.type][event.rank][event.mbid] = event
 
+    def start_ts(e: Event, eps=0.01):
+        return e.start_ts + (e.finish_ts - e.start_ts) * eps
+
+    def finish_ts(e: Event, eps=0.01):
+        return e.finish_ts - (e.finish_ts - e.start_ts) * eps
+
     # Basic happens-before cross rank checks
     for rank in range(all_ranks - 1):
         next_rank = rank + 1
@@ -191,14 +203,14 @@ def check_events_for_single_batch(events: List[Event], all_ranks: int, chunks: i
             rank_forward = events_by_type_by_rank_by_mbid[Phase.FORWARD][rank][mbid]
             next_rank_forward = events_by_type_by_rank_by_mbid[Phase.FORWARD][next_rank][mbid]
             # happens-before cross-rank forward check
-            assert next_rank_forward.start_ts >= rank_forward.finish_ts, \
+            assert start_ts(next_rank_forward) >= finish_ts(rank_forward), \
                 f"{rank_forward.name}({rank_forward.finish_ts}) must happen before " \
                 f"{next_rank_forward.name}({next_rank_forward.start_ts}), see {pipe_visualized_filename}"
 
             rank_backward = events_by_type_by_rank_by_mbid[Phase.BACKWARD][next_rank][mbid]
             next_rank_backward = events_by_type_by_rank_by_mbid[Phase.BACKWARD][rank][mbid]
             # happens-before cross-rank backward check
-            assert next_rank_backward.start_ts >= rank_backward.finish_ts, \
+            assert start_ts(next_rank_backward) >= finish_ts(rank_backward), \
                 f"{rank_backward.name}({rank_backward.finish_ts}) must happen before " \
                 f"{next_rank_backward.name}({next_rank_backward.start_ts}), see {pipe_visualized_filename}"
 
@@ -209,14 +221,14 @@ def check_events_for_single_batch(events: List[Event], all_ranks: int, chunks: i
             rank_forward = events_by_type_by_rank_by_mbid[Phase.FORWARD][rank][mbid]
             next_mbid_forward = events_by_type_by_rank_by_mbid[Phase.FORWARD][rank][next_mbid]
             # happens-before cross-microbatch forward check
-            assert next_mbid_forward.start_ts >= rank_forward.finish_ts, \
+            assert start_ts(next_mbid_forward) >= finish_ts(rank_forward), \
                 f"{rank_forward.name}({rank_forward.finish_ts}) must happen before " \
                 f"{next_mbid_forward.name}({next_mbid_forward.start_ts}), see {pipe_visualized_filename}"
 
             rank_backward = events_by_type_by_rank_by_mbid[Phase.BACKWARD][rank][mbid]
             next_mbid_backward = events_by_type_by_rank_by_mbid[Phase.BACKWARD][rank][next_mbid]
             # happens-before cross-microbatch backward check
-            assert next_mbid_backward.start_ts >= rank_backward.finish_ts, \
+            assert start_ts(next_mbid_backward) >= finish_ts(rank_backward), \
                 f"{rank_backward.name}({rank_backward.finish_ts}) must happen before " \
                 f"{next_mbid_backward.name}({next_mbid_backward.start_ts}), see {pipe_visualized_filename}"
 
@@ -226,15 +238,13 @@ def check_events_for_single_batch(events: List[Event], all_ranks: int, chunks: i
         last_forward = events_by_type_by_rank_by_mbid[Phase.FORWARD][all_ranks - 1][mbid]
         first_next_forward = events_by_type_by_rank_by_mbid[Phase.FORWARD][0][next_mbid]
         # cross-microbatch forward overlap check
-        # TODO: INVERT CONDITION TO >= AFTER OVERLAP FIX!!!
-        assert last_forward.finish_ts <= first_next_forward.start_ts, \
+        assert last_forward.finish_ts >= first_next_forward.start_ts, \
             f"Forward microbatch {mbid} doesn't overlap with next microbatch {next_mbid}"
 
-        last_backward = events_by_type_by_rank_by_mbid[Phase.BACKWARD][all_ranks - 1][mbid]
-        first_next_backward = events_by_type_by_rank_by_mbid[Phase.BACKWARD][0][mbid + 1]
+        last_backward = events_by_type_by_rank_by_mbid[Phase.BACKWARD][0][mbid]
+        first_next_backward = events_by_type_by_rank_by_mbid[Phase.BACKWARD][all_ranks - 1][next_mbid]
         # cross-microbatch forward overlap check
-        # TODO: INVERT CONDITION TO >= AFTER OVERLAP FIX!!!
-        assert last_backward.finish_ts <= first_next_backward.start_ts, \
+        assert last_backward.finish_ts >= first_next_backward.start_ts, \
             f"Backward microbatch {mbid} doesn't overlap with next microbatch {next_mbid}"
 
 
