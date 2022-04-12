@@ -1,4 +1,5 @@
 #!/bin/bash
+# Copyright (c) Meta Platforms, Inc. and affiliates
 
 export MASTER_PORT=29500
 export MASTER_ADDR=$(scontrol show hostname ${SLURM_NODELIST} | head -n 1)

@@ -3,6 +3,7 @@ import argparse
 import os
 import socket
 from typing import Dict
+import logging
 
 import torch
 import torch.distributed.rpc as rpc
@@ -21,10 +22,15 @@ schedules = {
     'Interleaved1F1B': PipelineDriverInterleaved1F1B,
 }
 
+VERBOSE = bool(int(os.environ.get('VERBOSE', False)))
+
+if VERBOSE:
+    logging.getLogger().setLevel(logging.DEBUG)
+
 torch.fx.Tracer.proxy_buffer_attributes = True
 
 
-def run_main(args):
+def run_master(args):
     d_hid = 512
     bs = 503
 
@@ -102,7 +108,7 @@ def run_worker(rank, world_size, args):
         rpc_backend_options=options
     )
     if rank == 0:
-        run_main(args)
+        run_master(args)
     rpc.shutdown()
 
 

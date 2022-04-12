@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 import argparse
 import inspect
 import os
@@ -49,10 +50,11 @@ def add_split_points(gpt2, layers_per_rank):
     annotate_split_points(gpt2, {'ln_f': PipeSplitWrapper.SplitPoint.BEGINNING})
 
 
-def run_main(args):
-    REPLICATE = os.environ.get('REPLICATE', '0') != '0'
-    MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if REPLICATE else MultiUseParameterConfig.TRANSMIT
-    print(f'REPLICATE config: {REPLICATE} -> {MULTI_USE_PARAM_CONFIG}')
+def run_master(args):
+    MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if args.replicate else MultiUseParameterConfig.TRANSMIT
+    print(f'REPLICATE config: {args.replicate} -> {MULTI_USE_PARAM_CONFIG}')
+
+    print("Using schedule:", args.schedule)
 
     bs = 20
     seq_length = 32
@@ -80,7 +82,7 @@ def run_main(args):
     args_chunk_spec = (TensorChunkSpec(0),)
     kwargs_chunk_spec = {}
     output_chunk_spec = {'last_hidden_state': TensorChunkSpec(0)}
-    pipe_driver = PipelineDriverFillDrain(gpt2_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec,
+    pipe_driver = schedules[args.schedule](gpt2_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec,
                                           args.world_size, _debug_mask_minibatches=True)
 
     # Warm up and correctness runs
@@ -120,7 +122,7 @@ def run_worker(rank, world_size, args):
         rpc_backend_options=options
     )
     if rank == 0:
-        run_main(args)
+        run_master(args)
     rpc.shutdown()
 
 

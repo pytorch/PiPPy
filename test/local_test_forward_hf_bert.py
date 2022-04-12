@@ -13,7 +13,9 @@ import transformers.utils.fx as fx
 from pippy.IR import MultiUseParameterConfig, Pipe, PipeSplitWrapper, annotate_split_points
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverBase
 from pippy.microbatch import TensorChunkSpec
-from transformers import *
+from transformers import BertModel, BertConfig
+import logging
+
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
@@ -23,6 +25,10 @@ schedules = {
     '1F1B': PipelineDriver1F1B,
 }
 
+VERBOSE = bool(int(os.environ.get('VERBOSE', False)))
+
+if VERBOSE:
+    logging.getLogger().setLevel(logging.DEBUG)
 
 @torch.fx.wrap
 def torch_ones_wrapper(*args, **kwargs):
@@ -45,7 +51,7 @@ class HFBertTracer(fx.HFTracer):
 torch.fx.Tracer.proxy_buffer_attributes = True
 
 
-def run_main(args):
+def run_master(args):
     bs = 20
     seq_length = 32
 
@@ -115,7 +121,7 @@ def run_worker(rank, world_size, args):
         rpc_backend_options=options
     )
     if rank == 0:
-        run_main(args)
+        run_master(args)
     rpc.shutdown()
 
 
