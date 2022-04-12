@@ -141,6 +141,7 @@ def run_master(args):
 
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if args.replicate else MultiUseParameterConfig.TRANSMIT
     print(f'REPLICATE config: {args.replicate} -> {MULTI_USE_PARAM_CONFIG}')
+    print("Using schedule:", args.schedule)
 
     class ExampleCode(torch.nn.Module):
         def __init__(self):
@@ -171,7 +172,7 @@ def run_master(args):
     output_chunk_spec = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
 
     all_ranks = [1, 2, 3, 4]
-    pipe_driver: PipelineDriverBase = PipelineDriverFillDrain(ec_pipe, args_chunk_spec, kwargs_chunk_spec,
+    pipe_driver: PipelineDriverBase = schedules[args.schedule](ec_pipe, args_chunk_spec, kwargs_chunk_spec,
                                                               output_chunk_spec, args.world_size - 1, all_ranks,
                                                               _debug_mask_minibatches=True)
 
