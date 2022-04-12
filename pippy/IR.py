@@ -53,7 +53,8 @@ def stage_backward(stage_output, output_grads, input_values, stage_info : str):
                 for k in output_val.keys():
                     extract_tensors_with_grads(output_val[k], grad_val[k])
             else:
-                raise RuntimeError(f'Unsupported value type {type(output_val)}')
+                # Output is a non-tensor type; just ignore it
+                pass
 
         extract_tensors_with_grads(stage_output, output_grads)
 
