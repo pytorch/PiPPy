@@ -171,9 +171,9 @@ def run_master(args):
     kwargs_chunk_spec = {}
     output_chunk_spec = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
 
-    all_ranks = [1, 2, 3, 4]
+    all_stages = [0, 1, 2, 3]
     pipe_driver: PipelineDriverBase = schedules[args.schedule](ec_pipe, args_chunk_spec, kwargs_chunk_spec,
-                                                              output_chunk_spec, args.world_size - 1, all_ranks,
+                                                              output_chunk_spec, args.world_size - 1,
                                                               _debug_mask_minibatches=True)
 
     input = torch.randn(bs, d_hid)
@@ -193,10 +193,10 @@ def run_master(args):
 
     # second: perform checks
     for events_context in batches_events_contexts:
-        check_events_for_single_batch(events_context.events, all_ranks, chunks, pipe_visualized_filename)
+        check_events_for_single_batch(events_context.events, all_stages, chunks, pipe_visualized_filename)
 
 
-def check_events_for_single_batch(events: List[Event], all_ranks: List[int], chunks: int,
+def check_events_for_single_batch(events: List[Event], all_stages: List[int], chunks: int,
                                   pipe_visualized_filename: str):
     events_by_type_by_rank_by_mbid: Dict[Any, Dict[Any, Dict[Any, Event]]] = \
         defaultdict(lambda: defaultdict(lambda: dict()))
@@ -210,9 +210,9 @@ def check_events_for_single_batch(events: List[Event], all_ranks: List[int], chu
         return e.finish_ts - (e.finish_ts - e.start_ts) * eps
 
     # Basic happens-before cross rank checks
-    for i in range(len(all_ranks) - 1):
-        rank = all_ranks[i]
-        next_rank = all_ranks[i + 1]
+    for i in range(len(all_stages) - 1):
+        rank = all_stages[i]
+        next_rank = all_stages[i + 1]
         for mbid in range(chunks):
             rank_forward = events_by_type_by_rank_by_mbid[Phase.FORWARD][rank][mbid]
             next_rank_forward = events_by_type_by_rank_by_mbid[Phase.FORWARD][next_rank][mbid]
@@ -231,8 +231,8 @@ def check_events_for_single_batch(events: List[Event], all_ranks: List[int], chu
     # Basic happens-before cross-microbatch checks
     for mbid in range(chunks - 1):
         next_mbid = mbid + 1
-        for i in range(len(all_ranks) - 1):
-            rank = all_ranks[i]
+        for i in range(len(all_stages) - 1):
+            rank = all_stages[i]
             rank_forward = events_by_type_by_rank_by_mbid[Phase.FORWARD][rank][mbid]
             next_mbid_forward = events_by_type_by_rank_by_mbid[Phase.FORWARD][rank][next_mbid]
             # happens-before cross-microbatch forward check
@@ -250,14 +250,14 @@ def check_events_for_single_batch(events: List[Event], all_ranks: List[int], chu
     # Overlap checks
     for mbid in range(chunks - 1):
         next_mbid = mbid + 1
-        last_forward = events_by_type_by_rank_by_mbid[Phase.FORWARD][all_ranks[-1]][mbid]
-        first_next_forward = events_by_type_by_rank_by_mbid[Phase.FORWARD][all_ranks[0]][next_mbid]
+        last_forward = events_by_type_by_rank_by_mbid[Phase.FORWARD][all_stages[-1]][mbid]
+        first_next_forward = events_by_type_by_rank_by_mbid[Phase.FORWARD][all_stages[0]][next_mbid]
         # cross-microbatch forward overlap check
         assert last_forward.finish_ts >= first_next_forward.start_ts, \
             f"Forward microbatch {mbid} doesn't overlap with next microbatch {next_mbid}"
 
-        last_backward = events_by_type_by_rank_by_mbid[Phase.BACKWARD][all_ranks[0]][mbid]
-        first_next_backward = events_by_type_by_rank_by_mbid[Phase.BACKWARD][all_ranks[-1]][next_mbid]
+        last_backward = events_by_type_by_rank_by_mbid[Phase.BACKWARD][all_stages[0]][mbid]
+        first_next_backward = events_by_type_by_rank_by_mbid[Phase.BACKWARD][all_stages[-1]][next_mbid]
         # cross-microbatch forward overlap check
         assert last_backward.finish_ts >= first_next_backward.start_ts, \
             f"Backward microbatch {mbid} doesn't overlap with next microbatch {next_mbid}"
