@@ -13,6 +13,7 @@ import torch.distributed.rpc as rpc
 import torch.fx
 
 from pippy.IR import Pipe, stage_backward, sync_barrier
+from pippy.events import EventRecorder, EventsContext, Event
 from pippy.microbatch import split_args_kwargs_into_chunks, merge_chunks
 
 # TODO: Define the strategy for replicating the computation. In particular, we will likely make the assumption
@@ -58,6 +59,40 @@ class SchedState(Enum):
     RUNNING = 2
     DONE = 3
 
+
+def event_name(ph, stage_id, mbid):
+    phase_to_short_str = {
+        Phase.FORWARD: 'F',
+        Phase.BACKWARD: 'B',
+        Phase.SYNC_BARRIER: 'S',
+    }
+    return f"{phase_to_short_str[ph]}_{stage_id},{mbid}"
+
+
+def prev_event_name(ph: Any, all_stages: List[int], stage_id: int, mbid: Any):
+    i = all_stages.index(stage_id)
+    if ph == Phase.FORWARD and i > 0:
+        prev_stage = all_stages[i - 1]
+        return event_name(ph, prev_stage, mbid)
+    elif ph == Phase.BACKWARD and i < len(all_stages) - 1:
+        next_stage = all_stages[i + 1]
+        return event_name(ph, next_stage, mbid)
+    else:
+        return None
+
+
+def next_event_name(ph: Any, all_stages: List[int], stage_id: int, mbid: Any):
+    i = all_stages.index(stage_id)
+    if ph == Phase.FORWARD and i < len(all_stages) - 1:
+        next_stage = all_stages[i + 1]
+        return event_name(ph, next_stage, mbid)
+    elif ph == Phase.BACKWARD and i > 0:
+        prev_stage = all_stages[i - 1]
+        return event_name(ph, prev_stage, mbid) if stage_id > 0 else None
+    else:
+        return None
+
+
 class WorkItem:
     def __init__(
             self, stage_id, phase, args, kwargs, future, microbatch_id, blocked_args_count, ready_args,
@@ -82,30 +117,6 @@ class WorkItem:
 
     def __str__(self):
         return f'WorkItem({self.debug_str})'
-
-
-class Event:
-    def __init__(self,
-                 rank: int,
-                 start_ts: float,
-                 finish_ts: float,
-                 id: Optional[str] = None,
-                 name: Optional[str] = None,
-                 type: Optional[Any] = None,
-                 mbid: Optional[Any] = None
-                 ):
-        args_to_fwd = ['rank', 'start_ts', 'finish_ts', 'id', 'name', 'type', 'mbid']
-
-        for arg in args_to_fwd:
-            setattr(self, arg, locals()[arg])
-
-    rank: int
-    start_ts: float
-    finish_ts: float
-    id: Optional[str]
-    name: Optional[str]
-    type: Optional[Any]
-    mbid: Optional[Any]
 
 
 class ValueReference:
@@ -178,7 +189,7 @@ def async_transfer(stage_id, microbatch, worker_rref, value_ref_arg, value_ref_e
 
     return fut.then(bottom_half)
 
-class RankWorker:
+class RankWorker(EventRecorder):
     """
     RankWorker is the underlying WorkItem processing engine for pipeline stages
     resident on this rank. WorkItems of multiple stages would share the same
@@ -198,9 +209,10 @@ class RankWorker:
                     specify resource limits and how to implement backpressure?)
     """
 
-    def __init__(self, local_rank, max_outstanding=None):
+    def __init__(self, local_rank, all_stages, max_outstanding=None):
+        logging.info(f'[{local_rank}] Instantiating RankWorker')
         self.local_rank = local_rank
-        logging.info(f'[{self.local_rank}] Instantiating RankWorker')
+        self.all_stages = all_stages
         # Maximum outstanding micro-batches of the pipeline schedule
         self.max_outstanding = max_outstanding
         # Keeps track of the outstanding micro-batches in current rank executor
@@ -300,7 +312,8 @@ class RankWorker:
             kwargs = torch.fx.node.map_aggregate(kwargs_value_refs, retrieve_value_ref_args_by_idx)
 
             if phase == Phase.BACKWARD:
-                logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running backward phase. Retrieving stashed values')
+                logging.info(
+                    f'[{self.local_rank}][{work_item.microbatch_id}] Running backward phase. Retrieving stashed values')
                 # HACK: here we are directly accessing the saved tensor outputs
                 # for closed-over outputs so that they still have the grad_fn
                 # from local autograd. Can we solve this more elegantly?
@@ -319,6 +332,7 @@ class RankWorker:
                         return val
                     else:
                         return a
+
                 args = torch.fx.node.map_aggregate(args, extract_tensor_args)
                 kwargs = torch.fx.node.map_aggregate(kwargs, extract_tensor_args)
                 logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running forward module')
@@ -340,25 +354,14 @@ class RankWorker:
             future.set_result(out_val)
             work_item.state = SchedState.DONE
 
-            def name(ph, stage_id, mbid):
-                phase_to_short_str = {
-                    Phase.FORWARD: 'F',
-                    Phase.BACKWARD: 'B',
-                    Phase.SYNC_BARRIER: 'S',
-                }
-                return f"{phase_to_short_str[ph]}_{stage_id},{mbid}"
+            name = event_name(work_item.phase, work_item.stage_id, work_item.microbatch_id)
+            prev_name = prev_event_name(work_item.phase, self.all_stages, work_item.stage_id, work_item.microbatch_id)
+            next_name = next_event_name(work_item.phase, self.all_stages, work_item.stage_id, work_item.microbatch_id)
+            self.record_event(rank=self.local_rank, start_ts=start_ts, finish_ts=time.time(), id=name,
+                              name=name, type=work_item.phase, mbid=work_item.microbatch_id)
+            self.record_event_dependency(from_id=prev_name, to_id=name, type='transfer')
+            self.record_event_dependency(from_id=name, to_id=next_name, type='transfer')
 
-            name = name(work_item.phase, work_item.stage_id, work_item.microbatch_id)
-            self.record_event(rank=self.local_rank, start_ts=start_ts, finish_ts=time.time(), id=name, name=name,
-                              type=work_item.phase, mbid=work_item.microbatch_id)
-
-    def record_event(self, rank: int, start_ts: float, finish_ts: float, id: str, name: str, type: Optional[Any], mbid: Optional[Any]):
-        self.events.append(Event(rank=rank, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name, type=type, mbid=mbid))
-
-    def retrieve_events(self):
-        events = self.events
-        self.events = []
-        return events
 
 class PipeStageExecutor:
     """
@@ -483,6 +486,7 @@ class PipelineDriverBase:
         if not hasattr(self, 'interleave_stages'):
             self.interleave_stages = False
 
+        self.microbatch_interpreters: List[RemoteInterpreter] = []
 
     def _init_remote_executors(self):
         self.rank_worker_rrefs : Dict[int, torch.distributed.rpc.RRef] = {}
@@ -534,8 +538,10 @@ class PipelineDriverBase:
                           'since there are enough ranks to support one stage per rank')
 
         # Fire up rank workers
+        all_stages = list(range(n_stages))
         for rank in self.all_ranks[:ranks_to_launch]:
             kwargs = {'local_rank': rank,
+                      'all_stages': all_stages,
                       'max_outstanding': self.max_outstanding}
             self.rank_worker_rrefs[rank] = rpc.remote(rank, RankWorker, args=(), kwargs=kwargs)
 
@@ -544,7 +550,7 @@ class PipelineDriverBase:
         for stage_id, descr in enumerate(executor_descriptors):
             # Assign stages to rank workers in a round-robin fashion
             rank = stage_id % self.world_size
-            self.remote_stage_executor_rrefs[descr.name] = (rank,
+            self.remote_stage_executor_rrefs[descr.name] = (stage_id,
                                                             self.rank_worker_rrefs[rank].remote().create_stage_executor(
                                                                 stage_id=stage_id,
                                                                 mod=descr.mod))
@@ -558,23 +564,22 @@ class PipelineDriverBase:
         raise NotImplementedError('PipelineDriverBase is an abstract base class, please use a concrete '
                                   'implementation class.')
 
-
     def _sync_replicated_params(self):
         logging.info(f'[root] Synchronizing gradients for {len(self.pipe.replicated_params)} sets of replicated parameters')
         for param_set in self.pipe.replicated_params:
             grad_values = []
             for module_name, param_qualname in param_set.items():
                 assert module_name in self.remote_stage_executor_rrefs
-                rank, module_rref = self.remote_stage_executor_rrefs[module_name]
-                grad_value = rpc.rpc_sync(rank, get_grad_from_executor, (module_rref, param_qualname))
+                stage_id, module_rref = self.remote_stage_executor_rrefs[module_name]
+                grad_value = rpc.rpc_sync(module_rref.owner(), get_grad_from_executor, (module_rref, param_qualname))
                 grad_values.append(grad_value)
 
             synced_value = torch.sum(torch.stack(grad_values), dim=0)
 
             for module_name, param_qualname in param_set.items():
                 assert module_name in self.remote_stage_executor_rrefs
-                rank, module_rref = self.remote_stage_executor_rrefs[module_name]
-                rpc.rpc_sync(rank, set_grad_in_executor, (module_rref, param_qualname, synced_value))
+                stage_id, module_rref = self.remote_stage_executor_rrefs[module_name]
+                rpc.rpc_sync(module_rref.owner(), set_grad_in_executor, (module_rref, param_qualname, synced_value))
 
     def _retrieve_output_values(self, microbatch_interpreters, last_nodes):
         logging.info(f'[root] Retrieving output values from {len(microbatch_interpreters)} chunks')
@@ -597,14 +602,17 @@ class PipelineDriverBase:
         # Then wait for futures to be ready
         return torch.fx.node.map_aggregate(output_vals, lambda a: a.wait() if isinstance(a, torch._C.Future) else a)
 
-    def retrieve_events(self) -> List[Event]:
-        events = []
+    def retrieve_events(self) -> EventsContext:
+        events_context = EventsContext()
         for rank, worker_rref in self.rank_worker_rrefs.items():
-            events.extend(worker_rref.rpc_sync().retrieve_events())
-        return events
+            events_context.update(worker_rref.rpc_sync().retrieve_events())
+        for interp in self.microbatch_interpreters:
+            events_context.update(interp.retrieve_events())
+        events_context.events.sort(key=lambda e: e.start_ts)
+        return events_context
 
 
-class RemoteInterpreter(torch.fx.Interpreter):
+class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
     def __init__(self, remote_stage_executor_rrefs, stage_to_executor, module, cur_microbatch : int,
                  args, kwargs, garbage_collect_values=True):
         super().__init__(module, garbage_collect_values)
@@ -634,10 +642,16 @@ class RemoteInterpreter(torch.fx.Interpreter):
         node = self.node_list[self.pc]
 
         if target in self.remote_stage_executor_rrefs:
-            rank, stage_executor = self.remote_stage_executor_rrefs[target]
+            stage_id, stage_executor = self.remote_stage_executor_rrefs[target]
             logging.info(f'[root][{self.cur_microbatch}] Issuing {Phase.FORWARD} '
-                         f'invocation for target {target} on rank {rank}')
+                         f'invocation for target {target} on stage {stage_id}')
             invocation_key = f'{self.cur_microbatch}_{node.name}'
+            ts = time.time()
+            forward_name = event_name(Phase.FORWARD, stage_id, self.cur_microbatch)
+            name = f"I{forward_name}"
+            self.record_event(rank=0, start_ts=ts, finish_ts=ts, id=name, name=name, type='invoke',
+                              mbid=self.cur_microbatch)
+            self.record_event_dependency(from_id=name, to_id=forward_name, type='invoke')
             return stage_executor.rpc_sync().invoke(
                 invocation_key, Phase.FORWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
                 output_refcount=len(node.users))
@@ -655,9 +669,15 @@ class RemoteInterpreter(torch.fx.Interpreter):
                 idx=args[1])
         elif target is stage_backward:
             assert 'fw_stage' in node.meta
-            rank, stage_executor = self.remote_stage_executor_rrefs[node.meta['fw_stage']]
+            stage_id, stage_executor = self.remote_stage_executor_rrefs[node.meta['fw_stage']]
             logging.info(f'[root][{self.cur_microbatch}] Issuing BW invocation '
-                         f'for target {node.meta["fw_stage"]} on rank {rank}')
+                         f'for target {node.meta["fw_stage"]} on stage {stage_id}')
+            ts = time.time()
+            backward_name = event_name(Phase.BACKWARD, stage_id, self.cur_microbatch)
+            name = f"I{backward_name}"
+            self.record_event(rank=0, start_ts=ts, finish_ts=ts, id=name, name=name, type='invoke',
+                              mbid=self.cur_microbatch)
+            self.record_event_dependency(from_id=name, to_id=backward_name, type='invoke')
             return stage_executor.rpc_sync().invoke(
                 invocation_key, Phase.BACKWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
                 output_refcount=len(node.users))
@@ -665,16 +685,16 @@ class RemoteInterpreter(torch.fx.Interpreter):
             # TODO: just assuming the last executor is indeed the executor for the
             # last stage. We should do this in a more principled way
             executor_keys = list(self.remote_stage_executor_rrefs.keys())
-            rank, stage_executor = self.remote_stage_executor_rrefs[executor_keys[-1]]
+            stage_id, stage_executor = self.remote_stage_executor_rrefs[executor_keys[-1]]
             logging.info(f'[root][{self.cur_microbatch}] Issuing sync invocation '
-                         f'on rank {rank}')
+                         f'on stage {stage_id}')
             return stage_executor.rpc_sync().invoke(
                 invocation_key, Phase.SYNC_BARRIER, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
                 output_refcount=len(node.users))
         else:
             raise AssertionError(f'Unknown operator {torch.typename(target)}')
 
-    def run_until(self, predicate : Callable[[torch.fx.Node], bool]):
+    def run_until(self, predicate: Callable[[torch.fx.Node], bool]):
         for self.pc in range(self.pc, len(self.node_list)):
             node = self.node_list[self.pc]
 
@@ -725,25 +745,25 @@ class PipelineDriverFillDrain(PipelineDriverBase):
                                                                  self.kwargs_chunk_spec, chunks,
                                                                  self._debug_mask_minibatches)
 
-        microbatch_interpreters : List[RemoteInterpreter] = []
+        self.microbatch_interpreters = []
 
         for chunk in range(chunks):
             logging.info(f'[root] Instantiating microbatch interpreter for chunk {chunk}')
             interp = RemoteInterpreter(self.remote_stage_executor_rrefs,
                                        self.stage_to_executor, self.pipe.split_gm,
                                        chunk, args_split[chunk], kwargs_split[chunk])
-            microbatch_interpreters.append(interp)
+            self.microbatch_interpreters.append(interp)
 
-        logging.info(f'[root] {len(microbatch_interpreters)} instantiated')
+        logging.info(f'[root] {len(self.microbatch_interpreters)} instantiated')
 
         last_nodes = []
-        for interp in microbatch_interpreters:
+        for interp in self.microbatch_interpreters:
             last_nodes.append(interp.run_until(lambda n: n.op == 'output'))
 
         assert all(n == last_nodes[0] for n in last_nodes)
         assert last_nodes[0].op == 'output'
 
-        local_results = self._retrieve_output_values(microbatch_interpreters, last_nodes)
+        local_results = self._retrieve_output_values(self.microbatch_interpreters, last_nodes)
 
         if self.pipe.has_loss_and_backwards:
             # Shared parameter sync
@@ -777,24 +797,24 @@ class PipelineDriver1F1B(PipelineDriverBase):
                                                                  self.kwargs_chunk_spec, chunks,
                                                                  self._debug_mask_minibatches)
 
-        microbatch_interpreters : List[RemoteInterpreter] = []
+        self.microbatch_interpreters = []
 
         for chunk in range(chunks):
             logging.info(f'[root] Instantiating microbatch interpreter for chunk {chunk}')
             interp = RemoteInterpreter(self.remote_stage_executor_rrefs,
                                        self.stage_to_executor, self.pipe.split_gm,
                                        chunk, args_split[chunk], kwargs_split[chunk])
-            microbatch_interpreters.append(interp)
+            self.microbatch_interpreters.append(interp)
 
-        logging.info(f'[root] {len(microbatch_interpreters)} instantiated')
+        logging.info(f'[root] {len(self.microbatch_interpreters)} instantiated')
 
         last_nodes = []
 
-        for i, interp in enumerate(microbatch_interpreters):
+        for i, interp in enumerate(self.microbatch_interpreters):
             logging.info(f'[root] Executing stages for chunk {i}')
             last_nodes.append(interp.run_until(lambda n: n.op == 'output'))
 
-        local_results = self._retrieve_output_values(microbatch_interpreters, last_nodes)
+        local_results = self._retrieve_output_values(self.microbatch_interpreters, last_nodes)
 
         # There is backward pass, we should sync shared parameters
         if self.pipe.has_loss_and_backwards:

@@ -140,8 +140,8 @@ def run_master(args):
         _, module_name, param_qualname = name.split('.', maxsplit=2)
 
         assert module_name in pipe_driver.remote_stage_executor_rrefs
-        rank, module_rref = pipe_driver.remote_stage_executor_rrefs[module_name]
-        grad_value = rpc.rpc_sync(rank, get_grad_from_executor, (module_rref, param_qualname))
+        stage_id, module_rref = pipe_driver.remote_stage_executor_rrefs[module_name]
+        grad_value = rpc.rpc_sync(module_rref.owner(), get_grad_from_executor, (module_rref, param_qualname))
         pipe_grads[name] = copy.deepcopy(grad_value)
 
     optim = torch.optim.SGD(ec_pipe.split_gm.parameters(), lr=0.05)
