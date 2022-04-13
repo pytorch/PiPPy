@@ -88,16 +88,12 @@ def run_master(args):
 
 
 def run_worker(rank, world_size, args):
-    # Fill in correct rank in case args.rank = -1
-    if args.rank == -1:
-        args.rank = rank
     os.environ['MASTER_ADDR'] = args.master_addr
     os.environ['MASTER_PORT'] = args.master_port
     options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256)
     if args.cuda:
         n_devs = torch.cuda.device_count()
         dev_id = rank % n_devs
-        options.set_devices([dev_id])
         for i in range(world_size):
             options.set_device_map(f"worker{i}", {dev_id: i % n_devs})
     args.device = f'cuda:{dev_id}' if args.cuda else 'cpu'
