@@ -139,6 +139,9 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.7", "3.8", "3.9"]
+        replicate: ["0", "1"]
+        schedule: ["FillDrain", "1F1B"]
+        verbose: ["0"]
     container:
       image: python:${{ matrix.python-version }}
 
@@ -154,6 +157,4 @@ jobs:
       - name: Install pippy
         run: "python setup.py install"
       - name: Run PP + DDP test - Transmitted parameters
-        run: REPLICATE=0 python test/local_test_ddp.py
-      - name: Run PP + DDP test - Replicated parameters
-        run: REPLICATE=1 python test/local_test_ddp.py
+        run: VERBOSE=${{ matrix.verbose }} python test/local_test_ddp.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}

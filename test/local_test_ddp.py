@@ -11,7 +11,7 @@ import torch.distributed.rpc as rpc
 import torch.multiprocessing as mp
 
 from pippy.IR import MultiUseParameterConfig, Pipe, TrivialLossWrapper, pipe_split
-from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B
+from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverBase
 from pippy.microbatch import TensorChunkSpec, CustomReducer
 
 # TODOs for implementing forward/backward/loss with schedules:
@@ -57,10 +57,9 @@ def run_master(args, pp_ranks):
     bs = 503
     CHUNKS = 5
     DEBUG_MASK_MINIBATCHES = True
-    REF_USE_MICROBATCHES = True
     REPLICATE = os.environ.get('REPLICATE', '0') != '0'
-    MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if REPLICATE else MultiUseParameterConfig.TRANSMIT
-    print(f'REPLICATE config: {REPLICATE} -> {MULTI_USE_PARAM_CONFIG}')
+    MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if args.replicate else MultiUseParameterConfig.TRANSMIT
+    print(f'REPLICATE config: {args.replicate} -> {MULTI_USE_PARAM_CONFIG}')
 
     print("Using schedule:", args.schedule)
 
@@ -112,8 +111,10 @@ def run_master(args, pp_ranks):
     kwargs_chunk_spec: Dict = {}
     output_chunk_spec = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
 
-    pipe_driver = schedules[args.schedule](ec_pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec,
-                                        args.pp_group_size, all_ranks=pp_ranks, dp_pg_cb=resolve_pg_per_stage)
+    pipe_driver : PipelineDriverBase = schedules[args.schedule](ec_pipe, args_chunk_spec, kwargs_chunk_spec,
+                                                                output_chunk_spec, args.pp_group_size,
+                                                                all_ranks=pp_ranks, dp_pg_cb=resolve_pg_per_stage,
+                                                                _debug_mask_minibatches=DEBUG_MASK_MINIBATCHES)
     print(f'Rank {args.rank} Instantiated pipe with ranks {pp_ranks}')
 
     torch.manual_seed(args.rank)
@@ -213,6 +214,7 @@ if __name__ == "__main__":
     parser.add_argument('--master_addr', type=str, default=os.getenv('MASTER_ADDR', 'localhost'))
     parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
     parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
+    parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
     args = parser.parse_args()
 
     assert args.dp_group_size * args.pp_group_size == args.world_size
