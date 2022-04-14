@@ -288,6 +288,8 @@ def get_output_loss_value_spec_for_model(model_cls):
     if model_cls in [BertForPreTraining, MegatronBertForPreTraining, MobileBertForPreTraining]:
         return {'loss': True, 'prediction_logits': False, 'seq_relationship_logits': False}
 
+    if model_cls in [T5ForConditionalGeneration]:
+        return {'loss': True, 'logits': False, 'past_key_values': False, 'encoder_last_hidden_state': False}
 
     return {'loss': True, 'logits': False}
 
@@ -300,11 +302,6 @@ class HFModelsForwardBackwardTest(unittest.TestCase):
 for _model_cls in fx._SUPPORTED_MODELS:
     def scope(model_cls, replicate):
         def test_case(self):
-            if model_cls in [T5ForConditionalGeneration]:
-                # TypeError: full() received an invalid combination of arguments - got (HFProxy, int),
-                # but expected one of
-                self.skipTest('Known bad model')
-
             model, splitter = generate_hf_model(model_cls)
             model.eval() # Disable nondeterminism for testing
             submodules_cnt = splitter(model)
