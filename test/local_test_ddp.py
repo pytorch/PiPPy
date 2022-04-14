@@ -11,7 +11,9 @@ import torch.distributed.rpc as rpc
 import torch.multiprocessing as mp
 
 from pippy.IR import MultiUseParameterConfig, Pipe, TrivialLossWrapper, pipe_split
-from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverBase
+from pippy.PipelineDriver import (
+    PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverBase, PipelineDriverInterleaved1F1B
+)
 from pippy.microbatch import TensorChunkSpec, CustomReducer
 
 # TODOs for implementing forward/backward/loss with schedules:
@@ -25,6 +27,7 @@ CHECK_NUMERIC_EQUIVALENCE = True
 schedules = {
     'FillDrain': PipelineDriverFillDrain,
     '1F1B': PipelineDriver1F1B,
+    'Interleaved1F1B': PipelineDriverInterleaved1F1B
 }
 
 VERBOSE = bool(os.environ.get('VERBOSE', False))

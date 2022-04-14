@@ -867,7 +867,8 @@ class PipelineDriver1F1B(PipelineDriverBase):
             logging.info(f'[root] Instantiating microbatch interpreter for chunk {chunk}')
             interp = RemoteInterpreter(self.remote_stage_executor_rrefs,
                                        self.stage_to_executor, self.pipe.split_gm,
-                                       chunk, args_split[chunk], kwargs_split[chunk])
+                                       chunk, args_split[chunk], kwargs_split[chunk],
+                                       batch_id=batch_id, num_microbatches=chunks)
             self.microbatch_interpreters.append(interp)
 
         logging.info(f'[root] {len(self.microbatch_interpreters)} instantiated')
@@ -889,8 +890,9 @@ class PipelineDriver1F1B(PipelineDriverBase):
 
 class PipelineDriverInterleaved1F1B(PipelineDriver1F1B):
     def __init__(self, pipe : Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size : int,
-                 all_ranks : List[int] = None, single_loss : bool = False, _debug_mask_minibatches: bool = False):
+                 all_ranks : List[int] = None, single_loss : bool = False, _debug_mask_minibatches: bool = False,
+                 dp_pg_cb=None):
         self.interleave_stages = True
         super().__init__(pipe, args_chunk_spec, kwargs_chunk_spec,
                          output_chunk_spec, world_size, all_ranks, single_loss,
-                         _debug_mask_minibatches)
+                         _debug_mask_minibatches, dp_pg_cb=dp_pg_cb)
