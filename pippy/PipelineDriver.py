@@ -236,7 +236,7 @@ class RankWorker(EventRecorder):
 
     def create_stage_executor(self, stage_id, mod):
         if stage_id in self.stage_executors:
-            raise AssertionError(f'Rank {local_rank} already has stage {stage_id}')
+            raise AssertionError(f'Rank {self.local_rank} already has stage {stage_id}')
         self.stage_executors[stage_id] = PipeStageExecutor(stage_id=stage_id,
                                                            mod=mod, rank_worker=self)
         return self.stage_executors[stage_id]
