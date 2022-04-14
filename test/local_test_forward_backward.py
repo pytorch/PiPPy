@@ -239,9 +239,13 @@ def run_worker(rank, world_size, args):
                                               _transports=["shm", "uv"])
     if args.cuda:
         n_devs = torch.cuda.device_count()
-        dev_id = rank % n_devs
-        for i in range(world_size):
-            options.set_device_map(f"worker{i}", {dev_id: i % n_devs})
+        if n_devs > 0:
+            dev_id = rank % n_devs
+            for i in range(world_size):
+                options.set_device_map(f"worker{i}", {dev_id: i % n_devs})
+        else:
+            args.cuda = 0
+
     args.device = f'cuda:{dev_id}' if args.cuda else 'cpu'
     print(f"rank = {rank} host/pid/device = "
           f"{socket.gethostname()}/{os.getpid()}/{args.device}")
