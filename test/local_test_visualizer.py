@@ -16,7 +16,7 @@ from torch.autograd import Function
 
 from pippy.IR import MultiUseParameterConfig, Pipe, pipe_split, TrivialLossWrapper
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, Phase, PipelineDriverBase, \
-    EventsContext
+    EventsContext, PipelineDriverInterleaved1F1B
 from pippy.events import Event
 from pippy.microbatch import TensorChunkSpec, CustomReducer
 from pippy.visualizer import events_to_json
@@ -27,6 +27,7 @@ CHECK_NUMERIC_EQUIVALENCE = True
 schedules = {
     'FillDrain': PipelineDriverFillDrain,
     '1F1B': PipelineDriver1F1B,
+    'Interleaved1F1B': PipelineDriverInterleaved1F1B,
 }
 
 VERBOSE = bool(int(os.environ.get('VERBOSE', False)))
@@ -171,10 +172,10 @@ def run_master(args):
     kwargs_chunk_spec = {}
     output_chunk_spec = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
 
-    all_stages = [0, 1, 2, 3]
+    all_ranks = list(range(1, args.world_size))  # exclude master rank = 0
     pipe_driver: PipelineDriverBase = schedules[args.schedule](ec_pipe, args_chunk_spec, kwargs_chunk_spec,
-                                                              output_chunk_spec, args.world_size - 1,
-                                                              _debug_mask_minibatches=True)
+                                                               output_chunk_spec, args.world_size - 1,
+                                                               all_ranks=all_ranks, _debug_mask_minibatches=True)
 
     input = torch.randn(bs, d_hid)
     target = torch.randn(bs, d_hid)
@@ -193,7 +194,7 @@ def run_master(args):
 
     # second: perform checks
     for events_context in batches_events_contexts:
-        check_events_for_single_batch(events_context.events, all_stages, chunks, pipe_visualized_filename)
+        check_events_for_single_batch(events_context.events, all_ranks, chunks, pipe_visualized_filename)
 
 
 def check_events_for_single_batch(events: List[Event], all_stages: List[int], chunks: int,

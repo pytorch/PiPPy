@@ -549,7 +549,7 @@ class PipelineDriverBase:
 
         for stage_id, descr in enumerate(executor_descriptors):
             # Assign stages to rank workers in a round-robin fashion
-            rank = stage_id % self.world_size
+            rank = self.all_ranks[stage_id % self.world_size]
             self.remote_stage_executor_rrefs[descr.name] = (stage_id,
                                                             self.rank_worker_rrefs[rank].remote().create_stage_executor(
                                                                 stage_id=stage_id,
