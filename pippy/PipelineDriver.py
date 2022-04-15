@@ -147,31 +147,12 @@ class RefcountedFuture:
         return self.refcount == 0
 
 
-def _get_value_on_remote(caller_stage, runlist_key, microbatch, value_ref_arg, value_ref_executor_rref):
-    callee_stage = value_ref_arg.stage_id
-    logging.info(f'[{callee_stage}][{microbatch}] Executing async transfer of value '
-                 f'{value_ref_arg} initiated by stage {caller_stage} for {runlist_key}')
-
-    executor = value_ref_executor_rref.local_value()
-    with executor.value_store_lock:
-        refcounted_future = executor.value_store[value_ref_arg.unique_key]
-
-    value = refcounted_future.future.wait()
-
-    with executor.value_store_lock:
-        if refcounted_future.release():
-            executor.value_store.pop(value_ref_arg.unique_key)
-
-    return value
-
 @rpc.functions.async_execution
 def async_transfer(stage_id, microbatch, worker_rref, value_ref_arg, value_ref_executor_rref, arg_idx, runlist_key):
     logging.info(f'[{stage_id}][{microbatch}] Starting transfer')
     self = worker_rref.local_value()
-    fut = rpc.rpc_async(to=value_ref_executor_rref.owner(), func=_get_value_on_remote,
-                        args=(stage_id, runlist_key, microbatch,
-                              value_ref_arg, value_ref_executor_rref),
-                        timeout=0)
+    fut = value_ref_executor_rref.rpc_async(timeout=0).get_value(
+        stage_id, runlist_key, microbatch, value_ref_arg)
 
     def bottom_half(fut):
         logging.info(f'[{stage_id}][{microbatch}] Completing transfer of value {value_ref_arg} '
@@ -501,19 +482,36 @@ class PipeStageExecutor:
 
         return ValueReference(self.stage_id, output_unique_key)
 
+    def get_value(self, caller_stage, runlist_key, microbatch, value_ref_arg):
+        callee_stage = value_ref_arg.stage_id
+        logging.info(f'[{callee_stage}][{microbatch}] Executing async transfer of value '
+                     f'{value_ref_arg} initiated by stage {caller_stage} for {runlist_key}')
+        assert callee_stage == self.stage_id, "Mismatch between ValueRef and stage executor"
 
-def get_grad_from_executor(executor, qualname):
-    mod = executor.local_value().mod
-    if isinstance(mod, torch.nn.parallel.DistributedDataParallel):
-        mod = mod.module
-    return mod.get_parameter(qualname).grad
+        with self.value_store_lock:
+            refcounted_future = self.value_store[value_ref_arg.unique_key]
 
-def set_grad_in_executor(executor, qualname, value):
-    mod = executor.local_value().mod
-    if isinstance(mod, torch.nn.parallel.DistributedDataParallel):
-        mod = mod.module
-    param = mod.get_parameter(qualname)
-    param.grad = value
+        value = refcounted_future.future.wait()
+
+        with self.value_store_lock:
+            if refcounted_future.release():
+                self.value_store.pop(value_ref_arg.unique_key)
+
+        return value
+
+
+    def get_grad(self, qualname):
+        mod = self.mod
+        if isinstance(mod, torch.nn.parallel.DistributedDataParallel):
+            mod = mod.module
+        return mod.get_parameter(qualname).grad
+
+    def set_grad(self, qualname, value):
+        mod = self.mod
+        if isinstance(mod, torch.nn.parallel.DistributedDataParallel):
+            mod = mod.module
+        param = mod.get_parameter(qualname)
+        param.grad = value
 
 
 class PipelineDriverBase:
@@ -624,7 +622,7 @@ class PipelineDriverBase:
             for module_name, param_qualname in param_set.items():
                 assert module_name in self.remote_stage_executor_rrefs
                 stage_id, module_rref = self.remote_stage_executor_rrefs[module_name]
-                grad_value = rpc.rpc_sync(module_rref.owner(), get_grad_from_executor, (module_rref, param_qualname))
+                grad_value = module_rref.rpc_sync().get_grad(param_qualname)
                 grad_values.append(grad_value)
 
             synced_value = torch.sum(torch.stack(grad_values), dim=0)
@@ -632,7 +630,7 @@ class PipelineDriverBase:
             for module_name, param_qualname in param_set.items():
                 assert module_name in self.remote_stage_executor_rrefs
                 stage_id, module_rref = self.remote_stage_executor_rrefs[module_name]
-                rpc.rpc_sync(module_rref.owner(), set_grad_in_executor, (module_rref, param_qualname, synced_value))
+                module_rref.rpc_sync().set_grad(param_qualname, synced_value)
 
     def _retrieve_output_values(self, microbatch_interpreters, last_nodes):
         logging.info(f'[root] Retrieving output values from {len(microbatch_interpreters)} chunks')
@@ -645,8 +643,8 @@ class PipelineDriverBase:
         def initiate_async_transfer(a):
             if isinstance(a, ValueReference):
                 value_ref_executor_rref = self.stage_to_executor[a.stage_id]
-                return rpc.rpc_async(to=value_ref_executor_rref.owner(), func=_get_value_on_remote,
-                                     args=('root', 'collect', -1, a, value_ref_executor_rref), timeout=0)
+                return value_ref_executor_rref.rpc_async(timeout=0).get_value(
+                    'root', 'collect', -1, a)
             else:
                 return a
 
