@@ -16,7 +16,6 @@ from transformers import *
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
-SLURM = os.getenv('SLURM_PROCID') is not None
 
 schedules = {
     'FillDrain': PipelineDriverFillDrain,
@@ -60,12 +59,10 @@ def run_master(args):
     seq_length = 32
     layers_per_rank = 1
 
-    device = torch.device('cuda:0' if SLURM and torch.cuda.is_available() else 'cpu')
-
     gpt2 = GPT2Model(GPT2Config(use_cache=False))
-    gpt2.to(device)
+    gpt2.to(args.device)
     gpt2.eval()
-    gpt2_input = torch.zeros(bs, seq_length, dtype=torch.long, device=device).random_(gpt2.config.vocab_size)
+    gpt2_input = torch.zeros(bs, seq_length, dtype=torch.long, device=args.device).random_(gpt2.config.vocab_size)
 
     add_split_points(gpt2, layers_per_rank)
 
@@ -108,13 +105,23 @@ def run_master(args):
 
 
 def run_worker(rank, world_size, args):
-    print(f"rank = {rank} host/pid = {socket.gethostname()}/{os.getpid()}")
     os.environ['MASTER_ADDR'] = args.master_addr
     os.environ['MASTER_PORT'] = args.master_port
-    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256, _transports=["uv"])
-    if SLURM and torch.cuda.is_available():
-        for i in range(world_size):
-            options.set_device_map(f"worker{i}", {0: 0})
+    # Exclude IB for metadata transport due to lack of EFA support on AWS
+    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256,
+                                              _transports=["shm", "uv"])
+    if args.cuda:
+        n_devs = torch.cuda.device_count()
+        if n_devs > 0:
+            dev_id = rank % n_devs
+            for i in range(world_size):
+                options.set_device_map(f"worker{i}", {dev_id: i % n_devs})
+        else:
+            args.cuda = 0
+    args.device = f'cuda:{dev_id}' if args.cuda else 'cpu'
+    print(f"rank = {rank} host/pid/device = "
+          f"{socket.gethostname()}/{os.getpid()}/{args.device}")
+
     rpc.init_rpc(
         f"worker{rank}",
         rank=rank,
@@ -134,6 +141,7 @@ if __name__ == "__main__":
     parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
     parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
     parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
+    parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
     args = parser.parse_args()
 
     if args.rank == -1:

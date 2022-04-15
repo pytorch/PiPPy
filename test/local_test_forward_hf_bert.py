@@ -55,8 +55,10 @@ def run_master(args):
     print("Using schedule:", args.schedule)
 
     bert = BertModel(BertConfig())
+    bert.to(args.device)
     bert.eval()
-    bert_input = torch.zeros(bs, seq_length, dtype=torch.long).random_(bert.config.vocab_size)
+    bert_input = torch.zeros(bs, seq_length, dtype=torch.long,
+            device=args.device).random_(bert.config.vocab_size)
     bert(bert_input)
 
     for i in range(bert.config.num_hidden_layers):
@@ -104,10 +106,23 @@ def run_master(args):
 
 
 def run_worker(rank, world_size, args):
-    print(f"rank = {rank} host/pid = {socket.gethostname()}/{os.getpid()}")
     os.environ['MASTER_ADDR'] = args.master_addr
     os.environ['MASTER_PORT'] = args.master_port
-    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256)
+    # Exclude IB for metadata transport due to lack of EFA support on AWS
+    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256,
+                                              _transports=["shm", "uv"])
+    if args.cuda:
+        n_devs = torch.cuda.device_count()
+        if n_devs > 0:
+            dev_id = rank % n_devs
+            for i in range(world_size):
+                options.set_device_map(f"worker{i}", {dev_id: i % n_devs})
+        else:
+            args.cuda = 0
+    args.device = f'cuda:{dev_id}' if args.cuda else 'cpu'
+    print(f"rank = {rank} host/pid/device = "
+          f"{socket.gethostname()}/{os.getpid()}/{args.device}")
+
     rpc.init_rpc(
         f"worker{rank}",
         rank=rank,
@@ -127,6 +142,7 @@ if __name__ == "__main__":
     parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
     parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
     parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
+    parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
     args = parser.parse_args()
 
     if args.rank == -1:
