@@ -134,7 +134,7 @@ jobs:
         run: python examples/slurm/hf/gpt2/pippy_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
 
   integration_test_gpu:
-    runs-on: linux.16xlarge.nvidia.gpu:
+    runs-on: linux.16xlarge.nvidia.gpu
     strategy:
       matrix:
         python-version: ["3.9"]
