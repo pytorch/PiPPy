@@ -99,11 +99,10 @@ jobs:
       - name: Test min-gpt-tracing
         run: python test/min_gpt_tracing.py
 
-  integration_test:
-    runs-on: ${{ matrix.machine }}
+  integration_test_cpu:
+    runs-on: linux.2xlarge
     strategy:
       matrix:
-        machine: [linux.2xlarge, linux.16xlarge.nvidia.gpu]
         python-version: ["3.7", "3.8", "3.9"]
         replicate: ["0", "1"]
         schedule: ["FillDrain", "1F1B"]
@@ -129,7 +128,53 @@ jobs:
         run: python test/local_test_forward_hf_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: Run HF GPT2 forward-only integration test
         run: python test/local_test_forward_hf_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
-      - name: Run visualizer test
-        run: python test/local_test_visualizer.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+#     - name: Run visualizer test
+#       run: python test/local_test_visualizer.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+      - name: Run GPT2 slurm example without slurm
+        run: python examples/slurm/hf/gpt2/pippy_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+
+  integration_test_gpu:
+    runs-on: linux.16xlarge.nvidia.gpu
+    strategy:
+      matrix:
+        python-version: ["3.7", "3.8", "3.9"]
+        replicate: ["0", "1"]
+        schedule: ["FillDrain", "1F1B"]
+    container:
+      image: python:${{ matrix.python-version }}
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install CUDA 11.3
+        run: |
+          sudo yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+          sudo yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel7/x86_64/cuda-rhel7.repo
+          sudo yum clean expire-cache
+          sudo yum install -y nvidia-driver-latest-dkms
+          sudo yum install -y cuda-11-3
+          sudo yum install -y cuda-drivers
+          sudo yum install -y libcudnn8-devel
+          echo /usr/local/cuda-11.3/bin >> $GITHUB_PATH
+          nvcc --version
+          nvidia-smi
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 pytest pytest-cov numpy
+          if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cu113/torch_nightly.html; fi
+      - name: Install pavel's huggingface fork
+        run: pip install git+https://github.com/pbelevich/transformers.git@compatible_with_pt_master sentencepiece
+      - name: Install pippy
+        run: "python setup.py install"
+      - name: Run forward-only integration test
+        run: python test/local_test_forward.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+      - name: Run forward-loss-backward integration test
+        run: python test/local_test_forward_backward.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+      - name: Run HF BERT forward-only integration test
+        run: python test/local_test_forward_hf_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+      - name: Run HF GPT2 forward-only integration test
+        run: python test/local_test_forward_hf_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+#     - name: Run visualizer test
+#       run: python test/local_test_visualizer.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: Run GPT2 slurm example without slurm
         run: python examples/slurm/hf/gpt2/pippy_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
