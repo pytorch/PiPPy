@@ -12,7 +12,7 @@ import torch
 import torch.distributed.rpc as rpc
 import torch.fx
 
-from pippy.IR import Pipe, stage_backward, sync_barrier
+from pippy.IR import Pipe, stage_backward, sync_barrier, _null_coalesce_accumulate
 from pippy.events import EventRecorder, EventsContext, Event
 from pippy.microbatch import split_args_kwargs_into_chunks, merge_chunks
 
@@ -50,7 +50,8 @@ DEBUG = False
 class Phase(Enum):
     FORWARD = 0
     BACKWARD = 1
-    SYNC_BARRIER = 2
+    NULL_COALESCE_ACCUMULATE = 2
+    SYNC_BARRIER = 3
 
 # TODO: do we need this?
 class SchedState(Enum):
@@ -64,6 +65,7 @@ def event_name(ph, stage_id, mbid):
     phase_to_short_str = {
         Phase.FORWARD: 'F',
         Phase.BACKWARD: 'B',
+        Phase.NULL_COALESCE_ACCUMULATE: 'N',
         Phase.SYNC_BARRIER: 'S',
     }
     return f"{phase_to_short_str[ph]}_{stage_id},{mbid}"
@@ -129,6 +131,9 @@ class ValueReference:
 
     stage_id : int
     unique_key : str
+
+    def __repr__(self):
+        return f'ValueReference({self.stage_id}, {self.unique_key})'
 
 
 class RefcountedFuture:
@@ -357,6 +362,9 @@ class RankWorker(EventRecorder):
 
                 # Schedule forward stage of a new micro-batch
                 self.outstanding -= 1
+            elif work_item.phase == Phase.NULL_COALESCE_ACCUMULATE:
+                logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running _null_coalesce_accumulate')
+                out_val = _null_coalesce_accumulate(*args, **kwargs)
             elif work_item.phase == Phase.SYNC_BARRIER:
                 logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running sync_barrier')
                 out_val = sync_barrier(*args, **kwargs)
@@ -499,7 +507,6 @@ class PipeStageExecutor:
 
         return value
 
-
     def get_grad(self, qualname):
         mod = self.mod
         if isinstance(mod, torch.nn.parallel.DistributedDataParallel):
@@ -564,6 +571,8 @@ class PipelineDriverBase:
                 executor_descriptors[bw_idx].has_backward = True
                 node.meta['fw_stage'] = executor_descriptors[bw_idx].name
                 bw_idx -= 1
+            elif (node.op, node.target) == ('call_function', _null_coalesce_accumulate):
+                node.meta['fw_stage'] = executor_descriptors[bw_idx].name
 
         assert all(d.has_backward for d in executor_descriptors) or all(not d.has_backward for d in executor_descriptors)
 
@@ -743,6 +752,15 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
                          f'on stage {stage_id}')
             return stage_executor.rpc_sync().invoke(
                 invocation_key, Phase.SYNC_BARRIER, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
+                output_refcount=len(node.users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
+        elif target is _null_coalesce_accumulate:
+            assert 'fw_stage' in node.meta
+            stage_id, stage_executor = self.remote_stage_executor_rrefs[node.meta['fw_stage']]
+            logging.info(f'[root][{self.cur_microbatch}] Issuing BW invocation '
+                         f'for target {node.meta["fw_stage"]} on stage {stage_id}')
+            return stage_executor.rpc_sync().invoke(
+                invocation_key, Phase.NULL_COALESCE_ACCUMULATE, args, kwargs, self.cur_microbatch,
+                debug_str=node.format_node(),
                 output_refcount=len(node.users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
         else:
             raise AssertionError(f'Unknown operator {torch.typename(target)}')
