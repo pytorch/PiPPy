@@ -130,7 +130,7 @@ jobs:
       - name: Run HF BERT forward-only integration test
         run: VERBOSE=${{ matrix.verbose }} python test/local_test_forward_backward_hf_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: Run HF GPT2 forward-only integration test
-        run: VERBOSE=${{ matrix.verbose }} python test/local_test_forward_hf_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+        run: VERBOSE=${{ matrix.verbose }} python test/local_test_forward_backward_hf_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: Run GPT2 slurm example without slurm
         run: VERBOSE=${{ matrix.verbose }} python examples/slurm/hf/gpt2/pippy_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: Run visualizer test
