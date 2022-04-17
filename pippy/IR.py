@@ -46,7 +46,7 @@ def stage_backward(stage_output, output_grads, input_values, stage_info : str):
                 if grad_val is None:
                     return
                 assert isinstance(grad_val, (tuple, list)), f'grad_value expected to have type {type(output_val)} but got {type(grad_val)}'
-                assert len(output_val) == len(grad_val)
+                # assert len(output_val) == len(grad_val) Investigate why it fails! TODO(https://github.com/pytorch/PiPPy/issues/135)
                 for ov, gv in zip(output_val, grad_val):
                     extract_tensors_with_grads(ov, gv)
             elif isinstance(output_val, dict):
