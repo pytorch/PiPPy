@@ -106,6 +106,7 @@ jobs:
         python-version: ["3.7", "3.8", "3.9"]
         replicate: ["0", "1"]
         schedule: ["FillDrain", "1F1B"]
+        verbose: ["0"]
     container:
       image: python:${{ matrix.python-version }}
 
@@ -121,15 +122,15 @@ jobs:
       - name: Install pippy
         run: "python setup.py install"
       - name: Run forward-only integration test
-        run: python test/local_test_forward.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+        run: VERBOSE=${{ matrix.verbose }} python test/local_test_forward.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: Run forward-loss-backward integration test
-        run: python test/local_test_forward_backward.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+        run: VERBOSE=${{ matrix.verbose }} python test/local_test_forward_backward.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: Run HF BERT forward-only integration test
-        run: python test/local_test_forward_hf_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+        run: VERBOSE=${{ matrix.verbose }} python test/local_test_forward_hf_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: Run HF GPT2 forward-only integration test
-        run: python test/local_test_forward_hf_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+        run: VERBOSE=${{ matrix.verbose }} python test/local_test_forward_hf_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: Run GPT2 slurm example without slurm
-        run: python examples/slurm/hf/gpt2/pippy_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+        run: VERBOSE=${{ matrix.verbose }} python examples/slurm/hf/gpt2/pippy_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
 
   integration_test_gpu:
     runs-on: linux.16xlarge.nvidia.gpu
@@ -232,3 +233,28 @@ jobs:
           python3 test/local_test_forward_hf_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
           python3 test/local_test_forward_hf_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
           python3 examples/slurm/hf/gpt2/pippy_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+
+  ddp_test:
+    runs-on: linux.2xlarge
+    strategy:
+      matrix:
+        python-version: ["3.7", "3.8", "3.9"]
+        replicate: ["0", "1"]
+        schedule: ["FillDrain", "1F1B"]
+        verbose: ["0"]
+    container:
+      image: python:${{ matrix.python-version }}
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 pytest pytest-cov numpy
+          if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
+      - name: Install pavel's huggingface fork
+        run: pip install git+https://github.com/pbelevich/transformers.git@compatible_with_pt_master sentencepiece
+      - name: Install pippy
+        run: "python setup.py install"
+      - name: Run PP + DDP test - Transmitted parameters
+        run: VERBOSE=${{ matrix.verbose }} python test/local_test_ddp.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}

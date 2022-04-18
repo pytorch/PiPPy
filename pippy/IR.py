@@ -17,30 +17,68 @@ from torch.fx.passes.split_module import split_module
 # 5. Add parameter movement to split_module
 
 # TODO: move to a separate file with runtime artifacts
-def stage_backward(stage_output, output_grads, input_values):
+def stage_backward(stage_output, output_grads, input_values, stage_info : str):
     """
     Given the input value(s) and the corresponding gradient for those/that input
     value(s), compute and accumulate gradients for all parameter values (leaves
     in the autograd trace) as well as return a list of the gradients for the
     input values
     """
-    # stage_output may be a composite datatype like dict. Extract all individual
-    # tensor values here
-    stage_output_tensors = []
-
-    def get_tensor(v):
-        if isinstance(v, torch.Tensor) and v.requires_grad:
-            stage_output_tensors.append(v)
-    torch.fx.node.map_aggregate(stage_output, get_tensor)
-
-    torch.autograd.backward(stage_output_tensors, grad_tensors=output_grads)
-
-    grad_inputs = []
-    for val in input_values:
-        if isinstance(val, torch.Tensor):
-            grad_inputs.append(val.grad)
+    def friendly_debug_info(v):
+        if isinstance(v, torch.Tensor):
+            return f'Tensor(size={v.shape})'
         else:
-            grad_inputs.append(None)
+            return str(v)
+    try:
+        # stage_output may be a composite datatype like dict. Extract all individual
+        # tensor values here
+        stage_output_tensors = []
+        output_grad_tensors = []
+
+        def extract_tensors_with_grads(output_val, grad_val):
+            if isinstance(output_val, torch.Tensor):
+                if not output_val.requires_grad and output_val.grad_fn is None:
+                    return
+                assert isinstance(grad_val, (torch.Tensor, type(None))), f'Expected Tensor or None gradient but got {type(grad_val)}'
+                stage_output_tensors.append(output_val)
+                output_grad_tensors.append(grad_val)
+            elif isinstance(output_val, (tuple, list)):
+                if grad_val is None:
+                    return
+                assert isinstance(grad_val, (tuple, list)), f'grad_value expected to have type {type(output_val)} but got {type(grad_val)}'
+                assert len(output_val) == len(grad_val)
+                for ov, gv in zip(output_val, grad_val):
+                    extract_tensors_with_grads(ov, gv)
+            elif isinstance(output_val, dict):
+                if grad_val is None:
+                    return
+                assert isinstance(grad_val, dict)
+                assert set(output_val.keys()) == set(grad_val.keys())
+                for k in output_val.keys():
+                    extract_tensors_with_grads(output_val[k], grad_val[k])
+            else:
+                # Output is a non-tensor type; just ignore it
+                pass
+
+        extract_tensors_with_grads(stage_output, output_grads)
+
+        torch.autograd.backward(stage_output_tensors, grad_tensors=output_grad_tensors)
+
+        grad_inputs = []
+        for val in input_values:
+            if isinstance(val, torch.Tensor):
+                grad_inputs.append(val.grad)
+            else:
+                grad_inputs.append(None)
+
+    except Exception as e:
+        exc_msg = f"""
+        Failed to run backward stage {stage_info}
+        Stage output value: {torch.fx.node.map_aggregate(stage_output, friendly_debug_info)}
+        Output gradient values: {torch.fx.node.map_aggregate(output_grads, friendly_debug_info)}
+        Input values: {torch.fx.node.map_aggregate(input_values, friendly_debug_info)}
+        """
+        raise RuntimeError(exc_msg) from e
 
     barrier_token = None
     return grad_inputs, barrier_token
@@ -167,11 +205,17 @@ def _insert_stage_symbolic_backward(g : torch.fx.Graph, output_loss_value_spec):
                     stage_output = node,
                     output_grads = val_to_grad[node]
 
+                output_grads = (output_grads,) if not isinstance(output_grads, tuple) else output_grads
+
                 grad_call = g.call_function(stage_backward, kwargs={
                     'stage_output' : stage_output,
                     'output_grads' : output_grads,
-                    'input_values' : list(node.all_input_nodes)
+                    'input_values' : list(node.all_input_nodes),
                 })
+                # Insert backward stage debug info
+                kwargs_copy = dict(grad_call.kwargs)
+                kwargs_copy['stage_info'] = f'{grad_call} for stage {node.format_node()}'
+                grad_call.kwargs = kwargs_copy
 
                 grad_call_proxy = torch.fx.Proxy(grad_call)
                 grads, barrier_token = grad_call_proxy[0].node, grad_call_proxy[1].node
@@ -487,6 +531,11 @@ class Pipe(torch.nn.Module):
             return use_idxs[0]
 
         def move_param_to_callee(root, callee_name, param_val, use_idx, is_buffer):
+            assert isinstance(param_val, torch.Tensor), \
+                f"Expected '{node.target}' to be {torch.Tensor} but got {type(param_val)}." + \
+                (f" It might happen if module '{node.target}' was passed to some 'leaf function'"
+                 f"(see https://pytorch.org/docs/stable/fx.html#torch.fx.wrap). Please inspect "
+                 f"usages of '{node.target}' in the traced graph." if isinstance(param_val, torch.nn.Module) else "")
             callee = root.get_submodule(callee_name)
             new_param_name = f"moved_{node.target.replace('.', '_')}"
             assert not hasattr(callee, new_param_name)

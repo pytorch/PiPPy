@@ -3,13 +3,14 @@ import argparse
 import os
 import socket
 from typing import Dict
+import logging
 
 import torch
 import torch.distributed.rpc as rpc
 import torch.multiprocessing as mp
 
 from pippy.IR import MultiUseParameterConfig, Pipe, pipe_split
-from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverBase
+from pippy.PipelineDriver import PipelineDriverBase, PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverInterleaved1F1B
 from pippy.microbatch import TensorChunkSpec
 
 PROFILING_ENABLED = True
@@ -18,7 +19,13 @@ CHECK_NUMERIC_EQUIVALENCE = True
 schedules = {
     'FillDrain': PipelineDriverFillDrain,
     '1F1B': PipelineDriver1F1B,
+    'Interleaved1F1B': PipelineDriverInterleaved1F1B,
 }
+
+VERBOSE = bool(int(os.environ.get('VERBOSE', False)))
+
+if VERBOSE:
+    logging.getLogger().setLevel(logging.DEBUG)
 
 torch.fx.Tracer.proxy_buffer_attributes = True
 
@@ -52,6 +59,8 @@ def run_master(args):
             x = x + skip_connection
             x = torch.mm(x, self.mm_param2)
             x = self.lin(x)
+            pipe_split()
+            x = torch.relu(x)
             return {'out': x}
 
     ec = ExampleCode()
@@ -119,7 +128,7 @@ def run_worker(rank, world_size, args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 3)))
+    parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 4)))
     parser.add_argument('--rank', type=int, default=int(os.getenv("RANK", -1)))
     parser.add_argument('--master_addr', type=str, default=os.getenv('MASTER_ADDR', 'localhost'))
     parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
@@ -127,6 +136,10 @@ if __name__ == "__main__":
     parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
     parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
     args = parser.parse_args()
+
+    # Interleaved 1F1B uses less ranks than number of stages
+    if args.schedule == 'Interleaved1F1B':
+        args.world_size = 2
 
     if args.rank == -1:
         mp.spawn(run_worker, args=(args.world_size, args,), nprocs=args.world_size, join=True)
