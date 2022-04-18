@@ -215,21 +215,23 @@ jobs:
           nvcc --version
       - name: Install dependencies
         run: |
+          source build_binary_3.8/bin/activate
           pip3 install flake8 pytest pytest-cov numpy
           if [ -f requirements.txt ]; then pip3 install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cu113/torch_nightly.html; fi
       - name: Install pavel's huggingface fork
-        run: pip3 install git+https://github.com/pbelevich/transformers.git@compatible_with_pt_master sentencepiece
+        run: |
+          source build_binary_3.8/bin/activate
+          pip3 install git+https://github.com/pbelevich/transformers.git@compatible_with_pt_master sentencepiece
       - name: Install pippy
-        run: "python3 setup.py install"
-      - name: Run forward-only integration test
-        run: python3 test/local_test_forward.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
-      - name: Run forward-loss-backward integration test
-        run: python3 test/local_test_forward_backward.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
-      - name: Run HF BERT forward-only integration test
-        run: python3 test/local_test_forward_hf_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
-      - name: Run HF GPT2 forward-only integration test
-        run: python3 test/local_test_forward_hf_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
-#     - name: Run visualizer test
-#       run: python3 test/local_test_visualizer.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
-      - name: Run GPT2 slurm example without slurm
-        run: python3 examples/slurm/hf/gpt2/pippy_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+        run: |
+          source build_binary_3.8/bin/activate
+          "python3 setup.py install"
+      - name: Run all integration tests
+        run: |
+          source build_binary_3.8/bin/activate
+          python3 test/local_test_forward.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+          python3 test/local_test_forward_backward.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+          python3 test/local_test_forward_hf_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+          python3 test/local_test_forward_hf_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+#         python3 test/local_test_visualizer.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+          python3 examples/slurm/hf/gpt2/pippy_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
