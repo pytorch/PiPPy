@@ -198,13 +198,18 @@ jobs:
       - name: Install CUDA 11.3
         shell: bash
         run: |
-          sudo yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
-          sudo yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel7/x86_64/cuda-rhel7.repo
-          sudo yum clean expire-cache
-          sudo yum install -y nvidia-driver-latest-dkms
-          sudo yum install -y cuda-11-3
-          sudo yum install -y cuda-drivers
-          sudo yum install -y libcudnn8-devel
+          rpm -qa | grep nvidia
+          if [[ "$?" == "0" ]]; then
+            echo "CUDA already installed; skipping this step"
+          else
+            sudo yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+            sudo yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel7/x86_64/cuda-rhel7.repo
+            sudo yum clean expire-cache
+            sudo yum install -y nvidia-driver-latest-dkms
+            sudo yum install -y cuda-11-3
+            sudo yum install -y cuda-drivers
+            sudo yum install -y libcudnn8-devel
+          fi
       - name: setup Path
         run: |
           echo /usr/local/cuda-11.3/bin >> $GITHUB_PATH
