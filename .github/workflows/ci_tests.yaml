@@ -140,7 +140,7 @@ jobs:
         replicate: ["0", "1"]
         schedule: ["FillDrain", "1F1B"]
     container:
-      image: pytorch/manylinux-builder:cuda113
+      image: pytorch/manylinux-builder:cuda11.3
 
     steps:
       - uses: actions/checkout@v2
