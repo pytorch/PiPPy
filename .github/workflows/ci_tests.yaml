@@ -139,11 +139,79 @@ jobs:
       matrix:
         replicate: ["0", "1"]
         schedule: ["FillDrain", "1F1B"]
-    container:
-      image: pytorch/manylinux-builder:cuda11.3
 
     steps:
-      - uses: actions/checkout@v2
+      - name: Check ldd --version
+        run: ldd --version
+      - name: check cpu info
+        shell: bash
+        run: |
+          cat /proc/cpuinfo
+      - name: check distribution info
+        shell: bash
+        run: |
+          cat /proc/version
+      - name: Display EC2 information
+        shell: bash
+        run: |
+          set -euo pipefail
+          function get_ec2_metadata() {
+            # Pulled from instance metadata endpoint for EC2
+            # see https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instancedata-data-retrieval.html
+            category=$1
+            curl -fsSL "http://169.254.169.254/latest/meta-data/${category}"
+          }
+          echo "ami-id: $(get_ec2_metadata ami-id)"
+          echo "instance-id: $(get_ec2_metadata instance-id)"
+          echo "instance-type: $(get_ec2_metadata instance-type)"
+      - name: check gpu info
+        shell: bash
+        run: |
+          sudo yum install lshw -y
+          sudo lshw -C display
+      # Checkout the repository to the GitHub Actions runner
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          submodules: true
+      # manually install python3.8 since self-hosted machine does not support the python action feature
+      - name: check amazon-linux-extras
+        run: |
+          sudo yum install -y amazon-linux-extras
+          amazon-linux-extras | grep -i python
+      - name: update python
+        run: |
+          sudo amazon-linux-extras install python3.8
+      - name: Update pip
+        run: |
+          sudo yum update -y
+          sudo yum -y install git python3-pip
+          sudo pip3 install --upgrade pip
+      - name: create virtual env
+        run: |
+          sudo pip3 install --upgrade virtualenv
+          virtualenv build_binary_3.8 -p python3.8
+      - name: check python version
+        run: |
+          source build_binary_3.8/bin/activate
+          python --version
+      - name: Install CUDA 11.3
+        shell: bash
+        run: |
+          sudo yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+          sudo yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel7/x86_64/cuda-rhel7.repo
+          sudo yum clean expire-cache
+          sudo yum install -y nvidia-driver-latest-dkms
+          sudo yum install -y cuda-11-3
+          sudo yum install -y cuda-drivers
+          sudo yum install -y libcudnn8-devel
+      - name: setup Path
+        run: |
+          echo /usr/local/cuda-11.3/bin >> $GITHUB_PATH
+          echo /usr/local/bin >> $GITHUB_PATH
+      - name: nvcc check
+        run: |
+          nvcc --version
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
