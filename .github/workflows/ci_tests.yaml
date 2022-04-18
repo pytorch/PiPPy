@@ -225,7 +225,7 @@ jobs:
       - name: Install pippy
         run: |
           source build_binary_3.8/bin/activate
-          "python3 setup.py install"
+          python3 setup.py install
       - name: Run all integration tests
         run: |
           source build_binary_3.8/bin/activate
