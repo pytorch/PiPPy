@@ -205,6 +205,10 @@ jobs:
           sudo yum install -y cuda-11-3 &&
           sudo yum install -y cuda-drivers &&
           sudo yum install -y libcudnn8-devel
+      - name: Install nvidia driver, nvidia-docker runtime, set GPU_FLAG
+        run: |
+          bash .github/workflows/install_nvidia_utils_linux.sh
+          echo "GPU_FLAG=--gpus all" >> "${GITHUB_ENV}"
       - name: setup Path
         run: |
           echo /usr/local/cuda-11.3/bin >> $GITHUB_PATH
