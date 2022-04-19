@@ -2,6 +2,7 @@
 import argparse
 import inspect
 import os
+import random
 import socket
 from typing import Dict
 
@@ -52,6 +53,7 @@ torch.fx.Tracer.proxy_buffer_attributes = True
 
 
 def run_master(args):
+
     bs = 20
     seq_length = 32
 
@@ -112,6 +114,14 @@ def run_master(args):
 
 
 def run_worker(rank, world_size, args):
+    seed = 42
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.cuda.manual_seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
     os.environ['MASTER_ADDR'] = args.master_addr
     os.environ['MASTER_PORT'] = args.master_port
     # Exclude IB for metadata transport due to lack of EFA support on AWS

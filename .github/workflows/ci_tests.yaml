@@ -233,6 +233,7 @@ jobs:
       - name: Run all integration tests
         run: |
           source build_binary_3.8/bin/activate
+          export CUBLAS_WORKSPACE_CONFIG=:4096:8
           python3 test/local_test_forward.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
           python3 test/local_test_forward_backward.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
           python3 test/local_test_forward_hf_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
