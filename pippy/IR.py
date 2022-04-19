@@ -732,7 +732,7 @@ class Pipe(torch.nn.Module):
         finally:
             _pipeline_tracer = old__pipeline_tracer
 
-        get_attr_nodes = {}
+        get_attr_nodes : Dict[str, torch.fx.Node] = {}
         for node in traced.graph.nodes:
             if node.op == 'get_attr':
                 get_attr_nodes.setdefault(node.target, node)
