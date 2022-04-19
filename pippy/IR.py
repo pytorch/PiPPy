@@ -538,7 +538,7 @@ class Pipe(torch.nn.Module):
                  f"usages of '{node.target}' in the traced graph." if isinstance(param_val, torch.nn.Module) else "")
             callee = root.get_submodule(callee_name)
             new_param_name = f"moved_{node.target.replace('.', '_')}"
-            assert not hasattr(callee, new_param_name)
+            assert not hasattr(callee, new_param_name), f'Module {callee_name} already has a parameter named {new_param_name}'
             if is_buffer:
                 callee.register_buffer(new_param_name, param_val)
             else:
@@ -731,6 +731,17 @@ class Pipe(torch.nn.Module):
             traced = torch.fx.GraphModule(mod, graph)
         finally:
             _pipeline_tracer = old__pipeline_tracer
+
+        get_attr_nodes = {}
+        for node in traced.graph.nodes:
+            if node.op == 'get_attr':
+                get_attr_nodes.setdefault(node.target, node)
+
+                if get_attr_nodes[node.target] != node:
+                    node.replace_all_uses_with(get_attr_nodes[node.target])
+                    traced.graph.erase_node(node)
+
+        traced.recompile()
 
         return Pipe._from_traced(mod, traced, multi_use_param_spec, output_loss_value_spec=output_loss_value_spec)
 
