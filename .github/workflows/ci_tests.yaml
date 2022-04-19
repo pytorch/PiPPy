@@ -212,6 +212,7 @@ jobs:
       - name: nvcc check
         run: |
           nvcc --version
+          nvidia-smi
       - name: Install dependencies
         run: |
           source build_binary_3.8/bin/activate
