@@ -446,15 +446,15 @@ class PipeStageExecutor:
         # HACK: we assume the module has at least one parameter
         param = next(self.mod.parameters(), None)
         if param is None:
-            warnings.warn(f'Stage module has 0 parameters, cannot figure out '
-                          f'device. Setting it to cpu')
+            warnings.warn(f"Module of stage {self.stage_id} has 0 parameters, "
+                          f"cannot figure out device. Setting it to cpu")
         else:
             device = param.device
 
         # Future constructor does not accept CPU device, must set to None
         future: torch.futures.Future = torch.futures.Future(devices=None if
-                param is None or device.type == 'cpu'
-                else [device])
+                                                            param is None or device.type == 'cpu'
+                                                            else [device])
         # TODO: increase blocked_args_count for extra things like scheduling
         work_item = WorkItem(stage_id=self.stage_id, phase=phase, args=args, kwargs=kwargs, future=future,
                              microbatch_id=cur_microbatch, blocked_args_count=len(value_ref_args), ready_args={},
