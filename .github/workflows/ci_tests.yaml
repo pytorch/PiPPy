@@ -133,6 +133,10 @@ jobs:
         run: VERBOSE=${{ matrix.verbose }} python test/local_test_forward_hf_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: Run GPT2 slurm example without slurm
         run: VERBOSE=${{ matrix.verbose }} python examples/slurm/hf/gpt2/pippy_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+      - name: Run BERT slurm example without slurm
+        run: VERBOSE=${{ matrix.verbose }} python examples/slurm/hf/bert/pippy_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+      - name: Run visualizer test
+        run: VERBOSE=${{ matrix.verbose }} python test/local_test_visualizer.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
 
   integration_test_gpu:
     runs-on: linux.16xlarge.nvidia.gpu
