@@ -163,6 +163,7 @@ def run_master(args):
             return x
 
     ec = ExampleCode()
+    ec.to(args.device)
 
     mse_loss = SlowMSELoss(reduction='sum')
     wrapper = TrivialLossWrapper(ec, mse_loss)
@@ -177,13 +178,13 @@ def run_master(args):
                                                                output_chunk_spec, args.world_size - 1,
                                                                all_ranks=all_ranks, _debug_mask_minibatches=True)
 
-    input = torch.randn(bs, d_hid)
-    target = torch.randn(bs, d_hid)
+    ec_input = torch.randn(bs, d_hid, device=args.device)
+    target = torch.randn(bs, d_hid, device=args.device)
 
     pipe_visualized_filename = "pipe_visualized.json"
     batches_events_contexts = []
     for i in range(batches):
-        pipe_driver.run(chunks, input, target)
+        pipe_driver.run(chunks, ec_input, target)
         batches_events_contexts.append(pipe_driver.retrieve_events())
 
     # first: save file
@@ -266,10 +267,23 @@ def check_events_for_single_batch(events: List[Event], all_stages: List[int], ch
 
 
 def run_worker(rank, world_size, args):
-    print(f"rank = {rank} host/pid = {socket.gethostname()}/{os.getpid()}")
     os.environ['MASTER_ADDR'] = args.master_addr
     os.environ['MASTER_PORT'] = args.master_port
-    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256)
+    # Exclude IB for metadata transport due to lack of EFA support on AWS
+    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256,
+                                              _transports=["shm", "uv"])
+    if args.cuda:
+        n_devs = torch.cuda.device_count()
+        if n_devs > 0:
+            dev_id = rank % n_devs
+            for i in range(world_size):
+                options.set_device_map(f"worker{i}", {dev_id: i % n_devs})
+        else:
+            args.cuda = 0
+    args.device = f'cuda:{dev_id}' if args.cuda else 'cpu'
+    print(f"rank = {rank} host/pid/device = "
+          f"{socket.gethostname()}/{os.getpid()}/{args.device}")
+
     rpc.init_rpc(
         f"worker{rank}",
         rank=rank,
@@ -289,6 +303,7 @@ if __name__ == "__main__":
     parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
     parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
     parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
+    parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
     args = parser.parse_args()
 
     if args.rank == -1:

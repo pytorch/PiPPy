@@ -17,7 +17,8 @@ from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, Pi
 from pippy.events import EventsContext
 from pippy.microbatch import CustomReducer, TensorChunkSpec
 from pippy.visualizer import events_to_json
-from transformers import GPT2LMHeadModel, GPT2Config
+from transformers import BertLMHeadModel, BertConfig
+from transformers.modeling_utils import ModuleUtilsMixin
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
@@ -41,11 +42,16 @@ def get_number_of_params(model):
 
 
 @torch.fx.wrap
-def torch_arange_wrapper(*args, **kwargs):
-    return torch.arange(*args, **kwargs)
+def torch_ones_wrapper(*args, **kwargs):
+    return torch.ones(*args, **kwargs)
 
 
-class HFGPT2Tracer(fx.HFTracer):
+@torch.fx.wrap
+def torch_create_extended_attention_mask_for_decoder_wrapper(*args, **kwargs):
+    return ModuleUtilsMixin.create_extended_attention_mask_for_decoder(*args, **kwargs)
+
+
+class HFBertTracer(fx.HFTracer):
     def trace(self, root, concrete_args=None, method_names=None):
         graph = super().trace(root, concrete_args, method_names)
         # HACK to replace HF's non-resolvable wrappers with the original
@@ -53,42 +59,19 @@ class HFGPT2Tracer(fx.HFTracer):
         # Requires this patch to HF: https://github.com/jamesr66a/transformers/commit/ede9d30f36f12be390692617ef76e2928b1612bd
         for node in graph.nodes:
             if node.op == 'call_function':
-                if getattr(node.target, '_orig', None) == torch.arange:
-                    node.target = torch_arange_wrapper
+                if getattr(node.target, '_orig', None) == torch.ones:
+                    node.target = torch_ones_wrapper
+                elif getattr(node.target, '_orig', None) == ModuleUtilsMixin.create_extended_attention_mask_for_decoder:
+                    node.target = torch_create_extended_attention_mask_for_decoder_wrapper
         return graph
 
 
-# TODO: Fails! Why??? https://gist.github.com/pbelevich/f4e78c6ed2fdabc8b02ab15e254935fd
-# def add_split_points(gpt2, layers_per_rank):
-#     for i in range(0, gpt2.config.n_layer // layers_per_rank):
-#         annotate_split_points(gpt2, {f'transformer.h.{i * layers_per_rank}': PipeSplitWrapper.SplitPoint.BEGINNING})
-#     annotate_split_points(gpt2, {
-#         f'transformer.h.{gpt2.config.n_layer // layers_per_rank - 1}': PipeSplitWrapper.SplitPoint.END})
-#     return gpt2.config.n_layer // layers_per_rank + 2
-
-
-# TODO: Fails! Why??? https://gist.github.com/pbelevich/f4e78c6ed2fdabc8b02ab15e254935fd
-# def add_split_points(gpt2, layers_per_rank):
-#     for i in range(0, gpt2.config.n_layer // layers_per_rank):
-#         annotate_split_points(gpt2, {f'transformer.h.{i * layers_per_rank}': PipeSplitWrapper.SplitPoint.BEGINNING})
-#     annotate_split_points(gpt2, {f'lm_head': PipeSplitWrapper.SplitPoint.BEGINNING})
-#     return gpt2.config.n_layer // layers_per_rank + 2
-
-
-# TODO: Fails! Why??? https://gist.github.com/pbelevich/f4e78c6ed2fdabc8b02ab15e254935fd
-# def add_split_points(gpt2, decoders_per_rank):
-#     annotate_split_points(gpt2, {f'transformer.drop': PipeSplitWrapper.SplitPoint.END})
-#     for i in range(0, gpt2.config.n_layer // decoders_per_rank):
-#         annotate_split_points(gpt2, {
-#             f'transformer.h.{i * decoders_per_rank + decoders_per_rank - 1}': PipeSplitWrapper.SplitPoint.END})
-#     return gpt2.config.n_layer // decoders_per_rank + 2
-
-
-def add_split_points(gpt2, decoders_per_rank):
-    for i in range(0, gpt2.config.n_layer // decoders_per_rank):
-        annotate_split_points(gpt2, {f'transformer.h.{i * decoders_per_rank}': PipeSplitWrapper.SplitPoint.BEGINNING})
-    annotate_split_points(gpt2, {f'transformer.ln_f': PipeSplitWrapper.SplitPoint.BEGINNING})
-    return gpt2.config.n_layer // decoders_per_rank + 2
+def add_split_points(bert, encoders_per_rank):
+    for i in range(0, bert.config.num_hidden_layers // encoders_per_rank):
+        annotate_split_points(bert,
+                              {f'bert.encoder.layer.{i * encoders_per_rank}': PipeSplitWrapper.SplitPoint.BEGINNING})
+    annotate_split_points(bert, {f'cls': PipeSplitWrapper.SplitPoint.BEGINNING})
+    return bert.config.num_hidden_layers // encoders_per_rank + 2
 
 
 def run_master(args):
@@ -98,17 +81,17 @@ def run_master(args):
 
     assert args.world_size >= 4, "This program requires at least 3 workers + 1 master"
 
-    gpt2 = GPT2LMHeadModel(GPT2Config())
-    gpt2.eval()
-    print(gpt2.config)
-    print(f"GPT-2 total number of params = {get_number_of_params(gpt2) // 10 ** 6}M")
+    bert = BertLMHeadModel(BertConfig(is_decoder=True))
+    bert.eval()
+    print(bert.config)
+    print(f"BERT total number of params = {get_number_of_params(bert) // 10 ** 6}M")
 
     emb_head = 2  # embeddings + head
     master_emb_head = 1 + emb_head  # master + embeddings + head
-    decoders_per_rank = (gpt2.config.n_layer + (args.world_size - master_emb_head) - 1) // (
-            args.world_size - master_emb_head)  # a divider of gpt2.config.n_layer: [1, 2, 3, 4, 6, 12]
-    print(f"decoders_per_rank = {decoders_per_rank}")
-    number_of_workers = emb_head + gpt2.config.n_layer // decoders_per_rank  # 3 + a divider of gpt2.config.n_layer: [4, 5, 6, 7, 9, 15]
+    encoders_per_rank = (bert.config.num_hidden_layers + (args.world_size - master_emb_head) - 1) // (
+            args.world_size - master_emb_head)  # a divider of bert.config.num_hidden_layers: [1, 2, 3, 4, 6, 12]
+    print(f"encoders_per_rank = {encoders_per_rank}")
+    number_of_workers = emb_head + bert.config.num_hidden_layers // encoders_per_rank  # 3 + a divider of bert.config.num_hidden_layers: [4, 5, 6, 7, 9, 15]
     print(f"number_of_workers = {number_of_workers}")
 
     all_worker_ranks = list(range(1, 1 + number_of_workers))  # exclude master rank = 0
@@ -120,51 +103,48 @@ def run_master(args):
     device = args.device
     print("Using device:", device)
 
-    gpt2_input_dict = {
-        'input_ids': torch.empty(bs, seq_length, dtype=torch.long, device=device).random_(gpt2.config.vocab_size),
-        'labels': torch.empty(bs, seq_length, dtype=torch.long, device=device).random_(gpt2.config.vocab_size),
-        'position_ids': torch.arange(0, seq_length, dtype=torch.long,
-                                     device=device)}  # needed because otherwise it is instantiated on cpu
+    bert_input_dict = {
+        'input_ids': torch.zeros(bs, seq_length, dtype=torch.long, device=device).random_(bert.config.vocab_size),
+        'labels': torch.zeros(bs, seq_length, dtype=torch.long, device=device).random_(bert.config.vocab_size),
+        'attention_mask': torch.ones(bs, seq_length, device=device)}
 
-    sm_cnt = add_split_points(gpt2, decoders_per_rank)
+    sm_cnt = add_split_points(bert, encoders_per_rank)
     assert sm_cnt == len(all_worker_ranks), f"sm_cnt = {sm_cnt} all_worker_ranks = {all_worker_ranks}"
 
-    # print(gpt2)
+    # print(bert)
 
-    hf_tracer = HFGPT2Tracer()
+    hf_tracer = HFBertTracer()
 
-    input_names = gpt2_input_dict.keys()
-    sig = inspect.signature(gpt2.forward)
+    input_names = bert_input_dict.keys()
+    sig = inspect.signature(bert.forward)
     concrete_args = {p.name: p.default for p in sig.parameters.values() if p.name not in input_names}
 
-    print('Instantiating GPT-2 Pipeline')
-    output_loss_value_spec = {'loss': True, 'logits': False,
-                              'past_key_values': [[False for _ in range(2)] for _ in range(12)]}
-    gpt2_pipe = Pipe.from_tracing(gpt2, MULTI_USE_PARAM_CONFIG, tracer=hf_tracer, concrete_args=concrete_args,
+    print('Instantiating BERT Pipeline')
+    output_loss_value_spec = {'loss': True, 'logits': False}
+    bert_pipe = Pipe.from_tracing(bert, MULTI_USE_PARAM_CONFIG, tracer=hf_tracer, concrete_args=concrete_args,
                                   output_loss_value_spec=output_loss_value_spec)
-    assert sm_cnt == len(list(gpt2_pipe.split_gm.children()))
-    gpt2_pipe.to(device)
+    assert sm_cnt == len(list(bert_pipe.split_gm.children()))
+    bert_pipe.to(device)
 
-    # gpt2_pipe(**gpt2_input_dict)
+    # bert_pipe(**bert_input_dict)
 
-    for i, sm in enumerate(gpt2_pipe.split_gm.children()):
+    for i, sm in enumerate(bert_pipe.split_gm.children()):
         print(f"submod_{i} {get_number_of_params(sm) // 10 ** 6}M params")
 
     args_chunk_spec = ()
-    kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'labels': TensorChunkSpec(0), 'position_ids': None}
-    output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b), 'logits': TensorChunkSpec(0),
-                         'past_key_values': [[TensorChunkSpec(0) for _ in range(2)] for _ in range(12)]}
-    pipe_driver: PipelineDriverBase = schedules[args.schedule](gpt2_pipe, args_chunk_spec, kwargs_chunk_spec,
+    kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'labels': TensorChunkSpec(0), 'attention_mask': None}
+    output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b), 'logits': TensorChunkSpec(0)}
+    pipe_driver: PipelineDriverBase = schedules[args.schedule](bert_pipe, args_chunk_spec, kwargs_chunk_spec,
                                                                output_chunk_spec, len(all_worker_ranks),
                                                                all_ranks=all_worker_ranks, _debug_mask_minibatches=True)
 
     this_file_name = os.path.splitext(os.path.basename(__file__))[0]
 
-    print('Running GPT2 pipeline.')
+    print('Running BERT pipeline.')
     pipe_visualized_filename = f"{this_file_name}_visualized.json"
     batches_events_contexts = []
     for i in range(batches):
-        pipe_driver.run(chunks, **gpt2_input_dict)
+        pipe_driver.run(chunks, **bert_input_dict)
         batches_events_contexts.append(pipe_driver.retrieve_events())
 
     all_events_contexts: EventsContext = reduce(lambda c1, c2: EventsContext().update(c1).update(c2),
@@ -176,6 +156,7 @@ def run_master(args):
 
 
 def run_worker(rank, world_size, args):
+    print(f"rank = {rank} host/pid = {socket.gethostname()}/{os.getpid()}")
     os.environ['MASTER_ADDR'] = args.master_addr
     os.environ['MASTER_PORT'] = args.master_port
     # Exclude IB for metadata transport due to lack of EFA support on AWS
@@ -192,7 +173,6 @@ def run_worker(rank, world_size, args):
     args.device = f'cuda:{dev_id}' if args.cuda else 'cpu'
     print(f"rank = {rank} host/pid/device = "
           f"{socket.gethostname()}/{os.getpid()}/{args.device}")
-
     rpc.init_rpc(
         f"worker{rank}",
         rank=rank,

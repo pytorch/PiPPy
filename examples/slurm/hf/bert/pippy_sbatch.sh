@@ -1,7 +1,7 @@
 #!/bin/bash
 # Copyright (c) Meta Platforms, Inc. and affiliates
 
-#SBATCH --job-name=gpt2_pippy
+#SBATCH --job-name=bert_pippy
 
 #SBATCH --open-mode=append
 
