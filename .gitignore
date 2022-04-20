@@ -6,3 +6,4 @@ pippy/version.py
 dist
 .idea/
 **/*.json
+**/slurm-*.out
