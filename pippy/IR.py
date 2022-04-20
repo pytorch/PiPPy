@@ -203,7 +203,7 @@ def _insert_stage_symbolic_backward(g : torch.fx.Graph, output_loss_value_spec):
                 output_grads : Union[Tuple[Optional[torch.fx.Node], ...], Optional[torch.fx.Node]]
                 if node in tuples:
                     stage_output = tuples[node]
-                    output_grads = tuple(val_to_grad[n] for n in tuples[node])
+                    output_grads = tuple(val_to_grad.get(n, None) for n in tuples[node])
                     outputs_with_grads_idxs = [i for i, n in enumerate(tuples[node]) if n in live_nodes]
                 else:
                     stage_output = node,
