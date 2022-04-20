@@ -10,7 +10,9 @@ import torch
 import transformers.utils.fx as fx
 from pippy.IR import MultiUseParameterConfig, Pipe, annotate_split_points, PipeSplitWrapper, stage_backward
 from transformers import *
-import torch.fx.experimental.meta_tracer
+# import torch.fx.experimental.meta_tracer as meta_tracer
+# TODO: switch this to torch.fx.experimental.meta_tracer when it's packaged in the nightly
+import tmp.meta_tracer as meta_tracer
 
 def albert_splitter(model) -> int:
     if isinstance(model, AlbertModel):
@@ -255,7 +257,7 @@ for _model_cls in fx._SUPPORTED_MODELS:
             input_dict = generate_inputs_for_model(model_cls, model, include_loss_args=False)
             concrete_args = generate_concrete_args_for_model(model, input_dict.keys())
 
-            hf_tracer = torch.fx.experimental.meta_tracer.MetaTracer()
+            hf_tracer = meta_tracer.MetaTracer()
             meta_args = torch.fx.node.map_aggregate(
                 input_dict, lambda v: v.to(device='meta') if isinstance(v, torch.Tensor) else v)
 
@@ -325,7 +327,7 @@ for _model_cls in fx._SUPPORTED_MODELS:
                 else:
                     raise e
 
-            hf_tracer = torch.fx.experimental.meta_tracer.MetaTracer()
+            hf_tracer = meta_tracer.MetaTracer()
             meta_args = torch.fx.node.map_aggregate(
                 input_dict, lambda v: v.to(device='meta') if isinstance(v, torch.Tensor) else v)
 
