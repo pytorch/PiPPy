@@ -179,7 +179,8 @@ def run_master(args, pp_ranks):
                                                                output_chunk_spec, args.pp_group_size,
                                                                 all_ranks=pp_ranks, dp_pg_cb=resolve_pg_per_stage,
                                                                _debug_mask_minibatches=False,
-                                                               _record_mem_dumps=bool(args.record_mem_dumps))
+                                                               _record_mem_dumps=bool(args.record_mem_dumps),
+                                                               checkpoint=bool(args.checkpoint))
 
     this_file_name = os.path.splitext(os.path.basename(__file__))[0]
 
@@ -255,6 +256,7 @@ if __name__ == "__main__":
     parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
     parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
     parser.add_argument('--record_mem_dumps', type=int, default=0, choices=[0, 1])
+    parser.add_argument('--checkpoint', type=int, default=0, choices=[0, 1])
     args = parser.parse_args()
 
     assert args.dp_group_size * args.pp_group_size == args.world_size

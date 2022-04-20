@@ -176,7 +176,10 @@ def run_master(args):
     all_ranks = list(range(1, args.world_size))  # exclude master rank = 0
     pipe_driver: PipelineDriverBase = schedules[args.schedule](ec_pipe, args_chunk_spec, kwargs_chunk_spec,
                                                                output_chunk_spec, args.world_size - 1,
-                                                               all_ranks=all_ranks, _debug_mask_minibatches=True)
+                                                               all_ranks=all_ranks,
+                                                               _debug_mask_minibatches=True,
+                                                               _record_mem_dumps=bool(args.record_mem_dumps),
+                                                               checkpoint=bool(args.checkpoint))
 
     ec_input = torch.randn(bs, d_hid, device=args.device)
     target = torch.randn(bs, d_hid, device=args.device)
@@ -304,6 +307,8 @@ if __name__ == "__main__":
     parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
     parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
     parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
+    parser.add_argument('--record_mem_dumps', type=int, default=0, choices=[0, 1])
+    parser.add_argument('--checkpoint', type=int, default=0, choices=[0, 1])
     args = parser.parse_args()
 
     if args.rank == -1:

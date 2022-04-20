@@ -86,7 +86,9 @@ def run_master(args):
                                                                output_chunk_spec,
                                                                len(all_worker_ranks),
                                                                all_ranks=all_worker_ranks,
-                                                               _debug_mask_minibatches=True)
+                                                               _debug_mask_minibatches=True,
+                                                               _record_mem_dumps=bool(args.record_mem_dumps),
+                                                               checkpoint=bool(args.checkpoint))
 
     optimizer = pipe_driver.instantiate_optimizer(optim.Adam, lr=1e-3, betas=(0.9, 0.999), eps=1e-8)
 
@@ -165,6 +167,8 @@ if __name__ == "__main__":
     parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
     parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
     parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
+    parser.add_argument('--record_mem_dumps', type=int, default=0, choices=[0, 1])
+    parser.add_argument('--checkpoint', type=int, default=0, choices=[0, 1])
     args = parser.parse_args()
     args.world_size = 7  # "This program requires exactly 6 workers + 1 master"
 

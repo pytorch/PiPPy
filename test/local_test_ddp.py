@@ -117,7 +117,9 @@ def run_master(args, pp_ranks):
     pipe_driver : PipelineDriverBase = schedules[args.schedule](ec_pipe, args_chunk_spec, kwargs_chunk_spec,
                                                                 output_chunk_spec, args.pp_group_size,
                                                                 all_ranks=pp_ranks, dp_pg_cb=resolve_pg_per_stage,
-                                                                _debug_mask_minibatches=DEBUG_MASK_MINIBATCHES)
+                                                                _debug_mask_minibatches=DEBUG_MASK_MINIBATCHES,
+                                                                _record_mem_dumps=bool(args.record_mem_dumps),
+                                                                checkpoint=bool(args.checkpoint))
     print(f'Rank {args.rank} Instantiated pipe with ranks {pp_ranks}')
 
     torch.manual_seed(args.rank)
@@ -237,6 +239,8 @@ if __name__ == "__main__":
     parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
     parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
     parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
+    parser.add_argument('--record_mem_dumps', type=int, default=0, choices=[0, 1])
+    parser.add_argument('--checkpoint', type=int, default=0, choices=[0, 1])
     args = parser.parse_args()
 
     assert args.dp_group_size * args.pp_group_size == args.world_size
