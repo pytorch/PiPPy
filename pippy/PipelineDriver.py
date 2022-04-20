@@ -437,7 +437,24 @@ class PipeStageExecutor:
 
         # Construct WorkItem for this microbatch+phase and record it in the
         # waiting runlist
-        future: torch.futures.Future = torch.futures.Future()
+
+        # We provide device to the Future constructor so that between
+        # future.set_result() and future.wait() correct dependencies can be
+        # captured
+        # We assume the output value is on the same device as the stage's
+        # module, and that all parameters in the module are on the same device
+        # HACK: we assume the module has at least one parameter
+        param = next(self.mod.parameters(), None)
+        if param is None:
+            warnings.warn(f'Stage module has 0 parameters, cannot figure out '
+                          f'device. Setting it to cpu')
+        else:
+            device = param.device
+
+        # Future constructor does not accept CPU device, must set to None
+        future: torch.futures.Future = torch.futures.Future(devices=None if
+                param is None or device.type == 'cpu'
+                else [device])
         # TODO: increase blocked_args_count for extra things like scheduling
         work_item = WorkItem(stage_id=self.stage_id, phase=phase, args=args, kwargs=kwargs, future=future,
                              microbatch_id=cur_microbatch, blocked_args_count=len(value_ref_args), ready_args={},
