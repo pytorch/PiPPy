@@ -492,6 +492,21 @@ class Pipe(torch.nn.Module):
         a dict ``{'loss': loss_value, 'model_out': model_out}``, you can specify
         ``output_loss_value_spec={'loss': True, 'model_out': False}``
         """
+
+        # Deduplicate `get_attr` nodes that refer to the same parameter . Downstream code for moving
+        # parameters relies on the invariant that parameter accesses happen once. This is not necessarily
+        # the case (especially with custom tracers), so fix that up here.
+        get_attr_nodes : Dict[str, torch.fx.Node] = {}
+        for node in traced.graph.nodes:
+            if node.op == 'get_attr':
+                get_attr_nodes.setdefault(node.target, node)
+
+                if get_attr_nodes[node.target] != node:
+                    node.replace_all_uses_with(get_attr_nodes[node.target])
+                    traced.graph.erase_node(node)
+
+        traced.recompile()
+
         part_idx = 0
 
         def split_callback(n : torch.fx.Node):
@@ -538,7 +553,7 @@ class Pipe(torch.nn.Module):
                  f"usages of '{node.target}' in the traced graph." if isinstance(param_val, torch.nn.Module) else "")
             callee = root.get_submodule(callee_name)
             new_param_name = f"moved_{node.target.replace('.', '_')}"
-            assert not hasattr(callee, new_param_name)
+            assert not hasattr(callee, new_param_name), f'Module {callee_name} already has a parameter named {new_param_name}'
             if is_buffer:
                 callee.register_buffer(new_param_name, param_val)
             else:
