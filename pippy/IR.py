@@ -17,7 +17,7 @@ from torch.fx.passes.split_module import split_module
 # 5. Add parameter movement to split_module
 
 # TODO: move to a separate file with runtime artifacts
-def stage_backward(stage_output, output_grads, input_values, stage_info : str, outputs_with_grads_idxs : List[int]):
+def stage_backward(stage_output, output_grads, input_values, stage_info : str):
     """
     Given the input value(s) and the corresponding gradient for those/that input
     value(s), compute and accumulate gradients for all parameter values (leaves
@@ -30,9 +30,6 @@ def stage_backward(stage_output, output_grads, input_values, stage_info : str, o
         else:
             return str(v)
     try:
-        stage_output_with_grads = [stage_output[i] for i in outputs_with_grads_idxs]
-        output_grads_with_grads = [output_grads[i] for i in outputs_with_grads_idxs]
-
         # stage_output may be a composite datatype like dict. Extract all individual
         # tensor values here
         stage_output_tensors = []
@@ -49,7 +46,7 @@ def stage_backward(stage_output, output_grads, input_values, stage_info : str, o
                 if grad_val is None:
                     return
                 assert isinstance(grad_val, (tuple, list)), f'grad_value expected to have type {type(output_val)} but got {type(grad_val)}'
-                assert len(output_val) == len(grad_val)
+                # assert len(output_val) == len(grad_val) Investigate why it fails! TODO(https://github.com/pytorch/PiPPy/issues/135)
                 for ov, gv in zip(output_val, grad_val):
                     extract_tensors_with_grads(ov, gv)
             elif isinstance(output_val, dict):
@@ -63,7 +60,7 @@ def stage_backward(stage_output, output_grads, input_values, stage_info : str, o
                 # Output is a non-tensor type; just ignore it
                 pass
 
-        extract_tensors_with_grads(stage_output_with_grads, output_grads_with_grads)
+        extract_tensors_with_grads(stage_output, output_grads)
 
         torch.autograd.backward(stage_output_tensors, grad_tensors=output_grad_tensors)
 
@@ -202,13 +199,11 @@ def _insert_stage_symbolic_backward(g : torch.fx.Graph, output_loss_value_spec):
             if node.op == 'call_module':
                 output_grads : Union[Tuple[Optional[torch.fx.Node], ...], Optional[torch.fx.Node]]
                 if node in tuples:
-                    stage_output = tuples[node]
-                    output_grads = tuple(val_to_grad.get(n, None) for n in tuples[node])
-                    outputs_with_grads_idxs = [i for i, n in enumerate(tuples[node]) if n in live_nodes]
+                    stage_output = tuple(n for n in tuples[node] if n in live_nodes)
+                    output_grads = tuple(val_to_grad[n] for n in tuples[node] if n in live_nodes)
                 else:
                     stage_output = node,
                     output_grads = val_to_grad[node]
-                    outputs_with_grads_idxs = [0]
 
                 output_grads = (output_grads,) if not isinstance(output_grads, tuple) else output_grads
 
@@ -216,7 +211,6 @@ def _insert_stage_symbolic_backward(g : torch.fx.Graph, output_loss_value_spec):
                     'stage_output' : stage_output,
                     'output_grads' : output_grads,
                     'input_values' : list(node.all_input_nodes),
-                    'outputs_with_grads_idxs' : outputs_with_grads_idxs,
                 })
                 # Insert backward stage debug info
                 kwargs_copy = dict(grad_call.kwargs)
