@@ -744,7 +744,7 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
         invocation_key = f'{self.cur_microbatch}_{node.name}'
         if target is operator.getitem and isinstance(args[0], ValueReference):
             stage_executor = self.stage_to_executor[args[0].stage_id]
-            return stage_executor.rpc_sync().index_value(
+            return stage_executor.rpc_sync(timeout=0).index_value(
                 output_unique_key=invocation_key, value_ref=args[0], output_refcount=len(node.users),
                 idx=args[1])
         elif target is stage_backward:
