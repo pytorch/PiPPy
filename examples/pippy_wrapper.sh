@@ -8,4 +8,4 @@ export CUDA_VISIBLE_DEVICES=${SLURM_LOCALID}
 export WORLD_SIZE=${SLURM_NTASKS}
 export RANK=${SLURM_PROCID}
 
-python -u pippy_t5.py
+exec "$@"

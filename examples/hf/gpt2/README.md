@@ -6,7 +6,7 @@ Splits Huggingface GPT2 model into 14 submodules and runs it on 2 nodes with 8 G
 
 Run command:
 ```commandline
-sbatch pippy_sbatch.sh
+PiPPy/examples$ sbatch pippy_sbatch.sh python ./hf/gpt2/pippy_gpt2.py
 ```
 Sample output:
 ```

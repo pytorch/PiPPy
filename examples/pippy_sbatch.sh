@@ -1,7 +1,7 @@
 #!/bin/bash
 # Copyright (c) Meta Platforms, Inc. and affiliates
 
-#SBATCH --job-name=gpt2_pippy
+#SBATCH --job-name=pippy
 
 #SBATCH --open-mode=append
 
@@ -19,4 +19,4 @@
 
 #SBATCH --time=1:00:00
 
-srun --label pippy_wrapper.sh
+srun --label pippy_wrapper.sh "$@"
