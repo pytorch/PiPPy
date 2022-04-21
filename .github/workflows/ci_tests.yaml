@@ -131,12 +131,12 @@ jobs:
         run: VERBOSE=${{ matrix.verbose }} python test/local_test_forward_hf_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: Run HF GPT2 forward-only integration test
         run: VERBOSE=${{ matrix.verbose }} python test/local_test_forward_hf_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
-      - name: Run GPT2 slurm example without slurm
-        run: VERBOSE=${{ matrix.verbose }} python examples/slurm/hf/gpt2/pippy_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
-      - name: Run BERT slurm example without slurm
-        run: VERBOSE=${{ matrix.verbose }} python examples/slurm/hf/bert/pippy_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
-      - name: Run T5 slurm example without slurm
-        run: VERBOSE=${{ matrix.verbose }} python examples/slurm/hf/t5/pippy_t5.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+      - name: Run GPT2 example without slurm
+        run: VERBOSE=${{ matrix.verbose }} python examples/hf/gpt2/pippy_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+      - name: Run BERT example without slurm
+        run: VERBOSE=${{ matrix.verbose }} python examples/hf/bert/pippy_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+      - name: Run T5 example without slurm
+        run: VERBOSE=${{ matrix.verbose }} python examples/hf/t5/pippy_t5.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: Run visualizer test
         run: VERBOSE=${{ matrix.verbose }} python test/local_test_visualizer.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
 
@@ -245,7 +245,7 @@ jobs:
           python3 test/local_test_forward_backward.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
           python3 test/local_test_forward_hf_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
           python3 test/local_test_forward_hf_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
-          python3 examples/slurm/hf/gpt2/pippy_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+          python3 examples/hf/gpt2/pippy_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
 
   ddp_test:
     runs-on: linux.2xlarge
