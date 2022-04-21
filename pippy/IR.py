@@ -492,6 +492,21 @@ class Pipe(torch.nn.Module):
         a dict ``{'loss': loss_value, 'model_out': model_out}``, you can specify
         ``output_loss_value_spec={'loss': True, 'model_out': False}``
         """
+
+        # Deduplicate `get_attr` nodes that refer to the same parameter . Downstream code for moving
+        # parameters relies on the invariant that parameter accesses happen once. This is not necessarily
+        # the case (especially with custom tracers), so fix that up here.
+        get_attr_nodes : Dict[str, torch.fx.Node] = {}
+        for node in traced.graph.nodes:
+            if node.op == 'get_attr':
+                get_attr_nodes.setdefault(node.target, node)
+
+                if get_attr_nodes[node.target] != node:
+                    node.replace_all_uses_with(get_attr_nodes[node.target])
+                    traced.graph.erase_node(node)
+
+        traced.recompile()
+
         part_idx = 0
 
         def split_callback(n : torch.fx.Node):
@@ -731,17 +746,6 @@ class Pipe(torch.nn.Module):
             traced = torch.fx.GraphModule(mod, graph)
         finally:
             _pipeline_tracer = old__pipeline_tracer
-
-        get_attr_nodes : Dict[str, torch.fx.Node] = {}
-        for node in traced.graph.nodes:
-            if node.op == 'get_attr':
-                get_attr_nodes.setdefault(node.target, node)
-
-                if get_attr_nodes[node.target] != node:
-                    node.replace_all_uses_with(get_attr_nodes[node.target])
-                    traced.graph.erase_node(node)
-
-        traced.recompile()
 
         return Pipe._from_traced(mod, traced, multi_use_param_spec, output_loss_value_spec=output_loss_value_spec)
 

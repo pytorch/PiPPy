@@ -246,6 +246,7 @@ class HFModelsForwardTest(unittest.TestCase):
 for _model_cls in fx._SUPPORTED_MODELS:
     def scope(model_cls, replicate):
         def test_case(self):
+            # TODO: https://github.com/pytorch/PiPPy/issues/149
             if model_cls in [MegatronBertForNextSentencePrediction, BertForNextSentencePrediction,
                              MobileBertForNextSentencePrediction]:
                 self.skipTest('Need to fix handling of kwargs')
@@ -310,6 +311,7 @@ class HFModelsForwardBackwardTest(unittest.TestCase):
 for _model_cls in fx._SUPPORTED_MODELS:
     def scope(model_cls, replicate):
         def test_case(self):
+            # TODO: https://github.com/pytorch/PiPPy/issues/149
             if model_cls in [MegatronBertForNextSentencePrediction, BertForNextSentencePrediction,
                              MobileBertForNextSentencePrediction]:
                 self.skipTest('Need to fix handling of kwargs')
