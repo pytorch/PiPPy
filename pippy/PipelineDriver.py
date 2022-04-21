@@ -152,6 +152,32 @@ class RefcountedFuture:
         return self.refcount == 0
 
 
+@rpc.functions.async_execution
+def async_transfer(stage_id, microbatch, worker_rref, value_ref_arg, value_ref_executor_rref, arg_idx, runlist_key):
+    logging.info(f'[{stage_id}][{microbatch}] Starting transfer')
+    self = worker_rref.local_value()
+    fut = value_ref_executor_rref.rpc_async(timeout=0).get_value(
+        stage_id, runlist_key, microbatch, value_ref_arg)
+
+    def bottom_half(fut):
+        logging.info(f'[{stage_id}][{microbatch}] Completing transfer of value {value_ref_arg} '
+                     f'for runlist item {runlist_key}')
+        value = fut.value()
+        with self.waiting_runlist_lock:
+            work_item = self.waiting_runlist[runlist_key]
+            work_item.ready_args[arg_idx] = value
+            work_item.blocked_args_count -= 1
+            if work_item.blocked_args_count == 0:
+                with self.ready_runlist_cv:
+                    work_item.state = SchedState.READY
+                    self.ready_runlist[runlist_key] = self.waiting_runlist.pop(runlist_key)
+                    self.ready_runlist_cv.notify()
+                logging.info(f'[{stage_id}][{microbatch}] All operands ready')
+            else:
+                logging.info(f'[{stage_id}][{microbatch}] Still waiting for {work_item.blocked_args_count} operands.')
+
+    return fut.then(bottom_half)
+
 class RankWorker(EventRecorder):
     """
     RankWorker is the underlying WorkItem processing engine for pipeline stages
@@ -358,19 +384,6 @@ class RankWorker(EventRecorder):
             self.record_event_dependency(from_id=prev_name, to_id=name, type='transfer')
             self.record_event_dependency(from_id=name, to_id=next_name, type='transfer')
 
-    # For work item marked with runlist_key, update its operand list with value
-    def update_run_list(self, runlist_key, arg_idx, value):
-        with self.waiting_runlist_lock:
-            work_item = self.waiting_runlist[runlist_key]
-            work_item.ready_args[arg_idx] = value
-            work_item.blocked_args_count -= 1
-            if work_item.blocked_args_count == 0:
-                with self.ready_runlist_cv:
-                    work_item.state = SchedState.READY
-                    self.ready_runlist[runlist_key] = self.waiting_runlist.pop(runlist_key)
-                    self.ready_runlist_cv.notify()
-                logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] all operands ready')
-
 
 class PipeStageExecutor:
     """
@@ -464,11 +477,11 @@ class PipeStageExecutor:
         # Spawn asynchronous data transfers for each of the ValueRef arguments.
         _futures = []
         for arg_idx, value_ref_arg in enumerate(value_ref_args):
-            logging.info(f'[{self.stage_id}][{cur_microbatch}] Launching asynchronous data transfer for '
-                         f'ValueReference {arg_idx} {value_ref_arg}')
+            logging.info(f'[{self.stage_id}][{cur_microbatch}] Launching asynchronous data transfer for ValueReference {arg_idx} {value_ref_arg}')
             assert self.peer_executors is not None
-            _futures.append(self.async_transfer(cur_microbatch, value_ref_arg,
-                                                arg_idx, output_unique_key))
+            worker_rref: rpc.RRef = rpc.RRef(self.rank_worker)
+            _futures.append(async_transfer(self.stage_id, cur_microbatch, worker_rref, value_ref_arg,
+                                           self.peer_executors[value_ref_arg.stage_id], arg_idx, output_unique_key))
 
         if DEBUG:
             # Make exceptions visible
@@ -510,20 +523,6 @@ class PipeStageExecutor:
                 self.value_store.pop(value_ref_arg.unique_key)
 
         return value
-
-    def async_transfer(self, microbatch, value_ref_arg, arg_idx, runlist_key):
-        logging.info(f'[{self.stage_id}][{microbatch}] Starting transfer')
-        value_ref_executor_rref = self.peer_executors[value_ref_arg.stage_id]
-        fut = value_ref_executor_rref.rpc_async(timeout=0).get_value(
-            self.stage_id, runlist_key, microbatch, value_ref_arg)
-
-        def bottom_half(fut):
-            logging.info(f'[{self.stage_id}][{microbatch}] Completing transfer of value {value_ref_arg} '
-                         f'for runlist item {runlist_key}')
-            value = fut.value()
-            self.rank_worker.update_run_list(runlist_key, arg_idx, value)
-
-        return fut.then(bottom_half)
 
     def get_grad(self, qualname):
         mod = self.mod
