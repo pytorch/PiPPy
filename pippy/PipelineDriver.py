@@ -399,6 +399,13 @@ class PipeStageExecutor:
 
         self.peer_executors : Dict[int, torch._C._distributed_rpc.PyRRef] = None
 
+    def __getstate__(self):
+        # Adding an empty __getstate__ function here to work around the DDP pickling issue (#153) that occurs when the
+        # PipelineDiver asks PipeStageExecutors to install_peer_executor(a list of RRefs)
+        # More elegant solution is needed in CUDAFuture or RPC to avoid pickling when users do not need to transfer
+        # tensors
+        pass
+
     def install_peer_executors(self, peer_executors):
         assert self.peer_executors is None
         self.peer_executors = peer_executors
