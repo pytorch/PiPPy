@@ -100,7 +100,7 @@ jobs:
         run: python test/min_gpt_tracing.py
 
   integration_test_cpu:
-    runs-on: linux.2xlarge
+    runs-on: linux.24xlarge
     strategy:
       matrix:
         python-version: ["3.7", "3.8", "3.9"]
