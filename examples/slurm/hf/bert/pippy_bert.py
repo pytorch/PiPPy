@@ -196,6 +196,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.rank == -1:
+        # Randomize port
+        import random
+        args.master_port = str(int(args.master_port)+random.randint(1, 499))
         mp.spawn(run_worker, args=(args.world_size, args,), nprocs=args.world_size, join=True)
     elif args.rank < args.world_size:
         run_worker(args.rank, args.world_size, args)
