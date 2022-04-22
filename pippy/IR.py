@@ -739,7 +739,7 @@ class Pipe(torch.nn.Module):
 
     @staticmethod
     def from_tracing(mod : torch.nn.Module, multi_use_param_spec : Optional[MultiUseParamSpec] = None,
-                     tracer=None, output_loss_value_spec=None, **kwargs):
+                     tracer=None, output_loss_value_spec=None, deep_copy_module=False, **kwargs):
         # TODO: abstract partitioning policy
 
         global _pipeline_tracer
@@ -747,7 +747,8 @@ class Pipe(torch.nn.Module):
         _pipeline_tracer = tracer or torch.fx.Tracer()
         try:
             # TODO: tracing policy
-            mod = copy.deepcopy(mod)  # because further pipe building activities can modify mod
+            if deep_copy_module:
+                mod = copy.deepcopy(mod)  # because further pipe building activities can modify mod
             graph = _pipeline_tracer.trace(mod, **kwargs)
             traced = torch.fx.GraphModule(mod, graph)
         finally:
