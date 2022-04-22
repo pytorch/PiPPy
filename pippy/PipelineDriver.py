@@ -791,30 +791,36 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
             raise AssertionError(f'Unknown operator {torch.typename(target)}')
 
     def run_until(self, predicate: Callable[[torch.fx.Node], bool]):
-        for self.pc in range(self.pc, len(self.node_list)):
+        while self.pc < len(self.node_list):
             node = self.node_list[self.pc]
 
             if predicate(node):
                 return node
 
-            # TODO: hoist run() implementation
-            logging.info(f'[{self.cur_microbatch}] Issue command to run {node.format_node()}')
-            self.env[node] = super().run_node(node)
+            return self.run_one(node)
 
-            # TODO: we could potentially move this waiting to the use sites for an RRef
-            # (i.e. during Interpreter.map_nodes_to_values or when we pass args/kwargs
-            #  to the callees) as an optimization
-            # TODO: is it possible for there to be a blocking version of this API?
-            def wait_for_confirmation(n):
-                if isinstance(n, torch._C._distributed_rpc.PyRRef):
-                    while not n.confirmed_by_owner():
-                        pass
+    def run_one(self, node):
+        # TODO: hoist run() implementation
+        logging.info(f'[{self.cur_microbatch}] Issue command to run {node.format_node()}')
+        self.env[node] = super().run_node(node)
 
-            torch.fx.node.map_aggregate(self.env[node], wait_for_confirmation)
+        # TODO: we could potentially move this waiting to the use sites for an RRef
+        # (i.e. during Interpreter.map_nodes_to_values or when we pass args/kwargs
+        #  to the callees) as an optimization
+        # TODO: is it possible for there to be a blocking version of this API?
+        def wait_for_confirmation(n):
+            if isinstance(n, torch._C._distributed_rpc.PyRRef):
+                while not n.confirmed_by_owner():
+                    pass
 
-            if DEBUG and isinstance(self.env[node], torch._C._distributed_rpc.PyRRef):
-                print(node, self.env[node])
-                self.env[node].to_here()
+        torch.fx.node.map_aggregate(self.env[node], wait_for_confirmation)
+
+        if DEBUG and isinstance(self.env[node], torch._C._distributed_rpc.PyRRef):
+            print(node, self.env[node])
+            self.env[node].to_here()
+
+        self.pc += 1
+        return node
 
 
 class PipelineDriverFillDrain(PipelineDriverBase):
@@ -857,12 +863,47 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 
         logging.info(f'[root] {len(self.microbatch_interpreters)} instantiated')
 
-        last_nodes = []
-        for interp in self.microbatch_interpreters:
-            last_nodes.append(interp.run_until(lambda n: n.op == 'output'))
+        # Deterministic clock cycle - see torchgpipe paper section 3.2.1 for details
 
-        assert all(n == last_nodes[0] for n in last_nodes)
-        assert last_nodes[0].op == 'output'
+        # Advance past placeholders
+        for interp in self.microbatch_interpreters:
+            interp.run_until(lambda n: n.op != 'placeholder')
+
+        # Ramp-up, admit diagonal wavefront until we get to a full diagonal
+        # location in the matrix
+        for ramp_up_idx in range(len(self.microbatch_interpreters)):
+            for i in range(ramp_up_idx + 1):
+                interp = self.microbatch_interpreters[i]
+                start_node = interp.node_list[interp.pc]
+
+                def run_including_indexing(n):
+                    return n != start_node and n.target != operator.getitem
+
+                interp.run_until(run_including_indexing)
+
+        # Steady-state. We have a full diagonal in the matrix; keep dispatching
+        # across the diagonal
+
+        any_valid = True
+        while any_valid:
+            any_valid = False
+            for i in range(len(self.microbatch_interpreters)):
+                interp = self.microbatch_interpreters[i]
+                start_node = interp.node_list[interp.pc]
+
+                def run_including_indexing(n):
+                    if n.op == 'output':
+                        return True
+
+                    return n != start_node and n.target != operator.getitem
+
+                interp.run_until(run_including_indexing)
+
+                any_valid |= interp.node_list[interp.pc] != start_node
+
+
+        last_nodes = [interp.node_list[interp.pc] for interp in self.microbatch_interpreters]
+        assert all(node.op == 'output' for node in last_nodes)
 
         local_results = self._retrieve_output_values(self.microbatch_interpreters, last_nodes)
 
@@ -875,59 +916,17 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         return merge_chunks(local_results, self.output_chunk_spec, self._debug_mask_minibatches)
 
 
-class PipelineDriver1F1B(PipelineDriverBase):
+class PipelineDriver1F1B(PipelineDriverFillDrain):
     def __init__(self, pipe: Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size: int,
                  all_ranks: List[int] = None, single_loss: bool = False, _debug_mask_minibatches: bool = False,
                  dp_pg_cb=None):
-        super().__init__(pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size, all_ranks,
-                         _debug_mask_minibatches, dp_pg_cb=dp_pg_cb)
-        self.single_loss = single_loss
         # In 1F1B with backward stages, the maximum number of outstanding
         # micro-batches equals the number of pipeline stages
         if self.pipe.has_loss_and_backwards:
             self.max_outstanding = self.pipe.num_stages
 
-        self._init_remote_executors()
-
-    def run(self, chunks: int, *args, **kwargs):
-        if self.single_loss:
-            raise NotImplementedError('Single minibatch loss not implemented')
-
-        logging.info('[root] Running pipeline 1F1B')
-
-        args_split, kwargs_split = split_args_kwargs_into_chunks(args, kwargs, self.args_chunk_spec,
-                                                                 self.kwargs_chunk_spec, chunks,
-                                                                 self._debug_mask_minibatches)
-
-        self.microbatch_interpreters = []
-
-        batch_id = self.batch_id
-        self.batch_id += 1
-
-        for chunk in range(chunks):
-            logging.info(f'[root] Instantiating microbatch interpreter for chunk {chunk}')
-            interp = RemoteInterpreter(self.remote_stage_executor_rrefs,
-                                       self.stage_to_executor, self.pipe.split_gm,
-                                       chunk, args_split[chunk], kwargs_split[chunk],
-                                       batch_id=batch_id, num_microbatches=chunks)
-            self.microbatch_interpreters.append(interp)
-
-        logging.info(f'[root] {len(self.microbatch_interpreters)} instantiated')
-
-        last_nodes = []
-
-        for i, interp in enumerate(self.microbatch_interpreters):
-            logging.info(f'[root] Executing stages for chunk {i}')
-            last_nodes.append(interp.run_until(lambda n: n.op == 'output'))
-
-        local_results = self._retrieve_output_values(self.microbatch_interpreters, last_nodes)
-
-        # There is backward pass, we should sync shared parameters
-        if self.pipe.has_loss_and_backwards:
-            self._sync_replicated_params()
-
-        return merge_chunks(local_results, self.output_chunk_spec, self._debug_mask_minibatches)
-
+        super().__init__(pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size, all_ranks,
+                         _debug_mask_minibatches, dp_pg_cb=dp_pg_cb)
 
 class PipelineDriverInterleaved1F1B(PipelineDriver1F1B):
     def __init__(self, pipe : Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size : int,
