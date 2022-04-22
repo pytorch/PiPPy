@@ -922,11 +922,11 @@ class PipelineDriver1F1B(PipelineDriverFillDrain):
                  dp_pg_cb=None):
         # In 1F1B with backward stages, the maximum number of outstanding
         # micro-batches equals the number of pipeline stages
-        if self.pipe.has_loss_and_backwards:
-            self.max_outstanding = self.pipe.num_stages
+        if pipe.has_loss_and_backwards:
+            self.max_outstanding = pipe.num_stages
 
         super().__init__(pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size, all_ranks,
-                         _debug_mask_minibatches, dp_pg_cb=dp_pg_cb)
+                         single_loss, _debug_mask_minibatches, dp_pg_cb=dp_pg_cb)
 
 class PipelineDriverInterleaved1F1B(PipelineDriver1F1B):
     def __init__(self, pipe : Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size : int,
