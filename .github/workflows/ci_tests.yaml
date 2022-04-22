@@ -78,7 +78,7 @@ jobs:
           pytest --shard-id=${{ matrix.shard }} --num-shards=4 -k 'HFModelsForwardBackwardTest' -sv --cov=pippy test/hf_test.py
 
   min_gpt_test:
-    runs-on: linux.2xlarge
+    runs-on: linux.12xlarge
     strategy:
       matrix:
         python-version: ["3.7", "3.8", "3.9"]
