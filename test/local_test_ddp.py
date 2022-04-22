@@ -60,7 +60,6 @@ def run_master(args, pp_ranks):
     bs = 503
     CHUNKS = 5
     DEBUG_MASK_MINIBATCHES = True
-    REPLICATE = os.environ.get('REPLICATE', '0') != '0'
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if args.replicate else MultiUseParameterConfig.TRANSMIT
     print(f'REPLICATE config: {args.replicate} -> {MULTI_USE_PARAM_CONFIG}')
 
@@ -100,7 +99,8 @@ def run_master(args, pp_ranks):
             return x
 
     ec = ExampleCode()
-    ec(torch.randn(bs, d_hid))
+    ec.to(args.device)
+    ec(torch.randn(bs, d_hid, device=args.device))
     ec.train()
 
     # TODO: works with sum, need to define semantics for e.g. mean
@@ -121,8 +121,8 @@ def run_master(args, pp_ranks):
     print(f'Rank {args.rank} Instantiated pipe with ranks {pp_ranks}')
 
     torch.manual_seed(args.rank)
-    input = torch.randn(bs, d_hid)
-    target = torch.randn(bs, d_hid)
+    input = torch.randn(bs, d_hid, device=args.device)
+    target = torch.randn(bs, d_hid, device=args.device)
 
     # TODO: distributed optimizer
     out = pipe_driver.run(CHUNKS, input, target)
@@ -168,11 +168,23 @@ def run_master(args, pp_ranks):
 
 
 def run_worker(rank, world_size, args):
-    print(f"rank = {rank} host/pid = {socket.gethostname()}/{os.getpid()}")
     os.environ['MASTER_ADDR'] = args.master_addr
     os.environ['MASTER_PORT'] = args.master_port
-    torch.distributed.init_process_group("gloo", rank=rank, world_size=world_size)
-    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256)
+    torch.distributed.init_process_group("nccl", rank=rank, world_size=world_size)
+    # Exclude IB for metadata transport due to lack of EFA support on AWS
+    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256,
+                                              _transports=["shm", "uv"])
+    if args.cuda:
+        n_devs = torch.cuda.device_count()
+        if n_devs > 0:
+            dev_id = rank % n_devs
+            for i in range(world_size):
+                options.set_device_map(f"worker{i}", {dev_id: i % n_devs})
+        else:
+            args.cuda = 0
+    args.device = f'cuda:{dev_id}' if args.cuda else 'cpu'
+    print(f"rank = {rank} host/pid/device = "
+          f"{socket.gethostname()}/{os.getpid()}/{args.device}")
     rpc.init_rpc(
         f"worker{rank}",
         rank=rank,
@@ -218,6 +230,7 @@ if __name__ == "__main__":
     parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
     parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
     parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
+    parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
     args = parser.parse_args()
 
     assert args.dp_group_size * args.pp_group_size == args.world_size
