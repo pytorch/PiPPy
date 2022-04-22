@@ -166,11 +166,12 @@ def run_master(args, pp_ranks):
     if len(not_close_grads):
         raise AssertionError(f'Gradients not close: {not_close_grads}')
 
+    print('Gradient equivalence test passed')
+
 
 def run_worker(rank, world_size, args):
     os.environ['MASTER_ADDR'] = args.master_addr
     os.environ['MASTER_PORT'] = args.master_port
-    torch.distributed.init_process_group("nccl", rank=rank, world_size=world_size)
     # Exclude IB for metadata transport due to lack of EFA support on AWS
     options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256,
                                               _transports=["shm", "uv"])
@@ -185,6 +186,11 @@ def run_worker(rank, world_size, args):
     args.device = f'cuda:{dev_id}' if args.cuda else 'cpu'
     print(f"rank = {rank} host/pid/device = "
           f"{socket.gethostname()}/{os.getpid()}/{args.device}")
+
+    # Init DDP process group
+    backend = "nccl" if args.cuda else "gloo"
+    torch.distributed.init_process_group(backend=backend, rank=rank, world_size=world_size)
+
     rpc.init_rpc(
         f"worker{rank}",
         rank=rank,
