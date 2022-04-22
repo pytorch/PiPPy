@@ -768,10 +768,8 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
                 invocation_key, Phase.BACKWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
                 output_refcount=len(node.users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
         elif target is sync_barrier:
-            # TODO: just assuming the last executor is indeed the executor for the
-            # last stage. We should do this in a more principled way
             executor_keys = list(self.remote_stage_executor_rrefs.keys())
-            stage_id, stage_executor = self.remote_stage_executor_rrefs[executor_keys[-1]]
+            stage_id, stage_executor = self.remote_stage_executor_rrefs[executor_keys[0]]
             logging.info(f'[root][{self.cur_microbatch}] Issuing sync invocation '
                          f'on stage {stage_id}')
             return stage_executor.rpc_sync().invoke(
