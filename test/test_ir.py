@@ -342,7 +342,14 @@ class TestIR(unittest.TestCase):
 
     def test_from_tracing_preserves_buffer(self):
         ec = ExampleCode()
-        pipe = Pipe.from_tracing(ec)
+
+        pipe = Pipe.from_tracing(ec, deep_copy_module=False)
+        assert 'moved_buffer' in dict(pipe.split_gm.submod_1.named_buffers())
+        # NB: identity comparison
+        assert ec.buffer is pipe.split_gm.submod_1.moved_buffer
+        torch.testing.assert_allclose(ec.buffer, pipe.split_gm.submod_1.moved_buffer)
+
+        pipe = Pipe.from_tracing(ec, deep_copy_module=True)
         assert 'moved_buffer' in dict(pipe.split_gm.submod_1.named_buffers())
         # NB: identity comparison is not possible because pipe has a deepcopy of the original parameters
         assert ec.buffer is not pipe.split_gm.submod_1.moved_buffer
