@@ -122,23 +122,23 @@ jobs:
       - name: Install pippy
         run: "python setup.py install"
       - name: Run forward-only integration test
-        run: VERBOSE=${{ matrix.verbose }} python test/local_test_forward.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+        run: MASTER_PORT=29500 VERBOSE=${{ matrix.verbose }} python test/local_test_forward.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: Run forward-loss-backward integration test
-        run: VERBOSE=${{ matrix.verbose }} python test/local_test_forward_backward.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+        run: MASTER_PORT=29501 VERBOSE=${{ matrix.verbose }} python test/local_test_forward_backward.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: Run null_coalesce_accumulate integration test
-        run: VERBOSE=${{ matrix.verbose }} python test/local_test_null_coalesce_accumulate.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+        run: MASTER_PORT=29502 VERBOSE=${{ matrix.verbose }} python test/local_test_null_coalesce_accumulate.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: Run HF BERT forward-only integration test
-        run: VERBOSE=${{ matrix.verbose }} python test/local_test_forward_hf_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+        run: MASTER_PORT=29503 VERBOSE=${{ matrix.verbose }} python test/local_test_forward_hf_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: Run HF GPT2 forward-only integration test
-        run: VERBOSE=${{ matrix.verbose }} python test/local_test_forward_hf_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+        run: MASTER_PORT=29504 VERBOSE=${{ matrix.verbose }} python test/local_test_forward_hf_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: Run GPT2 slurm example without slurm
-        run: VERBOSE=${{ matrix.verbose }} python examples/slurm/hf/gpt2/pippy_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+        run: MASTER_PORT=29505 VERBOSE=${{ matrix.verbose }} python examples/slurm/hf/gpt2/pippy_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: Run BERT slurm example without slurm
-        run: VERBOSE=${{ matrix.verbose }} python examples/slurm/hf/bert/pippy_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+        run: MASTER_PORT=29506 VERBOSE=${{ matrix.verbose }} python examples/slurm/hf/bert/pippy_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: Run T5 slurm example without slurm
-        run: VERBOSE=${{ matrix.verbose }} python examples/slurm/hf/t5/pippy_t5.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+        run: MASTER_PORT=29507 VERBOSE=${{ matrix.verbose }} python examples/slurm/hf/t5/pippy_t5.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: Run visualizer test
-        run: VERBOSE=${{ matrix.verbose }} python test/local_test_visualizer.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+        run: MASTER_PORT=29508 VERBOSE=${{ matrix.verbose }} python test/local_test_visualizer.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
 
   integration_test_gpu:
     runs-on: linux.16xlarge.nvidia.gpu
