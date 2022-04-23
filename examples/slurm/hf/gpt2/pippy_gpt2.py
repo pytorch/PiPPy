@@ -141,7 +141,7 @@ def run_master(args):
     output_loss_value_spec = {'loss': True, 'logits': False,
                               'past_key_values': [[False for _ in range(2)] for _ in range(12)]}
     gpt2_pipe = Pipe.from_tracing(gpt2, MULTI_USE_PARAM_CONFIG, tracer=hf_tracer, concrete_args=concrete_args,
-                                  output_loss_value_spec=output_loss_value_spec)
+                                  output_loss_value_spec=output_loss_value_spec, deep_copy_module=False)
     assert sm_cnt == len(list(gpt2_pipe.split_gm.children()))
     gpt2_pipe.to(device)
 
