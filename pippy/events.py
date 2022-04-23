@@ -6,6 +6,12 @@ from typing import Optional, Any, List, Dict
 
 
 @dataclass
+class Allocator:
+    id: str
+    attrs: Dict[str, int]
+
+
+@dataclass
 class Event:
     rank: int
     host: str
@@ -15,6 +21,11 @@ class Event:
     name: Optional[str]
     type: Optional[Any]
     mbid: Optional[Any]
+
+
+@dataclass
+class MemDumpEvent(Event):
+    allocators: Dict[str, Allocator]
 
 
 @dataclass
@@ -54,6 +65,12 @@ class EventRecorder:
         self.events_context.events.append(
             Event(rank=rank, host=self.hostname, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name,
                   type=type, mbid=mbid))
+
+    def record_dump(self, rank: int, ts: float, id: str, name: str, type: Optional[Any],
+                    allocators: Dict[str, Allocator]):
+        self.events_context.events.append(
+            MemDumpEvent(rank=rank, host=self.hostname, start_ts=ts, finish_ts=ts, id=id, name=name, type=type,
+                         allocators=allocators, mbid=None))
 
     def record_event_dependency(self, from_id: str, to_id: str, type: Optional[Any]):
         dep = EventDependency(from_id=from_id, to_id=to_id, type=type)
