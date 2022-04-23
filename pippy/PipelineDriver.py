@@ -13,7 +13,7 @@ import torch.distributed.rpc as rpc
 import torch.fx
 
 from pippy.IR import Pipe, stage_backward, sync_barrier, _null_coalesce_accumulate
-from pippy.events import EventRecorder, EventsContext, Event
+from pippy.events import EventRecorder, EventsContext, Event, Allocator
 from pippy.microbatch import split_args_kwargs_into_chunks, merge_chunks
 
 # TODO: Define the strategy for replicating the computation. In particular, we will likely make the assumption
@@ -353,10 +353,22 @@ class RankWorker(EventRecorder):
             name = event_name(work_item.phase, work_item.stage_id, work_item.microbatch_id)
             prev_name = prev_event_name(work_item.phase, self.all_stages, work_item.stage_id, work_item.microbatch_id)
             next_name = next_event_name(work_item.phase, self.all_stages, work_item.stage_id, work_item.microbatch_id)
-            self.record_event(rank=self.local_rank, start_ts=start_ts, finish_ts=time.time(), id=name,
+            finish_ts = time.time()
+            self.record_event(rank=self.local_rank, start_ts=start_ts, finish_ts=finish_ts, id=name,
                               name=name, type=work_item.phase, mbid=work_item.microbatch_id)
             self.record_event_dependency(from_id=prev_name, to_id=name, type='transfer')
             self.record_event_dependency(from_id=name, to_id=next_name, type='transfer')
+
+            first_param = next(stage_executor.mod.parameters(), None)
+            device: torch.device = first_param.device if first_param is not None else torch.device('cpu')
+            if device.type == "cuda":
+                self.record_dump(rank=self.local_rank, ts=finish_ts, id=f'M{name}', name=f'M{name}', type='dump',
+                                 allocators={"CUDA": Allocator("TODO", {
+                                     "memory_allocated": int(torch.cuda.memory_allocated()),
+                                     "max_memory_allocated": int(torch.cuda.max_memory_allocated()),
+                                     "memory_reserved": int(torch.cuda.memory_reserved()),
+                                     "max_memory_reserved": int(torch.cuda.max_memory_reserved()),
+                                 })})
 
     # For work item marked with runlist_key, update its operand list with value
     def update_run_list(self, runlist_key, arg_idx, value):
