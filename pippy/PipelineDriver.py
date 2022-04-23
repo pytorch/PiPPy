@@ -877,6 +877,8 @@ class PipelineDriverFillDrain(PipelineDriverBase):
                 start_node = interp.node_list[interp.pc]
 
                 def run_including_indexing(n):
+                    # Run the node we start with including all nodes that are tuple
+                    # indexing, then stop
                     return n != start_node and n.target != operator.getitem
 
                 interp.run_until(run_including_indexing)
@@ -887,11 +889,15 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         any_valid = True
         while any_valid:
             any_valid = False
-            for i in range(len(self.microbatch_interpreters)):
-                interp = self.microbatch_interpreters[i]
+            for interp in self.microbatch_interpreters:
                 start_node = interp.node_list[interp.pc]
 
                 def run_including_indexing(n):
+                    # Run the node we start with including all nodes that are
+                    # tuple indexing, but also stop at the output node. Because
+                    # we are on a diagonal, interpreters as lower microbatch IDs
+                    # will be invoked when their pc's point to the output node
+                    # multiple times.
                     if n.op == 'output':
                         return True
 
