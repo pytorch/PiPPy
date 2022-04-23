@@ -60,8 +60,8 @@ def event_to_json(event: Event, prev_events: Dict[str, List[EventDependency]],
     lines = []
     if isinstance(event, MemDumpEvent):
         lines.append(generate_event_str(
-            pid=f"{event.host}",
-            tid=f"{event.rank}",
+            pid=f"{event.rank}({event.host})",
+            tid=0,
             name=event.name,
             id=event.id,
             ph="v",
@@ -72,8 +72,8 @@ def event_to_json(event: Event, prev_events: Dict[str, List[EventDependency]],
         if event.id is not None:
             for prev_event in prev_events[event.id]:
                 lines.append(generate_event_str(
-                    pid=f"{event.host}",
-                    tid=f"{event.rank}",
+                    pid=f"{event.rank}({event.host})",
+                    tid=0,
                     name=f"{prev_event.from_id} -> {prev_event.to_id}",
                     id=f"{prev_event.from_id} -> {prev_event.to_id}",
                     ph="f",
@@ -81,8 +81,8 @@ def event_to_json(event: Event, prev_events: Dict[str, List[EventDependency]],
                     ts=event.start_ts * 1_000_000
                 ))
         lines.append(generate_event_str(
-            pid=f"{event.host}",
-            tid=f"{event.rank}",
+            pid=f"{event.rank}({event.host})",
+            tid=0,
             name=event.name,
             id=event.id,
             ph="B",
@@ -91,8 +91,8 @@ def event_to_json(event: Event, prev_events: Dict[str, List[EventDependency]],
         if event.id is not None:
             for next_event in next_events[event.id]:
                 lines.append(generate_event_str(
-                    pid=f"{event.host}",
-                    tid=f"{event.rank}",
+                    pid=f"{event.rank}({event.host})",
+                    tid=0,
                     name=f"{next_event.from_id} -> {next_event.to_id}",
                     id=f"{next_event.from_id} -> {next_event.to_id}",
                     ph="s",
@@ -100,8 +100,8 @@ def event_to_json(event: Event, prev_events: Dict[str, List[EventDependency]],
                     ts=event.finish_ts * 1_000_000
                 ))
         lines.append(generate_event_str(
-            pid=f"{event.host}",
-            tid=f"{event.rank}",
+            pid=f"{event.rank}({event.host})",
+            tid=0,
             name=event.name,
             id=event.id,
             ph="E",
