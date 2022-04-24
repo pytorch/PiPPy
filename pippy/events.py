@@ -1,3 +1,4 @@
+import os
 import socket
 from collections import defaultdict
 from copy import deepcopy
@@ -15,6 +16,7 @@ class Allocator:
 class Event:
     rank: int
     host: str
+    pid: int
     start_ts: float
     finish_ts: float
     id: Optional[str]
@@ -59,11 +61,12 @@ class EventsContext:
 class EventRecorder:
     events_context: EventsContext = EventsContext()
     hostname: str = socket.gethostname()
+    pid = os.getpid()
 
     def record_event(self, rank: int, start_ts: float, finish_ts: float, id: str, name: str, type: Optional[Any],
                      mbid: Optional[Any]):
         self.events_context.events.append(
-            Event(rank=rank, host=self.hostname, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name,
+            Event(rank=rank, host=self.hostname, pid=self.pid, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name,
                   type=type, mbid=mbid))
 
     def record_dump(self, rank: int, ts: float, id: str, name: str, type: Optional[Any],
