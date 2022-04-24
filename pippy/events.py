@@ -72,7 +72,7 @@ class EventRecorder:
     def record_dump(self, rank: int, ts: float, id: str, name: str, type: Optional[Any],
                     allocators: Dict[str, Allocator]):
         self.events_context.events.append(
-            MemDumpEvent(rank=rank, host=self.hostname, start_ts=ts, finish_ts=ts, id=id, name=name, type=type,
+            MemDumpEvent(rank=rank, host=self.hostname, pid=self.pid, start_ts=ts, finish_ts=ts, id=id, name=name, type=type,
                          allocators=allocators, mbid=None))
 
     def record_event_dependency(self, from_id: str, to_id: str, type: Optional[Any]):
