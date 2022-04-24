@@ -272,6 +272,9 @@ class RankWorker(EventRecorder):
                 batch_id_to_remaining_backward_microbatches[batch_id] = num_microbatches
 
             start_ts = time.time()
+            name = event_name(work_item.phase, work_item.stage_id, work_item.microbatch_id)
+            for peer_executor_rref in stage_executor.peer_executors.values():
+                peer_executor_rref.rpc_sync()._record_dump(f'M{name}_start', start_ts)
 
             value_ref_arg_idx = 0
 
@@ -350,7 +353,6 @@ class RankWorker(EventRecorder):
             future.set_result(out_val)
             work_item.state = SchedState.DONE
 
-            name = event_name(work_item.phase, work_item.stage_id, work_item.microbatch_id)
             prev_name = prev_event_name(work_item.phase, self.all_stages, work_item.stage_id, work_item.microbatch_id)
             next_name = next_event_name(work_item.phase, self.all_stages, work_item.stage_id, work_item.microbatch_id)
             finish_ts = time.time()
@@ -359,16 +361,8 @@ class RankWorker(EventRecorder):
             self.record_event_dependency(from_id=prev_name, to_id=name, type='transfer')
             self.record_event_dependency(from_id=name, to_id=next_name, type='transfer')
 
-            first_param = next(stage_executor.mod.parameters(), None)
-            device: torch.device = first_param.device if first_param is not None else torch.device('cpu')
-            if device.type == "cuda":
-                self.record_dump(rank=self.local_rank, ts=finish_ts, id=f'M{name}', name=f'M{name}', type='dump',
-                                 allocators={"CUDA": Allocator("TODO", {
-                                     "memory_allocated": int(torch.cuda.memory_allocated()),
-                                     "max_memory_allocated": int(torch.cuda.max_memory_allocated()),
-                                     "memory_reserved": int(torch.cuda.memory_reserved()),
-                                     "max_memory_reserved": int(torch.cuda.max_memory_reserved()),
-                                 })})
+            for peer_executor_rref in stage_executor.peer_executors.values():
+                peer_executor_rref.rpc_sync()._record_dump(f'M{name}_finish', finish_ts)
 
     # For work item marked with runlist_key, update its operand list with value
     def update_run_list(self, runlist_key, arg_idx, value):
@@ -384,7 +378,7 @@ class RankWorker(EventRecorder):
                 logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] all operands ready')
 
 
-class PipeStageExecutor:
+class PipeStageExecutor(EventRecorder):
     """
     PipeStageExecutor encapsulates the execution semantics of a fragment of
     code on a pipeline stage. PipeStageExecutor handles:
@@ -557,6 +551,19 @@ class PipeStageExecutor:
         param = mod.get_parameter(qualname)
         param.grad = value
 
+    def _record_dump(self, dump_id, ts):
+        first_param = next(self.mod.parameters(), None)
+        device: torch.device = first_param.device if first_param is not None else torch.device('cpu')
+        if device.type == "cuda":
+            self.record_dump(rank=self.rank_worker.local_rank, ts=ts, id=dump_id, name=dump_id, type='dump',
+                             allocators={"CUDA": Allocator(f"{self.rank_worker.local_rank}", {
+                                 "size": int(torch.cuda.memory_allocated()),
+                                 "memory_allocated": int(torch.cuda.memory_allocated()),
+                                 "max_memory_allocated": int(torch.cuda.max_memory_allocated()),
+                                 "memory_reserved": int(torch.cuda.memory_reserved()),
+                                 "max_memory_reserved": int(torch.cuda.max_memory_reserved()),
+                             })})
+
 
 class PipelineDriverBase:
     def __init__(self, pipe : Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size : int,
@@ -704,6 +711,8 @@ class PipelineDriverBase:
             events_context.update(worker_rref.rpc_sync().retrieve_events())
         for interp in self.microbatch_interpreters:
             events_context.update(interp.retrieve_events())
+        for _, executor_rref in self.remote_stage_executor_rrefs.values():
+            events_context.update(executor_rref.rpc_sync().retrieve_events())
         events_context.events.sort(key=lambda e: e.start_ts)
         return events_context
 
