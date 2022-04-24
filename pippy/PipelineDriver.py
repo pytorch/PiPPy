@@ -173,7 +173,7 @@ class RankWorker(EventRecorder):
     """
 
     def __init__(self, local_rank, all_stages, max_outstanding=None, dp_pg_cb=None, pp_rank=None,
-                 _record_mem_dumps=False):
+                 _record_mem_dumps=False, checkpoint=False):
         logging.info(f'[{local_rank}] Instantiating RankWorker')
         self.local_rank = local_rank
         self.all_stages = all_stages
@@ -181,6 +181,7 @@ class RankWorker(EventRecorder):
         self.dp_pg_cb = dp_pg_cb
         self.pp_rank = pp_rank
         self._record_mem_dumps = _record_mem_dumps
+        self.checkpoint = checkpoint
 
         # Maximum outstanding micro-batches of the pipeline schedule
         self.max_outstanding = max_outstanding
@@ -323,7 +324,11 @@ class RankWorker(EventRecorder):
                     with stage_executor.mod.no_sync():
                         out_val = stage_executor.mod(*args, **kwargs)
                 else:
-                    out_val = stage_executor.mod(*args, **kwargs)
+                    from torch.utils.checkpoint import checkpoint
+                    if self.checkpoint:
+                        out_val = checkpoint(stage_executor.mod, use_reentrant=False, *args, **kwargs)
+                    else:
+                        out_val = stage_executor.mod(*args, **kwargs)
 
                 stage_executor.fwd_cache[microbatch_id] = (out_val if isinstance(out_val, tuple) else (out_val,), flat_tensor_args)
 
@@ -572,7 +577,8 @@ class PipeStageExecutor(EventRecorder):
 class PipelineDriverBase:
     def __init__(self, pipe : Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size : int,
                  all_ranks : List[int] = None, _debug_mask_minibatches : bool = False,
-                 dp_pg_cb=None, max_outstanding=None, interleave_stages=False, _record_mem_dumps=False):
+                 dp_pg_cb=None, max_outstanding=None, interleave_stages=False, _record_mem_dumps=False,
+                 checkpoint=False):
         self.pipe = pipe
         self.world_size = world_size
         self.all_ranks = all_ranks
@@ -589,6 +595,7 @@ class PipelineDriverBase:
         self.dp_pg_cb = dp_pg_cb
         self.batch_id = 0
         self._record_mem_dumps = _record_mem_dumps
+        self.checkpoint = checkpoint
 
     def _init_remote_executors(self):
         self.rank_worker_rrefs : Dict[int, torch.distributed.rpc.RRef] = {}
@@ -650,7 +657,8 @@ class PipelineDriverBase:
                       'max_outstanding': self.max_outstanding,
                       'dp_pg_cb': self.dp_pg_cb,
                       'pp_rank': pp_rank,
-                      '_record_mem_dumps': self._record_mem_dumps}
+                      '_record_mem_dumps': self._record_mem_dumps,
+                      'checkpoint': self.checkpoint}
             self.rank_worker_rrefs[rank] = rpc.remote(rank, RankWorker, args=(), kwargs=kwargs)
             pp_rank += 1
 
@@ -850,10 +858,12 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
 class PipelineDriverFillDrain(PipelineDriverBase):
     def __init__(self, pipe: Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size: int,
                  all_ranks: List[int] = None, single_loss: bool = False, _debug_mask_minibatches: bool = False,
-                 dp_pg_cb=None, max_outstanding=None, interleave_stages=False, _record_mem_dumps=False):
+                 dp_pg_cb=None, max_outstanding=None, interleave_stages=False, _record_mem_dumps=False,
+                 checkpoint=False):
         super().__init__(pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size, all_ranks,
                          _debug_mask_minibatches, dp_pg_cb=dp_pg_cb, max_outstanding=max_outstanding,
-                         interleave_stages=interleave_stages, _record_mem_dumps=_record_mem_dumps)
+                         interleave_stages=interleave_stages, _record_mem_dumps=_record_mem_dumps,
+                         checkpoint=checkpoint)
         self.single_loss = single_loss
 
         self._init_remote_executors()
@@ -950,20 +960,21 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 class PipelineDriver1F1B(PipelineDriverFillDrain):
     def __init__(self, pipe: Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size: int,
                  all_ranks: List[int] = None, single_loss: bool = False, _debug_mask_minibatches: bool = False,
-                 dp_pg_cb=None, interleave_stages=False, _record_mem_dumps=False):
+                 dp_pg_cb=None, interleave_stages=False, _record_mem_dumps=False, checkpoint=False):
         # In 1F1B with backward stages, the maximum number of outstanding
         # micro-batches equals the number of pipeline stages
         max_outstanding = pipe.num_stages if pipe.has_loss_and_backwards else None
 
         super().__init__(pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size, all_ranks,
                          single_loss, _debug_mask_minibatches, dp_pg_cb=dp_pg_cb, max_outstanding=max_outstanding,
-                         interleave_stages=interleave_stages, _record_mem_dumps=_record_mem_dumps)
+                         interleave_stages=interleave_stages, _record_mem_dumps=_record_mem_dumps,
+                         checkpoint=checkpoint)
 
 class PipelineDriverInterleaved1F1B(PipelineDriver1F1B):
     def __init__(self, pipe : Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size : int,
                  all_ranks : List[int] = None, single_loss : bool = False, _debug_mask_minibatches: bool = False,
-                 dp_pg_cb=None, _record_mem_dumps=False):
+                 dp_pg_cb=None, _record_mem_dumps=False, checkpoint=False):
         super().__init__(pipe, args_chunk_spec, kwargs_chunk_spec,
                          output_chunk_spec, world_size, all_ranks, single_loss,
                          _debug_mask_minibatches, dp_pg_cb=dp_pg_cb, interleave_stages=True,
-                         _record_mem_dumps=_record_mem_dumps)
+                         _record_mem_dumps=_record_mem_dumps, checkpoint=checkpoint)
