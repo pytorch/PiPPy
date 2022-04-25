@@ -11,6 +11,7 @@ from typing import Any, Callable, Dict, List, Tuple, Optional
 import torch
 import torch.distributed.rpc as rpc
 import torch.fx
+from torch.distributed.rpc import RRef
 
 from pippy.IR import Pipe, stage_backward, sync_barrier, _null_coalesce_accumulate
 from pippy.events import EventRecorder, EventsContext, Event
@@ -545,6 +546,12 @@ class PipeStageExecutor:
         param = mod.get_parameter(qualname)
         param.grad = value
 
+    def train(self, mode=True):
+        self.mod.train(mode=mode)
+
+    def parameter_rrefs(self):
+        return [RRef(p) for p in self.mod.parameters()]
+
 
 class PipelineDriverBase:
     def __init__(self, pipe : Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size : int,
@@ -647,6 +654,19 @@ class PipelineDriverBase:
     def run(self, chunks: int, *args, **kwargs):
         raise NotImplementedError('PipelineDriverBase is an abstract base class, please use a concrete '
                                   'implementation class.')
+
+    def train(self, mode=True):
+        for executor in self.stage_to_executor.values():
+            executor.rpc_sync().train(mode=mode)
+
+    def eval(self):
+        self.train(mode=False)
+
+    def parameter_rrefs(self):
+        remote_params = []
+        for executor in self.stage_to_executor.values():
+            remote_params.extend(executor.rpc_sync().parameter_rrefs())
+        return remote_params
 
     def _sync_replicated_params(self):
         logging.info(f'[root] Synchronizing gradients for {len(self.pipe.replicated_params)} sets of replicated parameters')
