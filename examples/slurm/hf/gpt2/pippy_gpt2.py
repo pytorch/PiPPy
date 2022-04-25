@@ -156,7 +156,8 @@ def run_master(args):
                          'past_key_values': [[TensorChunkSpec(0) for _ in range(2)] for _ in range(12)]}
     pipe_driver: PipelineDriverBase = schedules[args.schedule](gpt2_pipe, args_chunk_spec, kwargs_chunk_spec,
                                                                output_chunk_spec, len(all_worker_ranks),
-                                                               all_ranks=all_worker_ranks, _debug_mask_minibatches=True)
+                                                               all_ranks=all_worker_ranks, _debug_mask_minibatches=True,
+                                                               _record_mem_dumps=bool(args.record_mem_dumps))
 
     this_file_name = os.path.splitext(os.path.basename(__file__))[0]
 
@@ -213,6 +214,7 @@ if __name__ == "__main__":
     parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
     parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
     parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
+    parser.add_argument('--record_mem_dumps', type=int, default=0, choices=[0, 1])
     args = parser.parse_args()
 
     if args.rank == -1:
