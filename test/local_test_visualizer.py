@@ -135,8 +135,8 @@ class MyLinear(nn.Module):
 
 
 def run_master(args):
-    d_hid = 100
-    bs = 400
+    d_hid = 10
+    bs = 8
     chunks = 4
     batches = 1
 
@@ -147,10 +147,10 @@ def run_master(args):
     class ExampleCode(torch.nn.Module):
         def __init__(self):
             super().__init__()
-            self.l1 = MyLinear(d_hid, d_hid)
-            self.l2 = MyLinear(d_hid, d_hid)
-            self.l3 = MyLinear(d_hid, d_hid)
-            self.l4 = MyLinear(d_hid, d_hid)
+            self.l1 = nn.Linear(d_hid, d_hid-1)
+            self.l2 = nn.Linear(d_hid-1, d_hid-2)
+            self.l3 = nn.Linear(d_hid-2, d_hid-3)
+            self.l4 = nn.Linear(d_hid-3, d_hid-4)
 
         def forward(self, x):
             x = self.l1(x)
@@ -176,10 +176,12 @@ def run_master(args):
     all_ranks = list(range(1, args.world_size))  # exclude master rank = 0
     pipe_driver: PipelineDriverBase = schedules[args.schedule](ec_pipe, args_chunk_spec, kwargs_chunk_spec,
                                                                output_chunk_spec, args.world_size - 1,
-                                                               all_ranks=all_ranks, _debug_mask_minibatches=True)
+                                                               all_ranks=all_ranks, _debug_mask_minibatches=False,
+                                                               checkpoint=bool(args.checkpoint),
+                                                               _record_mem_dumps=bool(args.record_mem_dumps))
 
     ec_input = torch.randn(bs, d_hid, device=args.device)
-    target = torch.randn(bs, d_hid, device=args.device)
+    target = torch.randn(bs, d_hid-4, device=args.device)
 
     pipe_visualized_filename = "pipe_visualized.json"
     batches_events_contexts = []
@@ -304,6 +306,8 @@ if __name__ == "__main__":
     parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
     parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
     parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
+    parser.add_argument('--checkpoint', type=int, default=0, choices=[0, 1])
+    parser.add_argument('--record_mem_dumps', type=int, default=0, choices=[0, 1])
     args = parser.parse_args()
 
     if args.rank == -1:

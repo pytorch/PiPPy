@@ -44,6 +44,11 @@ def shard_dict_of_args(args_dict, args_chunk_spec, num_chunks, _debug_mask_minib
                 assert isinstance(v, torch.Tensor)
 
                 chunk_tensors = torch.chunk(v, num_chunks, chunk_v.split_dim)
+                chunk_tensors = [t.clone() for t in chunk_tensors]
+                for t1 in chunk_tensors:
+                    for t2 in chunk_tensors:
+                        if t1.data_ptr() != t2.data_ptr():
+                            assert t1.storage().data_ptr() != t2.storage().data_ptr()
 
                 if _debug_mask_minibatches:
                     expanded_chunks = []

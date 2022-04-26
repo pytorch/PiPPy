@@ -1,9 +1,12 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+import gc
 import logging
 import operator
+import os
 import threading
 import time
 import warnings
+from collections import Counter
 from enum import Enum
 from inspect import Parameter, Signature
 from typing import Any, Callable, Dict, List, Tuple, Optional
@@ -11,6 +14,7 @@ from typing import Any, Callable, Dict, List, Tuple, Optional
 import torch
 import torch.distributed.rpc as rpc
 import torch.fx
+from torch.profiler import profile, record_function, ProfilerActivity, tensorboard_trace_handler
 
 from pippy.IR import Pipe, stage_backward, sync_barrier, _null_coalesce_accumulate
 from pippy.events import EventRecorder, EventsContext, Event, Allocator
@@ -277,101 +281,121 @@ class RankWorker(EventRecorder):
             start_ts = time.time()
             name = event_name(work_item.phase, work_item.stage_id, work_item.microbatch_id)
             if self._record_mem_dumps:
-                for peer_executor_rref in stage_executor.peer_executors.values():
-                    peer_executor_rref.rpc_sync()._record_dump(f'M{name}_start', start_ts)
+                for stage_id, peer_executor_rref in stage_executor.peer_executors.items():
+                    if work_item.stage_id == stage_id:
+                        stage_executor._record_dump(f'M{name}_start', start_ts)
+                    # else:
+                    #     peer_executor_rref.rpc_sync(timeout=0)._record_dump(f'M{name}_start', start_ts)
 
-            value_ref_arg_idx = 0
+            if self._record_mem_dumps:
+                for stage_id, peer_executor_rref in stage_executor.peer_executors.items():
+                    if work_item.stage_id == stage_id:
+                        stage_executor._record_dump(f'M{name}_middle', start_ts)
+                    # else:
+                    #     peer_executor_rref.rpc_sync(timeout=0)._record_dump(f'M{name}_middle', start_ts)
 
-            def retrieve_value_ref_args_by_idx(a):
-                if isinstance(a, ValueReference):
-                    nonlocal value_ref_arg_idx
-                    val = ready_args[value_ref_arg_idx]
-                    value_ref_arg_idx += 1
-                    return val
-                else:
-                    return a
+            with profile(activities=[ProfilerActivity.CPU],
+                         profile_memory=True, record_shapes=True,
+                         on_trace_ready=tensorboard_trace_handler(dir_name=os.getcwd(), worker_name=name,
+                                                                  use_gzip=True)) as prof:
+                value_ref_arg_idx = 0
 
-            args = torch.fx.node.map_aggregate(args_value_refs, retrieve_value_ref_args_by_idx)
-            kwargs = torch.fx.node.map_aggregate(kwargs_value_refs, retrieve_value_ref_args_by_idx)
-
-            if phase == Phase.BACKWARD:
-                logging.info(
-                    f'[{self.local_rank}][{work_item.microbatch_id}] Running backward phase. Retrieving stashed values')
-                # HACK: here we are directly accessing the saved tensor outputs
-                # for closed-over outputs so that they still have the grad_fn
-                # from local autograd. Can we solve this more elegantly?
-                kwargs = dict(kwargs)
-                kwargs['stage_output'], kwargs['input_values'] = stage_executor.fwd_cache.pop(microbatch_id)
-
-            if work_item.phase == Phase.FORWARD:
-                self.outstanding += 1
-                flat_tensor_args = []
-
-                def extract_tensor_args(a):
-                    if isinstance(a, torch.Tensor):
-                        nonlocal flat_tensor_args
-                        val = a.detach().requires_grad_(a.requires_grad)
-                        flat_tensor_args.append(val)
+                def retrieve_value_ref_args_by_idx(a):
+                    if isinstance(a, ValueReference):
+                        nonlocal value_ref_arg_idx
+                        val = ready_args[value_ref_arg_idx]
+                        value_ref_arg_idx += 1
                         return val
                     else:
                         return a
 
-                args = torch.fx.node.map_aggregate(args, extract_tensor_args)
-                kwargs = torch.fx.node.map_aggregate(kwargs, extract_tensor_args)
-                logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running forward module')
+                args = torch.fx.node.map_aggregate(args_value_refs, retrieve_value_ref_args_by_idx)
+                kwargs = torch.fx.node.map_aggregate(kwargs_value_refs, retrieve_value_ref_args_by_idx)
 
-                if isinstance(stage_executor.mod, torch.nn.parallel.distributed.DistributedDataParallel):
-                    with stage_executor.mod.no_sync():
-                        out_val = stage_executor.mod(*args, **kwargs)
-                else:
-                    from torch.utils.checkpoint import checkpoint
-                    if self.checkpoint:
-                        out_val = checkpoint(stage_executor.mod, use_reentrant=False, *args, **kwargs)
+                if phase == Phase.BACKWARD:
+                    logging.info(
+                        f'[{self.local_rank}][{work_item.microbatch_id}] Running backward phase. Retrieving stashed values')
+                    # HACK: here we are directly accessing the saved tensor outputs
+                    # for closed-over outputs so that they still have the grad_fn
+                    # from local autograd. Can we solve this more elegantly?
+                    kwargs = dict(kwargs)
+                    kwargs['stage_output'], kwargs['input_values'] = stage_executor.fwd_cache.pop(microbatch_id)
+
+                if work_item.phase == Phase.FORWARD:
+                    self.outstanding += 1
+                    flat_tensor_args = []
+
+                    def extract_tensor_args(a):
+                        if isinstance(a, torch.Tensor):
+                            nonlocal flat_tensor_args
+                            val = a.detach().requires_grad_(a.requires_grad)
+                            flat_tensor_args.append(val)
+                            return val
+                        else:
+                            return a
+
+                    args = torch.fx.node.map_aggregate(args, extract_tensor_args)
+                    kwargs = torch.fx.node.map_aggregate(kwargs, extract_tensor_args)
+                    logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running forward module')
+
+                    if isinstance(stage_executor.mod, torch.nn.parallel.distributed.DistributedDataParallel):
+                        with stage_executor.mod.no_sync():
+                            out_val = stage_executor.mod(*args, **kwargs)
                     else:
-                        out_val = stage_executor.mod(*args, **kwargs)
+                        from torch.utils.checkpoint import checkpoint
+                        if self.checkpoint:
+                            out_val = checkpoint(stage_executor.mod, use_reentrant=False, *args, **kwargs)
+                        else:
+                            out_val = stage_executor.mod(*args, **kwargs)
 
-                stage_executor.fwd_cache[microbatch_id] = (out_val if isinstance(out_val, tuple) else (out_val,), flat_tensor_args)
+                    stage_executor.fwd_cache[microbatch_id] = (out_val if isinstance(out_val, tuple) else (out_val,), flat_tensor_args)
 
-            elif work_item.phase == Phase.BACKWARD:
-                logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running backward')
+                elif work_item.phase == Phase.BACKWARD:
+                    logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running backward')
 
-                batch_id_to_remaining_backward_microbatches[batch_id] -= 1
+                    batch_id_to_remaining_backward_microbatches[batch_id] -= 1
 
-                if isinstance(stage_executor.mod, torch.nn.parallel.distributed.DistributedDataParallel) and \
-                        batch_id_to_remaining_backward_microbatches[batch_id] == 0:
-                    # HACK: reaching into DDP implementation details here. Is there a better way?
-                    stage_executor.mod.reducer.prepare_for_backward(
-                        list(torch.nn.parallel.distributed._find_tensors(kwargs['stage_output'])))
+                    if isinstance(stage_executor.mod, torch.nn.parallel.distributed.DistributedDataParallel) and \
+                            batch_id_to_remaining_backward_microbatches[batch_id] == 0:
+                        # HACK: reaching into DDP implementation details here. Is there a better way?
+                        stage_executor.mod.reducer.prepare_for_backward(
+                            list(torch.nn.parallel.distributed._find_tensors(kwargs['stage_output'])))
 
-                out_val = stage_backward(*args, **kwargs)
+                    out_val = stage_backward(*args, **kwargs)
 
-                # Schedule forward stage of a new micro-batch
-                self.outstanding -= 1
-            elif work_item.phase == Phase.ACCUMULATE_GRAD:
-                logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running accumulate grad')
-                out_val = _null_coalesce_accumulate(*args, **kwargs)
-            elif work_item.phase == Phase.SYNC_BARRIER:
-                logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running sync_barrier')
-                out_val = sync_barrier(*args, **kwargs)
-            else:
-                assert False, f'Unrecognized phase {work_item.phase} encountered in execution'
+                    del args
+                    del kwargs
 
-            logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Populating result of type {type(out_val)} '
-                         f'for {key}')
-            future.set_result(out_val)
-            work_item.state = SchedState.DONE
+                    # Schedule forward stage of a new micro-batch
+                    self.outstanding -= 1
+                elif work_item.phase == Phase.ACCUMULATE_GRAD:
+                    logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running accumulate grad')
+                    out_val = _null_coalesce_accumulate(*args, **kwargs)
+                elif work_item.phase == Phase.SYNC_BARRIER:
+                    logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running sync_barrier')
+                    out_val = sync_barrier(*args, **kwargs)
+                else:
+                    assert False, f'Unrecognized phase {work_item.phase} encountered in execution'
 
-            prev_name = prev_event_name(work_item.phase, self.all_stages, work_item.stage_id, work_item.microbatch_id)
-            next_name = next_event_name(work_item.phase, self.all_stages, work_item.stage_id, work_item.microbatch_id)
-            finish_ts = time.time()
-            self.record_event(rank=self.local_rank, start_ts=start_ts, finish_ts=finish_ts, id=name,
-                              name=name, type=work_item.phase, mbid=work_item.microbatch_id)
-            self.record_event_dependency(from_id=prev_name, to_id=name, type='transfer')
-            self.record_event_dependency(from_id=name, to_id=next_name, type='transfer')
+                logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Populating result of type {type(out_val)} '
+                             f'for {key}')
+                future.set_result(out_val)
+                work_item.state = SchedState.DONE
+
+                prev_name = prev_event_name(work_item.phase, self.all_stages, work_item.stage_id, work_item.microbatch_id)
+                next_name = next_event_name(work_item.phase, self.all_stages, work_item.stage_id, work_item.microbatch_id)
+                finish_ts = time.time()
+                self.record_event(rank=self.local_rank, start_ts=start_ts, finish_ts=finish_ts, id=name,
+                                  name=name, type=work_item.phase, mbid=work_item.microbatch_id)
+                self.record_event_dependency(from_id=prev_name, to_id=name, type='transfer')
+                self.record_event_dependency(from_id=name, to_id=next_name, type='transfer')
 
             if self._record_mem_dumps:
-                for peer_executor_rref in stage_executor.peer_executors.values():
-                    peer_executor_rref.rpc_sync()._record_dump(f'M{name}_finish', finish_ts)
+                for stage_id, peer_executor_rref in stage_executor.peer_executors.items():
+                    if work_item.stage_id == stage_id:
+                        stage_executor._record_dump(f'M{name}_finish', start_ts)
+                    else:
+                        peer_executor_rref.rpc_sync(timeout=0)._record_dump(f'M{name}_finish', start_ts)
 
     # For work item marked with runlist_key, update its operand list with value
     def update_run_list(self, runlist_key, arg_idx, value):
@@ -561,17 +585,57 @@ class PipeStageExecutor(EventRecorder):
         param.grad = value
 
     def _record_dump(self, dump_id, ts):
+        def count_tensors():
+            c = Counter()
+            visited = set()
+            for obj in gc.get_objects():
+                try:
+                    if torch.is_tensor(obj) or (hasattr(obj, 'data') and torch.is_tensor(obj.data)):
+                        if not obj.storage().data_ptr() in visited:
+                            visited.add(obj.storage().data_ptr())
+                            c.update({(obj.size(), obj.numel(), obj.dtype): 1})
+                            print(f"{dump_id}/{self.rank_worker.local_rank}: obj.size() = {obj.size()} obj.data_ptr() = {obj.storage().data_ptr()} obj = {obj}")
+                except:
+                    pass
+            return c
+
+        def sizeof(dtype):
+            if dtype == torch.bool:
+                return 1
+            elif dtype == torch.complex32:
+                return 4
+            elif dtype == torch.complex64:
+                return 8
+            elif dtype == torch.complex128:
+                return 16
+            elif dtype.is_floating_point:
+                return torch.finfo(dtype).bits // 8
+            else:
+                return torch.iinfo(dtype).bits // 8
+
+        tensors = count_tensors()
+
+        allocators: Dict[str, Allocator] = {
+            f"tensors/{tuple(size)}": Allocator(f"{self.rank_worker.local_rank}/tensors/{tuple(size)}", {
+                "size": int(numel * sizeof(dtype) * cnt),
+                "object_count": int(cnt)
+            }) for (size, numel, dtype), cnt in tensors.items()
+        }
+
         first_param = next(self.mod.parameters(), None)
         device: torch.device = first_param.device if first_param is not None else torch.device('cpu')
         if device.type == "cuda":
-            self.record_dump(rank=self.rank_worker.local_rank, ts=ts, id=dump_id, name=dump_id, type='dump',
-                             allocators={"CUDA": Allocator(f"{self.rank_worker.local_rank}", {
-                                 "size": int(torch.cuda.memory_allocated()),
-                                 "memory_allocated": int(torch.cuda.memory_allocated()),
-                                 "max_memory_allocated": int(torch.cuda.max_memory_allocated()),
-                                 "memory_reserved": int(torch.cuda.memory_reserved()),
-                                 "max_memory_reserved": int(torch.cuda.max_memory_reserved()),
-                             })})
+            allocators["CUDA"] = Allocator(f"{self.rank_worker.local_rank}", {
+                "size": int(torch.cuda.memory_allocated()),
+                "memory_allocated": int(torch.cuda.memory_allocated()),
+                "max_memory_allocated": int(torch.cuda.max_memory_allocated()),
+                "memory_reserved": int(torch.cuda.memory_reserved()),
+                "max_memory_reserved": int(torch.cuda.max_memory_reserved()),
+            })
+        self.record_dump(rank=self.rank_worker.local_rank, ts=ts, id=dump_id, name=dump_id, type='dump',
+                         allocators=allocators)
+
+        return None
 
 
 class PipelineDriverBase:
@@ -675,7 +739,7 @@ class PipelineDriverBase:
 
         # Inform executors of their peers
         for stage_id, executor in self.stage_to_executor.items():
-            executor.rpc_sync().install_peer_executors(self.stage_to_executor)
+            executor.rpc_sync(timeout=0).install_peer_executors(self.stage_to_executor)
 
     def run(self, chunks: int, *args, **kwargs):
         raise NotImplementedError('PipelineDriverBase is an abstract base class, please use a concrete '
@@ -688,7 +752,7 @@ class PipelineDriverBase:
             for module_name, param_qualname in param_set.items():
                 assert module_name in self.remote_stage_executor_rrefs
                 stage_id, module_rref = self.remote_stage_executor_rrefs[module_name]
-                grad_value = module_rref.rpc_sync().get_grad(param_qualname)
+                grad_value = module_rref.rpc_sync(timeout=0).get_grad(param_qualname)
                 grad_values.append(grad_value)
 
             synced_value = torch.sum(torch.stack(grad_values), dim=0)
@@ -696,7 +760,7 @@ class PipelineDriverBase:
             for module_name, param_qualname in param_set.items():
                 assert module_name in self.remote_stage_executor_rrefs
                 stage_id, module_rref = self.remote_stage_executor_rrefs[module_name]
-                module_rref.rpc_sync().set_grad(param_qualname, synced_value)
+                module_rref.rpc_sync(timeout=0).set_grad(param_qualname, synced_value)
 
     def _retrieve_output_values(self, microbatch_interpreters, last_nodes):
         logging.info(f'[root] Retrieving output values from {len(microbatch_interpreters)} chunks')
@@ -722,11 +786,11 @@ class PipelineDriverBase:
     def retrieve_events(self) -> EventsContext:
         events_context = EventsContext()
         for rank, worker_rref in self.rank_worker_rrefs.items():
-            events_context.update(worker_rref.rpc_sync().retrieve_events())
+            events_context.update(worker_rref.rpc_sync(timeout=0).retrieve_events())
         for interp in self.microbatch_interpreters:
             events_context.update(interp.retrieve_events())
         for _, executor_rref in self.remote_stage_executor_rrefs.values():
-            events_context.update(executor_rref.rpc_sync().retrieve_events())
+            events_context.update(executor_rref.rpc_sync(timeout=0).retrieve_events())
         events_context.events.sort(key=lambda e: e.start_ts)
         return events_context
 
@@ -773,7 +837,7 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
             self.record_event(rank=0, start_ts=ts, finish_ts=ts, id=name, name=name, type='invoke',
                               mbid=self.cur_microbatch)
             self.record_event_dependency(from_id=name, to_id=forward_name, type='invoke')
-            return stage_executor.rpc_sync().invoke(
+            return stage_executor.rpc_sync(timeout=0).invoke(
                 invocation_key, Phase.FORWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
                 output_refcount=len(node.users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
         else:
@@ -799,7 +863,7 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
             self.record_event(rank=0, start_ts=ts, finish_ts=ts, id=name, name=name, type='invoke',
                               mbid=self.cur_microbatch)
             self.record_event_dependency(from_id=name, to_id=backward_name, type='invoke')
-            return stage_executor.rpc_sync().invoke(
+            return stage_executor.rpc_sync(timeout=0).invoke(
                 invocation_key, Phase.BACKWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
                 output_refcount=len(node.users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
         elif target is sync_barrier:
@@ -807,7 +871,7 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
             stage_id, stage_executor = self.remote_stage_executor_rrefs[executor_keys[0]]
             logging.info(f'[root][{self.cur_microbatch}] Issuing sync invocation '
                          f'on stage {stage_id}')
-            return stage_executor.rpc_sync().invoke(
+            return stage_executor.rpc_sync(timeout=0).invoke(
                 invocation_key, Phase.SYNC_BARRIER, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
                 output_refcount=len(node.users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
         elif target is _null_coalesce_accumulate:
@@ -815,7 +879,7 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
             stage_id, stage_executor = self.remote_stage_executor_rrefs[node.meta['fw_stage']]
             logging.info(f'[root][{self.cur_microbatch}] Issuing accumulate grad invocation '
                          f'for target {node.meta["fw_stage"]} on stage {stage_id}')
-            return stage_executor.rpc_sync().invoke(
+            return stage_executor.rpc_sync(timeout=0).invoke(
                 invocation_key, Phase.ACCUMULATE_GRAD, args, kwargs, self.cur_microbatch,
                 debug_str=node.format_node(),
                 output_refcount=len(node.users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
@@ -882,6 +946,16 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         args_split, kwargs_split = split_args_kwargs_into_chunks(args, kwargs, self.args_chunk_spec,
                                                                  self.kwargs_chunk_spec, chunks,
                                                                  self._debug_mask_minibatches)
+
+        def friendly_debug_info(v):
+            # if isinstance(v, torch.Tensor):
+            #     return f'Tensor(size={v.shape})'
+            # else:
+                return str(v)
+
+        print(chunks)
+        print([friendly_debug_info(arg) for arg in args])
+        print([[friendly_debug_info(arg) for arg in chunk] for chunk in args_split])
 
         self.microbatch_interpreters = []
 

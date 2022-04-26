@@ -18,8 +18,13 @@ def generate_json(x: Any):
 
 
 def generate_dumps(allocators: Dict[str, Allocator]):
+    def format_attr_val(attr_name, attr_val):
+        if attr_name == 'object_count':
+            return {"type": "scalar", "units": "objects", "value": f'{attr_val}'}
+        else:
+            return {"type": "scalar", "units": "bytes", "value": f'{format(attr_val, "x")}'}
     return {"dumps": {"allocators": {alloc_name: {
-        'attrs': {attr_name: {"type": "scalar", "units": "bytes", "value": f'{format(attr_val, "x")}'} for
+        'attrs': {attr_name: format_attr_val(attr_name, attr_val) for
                   attr_name, attr_val in alloc.attrs.items()},
         'guid': alloc.id} for alloc_name, alloc in allocators.items()}}}
 

@@ -74,6 +74,9 @@ def stage_backward(stage_output, output_grads, input_values, stage_info : str, o
             else:
                 grad_inputs.append(None)
 
+        del input_values
+        del stage_output
+
     except Exception as e:
         exc_msg = f"""
         Failed to run backward stage {stage_info}
