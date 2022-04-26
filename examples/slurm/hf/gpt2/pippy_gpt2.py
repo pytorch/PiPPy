@@ -156,7 +156,8 @@ def run_master(args):
                          'past_key_values': [[TensorChunkSpec(0) for _ in range(2)] for _ in range(12)]}
     pipe_driver: PipelineDriverBase = schedules[args.schedule](gpt2_pipe, args_chunk_spec, kwargs_chunk_spec,
                                                                output_chunk_spec, len(all_worker_ranks),
-                                                               all_ranks=all_worker_ranks, _debug_mask_minibatches=True,
+                                                               all_ranks=all_worker_ranks,
+                                                               _debug_mask_minibatches=False,
                                                                _record_mem_dumps=bool(args.record_mem_dumps))
 
     this_file_name = os.path.splitext(os.path.basename(__file__))[0]

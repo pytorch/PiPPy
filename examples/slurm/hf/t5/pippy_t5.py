@@ -176,7 +176,8 @@ def run_master(args):
                          'encoder_last_hidden_state': TensorChunkSpec(0)}
     pipe_driver: PipelineDriverBase = schedules[args.schedule](t5_pipe, args_chunk_spec, kwargs_chunk_spec,
                                                                output_chunk_spec, len(all_worker_ranks),
-                                                               all_ranks=all_worker_ranks, _debug_mask_minibatches=True,
+                                                               all_ranks=all_worker_ranks,
+                                                               _debug_mask_minibatches=False,
                                                                _record_mem_dumps=bool(args.record_mem_dumps))
 
     this_file_name = os.path.splitext(os.path.basename(__file__))[0]
