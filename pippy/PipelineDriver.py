@@ -423,6 +423,11 @@ class PipeStageExecutor(EventRecorder):
 
     def invoke(self, output_unique_key : str, phase : Phase, args, kwargs, cur_microbatch : int, debug_str : str,
                output_refcount : int, batch_id : int, num_microbatches : int):
+        ts = time.time()
+        forward_name = event_name(Phase.FORWARD, self.stage_id, cur_microbatch)
+        name = f"R{forward_name}"
+        self.record_event(rank=self.rank_worker.local_rank, start_ts=ts, finish_ts=ts, id=name, name=name, type='received', mbid=cur_microbatch)
+        self.record_event_dependency(from_id=name, to_id=forward_name, type='waiting')
         # TODO: do we need to serialize calls to invoke() to preserve the order in which WorkItems appear for
         # static schedules?
 
@@ -764,7 +769,7 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
             name = f"I{forward_name}"
             self.record_event(rank=0, start_ts=ts, finish_ts=ts, id=name, name=name, type='invoke',
                               mbid=self.cur_microbatch)
-            self.record_event_dependency(from_id=name, to_id=forward_name, type='invoke')
+            self.record_event_dependency(from_id=name, to_id=f"R{forward_name}", type='invoke')
             return stage_executor.rpc_sync().invoke(
                 invocation_key, Phase.FORWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
                 output_refcount=len(node.users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
