@@ -116,9 +116,14 @@ def run_master(args, pp_ranks):
 
     pipe_driver : PipelineDriverBase = schedules[args.schedule](ec_pipe, args_chunk_spec, kwargs_chunk_spec,
                                                                 output_chunk_spec, args.pp_group_size,
-                                                                all_ranks=pp_ranks, dp_pg_cb=resolve_pg_per_stage,
+                                                                all_ranks=pp_ranks,
                                                                 _debug_mask_minibatches=DEBUG_MASK_MINIBATCHES)
+
     print(f'Rank {args.rank} Instantiated pipe with ranks {pp_ranks}')
+
+    pipe_driver.init_data_parallel(dp_group_size=args.dp_group_size,
+                                   dp_ranks_per_pp_rank=args.dp_ranks_per_pp_rank,
+                                   dp_pg_cb=resolve_pg_per_stage)
 
     torch.manual_seed(args.rank)
     input = torch.randn(bs, d_hid, device=args.device)
@@ -199,8 +204,7 @@ def run_worker(rank, world_size, args):
     )
 
     global dp_pg_per_pp_rank
-    dp_ranks_per_pp_rank = torch.arange(args.world_size).reshape(args.pp_group_size, args.dp_group_size).tolist()
-    dp_pg_per_pp_rank = [torch.distributed.new_group(ranks) for ranks in dp_ranks_per_pp_rank]
+    args.dp_ranks_per_pp_rank = torch.arange(args.world_size).reshape(args.pp_group_size, args.dp_group_size).tolist()
 
     pp_ranks_per_dp_group = [[i * args.dp_group_size + rank for i in range(args.pp_group_size)]
                              for rank in range(args.dp_group_size)]
