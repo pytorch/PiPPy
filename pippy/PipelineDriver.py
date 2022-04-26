@@ -395,11 +395,8 @@ class PipeStageExecutor(EventRecorder):
     def __init__(self, stage_id, mod, rank_worker, dp_pg_cb, pp_rank):
         logging.info(f'Instantiating PipeStageExecutor for stage {stage_id}')
         self.stage_id = stage_id
-        if dp_pg_cb is not None:
-            assert pp_rank is not None
-            self.mod = torch.nn.parallel.DistributedDataParallel(mod, process_group=dp_pg_cb(pp_rank))
-        else:
-            self.mod = mod
+        self.mod = mod
+        self.pp_rank = pp_rank
         self.rank_worker = rank_worker
         # map microbatch ID to list of forward tensor args
         self.fwd_cache : Dict[int, Tuple[Any, List[torch.Tensor]]] = {}
@@ -420,6 +417,17 @@ class PipeStageExecutor(EventRecorder):
         assert self.peer_executors is None
         self.peer_executors = peer_executors
         return None
+
+    def init_data_parallel(self, initing_stage, dp_group_size, dp_group_ranks=None, dp_pg_cb=None):
+        if dp_group_ranks is not None:
+            dp_pg_for_stage = torch.distributed.new_group(dp_group_ranks)
+            print(f'Stage {self.stage_id}, rank {self.rank_worker.local_rank}, dp group {dp_group_ranks} -- init complete')
+        else:
+            print('Warn: implementation needed')
+
+        assert self.pp_rank is not None
+        if self.pp_rank == initing_stage:
+            self.mod = torch.nn.parallel.DistributedDataParallel(self.mod, process_group=dp_pg_for_stage)
 
     def invoke(self, output_unique_key : str, phase : Phase, args, kwargs, cur_microbatch : int, debug_str : str,
                output_refcount : int, batch_id : int, num_microbatches : int):
@@ -716,6 +724,15 @@ class PipelineDriverBase:
         # Inform executors of their peers
         for stage_id, executor in self.stage_to_executor.items():
             executor.rpc_sync().install_peer_executors(self.stage_to_executor)
+
+    def init_data_parallel(self, dp_group_size, dp_ranks_per_pp_rank=None, dp_pg_cb=None):
+        for stage_id in self.stage_to_executor.keys():
+            dp_group_ranks = dp_ranks_per_pp_rank[stage_id]
+            futs = []
+            for i, executor in self.stage_to_executor.items():
+                futs.append(executor.rpc_async(timeout=0).init_data_parallel(stage_id, dp_group_size, dp_group_ranks, dp_pg_cb))
+            for fut in futs:
+                fut.wait()
 
     def run(self, chunks: int, *args, **kwargs):
         raise NotImplementedError('PipelineDriverBase is an abstract base class, please use a concrete '
