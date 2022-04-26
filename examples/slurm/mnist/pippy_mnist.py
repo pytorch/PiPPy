@@ -5,11 +5,9 @@ import os
 import socket
 
 import torch
-import torch.distributed.autograd as dist_autograd
 import torch.distributed.rpc as rpc
 import torch.multiprocessing as mp
 from torch import nn, optim
-from torch.distributed.optim import DistributedOptimizer
 from torch.nn.functional import cross_entropy
 from torchvision import datasets, transforms
 from tqdm import tqdm
@@ -36,18 +34,6 @@ if VERBOSE:
 torch.fx.Tracer.proxy_buffer_attributes = True
 
 USE_TQDM = os.getenv('USE_TQDM', True)
-
-class AdamDebugWrapper(optim.Adam):
-    def zero_grad(self, set_to_none : bool = False):
-        # print('*****zero_grad')
-        return super().zero_grad(set_to_none)
-
-    def step(self, closure=None):
-        # print('*****step')
-        assert len(self.param_groups) == 1
-        # for param in self.param_groups[0]['params']:
-        #     print(param.grad)
-        return super().step(closure)
 
 def run_master(args):
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if args.replicate else MultiUseParameterConfig.TRANSMIT
@@ -101,7 +87,7 @@ def run_master(args):
                                                                all_ranks=all_worker_ranks,
                                                                _debug_mask_minibatches=True)
 
-    optimizer = pipe_driver.instantiate_optimizer(AdamDebugWrapper)
+    optimizer = pipe_driver.instantiate_optimizer(optim.Adam)
 
     loaders = {
         "train": train_dataloader,
