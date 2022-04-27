@@ -414,10 +414,16 @@ class PipeStageExecutor(EventRecorder):
         self.peer_executors = peer_executors
         return None
 
-    def init_data_parallel(self, n_stages, dp_group_size):
+    def init_data_parallel(self, n_stages, dp_group_size, dp_pg_cb=None):
         worker_rank = self.rank_worker.local_rank
+        if dp_pg_cb is not None:
+            logging.info(f'Rank[{worker_rank}] stage[{self.stage_id}] Initializing data parallel: '
+                         f'using DP process groups provided by user')
+            self.mod = torch.nn.parallel.DistributedDataParallel(self.mod, process_group=dp_pg_cb(self.stage_id))
+            return
+
         logging.info(f'Rank[{worker_rank}] stage[{self.stage_id}] Initializing data parallel: '
-                     f'n_stages {n_stages}, dp_group_size {dp_group_size}')
+                     f'creating DP process groups internally')
         # Discover DP peers via Store
         # HACK: using the Store coming with the default process group
         store = torch.distributed.distributed_c10d._get_default_store()
@@ -750,7 +756,7 @@ class PipelineDriverBase:
         for stage_id, executor in self.stage_to_executor.items():
             executor.rpc_sync().install_peer_executors(self.stage_to_executor)
 
-    def init_data_parallel(self, dp_group_size):
+    def init_data_parallel(self, dp_group_size, dp_pg_cb=None):
         n_stages = len(self.stage_to_executor)
         logging.info(f'[root] Initializing {n_stages} data parallel groups, each of size {dp_group_size}')
         futs = []
@@ -758,7 +764,8 @@ class PipelineDriverBase:
         # These must be async calls because otherwise there will be deadlocks
         for i, executor in self.stage_to_executor.items():
             futs.append(executor.rpc_async(timeout=0).init_data_parallel(n_stages,
-                                                                         dp_group_size))
+                                                                         dp_group_size
+                                                                         dp_pg_cb))
 
         # Here we wait for all DP process groups to be initialized before the user can ask the PipeDriver to run
         # TODO: see if this is necessary
