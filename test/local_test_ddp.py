@@ -122,7 +122,7 @@ def run_master(args, pp_ranks):
     print(f'Rank {args.rank} Instantiated pipe with ranks {pp_ranks}')
 
     pipe_driver.init_data_parallel(dp_group_size=args.dp_group_size,
-                                   dp_ranks_per_pp_rank=args.dp_ranks_per_pp_rank,
+                                   dp_ranks_per_pp_rank=None,
                                    dp_pg_cb=resolve_pg_per_stage)
 
     torch.manual_seed(args.rank)

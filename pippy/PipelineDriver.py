@@ -420,16 +420,36 @@ class PipeStageExecutor(EventRecorder):
 
     def init_data_parallel(self, n_stages, dp_group_size, dp_ranks_per_pp_rank=None, dp_pg_cb=None):
         assert self.pp_rank is not None
+        # Discover DP peers via Store
+        if dp_ranks_per_pp_rank is None:
+            store = torch.distributed.distributed_c10d._get_default_store()
+            #TODO: figure out the unique rank of this stage for Interleaved 1F1B
+            my_rank = str(self.rank_worker.local_rank)
+            my_stage = str(self.stage_id)
+            store.set(my_rank, my_stage)
+
+            stage_to_dp_ranks: Dict[int, List[int]] = {}
+            for stage in range(n_stages):
+                stage_to_dp_ranks.setdefault(stage, [])
+
+            world_size = n_stages * dp_group_size
+            all_ranks = [ str(i) for i in range(world_size) ]
+            store.wait(all_ranks)
+
+            for rank in all_ranks:
+                stage = store.get(rank)
+                stage_to_dp_ranks[int(stage)].append(int(rank))
+
         # Even if a rank is not in the DP group of another stage, it must still participate in the new_group call of
         # that stage; this is required by c10d
         for stage in range(n_stages):
             if dp_ranks_per_pp_rank is not None:
                 dp_group_ranks = dp_ranks_per_pp_rank[stage]
-                dp_pg_for_stage = torch.distributed.new_group(dp_group_ranks)
-                print(f'Stage {self.stage_id}, rank {self.rank_worker.local_rank}, '
-                      f'DP group {dp_group_ranks} -- init complete')
             else:
-                print('Warn: implementation needed')
+                dp_group_ranks = stage_to_dp_ranks[stage]
+            dp_pg_for_stage = torch.distributed.new_group(dp_group_ranks)
+            print(f'Stage {self.stage_id}, rank {self.rank_worker.local_rank}, '
+                  f'DP group {dp_group_ranks} -- init complete')
 
             # Wrap stage module with DDP using the DP group corresponding to own stage
             if self.pp_rank == stage:
