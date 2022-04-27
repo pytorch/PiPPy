@@ -560,18 +560,61 @@ class PipeStageExecutor(EventRecorder):
         param = mod.get_parameter(qualname)
         param.grad = value
 
-    def _record_dump(self, dump_id, ts):
-        first_param = next(self.mod.parameters(), None)
-        device: torch.device = first_param.device if first_param is not None else torch.device('cpu')
-        if device.type == "cuda":
-            self.record_dump(rank=self.rank_worker.local_rank, ts=ts, id=dump_id, name=dump_id, type='dump',
-                             allocators={"CUDA": Allocator(f"{self.rank_worker.local_rank}", {
-                                 "size": int(torch.cuda.memory_allocated()),
-                                 "memory_allocated": int(torch.cuda.memory_allocated()),
-                                 "max_memory_allocated": int(torch.cuda.max_memory_allocated()),
-                                 "memory_reserved": int(torch.cuda.memory_reserved()),
-                                 "max_memory_reserved": int(torch.cuda.max_memory_reserved()),
-                             })})
+    def train(self, mode=True):
+        self.mod.train(mode=mode)
+
+    def _should_instantiate_optim(self):
+        return len(list(self.mod.parameters())) > 0
+
+    def instantiate_optimizer(self, optim_class, *args, **kwargs):
+        assert self._should_instantiate_optim()
+        return optim_class(self.mod.parameters(), *args, **kwargs)
+
+
+def _wait_for_all(rpc_futs):
+    # Stolen from DistributedOptimizer implementation
+    # TODO: improve error propagation
+    exception = None
+    results = []
+    for fut in rpc_futs:
+        try:
+            results.append(fut.wait())
+        except Exception as e:
+            results.append(e)
+            exception = e
+    if exception is not None:
+        raise exception
+    return results
+
+def _record_dump(self, dump_id, ts):
+    first_param = next(self.mod.parameters(), None)
+    device: torch.device = first_param.device if first_param is not None else torch.device('cpu')
+    if device.type == "cuda":
+        self.record_dump(rank=self.rank_worker.local_rank, ts=ts, id=dump_id, name=dump_id, type='dump',
+                         allocators={"CUDA": Allocator(f"{self.rank_worker.local_rank}", {
+                             "size": int(torch.cuda.memory_allocated()),
+                             "memory_allocated": int(torch.cuda.memory_allocated()),
+                             "max_memory_allocated": int(torch.cuda.max_memory_allocated()),
+                             "memory_reserved": int(torch.cuda.memory_reserved()),
+                             "max_memory_reserved": int(torch.cuda.max_memory_reserved()),
+                         })})
+
+
+class PipelineOptimizer:
+    def __init__(self, remote_optims):
+        self.remote_optims = remote_optims
+
+    def zero_grad(self, set_to_none : bool = False):
+        futs = []
+        for optim in self.remote_optims:
+            futs.append(optim.rpc_async().zero_grad(set_to_none))
+        _wait_for_all(futs)
+
+    def step(self, closure=None):
+        futs = []
+        for optim in self.remote_optims:
+            futs.append(optim.rpc_async().step(closure))
+        _wait_for_all(futs)
 
 
 class PipelineDriverBase:
@@ -677,6 +720,22 @@ class PipelineDriverBase:
     def run(self, chunks: int, *args, **kwargs):
         raise NotImplementedError('PipelineDriverBase is an abstract base class, please use a concrete '
                                   'implementation class.')
+
+    def train(self, mode=True):
+        for executor in self.stage_to_executor.values():
+            executor.rpc_sync().train(mode=mode)
+
+    def eval(self):
+        self.train(mode=False)
+
+    def instantiate_optimizer(self, optim_class, *args, **kwargs):
+        remote_optims = []
+        for executor in self.stage_to_executor.values():
+            if executor.rpc_sync()._should_instantiate_optim():
+                remote_optim = executor.remote().instantiate_optimizer(optim_class, *args, **kwargs)
+                remote_optims.append(remote_optim)
+
+        return PipelineOptimizer([optim for optim in remote_optims if optim is not None])
 
     def _sync_replicated_params(self):
         logging.info(f'[root] Synchronizing gradients for {len(self.pipe.replicated_params)} sets of replicated parameters')
