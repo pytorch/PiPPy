@@ -45,13 +45,7 @@ def get_grad_from_executor(executor, qualname):
 
 torch.fx.Tracer.proxy_buffer_attributes = True
 
-dp_pg_per_pp_rank = None
 dp_pg_for_reference = None
-
-def resolve_pg_per_stage(pp_rank):
-    assert dp_pg_per_pp_rank
-    return dp_pg_per_pp_rank[pp_rank]
-
 
 def run_master(args, pp_ranks):
     torch.manual_seed(42)
@@ -121,9 +115,7 @@ def run_master(args, pp_ranks):
 
     print(f'Rank {args.rank} Instantiated pipe with ranks {pp_ranks}')
 
-    pipe_driver.init_data_parallel(dp_group_size=args.dp_group_size,
-                                   dp_ranks_per_pp_rank=None,
-                                   dp_pg_cb=resolve_pg_per_stage)
+    pipe_driver.init_data_parallel(args.dp_group_size)
 
     torch.manual_seed(args.rank)
     input = torch.randn(bs, d_hid, device=args.device)
@@ -202,9 +194,6 @@ def run_worker(rank, world_size, args):
         world_size=world_size,
         rpc_backend_options=options
     )
-
-    global dp_pg_per_pp_rank
-    args.dp_ranks_per_pp_rank = torch.arange(args.world_size).reshape(args.pp_group_size, args.dp_group_size).tolist()
 
     pp_ranks_per_dp_group = [[i * args.dp_group_size + rank for i in range(args.pp_group_size)]
                              for rank in range(args.dp_group_size)]
