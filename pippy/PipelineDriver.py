@@ -427,7 +427,7 @@ class PipeStageExecutor(EventRecorder):
         # Discover DP peers via Store
         # HACK: using the Store coming with the default process group
         store = torch.distributed.distributed_c10d._get_default_store()
-        #TODO: figure out the unique global "stage rank" for Interleaved 1F1B
+        # TODO: figure out the unique global "stage rank" for Interleaved 1F1B
         my_rank = str(worker_rank)
         my_stage = str(self.stage_id)
         # Each stage rank checks in with their stage id in respective pipe
@@ -440,7 +440,7 @@ class PipeStageExecutor(EventRecorder):
 
         # Wait for all stages to check in
         world_size = n_stages * dp_group_size
-        all_ranks = [ str(i) for i in range(world_size) ]
+        all_ranks = [str(i) for i in range(world_size)]
         store.wait(all_ranks)
         logging.info(f'Rank[{worker_rank}] stage[{self.stage_id}] Initializing data parallel: all stages have checked in')
 
