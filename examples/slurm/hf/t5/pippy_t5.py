@@ -41,27 +41,22 @@ def get_number_of_params(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-@torch.fx.wrap
 def torch_ones_wrapper(*args, **kwargs):
     return torch.ones(*args, **kwargs)
 
 
-@torch.fx.wrap
 def torch_arange_wrapper(*args, **kwargs):
     return torch.arange(*args, **kwargs)
 
 
-@torch.fx.wrap
 def torch_full_like_wrapper(*args, **kwargs):
     return torch.full_like(*args, **kwargs)
 
 
-@torch.fx.wrap
 def torch_create_extended_attention_mask_for_decoder_wrapper(*args, **kwargs):
     return ModuleUtilsMixin.create_extended_attention_mask_for_decoder(*args, **kwargs)
 
 
-@torch.fx.wrap
 def torch_zeros_wrapper(*args, **kwargs):
     return torch.zeros(*args, **kwargs)
 
@@ -102,13 +97,18 @@ def add_split_points(t5, decoders_per_rank):
         annotate_split_points(t5, {f'decoder.block.{i * decoders_per_rank}': PipeSplitWrapper.SplitPoint.BEGINNING})
     return t5.config.num_decoder_layers // decoders_per_rank + 1
 
+def resolve_pg_per_stage(pp_rank):
+    assert dp_pg_per_pp_rank
+    return dp_pg_per_pp_rank[pp_rank]
 
-def run_master(args):
+def run_master(args, pp_ranks):
+    torch.manual_seed(42)
+
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if args.replicate else MultiUseParameterConfig.TRANSMIT
     print(f'REPLICATE config: {args.replicate} -> {MULTI_USE_PARAM_CONFIG}')
     print("Using schedule:", args.schedule)
 
-    assert args.world_size == 8, "This program requires exactly 7 workers + 1 master"
+    assert args.pp_group_size == 8, "This program requires exactly 7 workers + 1 master"
 
     device = args.device
 
@@ -133,6 +133,7 @@ def run_master(args):
 
     print("Using device:", device)
 
+    torch.manual_seed(args.rank)
     inp = torch.empty(bs, seq_length, dtype=torch.long, device=device).random_(t5.config.vocab_size)
     t5_input_dict = {'input_ids': inp, 'decoder_input_ids': inp,
                      'labels': torch.empty(bs, seq_length, dtype=torch.long, device=device).random_(
@@ -175,15 +176,15 @@ def run_master(args):
                          'past_key_values': [[TensorChunkSpec(0) for _ in range(36)] for _ in range(4)],
                          'encoder_last_hidden_state': TensorChunkSpec(0)}
     pipe_driver: PipelineDriverBase = schedules[args.schedule](t5_pipe, args_chunk_spec, kwargs_chunk_spec,
-                                                               output_chunk_spec, len(all_worker_ranks),
-                                                               all_ranks=all_worker_ranks,
+                                                               output_chunk_spec, args.pp_group_size,
+                                                                all_ranks=pp_ranks, dp_pg_cb=resolve_pg_per_stage,
                                                                _debug_mask_minibatches=False,
                                                                _record_mem_dumps=bool(args.record_mem_dumps))
 
     this_file_name = os.path.splitext(os.path.basename(__file__))[0]
 
     print('Running T5 pipeline.')
-    pipe_visualized_filename = f"{this_file_name}_visualized.json"
+    pipe_visualized_filename = f"{this_file_name}_visualized_{args.rank}.json"
     batches_events_contexts = []
     for i in range(batches):
         pipe_driver.run(chunks, **t5_input_dict)
@@ -201,7 +202,7 @@ def run_worker(rank, world_size, args):
     os.environ['MASTER_ADDR'] = args.master_addr
     os.environ['MASTER_PORT'] = args.master_port
     # Exclude IB for metadata transport due to lack of EFA support on AWS
-    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256,
+    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=1024,
                                               _transports=["shm", "uv"])
     if args.cuda:
         n_devs = torch.cuda.device_count()
@@ -215,20 +216,38 @@ def run_worker(rank, world_size, args):
     print(f"rank = {rank} host/pid/device = "
           f"{socket.gethostname()}/{os.getpid()}/{args.device}")
 
+    # Init DDP process group
+    backend = "nccl" if args.cuda else "gloo"
+    torch.distributed.init_process_group(backend=backend, rank=rank, world_size=world_size)
+
     rpc.init_rpc(
         f"worker{rank}",
         rank=rank,
         world_size=world_size,
         rpc_backend_options=options
     )
-    if rank == 0:
-        run_master(args)
+
+    global dp_pg_per_pp_rank
+    dp_ranks_per_pp_rank = torch.arange(args.world_size).reshape(args.pp_group_size, args.dp_group_size).tolist()
+    dp_pg_per_pp_rank = [torch.distributed.new_group(ranks) for ranks in dp_ranks_per_pp_rank]
+
+    pp_ranks_per_dp_group = [[i * args.dp_group_size + rank for i in range(args.pp_group_size)]
+                             for rank in range(args.dp_group_size)]
+
+    global dp_pg_for_reference
+    dp_pg_for_reference = torch.distributed.new_group(list(range(args.dp_group_size)))
+
+    if rank >= 0 and rank // args.dp_group_size == 0:
+        args.rank = rank
+        run_master(args, pp_ranks_per_dp_group[rank])
     rpc.shutdown()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 8)))
+    parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 16)))
+    parser.add_argument('--dp_group_size', type=int, default=int(os.getenv("DP_GROUP_SIZE", 2)))
+    parser.add_argument('--pp_group_size', type=int, default=int(os.getenv("PP_GROUP_SIZE", 8)))
     parser.add_argument('--rank', type=int, default=int(os.getenv("RANK", -1)))
     parser.add_argument('--master_addr', type=str, default=os.getenv('MASTER_ADDR', 'localhost'))
     parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
@@ -237,6 +256,8 @@ if __name__ == "__main__":
     parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
     parser.add_argument('--record_mem_dumps', type=int, default=0, choices=[0, 1])
     args = parser.parse_args()
+
+    assert args.dp_group_size * args.pp_group_size == args.world_size
 
     if args.rank == -1:
         mp.spawn(run_worker, args=(args.world_size, args,), nprocs=args.world_size, join=True)
