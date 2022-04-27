@@ -13,7 +13,7 @@ import torch.distributed.rpc as rpc
 import torch.fx
 
 from pippy.IR import Pipe, stage_backward, sync_barrier, _null_coalesce_accumulate
-from pippy.events import EventRecorder, EventsContext, Event
+from pippy.events import EventRecorder, EventsContext, Event, Allocator
 from pippy.microbatch import split_args_kwargs_into_chunks, merge_chunks
 
 # TODO: Define the strategy for replicating the computation. In particular, we will likely make the assumption
@@ -172,13 +172,15 @@ class RankWorker(EventRecorder):
                     specify resource limits and how to implement backpressure?)
     """
 
-    def __init__(self, local_rank, all_stages, max_outstanding=None, dp_pg_cb=None, pp_rank=None):
+    def __init__(self, local_rank, all_stages, max_outstanding=None, dp_pg_cb=None, pp_rank=None,
+                 _record_mem_dumps=False):
         logging.info(f'[{local_rank}] Instantiating RankWorker')
         self.local_rank = local_rank
         self.all_stages = all_stages
         self.local_rank = local_rank
         self.dp_pg_cb = dp_pg_cb
         self.pp_rank = pp_rank
+        self._record_mem_dumps = _record_mem_dumps
 
         # Maximum outstanding micro-batches of the pipeline schedule
         self.max_outstanding = max_outstanding
@@ -272,6 +274,10 @@ class RankWorker(EventRecorder):
                 batch_id_to_remaining_backward_microbatches[batch_id] = num_microbatches
 
             start_ts = time.time()
+            name = event_name(work_item.phase, work_item.stage_id, work_item.microbatch_id)
+            if self._record_mem_dumps:
+                for peer_executor_rref in stage_executor.peer_executors.values():
+                    peer_executor_rref.rpc_sync()._record_dump(f'M{name}_start', start_ts)
 
             value_ref_arg_idx = 0
 
@@ -350,13 +356,17 @@ class RankWorker(EventRecorder):
             future.set_result(out_val)
             work_item.state = SchedState.DONE
 
-            name = event_name(work_item.phase, work_item.stage_id, work_item.microbatch_id)
             prev_name = prev_event_name(work_item.phase, self.all_stages, work_item.stage_id, work_item.microbatch_id)
             next_name = next_event_name(work_item.phase, self.all_stages, work_item.stage_id, work_item.microbatch_id)
-            self.record_event(rank=self.local_rank, start_ts=start_ts, finish_ts=time.time(), id=name,
+            finish_ts = time.time()
+            self.record_event(rank=self.local_rank, start_ts=start_ts, finish_ts=finish_ts, id=name,
                               name=name, type=work_item.phase, mbid=work_item.microbatch_id)
             self.record_event_dependency(from_id=prev_name, to_id=name, type='transfer')
             self.record_event_dependency(from_id=name, to_id=next_name, type='transfer')
+
+            if self._record_mem_dumps:
+                for peer_executor_rref in stage_executor.peer_executors.values():
+                    peer_executor_rref.rpc_sync()._record_dump(f'M{name}_finish', finish_ts)
 
     # For work item marked with runlist_key, update its operand list with value
     def update_run_list(self, runlist_key, arg_idx, value):
@@ -372,7 +382,7 @@ class RankWorker(EventRecorder):
                 logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] all operands ready')
 
 
-class PipeStageExecutor:
+class PipeStageExecutor(EventRecorder):
     """
     PipeStageExecutor encapsulates the execution semantics of a fragment of
     code on a pipeline stage. PipeStageExecutor handles:
@@ -413,6 +423,11 @@ class PipeStageExecutor:
 
     def invoke(self, output_unique_key : str, phase : Phase, args, kwargs, cur_microbatch : int, debug_str : str,
                output_refcount : int, batch_id : int, num_microbatches : int):
+        ts = time.time()
+        forward_name = event_name(Phase.FORWARD, self.stage_id, cur_microbatch)
+        name = f"R{forward_name}"
+        self.record_event(rank=self.rank_worker.local_rank, start_ts=ts, finish_ts=ts, id=name, name=name, type='received', mbid=cur_microbatch)
+        self.record_event_dependency(from_id=name, to_id=forward_name, type='waiting')
         # TODO: do we need to serialize calls to invoke() to preserve the order in which WorkItems appear for
         # static schedules?
 
@@ -571,6 +586,19 @@ def _wait_for_all(rpc_futs):
         raise exception
     return results
 
+def _record_dump(self, dump_id, ts):
+    first_param = next(self.mod.parameters(), None)
+    device: torch.device = first_param.device if first_param is not None else torch.device('cpu')
+    if device.type == "cuda":
+        self.record_dump(rank=self.rank_worker.local_rank, ts=ts, id=dump_id, name=dump_id, type='dump',
+                         allocators={"CUDA": Allocator(f"{self.rank_worker.local_rank}", {
+                             "size": int(torch.cuda.memory_allocated()),
+                             "memory_allocated": int(torch.cuda.memory_allocated()),
+                             "max_memory_allocated": int(torch.cuda.max_memory_allocated()),
+                             "memory_reserved": int(torch.cuda.memory_reserved()),
+                             "max_memory_reserved": int(torch.cuda.max_memory_reserved()),
+                         })})
+
 
 class PipelineOptimizer:
     def __init__(self, remote_optims):
@@ -592,7 +620,7 @@ class PipelineOptimizer:
 class PipelineDriverBase:
     def __init__(self, pipe : Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size : int,
                  all_ranks : List[int] = None, _debug_mask_minibatches : bool = False,
-                 dp_pg_cb=None, max_outstanding=None, interleave_stages=False):
+                 dp_pg_cb=None, max_outstanding=None, interleave_stages=False, _record_mem_dumps=False):
         self.pipe = pipe
         self.world_size = world_size
         self.all_ranks = all_ranks
@@ -608,6 +636,7 @@ class PipelineDriverBase:
         self.microbatch_interpreters: List[RemoteInterpreter] = []
         self.dp_pg_cb = dp_pg_cb
         self.batch_id = 0
+        self._record_mem_dumps = _record_mem_dumps
 
     def _init_remote_executors(self):
         self.rank_worker_rrefs : Dict[int, torch.distributed.rpc.RRef] = {}
@@ -668,7 +697,8 @@ class PipelineDriverBase:
                       'all_stages': all_stages,
                       'max_outstanding': self.max_outstanding,
                       'dp_pg_cb': self.dp_pg_cb,
-                      'pp_rank': pp_rank}
+                      'pp_rank': pp_rank,
+                      '_record_mem_dumps': self._record_mem_dumps}
             self.rank_worker_rrefs[rank] = rpc.remote(rank, RankWorker, args=(), kwargs=kwargs)
             pp_rank += 1
 
@@ -751,6 +781,8 @@ class PipelineDriverBase:
             events_context.update(worker_rref.rpc_sync().retrieve_events())
         for interp in self.microbatch_interpreters:
             events_context.update(interp.retrieve_events())
+        for _, executor_rref in self.remote_stage_executor_rrefs.values():
+            events_context.update(executor_rref.rpc_sync().retrieve_events())
         events_context.events.sort(key=lambda e: e.start_ts)
         return events_context
 
@@ -796,7 +828,7 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
             name = f"I{forward_name}"
             self.record_event(rank=0, start_ts=ts, finish_ts=ts, id=name, name=name, type='invoke',
                               mbid=self.cur_microbatch)
-            self.record_event_dependency(from_id=name, to_id=forward_name, type='invoke')
+            self.record_event_dependency(from_id=name, to_id=f"R{forward_name}", type='invoke')
             return stage_executor.rpc_sync().invoke(
                 invocation_key, Phase.FORWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
                 output_refcount=len(node.users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
@@ -882,10 +914,10 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
 class PipelineDriverFillDrain(PipelineDriverBase):
     def __init__(self, pipe: Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size: int,
                  all_ranks: List[int] = None, single_loss: bool = False, _debug_mask_minibatches: bool = False,
-                 dp_pg_cb=None, max_outstanding=None, interleave_stages=False):
+                 dp_pg_cb=None, max_outstanding=None, interleave_stages=False, _record_mem_dumps=False):
         super().__init__(pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size, all_ranks,
                          _debug_mask_minibatches, dp_pg_cb=dp_pg_cb, max_outstanding=max_outstanding,
-                         interleave_stages=interleave_stages)
+                         interleave_stages=interleave_stages, _record_mem_dumps=_record_mem_dumps)
         self.single_loss = single_loss
 
         self._init_remote_executors()
@@ -982,19 +1014,20 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 class PipelineDriver1F1B(PipelineDriverFillDrain):
     def __init__(self, pipe: Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size: int,
                  all_ranks: List[int] = None, single_loss: bool = False, _debug_mask_minibatches: bool = False,
-                 dp_pg_cb=None, interleave_stages=False):
+                 dp_pg_cb=None, interleave_stages=False, _record_mem_dumps=False):
         # In 1F1B with backward stages, the maximum number of outstanding
         # micro-batches equals the number of pipeline stages
         max_outstanding = pipe.num_stages if pipe.has_loss_and_backwards else None
 
         super().__init__(pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size, all_ranks,
                          single_loss, _debug_mask_minibatches, dp_pg_cb=dp_pg_cb, max_outstanding=max_outstanding,
-                         interleave_stages=interleave_stages)
+                         interleave_stages=interleave_stages, _record_mem_dumps=_record_mem_dumps)
 
 class PipelineDriverInterleaved1F1B(PipelineDriver1F1B):
     def __init__(self, pipe : Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size : int,
                  all_ranks : List[int] = None, single_loss : bool = False, _debug_mask_minibatches: bool = False,
-                 dp_pg_cb=None):
+                 dp_pg_cb=None, _record_mem_dumps=False):
         super().__init__(pipe, args_chunk_spec, kwargs_chunk_spec,
                          output_chunk_spec, world_size, all_ranks, single_loss,
-                         _debug_mask_minibatches, dp_pg_cb=dp_pg_cb, interleave_stages=True)
+                         _debug_mask_minibatches, dp_pg_cb=dp_pg_cb, interleave_stages=True,
+                         _record_mem_dumps=_record_mem_dumps)
