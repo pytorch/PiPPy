@@ -11,7 +11,6 @@ from typing import Any, Callable, Dict, List, Tuple, Optional
 import torch
 import torch.distributed.rpc as rpc
 import torch.fx
-from torch.distributed.rpc import RRef
 
 from pippy.IR import Pipe, stage_backward, sync_barrier, _null_coalesce_accumulate
 from pippy.events import EventRecorder, EventsContext, Event
@@ -549,8 +548,45 @@ class PipeStageExecutor:
     def train(self, mode=True):
         self.mod.train(mode=mode)
 
-    def parameter_rrefs(self):
-        return [RRef(p) for p in self.mod.parameters()]
+    def _should_instantiate_optim(self):
+        return len(list(self.mod.parameters())) > 0
+
+    def instantiate_optimizer(self, optim_class):
+        assert self._should_instantiate_optim()
+        return optim_class(self.mod.parameters())
+
+
+def _wait_for_all(rpc_futs):
+    # Stolen from DistributedOptimizer implementation
+    # TODO: improve error propagation
+    exception = None
+    results = []
+    for fut in rpc_futs:
+        try:
+            results.append(fut.wait())
+        except Exception as e:
+            results.append(e)
+            exception = e
+    if exception is not None:
+        raise exception
+    return results
+
+
+class PipelineOptimizer:
+    def __init__(self, remote_optims):
+        self.remote_optims = remote_optims
+
+    def zero_grad(self, set_to_none : bool = False):
+        futs = []
+        for optim in self.remote_optims:
+            futs.append(optim.rpc_async().zero_grad(set_to_none))
+        _wait_for_all(futs)
+
+    def step(self, closure=None):
+        futs = []
+        for optim in self.remote_optims:
+            futs.append(optim.rpc_async().step(closure))
+        _wait_for_all(futs)
 
 
 class PipelineDriverBase:
@@ -662,11 +698,14 @@ class PipelineDriverBase:
     def eval(self):
         self.train(mode=False)
 
-    def parameter_rrefs(self):
-        remote_params = []
+    def instantiate_optimizer(self, optim_class):
+        remote_optims = []
         for executor in self.stage_to_executor.values():
-            remote_params.extend(executor.rpc_sync().parameter_rrefs())
-        return remote_params
+            if executor.rpc_sync()._should_instantiate_optim():
+                remote_optim = executor.remote().instantiate_optimizer(optim_class)
+                remote_optims.append(remote_optim)
+
+        return PipelineOptimizer([optim for optim in remote_optims if optim is not None])
 
     def _sync_replicated_params(self):
         logging.info(f'[root] Synchronizing gradients for {len(self.pipe.replicated_params)} sets of replicated parameters')

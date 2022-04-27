@@ -5,11 +5,9 @@ import os
 import socket
 
 import torch
-import torch.distributed.autograd as dist_autograd
 import torch.distributed.rpc as rpc
 import torch.multiprocessing as mp
 from torch import nn, optim
-from torch.distributed.optim import DistributedOptimizer
 from torch.nn.functional import cross_entropy
 from torchvision import datasets, transforms
 from tqdm import tqdm
@@ -36,7 +34,6 @@ if VERBOSE:
 torch.fx.Tracer.proxy_buffer_attributes = True
 
 USE_TQDM = os.getenv('USE_TQDM', True)
-
 
 def run_master(args):
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if args.replicate else MultiUseParameterConfig.TRANSMIT
@@ -78,7 +75,7 @@ def run_master(args):
 
     wrapper = OutputLossWrapper(model, cross_entropy)
 
-    pipe = Pipe.from_tracing(wrapper, MULTI_USE_PARAM_CONFIG)
+    pipe = Pipe.from_tracing(wrapper, MULTI_USE_PARAM_CONFIG, output_loss_value_spec=(False, True))
     pipe.to(args.device)
 
     args_chunk_spec = (TensorChunkSpec(0), TensorChunkSpec(0))
@@ -90,10 +87,7 @@ def run_master(args):
                                                                all_ranks=all_worker_ranks,
                                                                _debug_mask_minibatches=True)
 
-    optimizer = DistributedOptimizer(
-        optim.Adam,
-        pipe_driver.parameter_rrefs(),
-    )
+    optimizer = pipe_driver.instantiate_optimizer(optim.Adam)
 
     loaders = {
         "train": train_dataloader,
@@ -111,15 +105,14 @@ def run_master(args):
                 y_batch = y_batch.to(args.device)
                 if k == "train":
                     pipe_driver.train()
-                    with dist_autograd.context() as context_id:
-                        outp, loss = pipe_driver.run(chunks, x_batch, y_batch)
-                        preds = outp.argmax(-1)
-                        correct = (preds == y_batch).sum()
-                        all = len(y_batch)
-                        epoch_correct += correct.item()
-                        epoch_all += all
-                        dist_autograd.backward(context_id, [loss])
-                        optimizer.step(context_id)
+                    optimizer.zero_grad()
+                    outp, _ = pipe_driver.run(chunks, x_batch, y_batch)
+                    preds = outp.argmax(-1)
+                    correct = (preds == y_batch).sum()
+                    all = len(y_batch)
+                    epoch_correct += correct.item()
+                    epoch_all += all
+                    optimizer.step()
                 else:
                     pipe_driver.eval()
                     with torch.no_grad():
