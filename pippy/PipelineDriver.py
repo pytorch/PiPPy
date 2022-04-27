@@ -206,8 +206,7 @@ class RankWorker(EventRecorder):
         if stage_id in self.stage_executors:
             raise AssertionError(f'Rank {self.local_rank} already has stage {stage_id}')
         self.stage_executors[stage_id] = PipeStageExecutor(stage_id=stage_id,
-                                                           mod=mod, rank_worker=self,
-                                                           pp_rank=self.pp_rank)
+                                                           mod=mod, rank_worker=self)
         return self.stage_executors[stage_id]
 
     def enqueue_ready_runlist(self, unique_key, work_item):
@@ -390,11 +389,10 @@ class PipeStageExecutor(EventRecorder):
     * TODO: gradient checkpointing
     """
 
-    def __init__(self, stage_id, mod, rank_worker, pp_rank):
+    def __init__(self, stage_id, mod, rank_worker):
         logging.info(f'Instantiating PipeStageExecutor for stage {stage_id}')
         self.stage_id = stage_id
         self.mod = mod
-        self.pp_rank = pp_rank
         self.rank_worker = rank_worker
         # map microbatch ID to list of forward tensor args
         self.fwd_cache : Dict[int, Tuple[Any, List[torch.Tensor]]] = {}
@@ -417,7 +415,6 @@ class PipeStageExecutor(EventRecorder):
         return None
 
     def init_data_parallel(self, n_stages, dp_group_size):
-        assert self.pp_rank is not None
         # Discover DP peers via Store
         # HACK: using the Store coming with the default process group
         store = torch.distributed.distributed_c10d._get_default_store()
@@ -452,7 +449,7 @@ class PipeStageExecutor(EventRecorder):
                          f'DP group {dp_group_ranks} -- init complete')
 
             # Wrap stage module with DDP using the DP group corresponding to own stage
-            if self.pp_rank == stage:
+            if self.stage_id == stage:
                 self.mod = torch.nn.parallel.DistributedDataParallel(self.mod, process_group=dp_pg_for_stage)
 
     def invoke(self, output_unique_key : str, phase : Phase, args, kwargs, cur_microbatch : int, debug_str : str,
