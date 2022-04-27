@@ -764,7 +764,7 @@ class PipelineDriverBase:
         # These must be async calls because otherwise there will be deadlocks
         for i, executor in self.stage_to_executor.items():
             futs.append(executor.rpc_async(timeout=0).init_data_parallel(n_stages,
-                                                                         dp_group_size
+                                                                         dp_group_size,
                                                                          dp_pg_cb))
 
         # Here we wait for all DP process groups to be initialized before the user can ask the PipeDriver to run
