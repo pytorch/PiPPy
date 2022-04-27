@@ -415,11 +415,14 @@ class PipeStageExecutor(EventRecorder):
         return None
 
     def init_data_parallel(self, n_stages, dp_group_size):
+        worker_rank = self.rank_worker.local_rank
+        logging.info(f'Rank[{worker_rank}] stage[{self.stage_id}] Initializing data parallel: '
+                     f'n_stages {n_stages}, dp_group_size {dp_group_size}')
         # Discover DP peers via Store
         # HACK: using the Store coming with the default process group
         store = torch.distributed.distributed_c10d._get_default_store()
         #TODO: figure out the unique global "stage rank" for Interleaved 1F1B
-        my_rank = str(self.rank_worker.local_rank)
+        my_rank = str(worker_rank)
         my_stage = str(self.stage_id)
         # Each stage rank checks in with their stage id in respective pipe
         store.set(my_rank, my_stage)
@@ -433,6 +436,7 @@ class PipeStageExecutor(EventRecorder):
         world_size = n_stages * dp_group_size
         all_ranks = [ str(i) for i in range(world_size) ]
         store.wait(all_ranks)
+        logging.info(f'Rank[{worker_rank}] stage[{self.stage_id}] Initializing data parallel: all stages have checked in')
 
         # Fill the mapping
         for rank in all_ranks:
@@ -445,7 +449,7 @@ class PipeStageExecutor(EventRecorder):
         for stage in range(n_stages):
             dp_group_ranks = stage_to_dp_ranks[stage]
             dp_pg_for_stage = torch.distributed.new_group(dp_group_ranks)
-            logging.info(f'Stage {self.stage_id}, rank {self.rank_worker.local_rank}, '
+            logging.info(f'Rank[{worker_rank}] stage[{self.stage_id}] '
                          f'DP group {dp_group_ranks} -- init complete')
 
             # Wrap stage module with DDP using the DP group corresponding to own stage
@@ -748,6 +752,7 @@ class PipelineDriverBase:
 
     def init_data_parallel(self, dp_group_size):
         n_stages = len(self.stage_to_executor)
+        logging.info(f'[root] Initializing {n_stages} data parallel groups, each of size {dp_group_size}')
         futs = []
         # Asks all stage executors to participate in DP process group init
         # These must be async calls because otherwise there will be deadlocks
