@@ -87,7 +87,7 @@ def run_master(args):
                                                                all_ranks=all_worker_ranks,
                                                                _debug_mask_minibatches=True)
 
-    optimizer = pipe_driver.instantiate_optimizer(optim.Adam)
+    optimizer = pipe_driver.instantiate_optimizer(optim.Adam, lr=1e-3, betas=(0.9, 0.999), eps=1e-8)
 
     loaders = {
         "train": train_dataloader,
@@ -157,7 +157,7 @@ def run_worker(rank, world_size, args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 7)))
+    # parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 7)))
     parser.add_argument('--rank', type=int, default=int(os.getenv("RANK", -1)))
     parser.add_argument('--master_addr', type=str, default=os.getenv('MASTER_ADDR', 'localhost'))
     parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
@@ -165,6 +165,7 @@ if __name__ == "__main__":
     parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
     parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
     args = parser.parse_args()
+    args.world_size = 7  # "This program requires exactly 6 workers + 1 master"
 
     if args.rank == -1:
         mp.spawn(run_worker, args=(args.world_size, args,), nprocs=args.world_size, join=True)

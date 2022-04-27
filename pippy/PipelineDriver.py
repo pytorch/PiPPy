@@ -551,9 +551,9 @@ class PipeStageExecutor:
     def _should_instantiate_optim(self):
         return len(list(self.mod.parameters())) > 0
 
-    def instantiate_optimizer(self, optim_class):
+    def instantiate_optimizer(self, optim_class, *args, **kwargs):
         assert self._should_instantiate_optim()
-        return optim_class(self.mod.parameters())
+        return optim_class(self.mod.parameters(), *args, **kwargs)
 
 
 def _wait_for_all(rpc_futs):
@@ -698,11 +698,11 @@ class PipelineDriverBase:
     def eval(self):
         self.train(mode=False)
 
-    def instantiate_optimizer(self, optim_class):
+    def instantiate_optimizer(self, optim_class, *args, **kwargs):
         remote_optims = []
         for executor in self.stage_to_executor.values():
             if executor.rpc_sync()._should_instantiate_optim():
-                remote_optim = executor.remote().instantiate_optimizer(optim_class)
+                remote_optim = executor.remote().instantiate_optimizer(optim_class, *args, **kwargs)
                 remote_optims.append(remote_optim)
 
         return PipelineOptimizer([optim for optim in remote_optims if optim is not None])
