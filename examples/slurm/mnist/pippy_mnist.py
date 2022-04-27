@@ -9,8 +9,8 @@ import torch.distributed.rpc as rpc
 import torch.multiprocessing as mp
 from torch import nn, optim
 from torch.nn.functional import cross_entropy
-from torchvision import datasets, transforms
-from tqdm import tqdm
+from torchvision import datasets, transforms  # type: ignore
+from tqdm import tqdm  # type: ignore
 
 from pippy.IR import MultiUseParameterConfig, Pipe, PipeSplitWrapper, LossWrapper
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverInterleaved1F1B, \
@@ -39,6 +39,7 @@ def run_master(args):
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if args.replicate else MultiUseParameterConfig.TRANSMIT
     print(f'REPLICATE config: {args.replicate} -> {MULTI_USE_PARAM_CONFIG}')
     print("Using schedule:", args.schedule)
+    print("Using device:", args.device)
 
     number_of_workers = 6
     all_worker_ranks = list(range(1, 1 + number_of_workers))  # exclude master rank = 0

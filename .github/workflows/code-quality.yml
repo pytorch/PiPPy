@@ -16,6 +16,7 @@ jobs:
         pip install -r docs/requirements.txt
         pip install types-docutils types-setuptools tqdm
         if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
+        pip install --pre torchvision -f https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html
         pip install git+https://github.com/pbelevich/transformers.git@compatible_with_pt_master
         pip install "black<23" pylint==v3.0.0a3 mypy==v0.902 flake8
     - name: Lint with pylint

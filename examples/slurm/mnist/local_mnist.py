@@ -4,8 +4,8 @@ import os
 import torch
 from torch import nn, optim
 from torch.nn.functional import cross_entropy
-from torchvision import datasets, transforms
-from tqdm import tqdm
+from torchvision import datasets, transforms  # type: ignore
+from tqdm import tqdm  # type: ignore
 
 from pippy.IR import PipeSplitWrapper, LossWrapper
 
