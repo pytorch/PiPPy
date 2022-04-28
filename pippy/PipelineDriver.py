@@ -569,6 +569,19 @@ class PipeStageExecutor(EventRecorder):
     def instantiate_optimizer(self, optim_class, *args, **kwargs):
         assert self._should_instantiate_optim()
         return optim_class(self.mod.parameters(), *args, **kwargs)
+    
+    def _record_dump(self, dump_id, ts):
+        first_param = next(self.mod.parameters(), None)
+        device: torch.device = first_param.device if first_param is not None else torch.device('cpu')
+        if device.type == "cuda":
+            self.record_dump(rank=self.rank_worker.local_rank, ts=ts, id=dump_id, name=dump_id, type='dump',
+                             allocators={"CUDA": Allocator(f"{self.rank_worker.local_rank}", {
+                                 "size": int(torch.cuda.memory_allocated()),
+                                 "memory_allocated": int(torch.cuda.memory_allocated()),
+                                 "max_memory_allocated": int(torch.cuda.max_memory_allocated()),
+                                 "memory_reserved": int(torch.cuda.memory_reserved()),
+                                 "max_memory_reserved": int(torch.cuda.max_memory_reserved()),
+                             })})
 
 
 def _wait_for_all(rpc_futs):
@@ -585,19 +598,6 @@ def _wait_for_all(rpc_futs):
     if exception is not None:
         raise exception
     return results
-
-def _record_dump(self, dump_id, ts):
-    first_param = next(self.mod.parameters(), None)
-    device: torch.device = first_param.device if first_param is not None else torch.device('cpu')
-    if device.type == "cuda":
-        self.record_dump(rank=self.rank_worker.local_rank, ts=ts, id=dump_id, name=dump_id, type='dump',
-                         allocators={"CUDA": Allocator(f"{self.rank_worker.local_rank}", {
-                             "size": int(torch.cuda.memory_allocated()),
-                             "memory_allocated": int(torch.cuda.memory_allocated()),
-                             "max_memory_allocated": int(torch.cuda.max_memory_allocated()),
-                             "memory_reserved": int(torch.cuda.memory_reserved()),
-                             "max_memory_reserved": int(torch.cuda.max_memory_reserved()),
-                         })})
 
 
 class PipelineOptimizer:
