@@ -106,6 +106,7 @@ jobs:
         python-version: ["3.7", "3.8", "3.9"]
         replicate: ["0", "1"]
         schedule: ["FillDrain", "1F1B"]
+        checkpoint: [ "0", "1" ]
     env:
       VERBOSE: "0"
       OMP_NUM_THREADS: "1"
@@ -124,15 +125,15 @@ jobs:
       - name: Install pippy
         run: "python setup.py install"
       - name: Run forward-only integration test
-        run: python test/local_test_forward.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+        run: python test/local_test_forward.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
       - name: Run forward-loss-backward integration test
-        run: python test/local_test_forward_backward.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+        run: python test/local_test_forward_backward.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
       - name: Run null_coalesce_accumulate integration test
         run: python test/local_test_null_coalesce_accumulate.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: Run HF BERT forward-only integration test
-        run: python test/local_test_forward_hf_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+        run: python test/local_test_forward_hf_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
       - name: Run HF GPT2 forward-only integration test
-        run: python test/local_test_forward_hf_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+        run: python test/local_test_forward_hf_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
       - name: Run GPT2 slurm example without slurm
         run: python examples/slurm/hf/gpt2/pippy_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: Run BERT slurm example without slurm
