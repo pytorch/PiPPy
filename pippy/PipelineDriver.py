@@ -569,7 +569,7 @@ class PipeStageExecutor(EventRecorder):
     def instantiate_optimizer(self, optim_class, *args, **kwargs):
         assert self._should_instantiate_optim()
         return optim_class(self.mod.parameters(), *args, **kwargs)
-    
+
     def _record_dump(self, dump_id, ts):
         first_param = next(self.mod.parameters(), None)
         device: torch.device = first_param.device if first_param is not None else torch.device('cpu')
