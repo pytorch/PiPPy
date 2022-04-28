@@ -139,7 +139,7 @@ jobs:
       - name: Run BERT slurm example without slurm
         run: python examples/slurm/hf/bert/pippy_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: Run T5 slurm example without slurm
-        run: python examples/slurm/hf/t5/pippy_t5.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+        run: python examples/slurm/hf/t5/pippy_t5.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
       - name: Run visualizer test
         run: python test/local_test_visualizer.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
 
@@ -261,6 +261,7 @@ jobs:
         replicate: ["0", "1"]
         schedule: ["FillDrain", "1F1B"]
         verbose: ["0"]
+        checkpoint: [ "0", "1" ]
     container:
       image: python:${{ matrix.python-version }}
 
@@ -276,4 +277,4 @@ jobs:
       - name: Install pippy
         run: "python setup.py install"
       - name: Run PP + DDP test - Transmitted parameters
-        run: python test/local_test_ddp.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+        run: python test/local_test_ddp.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}

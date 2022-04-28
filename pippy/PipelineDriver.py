@@ -310,21 +310,26 @@ class RankWorker(EventRecorder):
                 kwargs = torch.fx.node.map_aggregate(kwargs, extract_tensor_args)
                 logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running forward module')
 
-                if isinstance(stage_executor.mod, torch.nn.parallel.distributed.DistributedDataParallel):
-                    with stage_executor.mod.no_sync():
-                        out_val = stage_executor.mod(*args, **kwargs)
-                else:
-                    if no_grad:
-                        with torch.no_grad():
-                            def set_requires_grad(a):
-                                if isinstance(a, torch.Tensor):
-                                    a.requires_grad_(True)
-                                return a
+                def forward_maybe_with_ddp(args, kwargs):
+                    if isinstance(stage_executor.mod, torch.nn.parallel.distributed.DistributedDataParallel):
+                        with stage_executor.mod.no_sync():
                             out_val = stage_executor.mod(*args, **kwargs)
-                            out_val = torch.fx.node.map_aggregate(out_val, set_requires_grad)
                     else:
-                        with torch.enable_grad():
-                            out_val = stage_executor.mod(*args, **kwargs)
+                        out_val = stage_executor.mod(*args, **kwargs)
+                    return out_val
+
+                def set_requires_grad(a):
+                    if isinstance(a, torch.Tensor):
+                        a.requires_grad_(True)
+                    return a
+
+                if no_grad:
+                    with torch.no_grad():
+                        out_val = forward_maybe_with_ddp(args, kwargs)
+                        out_val = torch.fx.node.map_aggregate(out_val, set_requires_grad)
+                else:
+                    with torch.enable_grad():
+                        out_val = forward_maybe_with_ddp(args, kwargs)
 
                 return out_val, flat_tensor_args
 
@@ -652,7 +657,6 @@ class PipelineDriverBase:
                  all_ranks : List[int] = None, _debug_mask_minibatches : bool = False,
                  dp_pg_cb=None, max_outstanding=None, interleave_stages=False, _record_mem_dumps=False,
                  checkpoint=False):
-        assert dp_pg_cb is None or not checkpoint, "DDP with checkpointing is not supported yet"
         self.pipe = pipe
         self.world_size = world_size
         self.all_ranks = all_ranks
