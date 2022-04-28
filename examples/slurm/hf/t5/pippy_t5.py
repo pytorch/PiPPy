@@ -99,7 +99,7 @@ def add_split_points(t5, decoders_per_rank):
 
 def resolve_pg_per_stage(pp_rank):
     assert dp_pg_per_pp_rank
-    return dp_pg_per_pp_rank[pp_rank]
+    return dp_pg_per_pp_rank[pp_rank + 1]  # exclude master
 
 def run_master(args, pp_ranks):
     torch.manual_seed(42)
@@ -125,7 +125,7 @@ def run_master(args, pp_ranks):
     number_of_workers = enc + t5.config.num_decoder_layers // decoders_per_rank
     print(f"number_of_workers = {number_of_workers}")
 
-    all_worker_ranks = list(range(1, 1 + number_of_workers))  # exclude master rank = 0
+    all_worker_ranks = pp_ranks[1:1 + number_of_workers]  # exclude master
     chunks = len(all_worker_ranks)
     batches = 1
     bs = 1 * chunks
@@ -176,8 +176,10 @@ def run_master(args, pp_ranks):
                          'past_key_values': [[TensorChunkSpec(0) for _ in range(36)] for _ in range(4)],
                          'encoder_last_hidden_state': TensorChunkSpec(0)}
     pipe_driver: PipelineDriverBase = schedules[args.schedule](t5_pipe, args_chunk_spec, kwargs_chunk_spec,
-                                                               output_chunk_spec, args.pp_group_size,
-                                                                all_ranks=pp_ranks, dp_pg_cb=resolve_pg_per_stage,
+                                                               output_chunk_spec,
+                                                               world_size=len(all_worker_ranks),
+                                                               all_ranks=all_worker_ranks,
+                                                               dp_pg_cb=resolve_pg_per_stage,
                                                                _debug_mask_minibatches=False,
                                                                _record_mem_dumps=bool(args.record_mem_dumps),
                                                                checkpoint=bool(args.checkpoint))
