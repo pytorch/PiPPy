@@ -1,4 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+import argparse
 import os
 
 import torch
@@ -12,12 +13,16 @@ from pippy.IR import PipeSplitWrapper, LossWrapper
 USE_TQDM = os.getenv('USE_TQDM', True)
 
 if __name__ == "__main__":
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--max_epochs', type=int, default=10)
+    parser.add_argument('--batch_size', type=int, default=10)
+    args = parser.parse_args()
 
-    number_of_workers = 6
-    all_worker_ranks = list(range(1, 1 + number_of_workers))  # exclude master rank = 0
-    chunks = len(all_worker_ranks)
-    batch_size = 10 * chunks
+    chunks = 6
+    batch_size = args.batch_size * chunks
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print("Using device:", device)
 
     transform = transforms.Compose([
         transforms.ToTensor(),
@@ -59,9 +64,7 @@ if __name__ == "__main__":
         "valid": valid_dataloader
     }
 
-    max_epochs = 10
-
-    for epoch in range(max_epochs):
+    for epoch in range(args.max_epochs):
         print(f"Epoch: {epoch + 1}")
         epoch_correct = 0
         epoch_all = 0

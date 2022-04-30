@@ -3,6 +3,7 @@ import argparse
 import logging
 import os
 import socket
+from functools import reduce
 
 import torch
 import torch.distributed.rpc as rpc
@@ -15,7 +16,9 @@ from tqdm import tqdm  # type: ignore
 from pippy.IR import MultiUseParameterConfig, Pipe, PipeSplitWrapper, LossWrapper
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverInterleaved1F1B, \
     PipelineDriverBase
+from pippy.events import EventsContext
 from pippy.microbatch import CustomReducer, TensorChunkSpec
+from pippy.visualizer import events_to_json
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
@@ -33,7 +36,8 @@ if VERBOSE:
 
 torch.fx.Tracer.proxy_buffer_attributes = True
 
-USE_TQDM = os.getenv('USE_TQDM', True)
+USE_TQDM = bool(int(os.getenv('USE_TQDM', '1')))
+
 
 def run_master(args):
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if args.replicate else MultiUseParameterConfig.TRANSMIT
@@ -44,7 +48,7 @@ def run_master(args):
     number_of_workers = 6
     all_worker_ranks = list(range(1, 1 + number_of_workers))  # exclude master rank = 0
     chunks = len(all_worker_ranks)
-    batch_size = 10 * chunks
+    batch_size = args.batch_size * chunks
 
     transform = transforms.Compose([
         transforms.ToTensor(),
@@ -86,7 +90,7 @@ def run_master(args):
                                                                output_chunk_spec,
                                                                len(all_worker_ranks),
                                                                all_ranks=all_worker_ranks,
-                                                               _debug_mask_minibatches=True,
+                                                               _debug_mask_minibatches=False,
                                                                _record_mem_dumps=bool(args.record_mem_dumps),
                                                                checkpoint=bool(args.checkpoint))
 
@@ -97,8 +101,11 @@ def run_master(args):
         "valid": valid_dataloader
     }
 
-    max_epochs = 10
-    for epoch in range(max_epochs):
+    this_file_name = os.path.splitext(os.path.basename(__file__))[0]
+    pipe_visualized_filename = f"{this_file_name}_visualized_{args.rank}.json"
+    batches_events_contexts = []
+
+    for epoch in range(args.max_epochs):
         print(f"Epoch: {epoch + 1}")
         epoch_correct = 0
         epoch_all = 0
@@ -126,10 +133,21 @@ def run_master(args):
                         epoch_correct += correct.item()
                         epoch_all += all
 
+                if args.visualize:
+                    batches_events_contexts.append(pipe_driver.retrieve_events())
             print(f"Loader: {k}. Accuracy: {epoch_correct / epoch_all}")
+
+    if args.visualize:
+        all_events_contexts: EventsContext = reduce(lambda c1, c2: EventsContext().update(c1).update(c2),
+                                                    batches_events_contexts, EventsContext())
+        with open(pipe_visualized_filename, "w") as f:
+            f.write(events_to_json(all_events_contexts))
+        print(f"Saved {pipe_visualized_filename}")
+    print('Finished')
 
 
 def run_worker(rank, world_size, args):
+    args.rank = rank
     os.environ['MASTER_ADDR'] = args.master_addr
     os.environ['MASTER_PORT'] = args.master_port
     # Exclude IB for metadata transport due to lack of EFA support on AWS
@@ -164,9 +182,14 @@ if __name__ == "__main__":
     parser.add_argument('--rank', type=int, default=int(os.getenv("RANK", -1)))
     parser.add_argument('--master_addr', type=str, default=os.getenv('MASTER_ADDR', 'localhost'))
     parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
+
+    parser.add_argument('--max_epochs', type=int, default=10)
+    parser.add_argument('--batch_size', type=int, default=10)
+
     parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
     parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
     parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
+    parser.add_argument('--visualize', type=int, default=0, choices=[0, 1])
     parser.add_argument('--record_mem_dumps', type=int, default=0, choices=[0, 1])
     parser.add_argument('--checkpoint', type=int, default=0, choices=[0, 1])
     args = parser.parse_args()
