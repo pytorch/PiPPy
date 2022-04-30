@@ -8,4 +8,6 @@ export CUDA_VISIBLE_DEVICES=${SLURM_LOCALID}
 export WORLD_SIZE=${SLURM_NTASKS}
 export RANK=${SLURM_PROCID}
 
-python -u pippy_mnist.py
+export USE_TQDM=0
+
+python -u pippy_mnist.py --record_mem_dumps=0 --checkpoint=0
