@@ -17,6 +17,7 @@ from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, Pi
 from pippy.events import EventsContext
 from pippy.microbatch import CustomReducer, TensorChunkSpec
 from pippy.visualizer import events_to_json
+from test.test_commons import tp_transports
 from transformers import GPT2LMHeadModel, GPT2Config
 
 PROFILING_ENABLED = True
@@ -183,8 +184,8 @@ def run_worker(rank, world_size, args):
     os.environ['MASTER_PORT'] = args.master_port
     # Exclude IB for metadata transport due to lack of EFA support on AWS
     options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256,
-                                              _transports=["shm", "uv"],
-                                              rpc_timeout=1800)
+                                              rpc_timeout=1800,
+                                              _transports=tp_transports())
     if args.cuda:
         n_devs = torch.cuda.device_count()
         if n_devs > 0:

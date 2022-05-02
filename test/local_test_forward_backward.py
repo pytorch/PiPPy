@@ -11,8 +11,10 @@ import torch.distributed.rpc as rpc
 import torch.multiprocessing as mp
 
 from pippy.IR import MultiUseParameterConfig, Pipe, TrivialLossWrapper, pipe_split
-from pippy.PipelineDriver import PipelineDriverBase, PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverInterleaved1F1B
+from pippy.PipelineDriver import PipelineDriverBase, PipelineDriverFillDrain, PipelineDriver1F1B, \
+    PipelineDriverInterleaved1F1B
 from pippy.microbatch import TensorChunkSpec, CustomReducer, split_args_kwargs_into_chunks
+from test.test_commons import tp_transports
 
 # TODOs for implementing forward/backward/loss with schedules:
 # * ability to switch between full-batch loss vs. per-microbatch loss. shen mentioned
@@ -241,8 +243,8 @@ def run_worker(rank, world_size, args):
     os.environ['MASTER_PORT'] = args.master_port
     # Exclude IB for metadata transport due to lack of EFA support on AWS
     options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256,
-                                              _transports=["shm", "uv"],
-                                              rpc_timeout=1800)
+                                              rpc_timeout=1800,
+                                              _transports=tp_transports())
     if args.cuda:
         n_devs = torch.cuda.device_count()
         if n_devs > 0:
