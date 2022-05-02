@@ -97,9 +97,11 @@ def add_split_points(t5, decoders_per_rank):
         annotate_split_points(t5, {f'decoder.block.{i * decoders_per_rank}': PipeSplitWrapper.SplitPoint.BEGINNING})
     return t5.config.num_decoder_layers // decoders_per_rank + 1
 
+
 def resolve_pg_per_stage(pp_rank):
     assert dp_pg_per_pp_rank
     return dp_pg_per_pp_rank[pp_rank + 1]  # exclude master
+
 
 def run_master(args, pp_ranks):
     torch.manual_seed(42)
@@ -108,13 +110,14 @@ def run_master(args, pp_ranks):
     print(f'REPLICATE config: {args.replicate} -> {MULTI_USE_PARAM_CONFIG}')
     print("Using schedule:", args.schedule)
 
-    assert args.pp_group_size == 8, "This program requires exactly 7 workers + 1 master"
+    assert args.pp_group_size == 8, "This pipeline group requires exactly 7 workers + 1 master"
 
     device = args.device
 
-    dir_path = os.path.dirname(os.path.realpath(__file__))
-    t5 = T5ForConditionalGeneration(T5Config.from_pretrained(dir_path + "/" + "t5_200m_config.json"))
-    t5.to(device)  # TODO: Delete this after
+    t5_config = T5Config.from_pretrained(args.model_config)
+    t5_config.use_cache = False  # don't output `past_key_values`
+    t5 = T5ForConditionalGeneration(t5_config)
+    t5.to(device)  # TODO: Delete this after https://github.com/pytorch/PiPPy/issues/142
     t5.eval()
     print(t5.config)
     print(f"T5 total number of params = {get_number_of_params(t5) // 10 ** 6}M")
@@ -127,9 +130,8 @@ def run_master(args, pp_ranks):
 
     all_worker_ranks = pp_ranks[1:1 + number_of_workers]  # exclude master
     chunks = len(all_worker_ranks)
-    batches = 1
-    bs = 1 * chunks
-    seq_length = 16
+    bs = args.batch_size * chunks
+    seq_length = args.seq_length
 
     print("Using device:", device)
 
@@ -151,14 +153,15 @@ def run_master(args, pp_ranks):
     concrete_args = {p.name: p.default for p in sig.parameters.values() if p.name not in input_names}
 
     print('Instantiating T5 Pipeline')
-    output_loss_value_spec = {'loss': True, 'logits': False, 'past_key_values': False,
+    output_loss_value_spec = {'loss': True, 'logits': False,
+                              # 'past_key_values': False,
                               'encoder_last_hidden_state': False}
     t5_pipe = Pipe.from_tracing(t5, MULTI_USE_PARAM_CONFIG, tracer=hf_tracer, concrete_args=concrete_args,
                                 output_loss_value_spec=output_loss_value_spec)
     split_gm_children = list(t5_pipe.split_gm.children())
     assert sm_cnt == len(
         split_gm_children), f"sm_cnt = {sm_cnt} len(split_gm_children) = {len(split_gm_children)}"
-    # t5_pipe.to(device) TODO: Uncomment this after
+    # t5_pipe.to(device) TODO: Uncomment this after https://github.com/pytorch/PiPPy/issues/142
 
     # t5_pipe(**t5_input_dict)
 
@@ -173,7 +176,7 @@ def run_master(args, pp_ranks):
     kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'decoder_input_ids': TensorChunkSpec(0),
                          'labels': TensorChunkSpec(0)}
     output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b), 'logits': TensorChunkSpec(0),
-                         'past_key_values': [[TensorChunkSpec(0) for _ in range(36)] for _ in range(4)],
+                         # 'past_key_values': [[TensorChunkSpec(0) for _ in range(36)] for _ in range(4)],
                          'encoder_last_hidden_state': TensorChunkSpec(0)}
     pipe_driver: PipelineDriverBase = schedules[args.schedule](t5_pipe, args_chunk_spec, kwargs_chunk_spec,
                                                                output_chunk_spec,
@@ -189,15 +192,17 @@ def run_master(args, pp_ranks):
     print('Running T5 pipeline.')
     pipe_visualized_filename = f"{this_file_name}_visualized_{args.rank}.json"
     batches_events_contexts = []
-    for i in range(batches):
+    for i in range(args.batches):
         pipe_driver.run(chunks, **t5_input_dict)
-        batches_events_contexts.append(pipe_driver.retrieve_events())
+        if args.visualize:
+            batches_events_contexts.append(pipe_driver.retrieve_events())
 
-    all_events_contexts: EventsContext = reduce(lambda c1, c2: EventsContext().update(c1).update(c2),
-                                                batches_events_contexts, EventsContext())
-    with open(pipe_visualized_filename, "w") as f:
-        f.write(events_to_json(all_events_contexts))
-    print(f"Saved {pipe_visualized_filename}")
+    if args.visualize:
+        all_events_contexts: EventsContext = reduce(lambda c1, c2: EventsContext().update(c1).update(c2),
+                                                    batches_events_contexts, EventsContext())
+        with open(pipe_visualized_filename, "w") as f:
+            f.write(events_to_json(all_events_contexts))
+        print(f"Saved {pipe_visualized_filename}")
     print('Finished')
 
 
@@ -250,16 +255,26 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 16)))
     parser.add_argument('--dp_group_size', type=int, default=int(os.getenv("DP_GROUP_SIZE", 2)))
-    parser.add_argument('--pp_group_size', type=int, default=int(os.getenv("PP_GROUP_SIZE", 8)))
+    # parser.add_argument('--pp_group_size', type=int, default=int(os.getenv("PP_GROUP_SIZE", 8)))
     parser.add_argument('--rank', type=int, default=int(os.getenv("RANK", -1)))
     parser.add_argument('--master_addr', type=str, default=os.getenv('MASTER_ADDR', 'localhost'))
     parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
+
+    model_config = os.path.dirname(os.path.realpath(__file__)) + "/" + "t5_200m_config.json"
+    parser.add_argument('--model_config', type=str, default=model_config)
+    parser.add_argument('--batch_size', type=int, default=1)
+    parser.add_argument('--batches', type=int, default=1)
+    parser.add_argument('--seq_length', type=int, default=16)
+
     parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
     parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
     parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
+    parser.add_argument('--visualize', type=int, default=1, choices=[0, 1])
     parser.add_argument('--record_mem_dumps', type=int, default=0, choices=[0, 1])
-    parser.add_argument('--checkpoint', type=int, default=0, choices=[0, 1])
+    parser.add_argument('--checkpoint', type=int, default=1, choices=[0, 1])
     args = parser.parse_args()
+
+    args.pp_group_size = 8  # This pipeline group requires exactly 7 workers + 1 master
 
     assert args.dp_group_size * args.pp_group_size == args.world_size
 
