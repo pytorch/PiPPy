@@ -77,7 +77,9 @@ def run_worker(rank, world_size, args):
     print(f"rank = {rank} host/pid = {socket.gethostname()}/{os.getpid()}")
     os.environ['MASTER_ADDR'] = args.master_addr
     os.environ['MASTER_PORT'] = args.master_port
-    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256)
+    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256,
+                                              _transports=["shm", "uv"],
+                                              rpc_timeout=1800)
     rpc.init_rpc(
         f"worker{rank}",
         rank=rank,

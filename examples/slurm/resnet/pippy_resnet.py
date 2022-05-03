@@ -152,7 +152,8 @@ def run_worker(rank, world_size, args):
     os.environ['MASTER_PORT'] = args.master_port
     # Exclude IB for metadata transport due to lack of EFA support on AWS
     options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256,
-                                              _transports=["shm", "uv"])
+                                              _transports=["shm", "uv"],
+                                              rpc_timeout=1800)
     if args.cuda:
         n_devs = torch.cuda.device_count()
         if n_devs > 0:

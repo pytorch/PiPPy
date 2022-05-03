@@ -571,7 +571,7 @@ class PipeStageExecutor(EventRecorder):
     def async_transfer(self, microbatch, value_ref_arg, arg_idx, runlist_key):
         logging.info(f'[{self.stage_id}][{microbatch}] Starting transfer')
         value_ref_executor_rref = self.peer_executors[value_ref_arg.stage_id]
-        fut = value_ref_executor_rref.rpc_async(timeout=0).get_value(
+        fut = value_ref_executor_rref.rpc_async().get_value(
             self.stage_id, runlist_key, microbatch, value_ref_arg)
 
         def bottom_half(fut):
@@ -803,7 +803,7 @@ class PipelineDriverBase:
         def initiate_async_transfer(a):
             if isinstance(a, ValueReference):
                 value_ref_executor_rref = self.stage_to_executor[a.stage_id]
-                return value_ref_executor_rref.rpc_async(timeout=0).get_value(
+                return value_ref_executor_rref.rpc_async().get_value(
                     'root', 'collect', -1, a)
             else:
                 return a
@@ -879,7 +879,7 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
         invocation_key = f'{self.cur_microbatch}_{node.name}'
         if target is operator.getitem and isinstance(args[0], ValueReference):
             stage_executor = self.stage_to_executor[args[0].stage_id]
-            return stage_executor.rpc_sync(timeout=0).index_value(
+            return stage_executor.rpc_sync().index_value(
                 output_unique_key=invocation_key, value_ref=args[0], output_refcount=len(node.users),
                 idx=args[1])
         elif target is stage_backward:
