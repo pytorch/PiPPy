@@ -794,6 +794,12 @@ class PipelineDriverBase:
         for stage_id, executor in self.stage_to_executor.items():
             executor.rpc_sync().install_peer_executors(self.stage_to_executor)
 
+    """
+    Method for creating a data parallel clique for each stage, across multiple pipelines
+        dp_group_size: size of each data parallel group, equals to the number of pipelines
+        dp_pg_cb: optional Callable taking pipeline stage as argument and returning corresponding data parallel group;
+                  user can use this Callable to pass in prepared data parallel groups
+    """
     def init_data_parallel(self, dp_group_size, dp_pg_cb=None):
         n_stages = len(self.stage_to_executor)
         logging.info(f'[root] Initializing {n_stages} data parallel groups, each of size {dp_group_size}')
