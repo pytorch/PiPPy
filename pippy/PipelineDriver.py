@@ -172,13 +172,12 @@ class RankWorker(EventRecorder):
                     specify resource limits and how to implement backpressure?)
     """
 
-    def __init__(self, local_rank, all_stages, max_outstanding=None, dp_pg_cb=None, pp_rank=None,
+    def __init__(self, local_rank, all_stages, max_outstanding=None, pp_rank=None,
                  _record_mem_dumps=False, checkpoint=False):
         logging.info(f'[{local_rank}] Instantiating RankWorker')
         self.local_rank = local_rank
         self.all_stages = all_stages
         self.local_rank = local_rank
-        self.dp_pg_cb = dp_pg_cb
         self.pp_rank = pp_rank
         self._record_mem_dumps = _record_mem_dumps
         self.checkpoint = checkpoint
@@ -208,9 +207,7 @@ class RankWorker(EventRecorder):
         if stage_id in self.stage_executors:
             raise AssertionError(f'Rank {self.local_rank} already has stage {stage_id}')
         self.stage_executors[stage_id] = PipeStageExecutor(stage_id=stage_id,
-                                                           mod=mod, rank_worker=self,
-                                                           dp_pg_cb=self.dp_pg_cb,
-                                                           pp_rank=self.pp_rank)
+                                                           mod=mod, rank_worker=self)
         return self.stage_executors[stage_id]
 
     def enqueue_ready_runlist(self, unique_key, work_item):
@@ -427,14 +424,10 @@ class PipeStageExecutor(EventRecorder):
     * TODO: gradient checkpointing
     """
 
-    def __init__(self, stage_id, mod, rank_worker, dp_pg_cb, pp_rank):
+    def __init__(self, stage_id, mod, rank_worker):
         logging.info(f'Instantiating PipeStageExecutor for stage {stage_id}')
         self.stage_id = stage_id
-        if dp_pg_cb is not None:
-            assert pp_rank is not None
-            self.mod = torch.nn.parallel.DistributedDataParallel(mod, process_group=dp_pg_cb(pp_rank))
-        else:
-            self.mod = mod
+        self.mod = mod
         self.rank_worker = rank_worker
         # map microbatch ID to list of forward tensor args
         self.fwd_cache : Dict[int, Tuple[Any, List[torch.Tensor]]] = {}
@@ -455,6 +448,54 @@ class PipeStageExecutor(EventRecorder):
         assert self.peer_executors is None
         self.peer_executors = peer_executors
         return None
+
+    def init_data_parallel(self, n_stages, dp_group_size, dp_pg_cb=None):
+        worker_rank = self.rank_worker.local_rank
+        if dp_pg_cb is not None:
+            logging.info(f'Rank[{worker_rank}] stage[{self.stage_id}] Initializing data parallel: '
+                         f'using DP process groups provided by user')
+            self.mod = torch.nn.parallel.DistributedDataParallel(self.mod, process_group=dp_pg_cb(self.stage_id))
+            return
+
+        logging.info(f'Rank[{worker_rank}] stage[{self.stage_id}] Initializing data parallel: '
+                     f'creating DP process groups internally')
+        # Discover DP peers via Store
+        # HACK: using the Store coming with the default process group
+        store = torch.distributed.distributed_c10d._get_default_store()
+        # TODO: figure out the unique global "stage rank" for Interleaved 1F1B
+        my_rank = str(worker_rank)
+        my_stage = str(self.stage_id)
+        # Each stage rank checks in with their stage id in respective pipe
+        store.set(my_rank, my_stage)
+
+        # Create a mapping from stage id to DP ranks
+        stage_to_dp_ranks: Dict[int, List[int]] = {}
+        for stage in range(n_stages):
+            stage_to_dp_ranks.setdefault(stage, [])
+
+        # Wait for all stages to check in
+        world_size = n_stages * dp_group_size
+        all_ranks = [str(i) for i in range(world_size)]
+        store.wait(all_ranks)
+        logging.info(f'Rank[{worker_rank}] stage[{self.stage_id}] Initializing data parallel: all stages have checked in')
+
+        # Fill the mapping
+        for rank in all_ranks:
+            stage = store.get(rank)
+            stage_to_dp_ranks[int(stage)].append(int(rank))
+
+        # Create DP process group for each stage
+        # Note: even if a rank is not in the DP group of another stage, it must still participate in the new_group call of
+        # that stage; this is required by c10d
+        for stage in range(n_stages):
+            dp_group_ranks = stage_to_dp_ranks[stage]
+            dp_pg_for_stage = torch.distributed.new_group(dp_group_ranks)
+            logging.info(f'Rank[{worker_rank}] stage[{self.stage_id}] '
+                         f'DP group {dp_group_ranks} -- init complete')
+
+            # Wrap stage module with DDP using the DP group corresponding to own stage
+            if self.stage_id == stage:
+                self.mod = torch.nn.parallel.DistributedDataParallel(self.mod, process_group=dp_pg_for_stage)
 
     def invoke(self, output_unique_key : str, phase : Phase, args, kwargs, cur_microbatch : int, debug_str : str,
                output_refcount : int, batch_id : int, num_microbatches : int):
@@ -655,7 +696,7 @@ class PipelineOptimizer:
 class PipelineDriverBase:
     def __init__(self, pipe : Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size : int,
                  all_ranks : List[int] = None, _debug_mask_minibatches : bool = False,
-                 dp_pg_cb=None, max_outstanding=None, interleave_stages=False, _record_mem_dumps=False,
+                 max_outstanding=None, interleave_stages=False, _record_mem_dumps=False,
                  checkpoint=False):
         self.pipe = pipe
         self.world_size = world_size
@@ -670,7 +711,6 @@ class PipelineDriverBase:
         self.interleave_stages = interleave_stages
 
         self.microbatch_interpreters: List[RemoteInterpreter] = []
-        self.dp_pg_cb = dp_pg_cb
         self.batch_id = 0
         self._record_mem_dumps = _record_mem_dumps
         self.checkpoint = checkpoint
@@ -733,7 +773,6 @@ class PipelineDriverBase:
             kwargs = {'local_rank': rank,
                       'all_stages': all_stages,
                       'max_outstanding': self.max_outstanding,
-                      'dp_pg_cb': self.dp_pg_cb,
                       'pp_rank': pp_rank,
                       '_record_mem_dumps': self._record_mem_dumps,
                       'checkpoint': self.checkpoint}
@@ -754,6 +793,28 @@ class PipelineDriverBase:
         # Inform executors of their peers
         for stage_id, executor in self.stage_to_executor.items():
             executor.rpc_sync().install_peer_executors(self.stage_to_executor)
+
+    """
+    Method for creating a data parallel clique for each stage, across multiple pipelines
+        dp_group_size: size of each data parallel group, equals to the number of pipelines
+        dp_pg_cb: optional Callable taking pipeline stage as argument and returning corresponding data parallel group;
+                  user can use this Callable to pass in prepared data parallel groups
+    """
+    def init_data_parallel(self, dp_group_size, dp_pg_cb=None):
+        n_stages = len(self.stage_to_executor)
+        logging.info(f'[root] Initializing {n_stages} data parallel groups, each of size {dp_group_size}')
+        futs = []
+        # Asks all stage executors to participate in DP process group init
+        # These must be async calls because otherwise there will be deadlocks
+        for i, executor in self.stage_to_executor.items():
+            futs.append(executor.rpc_async(timeout=0).init_data_parallel(n_stages,
+                                                                         dp_group_size,
+                                                                         dp_pg_cb))
+
+        # Here we wait for all DP process groups to be initialized before the user can ask the PipeDriver to run
+        # TODO: see if this is necessary
+        for fut in futs:
+            fut.wait()
 
     def run(self, chunks: int, *args, **kwargs):
         raise NotImplementedError('PipelineDriverBase is an abstract base class, please use a concrete '
@@ -952,10 +1013,10 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
 class PipelineDriverFillDrain(PipelineDriverBase):
     def __init__(self, pipe: Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size: int,
                  all_ranks: List[int] = None, single_loss: bool = False, _debug_mask_minibatches: bool = False,
-                 dp_pg_cb=None, max_outstanding=None, interleave_stages=False, _record_mem_dumps=False,
+                 max_outstanding=None, interleave_stages=False, _record_mem_dumps=False,
                  checkpoint=False):
         super().__init__(pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size, all_ranks,
-                         _debug_mask_minibatches, dp_pg_cb=dp_pg_cb, max_outstanding=max_outstanding,
+                         _debug_mask_minibatches, max_outstanding=max_outstanding,
                          interleave_stages=interleave_stages, _record_mem_dumps=_record_mem_dumps,
                          checkpoint=checkpoint)
         self.single_loss = single_loss
@@ -1054,21 +1115,21 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 class PipelineDriver1F1B(PipelineDriverFillDrain):
     def __init__(self, pipe: Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size: int,
                  all_ranks: List[int] = None, single_loss: bool = False, _debug_mask_minibatches: bool = False,
-                 dp_pg_cb=None, interleave_stages=False, _record_mem_dumps=False, checkpoint=False):
+                 interleave_stages=False, _record_mem_dumps=False, checkpoint=False):
         # In 1F1B with backward stages, the maximum number of outstanding
         # micro-batches equals the number of pipeline stages
         max_outstanding = pipe.num_stages if pipe.has_loss_and_backwards else None
 
         super().__init__(pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size, all_ranks,
-                         single_loss, _debug_mask_minibatches, dp_pg_cb=dp_pg_cb, max_outstanding=max_outstanding,
+                         single_loss, _debug_mask_minibatches, max_outstanding=max_outstanding,
                          interleave_stages=interleave_stages, _record_mem_dumps=_record_mem_dumps,
                          checkpoint=checkpoint)
 
 class PipelineDriverInterleaved1F1B(PipelineDriver1F1B):
     def __init__(self, pipe : Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size : int,
                  all_ranks : List[int] = None, single_loss : bool = False, _debug_mask_minibatches: bool = False,
-                 dp_pg_cb=None, _record_mem_dumps=False, checkpoint=False):
+                 _record_mem_dumps=False, checkpoint=False):
         super().__init__(pipe, args_chunk_spec, kwargs_chunk_spec,
                          output_chunk_spec, world_size, all_ranks, single_loss,
-                         _debug_mask_minibatches, dp_pg_cb=dp_pg_cb, interleave_stages=True,
+                         _debug_mask_minibatches, interleave_stages=True,
                          _record_mem_dumps=_record_mem_dumps, checkpoint=checkpoint)

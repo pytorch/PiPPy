@@ -182,10 +182,11 @@ def run_master(args, pp_ranks):
                                                                output_chunk_spec,
                                                                world_size=len(all_worker_ranks),
                                                                all_ranks=all_worker_ranks,
-                                                               dp_pg_cb=resolve_pg_per_stage,
                                                                _debug_mask_minibatches=False,
                                                                _record_mem_dumps=bool(args.record_mem_dumps),
                                                                checkpoint=bool(args.checkpoint))
+
+    pipe_driver.init_data_parallel(dp_group_size=args.dp_group_size, dp_pg_cb=resolve_pg_per_stage)
 
     this_file_name = os.path.splitext(os.path.basename(__file__))[0]
 
