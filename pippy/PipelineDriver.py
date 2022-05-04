@@ -70,6 +70,9 @@ def event_name(ph, stage_id, mbid):
     }
     return f"{phase_to_short_str[ph]}_{stage_id},{mbid}"
 
+def event_id(ph, stage_id, mbid, bid):
+    return f"{event_name(ph, stage_id, mbid)},{bid}"
+
 
 def prev_event_name(ph: Any, all_stages: List[int], stage_id: int, mbid: Any):
     i = all_stages.index(stage_id)
@@ -207,7 +210,8 @@ class RankWorker(EventRecorder):
         if stage_id in self.stage_executors:
             raise AssertionError(f'Rank {self.local_rank} already has stage {stage_id}')
         self.stage_executors[stage_id] = PipeStageExecutor(stage_id=stage_id,
-                                                           mod=mod, rank_worker=self)
+                                                           mod=mod, rank_worker=self,
+                                                           _record_mem_dumps=self._record_mem_dumps)
         return self.stage_executors[stage_id]
 
     def enqueue_ready_runlist(self, unique_key, work_item):
@@ -273,9 +277,9 @@ class RankWorker(EventRecorder):
 
             start_ts = time.time()
             name = event_name(work_item.phase, work_item.stage_id, work_item.microbatch_id)
+            id = event_id(work_item.phase, work_item.stage_id, work_item.microbatch_id, work_item.batch_id)
             if self._record_mem_dumps:
-                for peer_executor_rref in stage_executor.peer_executors.values():
-                    peer_executor_rref.rpc_sync()._record_dump(f'M{name}_start', start_ts)
+                stage_executor._record_dumps_on_all_peer_executors(f'M{id}_start', start_ts)
 
             value_ref_arg_idx = 0
 
@@ -391,14 +395,13 @@ class RankWorker(EventRecorder):
             prev_name = prev_event_name(work_item.phase, self.all_stages, work_item.stage_id, work_item.microbatch_id)
             next_name = next_event_name(work_item.phase, self.all_stages, work_item.stage_id, work_item.microbatch_id)
             finish_ts = time.time()
-            self.record_event(rank=self.local_rank, start_ts=start_ts, finish_ts=finish_ts, id=name,
+            self.record_event(rank=self.local_rank, start_ts=start_ts, finish_ts=finish_ts, id=id,
                               name=name, type=work_item.phase, mbid=work_item.microbatch_id)
             self.record_event_dependency(from_id=prev_name, to_id=name, type='transfer')
             self.record_event_dependency(from_id=name, to_id=next_name, type='transfer')
 
             if self._record_mem_dumps:
-                for peer_executor_rref in stage_executor.peer_executors.values():
-                    peer_executor_rref.rpc_sync()._record_dump(f'M{name}_finish', finish_ts)
+                stage_executor._record_dumps_on_all_peer_executors(f'M{id}_finish', finish_ts)
 
     # For work item marked with runlist_key, update its operand list with value
     def update_run_list(self, runlist_key, arg_idx, value):
@@ -424,7 +427,7 @@ class PipeStageExecutor(EventRecorder):
     * TODO: gradient checkpointing
     """
 
-    def __init__(self, stage_id, mod, rank_worker):
+    def __init__(self, stage_id, mod, rank_worker, _record_mem_dumps=False):
         logging.info(f'Instantiating PipeStageExecutor for stage {stage_id}')
         self.stage_id = stage_id
         self.mod = mod
@@ -436,6 +439,7 @@ class PipeStageExecutor(EventRecorder):
         self.value_store : Dict[str, RefcountedFuture] = {}
 
         self.peer_executors : Dict[int, torch._C._distributed_rpc.PyRRef] = None
+        self._record_mem_dumps = _record_mem_dumps
 
     def __getstate__(self):
         # Adding an empty __getstate__ function here to work around the DDP pickling issue (#153) that occurs when the
@@ -501,9 +505,13 @@ class PipeStageExecutor(EventRecorder):
                output_refcount : int, batch_id : int, num_microbatches : int):
         ts = time.time()
         forward_name = event_name(Phase.FORWARD, self.stage_id, cur_microbatch)
+        forward_id = event_id(Phase.FORWARD, self.stage_id, cur_microbatch, batch_id)
         name = f"R{forward_name}"
-        self.record_event(rank=self.rank_worker.local_rank, start_ts=ts, finish_ts=ts, id=name, name=name, type='received', mbid=cur_microbatch)
+        id = f"R{forward_id}"
+        self.record_event(rank=self.rank_worker.local_rank, start_ts=ts, finish_ts=ts, id=id, name=name, type='received', mbid=cur_microbatch)
         self.record_event_dependency(from_id=name, to_id=forward_name, type='waiting')
+        if self._record_mem_dumps:
+            self._record_dumps_on_all_peer_executors(f'M{id}_invoke', ts)
         # TODO: do we need to serialize calls to invoke() to preserve the order in which WorkItems appear for
         # static schedules?
 
@@ -650,15 +658,32 @@ class PipeStageExecutor(EventRecorder):
         first_param = next(self.mod.parameters(), None)
         device: torch.device = first_param.device if first_param is not None else torch.device('cpu')
         if device.type == "cuda":
+            alloc = torch.cuda.memory_allocated()
+            max_alloc = torch.cuda.max_memory_allocated()
+            rsrvd = torch.cuda.memory_reserved()
+            max_rsrvd = torch.cuda.max_memory_reserved()
+            assert alloc <= max_alloc, f"alloc = {alloc} max_alloc = {max_alloc}"
+            assert rsrvd <= max_rsrvd, f"rsrvd = {rsrvd} max_rsrvd = {max_rsrvd}"
+            assert max_alloc <= max_rsrvd, f"max_alloc = {max_alloc} max_rsrvd = {max_rsrvd}"
             self.record_dump(rank=self.rank_worker.local_rank, ts=ts, id=dump_id, name=dump_id, type='dump',
-                             allocators={"CUDA": Allocator(f"{self.rank_worker.local_rank}", {
-                                 "size": int(torch.cuda.memory_allocated()),
-                                 "memory_allocated": int(torch.cuda.memory_allocated()),
-                                 "max_memory_allocated": int(torch.cuda.max_memory_allocated()),
-                                 "memory_reserved": int(torch.cuda.memory_reserved()),
-                                 "max_memory_reserved": int(torch.cuda.max_memory_reserved()),
-                             })})
+                             allocators={
+                                 "cuda.4.alloc": Allocator(f"alloc_{self.rank_worker.local_rank}", {
+                                     "size": alloc,
+                                 }),
+                                 "cuda.3.max_alloc-alloc": Allocator(f"max_alloc-alloc_{self.rank_worker.local_rank}", {
+                                     "size": max_alloc - alloc,
+                                 }),
+                                 "cuda.2.rsrvd-max_alloc": Allocator(f"rsrvd-max_alloc_{self.rank_worker.local_rank}", {
+                                     "size": max(rsrvd - max_alloc, 0),
+                                 }),
+                                 "cuda.1.max_rsrvd-max_alloc_or_rsrvd": Allocator(f"max_rsrvd-max_alloc_or_rsrvd_{self.rank_worker.local_rank}", {
+                                     "size": max_rsrvd - (max_alloc if max_alloc > rsrvd else rsrvd),
+                                 }),
+                             })
 
+    def _record_dumps_on_all_peer_executors(self, id, ts):
+        for peer_executor_rref in self.peer_executors.values():
+            peer_executor_rref.rpc_sync()._record_dump(f'{id}', ts)
 
 def _wait_for_all(rpc_futs):
     # Stolen from DistributedOptimizer implementation
@@ -924,8 +949,10 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
             invocation_key = f'{self.cur_microbatch}_{node.name}'
             ts = time.time()
             forward_name = event_name(Phase.FORWARD, stage_id, self.cur_microbatch)
+            forward_id = event_id(Phase.FORWARD, stage_id, self.cur_microbatch, self.batch_id)
             name = f"I{forward_name}"
-            self.record_event(rank=0, start_ts=ts, finish_ts=ts, id=name, name=name, type='invoke',
+            id = f"I{forward_id}"
+            self.record_event(rank=0, start_ts=ts, finish_ts=ts, id=id, name=name, type='invoke',
                               mbid=self.cur_microbatch)
             self.record_event_dependency(from_id=name, to_id=f"R{forward_name}", type='invoke')
             return stage_executor.rpc_sync().invoke(
@@ -950,8 +977,10 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
                          f'for target {node.meta["fw_stage"]} on stage {stage_id}')
             ts = time.time()
             backward_name = event_name(Phase.BACKWARD, stage_id, self.cur_microbatch)
+            backward_id = event_id(Phase.BACKWARD, stage_id, self.cur_microbatch, self.batch_id)
             name = f"I{backward_name}"
-            self.record_event(rank=0, start_ts=ts, finish_ts=ts, id=name, name=name, type='invoke',
+            id = f"I{backward_id}"
+            self.record_event(rank=0, start_ts=ts, finish_ts=ts, id=id, name=name, type='invoke',
                               mbid=self.cur_microbatch)
             self.record_event_dependency(from_id=name, to_id=backward_name, type='invoke')
             return stage_executor.rpc_sync().invoke(
