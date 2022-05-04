@@ -158,7 +158,8 @@ def run_master(args):
                                                                output_chunk_spec, len(all_worker_ranks),
                                                                all_ranks=all_worker_ranks,
                                                                _debug_mask_minibatches=False,
-                                                               _record_mem_dumps=bool(args.record_mem_dumps))
+                                                               _record_mem_dumps=bool(args.record_mem_dumps),
+                                                               checkpoint=bool(args.checkpoint))
 
     this_file_name = os.path.splitext(os.path.basename(__file__))[0]
 
@@ -182,7 +183,8 @@ def run_worker(rank, world_size, args):
     os.environ['MASTER_PORT'] = args.master_port
     # Exclude IB for metadata transport due to lack of EFA support on AWS
     options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256,
-                                              _transports=["shm", "uv"])
+                                              _transports=["shm", "uv"],
+                                              rpc_timeout=1800)
     if args.cuda:
         n_devs = torch.cuda.device_count()
         if n_devs > 0:
@@ -216,6 +218,7 @@ if __name__ == "__main__":
     parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
     parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
     parser.add_argument('--record_mem_dumps', type=int, default=0, choices=[0, 1])
+    parser.add_argument('--checkpoint', type=int, default=0, choices=[0, 1])
     args = parser.parse_args()
 
     if args.rank == -1:

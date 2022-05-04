@@ -125,7 +125,9 @@ def run_master(args):
     pipe_driver: PipelineDriverBase = schedules[args.schedule](ec_pipe, args_chunk_spec, kwargs_chunk_spec,
                                                                output_chunk_spec,
                                                                args.world_size,
-                                                               _debug_mask_minibatches=DEBUG_MASK_MINIBATCHES)
+                                                               _debug_mask_minibatches=DEBUG_MASK_MINIBATCHES,
+                                                               _record_mem_dumps=bool(args.record_mem_dumps),
+                                                               checkpoint=bool(args.checkpoint))
 
     target = torch.randn(bs, d_hid, device=args.device)
 
@@ -239,7 +241,8 @@ def run_worker(rank, world_size, args):
     os.environ['MASTER_PORT'] = args.master_port
     # Exclude IB for metadata transport due to lack of EFA support on AWS
     options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256,
-                                              _transports=["shm", "uv"])
+                                              _transports=["shm", "uv"],
+                                              rpc_timeout=1800)
     if args.cuda:
         n_devs = torch.cuda.device_count()
         if n_devs > 0:
@@ -273,6 +276,8 @@ if __name__ == "__main__":
     parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
     parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
     parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
+    parser.add_argument('--record_mem_dumps', type=int, default=0, choices=[0, 1])
+    parser.add_argument('--checkpoint', type=int, default=0, choices=[0, 1])
     args = parser.parse_args()
 
     # Interleaved 1F1B uses less ranks than number of stages

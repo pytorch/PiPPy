@@ -173,13 +173,14 @@ class RankWorker(EventRecorder):
     """
 
     def __init__(self, local_rank, all_stages, max_outstanding=None, pp_rank=None,
-                 _record_mem_dumps=False):
+                 _record_mem_dumps=False, checkpoint=False):
         logging.info(f'[{local_rank}] Instantiating RankWorker')
         self.local_rank = local_rank
         self.all_stages = all_stages
         self.local_rank = local_rank
         self.pp_rank = pp_rank
         self._record_mem_dumps = _record_mem_dumps
+        self.checkpoint = checkpoint
 
         # Maximum outstanding micro-batches of the pipeline schedule
         self.max_outstanding = max_outstanding
@@ -290,17 +291,7 @@ class RankWorker(EventRecorder):
             args = torch.fx.node.map_aggregate(args_value_refs, retrieve_value_ref_args_by_idx)
             kwargs = torch.fx.node.map_aggregate(kwargs_value_refs, retrieve_value_ref_args_by_idx)
 
-            if phase == Phase.BACKWARD:
-                logging.info(
-                    f'[{self.local_rank}][{work_item.microbatch_id}] Running backward phase. Retrieving stashed values')
-                # HACK: here we are directly accessing the saved tensor outputs
-                # for closed-over outputs so that they still have the grad_fn
-                # from local autograd. Can we solve this more elegantly?
-                kwargs = dict(kwargs)
-                kwargs['stage_output'], kwargs['input_values'] = stage_executor.fwd_cache.pop(microbatch_id)
-
-            if work_item.phase == Phase.FORWARD:
-                self.outstanding += 1
+            def forward(args, kwargs, no_grad):
                 flat_tensor_args = []
 
                 def extract_tensor_args(a):
@@ -316,13 +307,57 @@ class RankWorker(EventRecorder):
                 kwargs = torch.fx.node.map_aggregate(kwargs, extract_tensor_args)
                 logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running forward module')
 
-                if isinstance(stage_executor.mod, torch.nn.parallel.distributed.DistributedDataParallel):
-                    with stage_executor.mod.no_sync():
+                def forward_maybe_with_ddp(args, kwargs):
+                    if isinstance(stage_executor.mod, torch.nn.parallel.distributed.DistributedDataParallel):
+                        with stage_executor.mod.no_sync():
+                            out_val = stage_executor.mod(*args, **kwargs)
+                    else:
                         out_val = stage_executor.mod(*args, **kwargs)
-                else:
-                    out_val = stage_executor.mod(*args, **kwargs)
+                    return out_val
 
-                stage_executor.fwd_cache[microbatch_id] = (out_val if isinstance(out_val, tuple) else (out_val,), flat_tensor_args)
+                def set_requires_grad(a):
+                    if isinstance(a, torch.Tensor):
+                        a.requires_grad_(True)
+                    return a
+
+                if no_grad:
+                    with torch.no_grad():
+                        out_val = forward_maybe_with_ddp(args, kwargs)
+                        out_val = torch.fx.node.map_aggregate(out_val, set_requires_grad)
+                else:
+                    with torch.enable_grad():
+                        out_val = forward_maybe_with_ddp(args, kwargs)
+
+                return out_val, flat_tensor_args
+
+            if phase == Phase.BACKWARD:
+                if self.checkpoint:
+                    logging.info(
+                        f'[{self.local_rank}][{work_item.microbatch_id}] Running backward phase. '
+                        f'Rerunning forward because of checkpointing')
+                    f_args, f_kwargs = stage_executor.fwd_cache.pop(microbatch_id)
+                    out_val, flat_tensor_args = forward(f_args, f_kwargs, no_grad=False)
+                    kwargs = dict(kwargs)
+                    kwargs['stage_output'], kwargs['input_values'] = \
+                        (out_val if isinstance(out_val, tuple) else (out_val,), flat_tensor_args)
+                else:
+                    logging.info(
+                        f'[{self.local_rank}][{work_item.microbatch_id}] Running backward phase. '
+                        f'Retrieving stashed values')
+                    # HACK: here we are directly accessing the saved tensor outputs
+                    # for closed-over outputs so that they still have the grad_fn
+                    # from local autograd. Can we solve this more elegantly?
+                    kwargs = dict(kwargs)
+                    kwargs['stage_output'], kwargs['input_values'] = stage_executor.fwd_cache.pop(microbatch_id)
+
+            if work_item.phase == Phase.FORWARD:
+                self.outstanding += 1
+                out_val, flat_tensor_args = forward(args, kwargs, no_grad=self.checkpoint)
+                if self.checkpoint:
+                    stage_executor.fwd_cache[microbatch_id] = args, kwargs
+                else:
+                    stage_executor.fwd_cache[microbatch_id] = \
+                        (out_val if isinstance(out_val, tuple) else (out_val,), flat_tensor_args)
 
             elif work_item.phase == Phase.BACKWARD:
                 logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running backward')
@@ -577,7 +612,7 @@ class PipeStageExecutor(EventRecorder):
     def async_transfer(self, microbatch, value_ref_arg, arg_idx, runlist_key):
         logging.info(f'[{self.stage_id}][{microbatch}] Starting transfer')
         value_ref_executor_rref = self.peer_executors[value_ref_arg.stage_id]
-        fut = value_ref_executor_rref.rpc_async(timeout=0).get_value(
+        fut = value_ref_executor_rref.rpc_async().get_value(
             self.stage_id, runlist_key, microbatch, value_ref_arg)
 
         def bottom_half(fut):
@@ -611,6 +646,19 @@ class PipeStageExecutor(EventRecorder):
         assert self._should_instantiate_optim()
         return optim_class(self.mod.parameters(), *args, **kwargs)
 
+    def _record_dump(self, dump_id, ts):
+        first_param = next(self.mod.parameters(), None)
+        device: torch.device = first_param.device if first_param is not None else torch.device('cpu')
+        if device.type == "cuda":
+            self.record_dump(rank=self.rank_worker.local_rank, ts=ts, id=dump_id, name=dump_id, type='dump',
+                             allocators={"CUDA": Allocator(f"{self.rank_worker.local_rank}", {
+                                 "size": int(torch.cuda.memory_allocated()),
+                                 "memory_allocated": int(torch.cuda.memory_allocated()),
+                                 "max_memory_allocated": int(torch.cuda.max_memory_allocated()),
+                                 "memory_reserved": int(torch.cuda.memory_reserved()),
+                                 "max_memory_reserved": int(torch.cuda.max_memory_reserved()),
+                             })})
+
 
 def _wait_for_all(rpc_futs):
     # Stolen from DistributedOptimizer implementation
@@ -626,19 +674,6 @@ def _wait_for_all(rpc_futs):
     if exception is not None:
         raise exception
     return results
-
-def _record_dump(self, dump_id, ts):
-    first_param = next(self.mod.parameters(), None)
-    device: torch.device = first_param.device if first_param is not None else torch.device('cpu')
-    if device.type == "cuda":
-        self.record_dump(rank=self.rank_worker.local_rank, ts=ts, id=dump_id, name=dump_id, type='dump',
-                         allocators={"CUDA": Allocator(f"{self.rank_worker.local_rank}", {
-                             "size": int(torch.cuda.memory_allocated()),
-                             "memory_allocated": int(torch.cuda.memory_allocated()),
-                             "max_memory_allocated": int(torch.cuda.max_memory_allocated()),
-                             "memory_reserved": int(torch.cuda.memory_reserved()),
-                             "max_memory_reserved": int(torch.cuda.max_memory_reserved()),
-                         })})
 
 
 class PipelineOptimizer:
@@ -661,7 +696,8 @@ class PipelineOptimizer:
 class PipelineDriverBase:
     def __init__(self, pipe : Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size : int,
                  all_ranks : List[int] = None, _debug_mask_minibatches : bool = False,
-                 max_outstanding=None, interleave_stages=False, _record_mem_dumps=False):
+                 max_outstanding=None, interleave_stages=False, _record_mem_dumps=False,
+                 checkpoint=False):
         self.pipe = pipe
         self.world_size = world_size
         self.all_ranks = all_ranks
@@ -677,6 +713,7 @@ class PipelineDriverBase:
         self.microbatch_interpreters: List[RemoteInterpreter] = []
         self.batch_id = 0
         self._record_mem_dumps = _record_mem_dumps
+        self.checkpoint = checkpoint
 
     def _init_remote_executors(self):
         self.rank_worker_rrefs : Dict[int, torch.distributed.rpc.RRef] = {}
@@ -737,7 +774,8 @@ class PipelineDriverBase:
                       'all_stages': all_stages,
                       'max_outstanding': self.max_outstanding,
                       'pp_rank': pp_rank,
-                      '_record_mem_dumps': self._record_mem_dumps}
+                      '_record_mem_dumps': self._record_mem_dumps,
+                      'checkpoint': self.checkpoint}
             self.rank_worker_rrefs[rank] = rpc.remote(rank, RankWorker, args=(), kwargs=kwargs)
             pp_rank += 1
 
@@ -820,7 +858,7 @@ class PipelineDriverBase:
         def initiate_async_transfer(a):
             if isinstance(a, ValueReference):
                 value_ref_executor_rref = self.stage_to_executor[a.stage_id]
-                return value_ref_executor_rref.rpc_async(timeout=0).get_value(
+                return value_ref_executor_rref.rpc_async().get_value(
                     'root', 'collect', -1, a)
             else:
                 return a
@@ -896,7 +934,7 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
         invocation_key = f'{self.cur_microbatch}_{node.name}'
         if target is operator.getitem and isinstance(args[0], ValueReference):
             stage_executor = self.stage_to_executor[args[0].stage_id]
-            return stage_executor.rpc_sync(timeout=0).index_value(
+            return stage_executor.rpc_sync().index_value(
                 output_unique_key=invocation_key, value_ref=args[0], output_refcount=len(node.users),
                 idx=args[1])
         elif target is stage_backward:
@@ -969,10 +1007,12 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
 class PipelineDriverFillDrain(PipelineDriverBase):
     def __init__(self, pipe: Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size: int,
                  all_ranks: List[int] = None, single_loss: bool = False, _debug_mask_minibatches: bool = False,
-                 max_outstanding=None, interleave_stages=False, _record_mem_dumps=False):
+                 max_outstanding=None, interleave_stages=False, _record_mem_dumps=False,
+                 checkpoint=False):
         super().__init__(pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size, all_ranks,
                          _debug_mask_minibatches, max_outstanding=max_outstanding,
-                         interleave_stages=interleave_stages, _record_mem_dumps=_record_mem_dumps)
+                         interleave_stages=interleave_stages, _record_mem_dumps=_record_mem_dumps,
+                         checkpoint=checkpoint)
         self.single_loss = single_loss
 
         self._init_remote_executors()
@@ -1069,20 +1109,21 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 class PipelineDriver1F1B(PipelineDriverFillDrain):
     def __init__(self, pipe: Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size: int,
                  all_ranks: List[int] = None, single_loss: bool = False, _debug_mask_minibatches: bool = False,
-                 interleave_stages=False, _record_mem_dumps=False):
+                 interleave_stages=False, _record_mem_dumps=False, checkpoint=False):
         # In 1F1B with backward stages, the maximum number of outstanding
         # micro-batches equals the number of pipeline stages
         max_outstanding = pipe.num_stages if pipe.has_loss_and_backwards else None
 
         super().__init__(pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size, all_ranks,
                          single_loss, _debug_mask_minibatches, max_outstanding=max_outstanding,
-                         interleave_stages=interleave_stages, _record_mem_dumps=_record_mem_dumps)
+                         interleave_stages=interleave_stages, _record_mem_dumps=_record_mem_dumps,
+                         checkpoint=checkpoint)
 
 class PipelineDriverInterleaved1F1B(PipelineDriver1F1B):
     def __init__(self, pipe : Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size : int,
                  all_ranks : List[int] = None, single_loss : bool = False, _debug_mask_minibatches: bool = False,
-                 _record_mem_dumps=False):
+                 _record_mem_dumps=False, checkpoint=False):
         super().__init__(pipe, args_chunk_spec, kwargs_chunk_spec,
                          output_chunk_spec, world_size, all_ranks, single_loss,
                          _debug_mask_minibatches, interleave_stages=True,
-                         _record_mem_dumps=_record_mem_dumps)
+                         _record_mem_dumps=_record_mem_dumps, checkpoint=checkpoint)

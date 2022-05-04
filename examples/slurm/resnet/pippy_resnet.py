@@ -8,17 +8,18 @@ from functools import reduce
 import torch
 import torch.distributed.rpc as rpc
 import torch.multiprocessing as mp
-from torch import nn, optim
+from torch import optim
 from torch.nn.functional import cross_entropy
 from torchvision import datasets, transforms  # type: ignore
 from tqdm import tqdm  # type: ignore
 
-from pippy.IR import MultiUseParameterConfig, Pipe, PipeSplitWrapper, LossWrapper
+from pippy.IR import MultiUseParameterConfig, Pipe, LossWrapper, PipeSplitWrapper, annotate_split_points
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverInterleaved1F1B, \
     PipelineDriverBase
 from pippy.events import EventsContext
 from pippy.microbatch import CustomReducer, TensorChunkSpec
 from pippy.visualizer import events_to_json
+from resnet import ResNet50
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
@@ -45,18 +46,18 @@ def run_master(args):
     print("Using schedule:", args.schedule)
     print("Using device:", args.device)
 
-    number_of_workers = 6
+    number_of_workers = 4
     all_worker_ranks = list(range(1, 1 + number_of_workers))  # exclude master rank = 0
     chunks = len(all_worker_ranks)
     batch_size = args.batch_size * chunks
 
     transform = transforms.Compose([
         transforms.ToTensor(),
-        transforms.Normalize((0.1307,), (0.3081,))
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
     ])
 
-    train_data = datasets.MNIST('./data', train=True, download=True, transform=transform)
-    valid_data = datasets.MNIST('./data', train=False, transform=transform)
+    train_data = datasets.CIFAR10('./data', train=True, download=True, transform=transform)
+    valid_data = datasets.CIFAR10('./data', train=False, transform=transform)
 
     train_dataloader = torch.utils.data.DataLoader(train_data, batch_size=batch_size)
     valid_dataloader = torch.utils.data.DataLoader(valid_data, batch_size=batch_size)
@@ -69,14 +70,13 @@ def run_master(args):
             output = self.module(input)
             return output, self.loss_fn(output, target)
 
-    model = nn.Sequential(
-        nn.Flatten(),
-        PipeSplitWrapper(nn.Linear(28 * 28, 128)),
-        PipeSplitWrapper(nn.ReLU()),
-        PipeSplitWrapper(nn.Linear(128, 64)),
-        PipeSplitWrapper(nn.ReLU()),
-        PipeSplitWrapper(nn.Linear(64, 10))
-    )
+    model = ResNet50()
+
+    annotate_split_points(model, {
+        'layer1': PipeSplitWrapper.SplitPoint.END,
+        'layer2': PipeSplitWrapper.SplitPoint.END,
+        'layer3': PipeSplitWrapper.SplitPoint.END,
+    })
 
     wrapper = OutputLossWrapper(model, cross_entropy)
 
@@ -179,7 +179,7 @@ def run_worker(rank, world_size, args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    # parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 7)))
+    # parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 5)))
     parser.add_argument('--rank', type=int, default=int(os.getenv("RANK", -1)))
     parser.add_argument('--master_addr', type=str, default=os.getenv('MASTER_ADDR', 'localhost'))
     parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
@@ -194,7 +194,7 @@ if __name__ == "__main__":
     parser.add_argument('--record_mem_dumps', type=int, default=0, choices=[0, 1])
     parser.add_argument('--checkpoint', type=int, default=0, choices=[0, 1])
     args = parser.parse_args()
-    args.world_size = 7  # "This program requires exactly 6 workers + 1 master"
+    args.world_size = 5  # "This program requires exactly 4 workers + 1 master"
 
     if args.rank == -1:
         mp.spawn(run_worker, args=(args.world_size, args,), nprocs=args.world_size, join=True)
