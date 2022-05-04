@@ -726,6 +726,18 @@ class Pipe(torch.nn.Module):
         split.graph.lint()
         split.recompile()
 
+        if hasattr(traced, '_tracer_cls'):
+            for mod in split.modules():
+                if isinstance(mod, torch.fx.GraphModule):
+                    mod.graph._tracer_cls = traced._tracer_cls
+                    mod._tracer_cls = traced._tracer_cls
+
+        if hasattr(traced, '_tracer_extras'):
+            for mod in split.modules():
+                if isinstance(mod, torch.fx.GraphModule):
+                    mod.graph._tracer_extras = traced._tracer_extras
+                    mod._tracer_extras = traced._tracer_extras
+
         num_stages = Pipe._number_and_count_forward_stages(split)
 
         if isinstance(mod, LossWrapper) or output_loss_value_spec:
