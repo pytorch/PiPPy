@@ -66,9 +66,9 @@ if __name__ == "__main__":
 
     for epoch in range(args.max_epochs):
         print(f"Epoch: {epoch + 1}")
-        epoch_correct = 0
-        epoch_all = 0
         for k, dataloader in loaders.items():
+            epoch_correct = 0
+            epoch_all = 0
             for i, (x_batch, y_batch) in enumerate(tqdm(dataloader) if USE_TQDM else dataloader):
                 x_batch = x_batch.to(device)
                 y_batch = y_batch.to(device)
