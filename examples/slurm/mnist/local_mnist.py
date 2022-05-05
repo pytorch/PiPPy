@@ -10,15 +10,16 @@ from tqdm import tqdm  # type: ignore
 
 from pippy.IR import PipeSplitWrapper, LossWrapper
 
-USE_TQDM = os.getenv('USE_TQDM', True)
+USE_TQDM = bool(int(os.getenv('USE_TQDM', '1')))
 
 if __name__ == "__main__":
+    torch.manual_seed(42)
     parser = argparse.ArgumentParser()
     parser.add_argument('--max_epochs', type=int, default=10)
     parser.add_argument('--batch_size', type=int, default=10)
     args = parser.parse_args()
 
-    chunks = 6
+    chunks = 3
     batch_size = args.batch_size * chunks
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -47,10 +48,12 @@ if __name__ == "__main__":
 
     model = nn.Sequential(
         nn.Flatten(),
-        PipeSplitWrapper(nn.Linear(28 * 28, 128)),
-        PipeSplitWrapper(nn.ReLU()),
-        PipeSplitWrapper(nn.Linear(128, 64)),
-        PipeSplitWrapper(nn.ReLU()),
+        nn.Linear(28 * 28, 128),
+        nn.ReLU(),
+        PipeSplitWrapper(nn.Sequential(
+            nn.Linear(128, 64),
+            nn.ReLU(),
+        )),
         PipeSplitWrapper(nn.Linear(64, 10))
     )
 
