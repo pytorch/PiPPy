@@ -284,7 +284,7 @@ class RankWorker(EventRecorder):
             value_ref_arg_idx = 0
 
             def retrieve_value_ref_args_by_idx(a):
-                if isinstance(a, ValueReference):
+                if isinstance(a, ValueReference) and a.unique_key != "noop":
                     nonlocal value_ref_arg_idx
                     val = ready_args[value_ref_arg_idx]
                     value_ref_arg_idx += 1
@@ -521,7 +521,7 @@ class PipeStageExecutor(EventRecorder):
         value_ref_args : List[ValueReference] = []
 
         def extract_value_ref_args(arg):
-            if isinstance(arg, ValueReference):
+            if isinstance(arg, ValueReference) and arg.unique_key != "noop":
                 value_ref_args.append(arg)
         torch.fx.node.map_aggregate(args, extract_value_ref_args)
         torch.fx.node.map_aggregate(kwargs, extract_value_ref_args)
@@ -941,7 +941,12 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
     def call_module(self, target, args, kwargs):
         assert isinstance(target, str)
         node = self.node_list[self.pc]
-
+        # if PipelineDriver is running inside `torch.no_grad()` context manager then `stage_backward*` nodes
+        # are excluded from execution, so we need exclude `stage_backward*` from reference count, otherwise
+        # it will cause memory leak.
+        users = list(filter(
+            lambda user: not user.name.startswith('stage_backward'),
+            node.users.keys())) if not torch.is_grad_enabled() else node.users.keys()
         if target in self.remote_stage_executor_rrefs:
             stage_id, stage_executor = self.remote_stage_executor_rrefs[target]
             logging.info(f'[root][{self.cur_microbatch}] Issuing {Phase.FORWARD} '
@@ -957,7 +962,7 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
             self.record_event_dependency(from_id=name, to_id=f"R{forward_name}", type='invoke')
             return stage_executor.rpc_sync().invoke(
                 invocation_key, Phase.FORWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
-                output_refcount=len(node.users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
+                output_refcount=len(users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
         else:
             logging.info(f'[root][{self.cur_microbatch}] Running local operation {target} from driver')
             return super().call_module(target, args, kwargs)
@@ -965,27 +970,40 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
     def call_function(self, target, args, kwargs):
         node = self.node_list[self.pc]
         invocation_key = f'{self.cur_microbatch}_{node.name}'
+        # if PipelineDriver is running inside `torch.no_grad()` context manager then `stage_backward*` nodes
+        # are excluded from execution, so we need exclude `stage_backward*` from reference count, otherwise
+        # it will cause memory leak.
+        users = list(filter(
+            lambda user: not user.name.startswith('stage_backward'),
+            node.users.keys())) if not torch.is_grad_enabled() else node.users.keys()
         if target is operator.getitem and isinstance(args[0], ValueReference):
-            stage_executor = self.stage_to_executor[args[0].stage_id]
-            return stage_executor.rpc_sync().index_value(
-                output_unique_key=invocation_key, value_ref=args[0], output_refcount=len(node.users),
-                idx=args[1])
+            stage_id = args[0].stage_id
+            if torch.is_grad_enabled() or args[0].unique_key != "noop":
+                stage_executor = self.stage_to_executor[stage_id]
+                return stage_executor.rpc_sync().index_value(
+                    output_unique_key=invocation_key, value_ref=args[0], output_refcount=len(users),
+                    idx=args[1])
+            else:
+                return ValueReference(stage_id, "noop")
         elif target is stage_backward:
             assert 'fw_stage' in node.meta
             stage_id, stage_executor = self.remote_stage_executor_rrefs[node.meta['fw_stage']]
-            logging.info(f'[root][{self.cur_microbatch}] Issuing BW invocation '
-                         f'for target {node.meta["fw_stage"]} on stage {stage_id}')
-            ts = time.time()
-            backward_name = event_name(Phase.BACKWARD, stage_id, self.cur_microbatch)
-            backward_id = event_id(Phase.BACKWARD, stage_id, self.cur_microbatch, self.batch_id)
-            name = f"I{backward_name}"
-            id = f"I{backward_id}"
-            self.record_event(rank=0, start_ts=ts, finish_ts=ts, id=id, name=name, type='invoke',
-                              mbid=self.cur_microbatch)
-            self.record_event_dependency(from_id=name, to_id=backward_name, type='invoke')
-            return stage_executor.rpc_sync().invoke(
-                invocation_key, Phase.BACKWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
-                output_refcount=len(node.users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
+            if torch.is_grad_enabled():
+                logging.info(f'[root][{self.cur_microbatch}] Issuing BW invocation '
+                             f'for target {node.meta["fw_stage"]} on stage {stage_id}')
+                ts = time.time()
+                backward_name = event_name(Phase.BACKWARD, stage_id, self.cur_microbatch)
+                backward_id = event_id(Phase.BACKWARD, stage_id, self.cur_microbatch, self.batch_id)
+                name = f"I{backward_name}"
+                id = f"I{backward_id}"
+                self.record_event(rank=0, start_ts=ts, finish_ts=ts, id=id, name=name, type='invoke',
+                                  mbid=self.cur_microbatch)
+                self.record_event_dependency(from_id=name, to_id=backward_name, type='invoke')
+                return stage_executor.rpc_sync().invoke(
+                    invocation_key, Phase.BACKWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
+                    output_refcount=len(users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
+            else:
+                return ValueReference(stage_id, "noop")
         elif target is sync_barrier:
             executor_keys = list(self.remote_stage_executor_rrefs.keys())
             stage_id, stage_executor = self.remote_stage_executor_rrefs[executor_keys[0]]
@@ -993,7 +1011,7 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
                          f'on stage {stage_id}')
             return stage_executor.rpc_sync().invoke(
                 invocation_key, Phase.SYNC_BARRIER, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
-                output_refcount=len(node.users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
+                output_refcount=len(users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
         elif target is _null_coalesce_accumulate:
             assert 'fw_stage' in node.meta
             stage_id, stage_executor = self.remote_stage_executor_rrefs[node.meta['fw_stage']]
@@ -1002,7 +1020,7 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
             return stage_executor.rpc_sync().invoke(
                 invocation_key, Phase.ACCUMULATE_GRAD, args, kwargs, self.cur_microbatch,
                 debug_str=node.format_node(),
-                output_refcount=len(node.users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
+                output_refcount=len(users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
         else:
             raise AssertionError(f'Unknown operator {torch.typename(target)}')
 
