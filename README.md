@@ -58,7 +58,7 @@ PiPPy consists of two parts: a _compiler_ and a _runtime_. The compiler takes yo
 
 To see how we can use `Pipe`, let's first take an example trivial neural network:
 
-```
+```python
 import torch
 
 class MyNetworkBlock(torch.nn.Module):
@@ -96,7 +96,7 @@ This network is written as free-form Python code; it has not been modified for a
 
 Let us see our first usage of the `pippy.IR.Pipe` interface:
 
-```
+```python
 from pippy.IR import Pipe
 
 pipe = Pipe.from_tracing(mn)
@@ -133,7 +133,7 @@ So what's going on here? First, `Pipe.from_tracing` uses `torch.fx` symbolic tra
 
 The above code groups together our model's operators and parameters into only one stage, since we have not specified a splitting policy. Let us add a custom splitting policy:
 
-```
+```python
 from pippy.IR import annotate_split_points, PipeSplitWrapper
 
 annotate_split_points(mn, {'layer0': PipeSplitWrapper.SplitPoint.END,
@@ -221,7 +221,9 @@ This covers the basic usage of the `Pipe` API. For more information, see the doc
 
 <!-- (TODO: link to docs when live) -->
 
-## Using PipelineDriver for pipelined execution
+## Using PipelineDriver for Pipelined Execution
+
+
 
 ## Forward vs. Forward-loss-backward
 
