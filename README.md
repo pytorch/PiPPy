@@ -94,7 +94,134 @@ mn = MyNetwork(512, [512, 1024, 256])
 
 This network is written as free-form Python code; it has not been modified for any specific parallelism technique.
 
-## Using Pipe in a Training Loop
+Let us see our first usage of the `pippy.IR.Pipe` interface:
+
+```
+from pippy.IR import Pipe
+
+pipe = Pipe.from_tracing(mn)
+print(pipe)
+"""
+GraphModule(
+  (submod_0): GraphModule(
+    (layer0_lin): Linear(in_features=512, out_features=512, bias=True)
+    (layer1_lin): Linear(in_features=512, out_features=1024, bias=True)
+    (layer2_lin): Linear(in_features=1024, out_features=256, bias=True)
+  )
+)
+
+
+
+def forward(self, x):
+    submod_0 = self.submod_0(x);  x = None
+    return submod_0
+"""
+print(pipe.split_gm.submod_0)
+"""
+def forward(self, x):
+    layer0_lin = self.layer0_lin(x);  x = None
+    relu = torch.relu(layer0_lin);  layer0_lin = None
+    layer1_lin = self.layer1_lin(relu);  relu = None
+    relu_1 = torch.relu(layer1_lin);  layer1_lin = None
+    layer2_lin = self.layer2_lin(relu_1);  relu_1 = None
+    relu_2 = torch.relu(layer2_lin);  layer2_lin = None
+    return relu_2
+"""
+```
+
+So what's going on here? First, `Pipe.from_tracing` uses `torch.fx` symbolic tracing to turn our model into a directed acyclic graph (DAG) representation. Then, it groups together the operations and parameters into _pipeline stages_. Stages are represented as `submod_N` submodules, where `N` is a natural number.
+
+The above code groups together our model's operators and parameters into only one stage, since we have not specified a splitting policy. Let us add a custom splitting policy:
+
+```
+from pippy.IR import annotate_split_points, PipeSplitWrapper
+
+annotate_split_points(mn, {'layer0': PipeSplitWrapper.SplitPoint.END,
+                           'layer1': PipeSplitWrapper.SplitPoint.END})
+
+pipe = Pipe.from_tracing(mn)
+
+print(' pipe '.center(80, '*'))
+print(pipe)
+"""
+************************************* pipe *************************************
+GraphModule(
+  (submod_0): GraphModule(
+    (layer0_mod_lin): Linear(in_features=512, out_features=512, bias=True)
+  )
+  (submod_1): GraphModule(
+    (layer1_mod_lin): Linear(in_features=512, out_features=1024, bias=True)
+  )
+  (submod_2): GraphModule(
+    (layer2_lin): Linear(in_features=1024, out_features=256, bias=True)
+  )
+)
+
+
+
+def forward(self, x):
+    submod_0 = self.submod_0(x);  x = None
+    submod_1 = self.submod_1(submod_0);  submod_0 = None
+    submod_2 = self.submod_2(submod_1);  submod_1 = None
+    return submod_2
+"""
+
+print(' submod0 '.center(80, '*'))
+print(pipe.split_gm.submod_0)
+"""
+*********************************** submod0 ************************************
+GraphModule(
+  (layer0_mod_lin): Linear(in_features=512, out_features=512, bias=True)
+)
+
+
+
+def forward(self, x):
+    layer0_mod_lin = self.layer0_mod_lin(x);  x = None
+    relu = torch.relu(layer0_mod_lin);  layer0_mod_lin = None
+    return relu
+"""
+
+print(' submod1 '.center(80, '*'))
+print(pipe.split_gm.submod_1)
+"""
+*********************************** submod1 ************************************
+GraphModule(
+  (layer1_mod_lin): Linear(in_features=512, out_features=1024, bias=True)
+)
+
+
+
+def forward(self, relu):
+    layer1_mod_lin = self.layer1_mod_lin(relu);  relu = None
+    relu_1 = torch.relu(layer1_mod_lin);  layer1_mod_lin = None
+    return relu_1
+"""
+
+print(' submod2 '.center(80, '*'))
+print(pipe.split_gm.submod_2)
+"""
+*********************************** submod2 ************************************
+GraphModule(
+  (layer2_lin): Linear(in_features=1024, out_features=256, bias=True)
+)
+
+
+
+def forward(self, relu_1):
+    layer2_lin = self.layer2_lin(relu_1);  relu_1 = None
+    relu = torch.relu(layer2_lin);  layer2_lin = None
+    return relu
+"""
+```
+
+Our code has now been split into _three_ pipeline stages. We used `annotate_split_points` to specify that the code should be split and the end of `layer0` and `layer1`.
+
+This covers the basic usage of the `Pipe` API. For more information, see the documentation.
+
+<!-- (TODO: link to docs when live) -->
+
+## Using PipelineDriver for pipelined execution
 
 ## Forward vs. Forward-loss-backward
 
