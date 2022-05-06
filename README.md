@@ -269,7 +269,7 @@ if local_rank == 0:
     # single tensor input and single tensor output, so we specify
     # a single `TensorChunkSpec` instance indicating dimension 0
     # for args[0] and the output value.
-    args_chunk_spec = (TensorChunkSpec(0,))
+    args_chunk_spec = (TensorChunkSpec(0),)
     kwargs_chunk_spec = {}
     output_chunk_spec = (TensorChunkSpec(0),)
 
@@ -294,7 +294,10 @@ torchrun --nproc_per_node=3 example.py
 
 Note that we have launched 3 processes, as we have 3 pipeline stages.
 
+We can now run the pipeline by using the `PipelineDriver.run` method:
 
+```
+```
 
 ## Forward vs. Forward-loss-backward
 
