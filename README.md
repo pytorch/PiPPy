@@ -2,7 +2,7 @@
 
 [**Why PiPPy?**](#why-pippy)
 | [**Install guide**](#install)
-| [**Using PiPPy**](#using-pippy)
+| [**PiPPy Quickstart**](#pippy-quickstart)
 | [**Future Work**](#future-work)
 | [**References**](#references)
 
@@ -46,17 +46,13 @@ To expose PiPPy for development such that changes to this repo are reflected in 
 python setup.py develop
 ```
 
-# Using PiPPy
+# PiPPy Quickstart
 
 PiPPy consists of two parts: a _compiler_ and a _runtime_. The compiler takes your model code, splits it up, and transforms it into a `Pipe`, which is a wrapper that describes how to execute the model in pipeline paralleism. The runtime executes the `Pipe` in parallel, handling things like micro-batch splitting and gradient propagation/syncing. We will cover the APIs for these concepts in this section.
 
 ## Splitting a Model with Pipe
 
-* Pipe API
-* Specifying split-points manually with pipe_split
-* Specifying split-points with PipeSplitWrapper/annotate_split_points
-
-To see how we can use `Pipe`, let's first take an example trivial neural network:
+To see how we can split a model into a pipeline, let's first take an example trivial neural network:
 
 ```python
 import torch
@@ -222,6 +218,81 @@ This covers the basic usage of the `Pipe` API. For more information, see the doc
 <!-- (TODO: link to docs when live) -->
 
 ## Using PipelineDriver for Pipelined Execution
+
+Given the above `Pipe` object, we can use one of the `PipelineDriver` classes to execute our model in a pipelined fashion. First off, let us instantiate a `PipelineExecutorFillDrain` instance:
+
+```python
+# To run a distributed training job, we must launch the script in multiple
+# different processes. We are using `torchrun` to do so in this example.
+# `torchrun` defines two environment variables: `LOCAL_RANK` and `WORLD_SIZE`,
+# which represent the index of this process within the set of processes and
+# the total number of processes, respectively.
+#
+# To learn more about `torchrun`, see
+# https://pytorch.org/docs/stable/elastic/run.html
+import os
+local_rank = int(os.environ["LOCAL_RANK"])
+world_size = int(os.environ['WORLD_SIZE'])
+
+# PiPPy uses the PyTorch RPC interface. To use RPC, we must call `init_rpc`
+# and inform the RPC framework of this process's rank and the total world
+# size. We can directly pass values `torchrun` provided.`
+#
+# To learn more about the PyTorch RPC framework, see
+# https://pytorch.org/docs/stable/rpc.html
+import torch.distributed.rpc as rpc
+rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
+
+# PiPPy relies on the concept of a "driver" process. The driver process
+# should be a single process within the RPC group that instantiates the
+# PipelineDriver and issues commands on that object. The other processes
+# in the RPC group will received commands from this process and execute
+# the pipeline stages
+if local_rank == 0:
+    # We are going to use the PipelineDriverFillDrain class. This class
+    # provides an interface for executing the `Pipe` in a style similar
+    # to the GPipe fill-drain schedule. To learn more about GPipe and
+    # the fill-drain schedule, see https://arxiv.org/abs/1811.06965
+    from pippy.PipelineDriver import PipelineDriverFillDrain
+    from pippy.microbatch import TensorChunkSpec
+
+    # Pipelining relies on _micro-batching_--that is--the process of
+    # dividing the program's input data into smaller chunks and
+    # feeding those chunks through the pipeline sequentially. Doing
+    # this requires that the data and operations be _separable_, i.e.
+    # there should be at least one dimension along which data can be
+    # split such that the program does not have interactions across
+    # this dimension. PiPPy provides `chunk_spec` arguments for this
+    # purpose, to specify the batch dimension for tensors in each of
+    # the args, kwargs, and outputs. The structure of the `chunk_spec`s
+    # should mirror that of the data type. Here, the program has a
+    # single tensor input and single tensor output, so we specify
+    # a single `TensorChunkSpec` instance indicating dimension 0
+    # for args[0] and the output value.
+    args_chunk_spec = (TensorChunkSpec(0,))
+    kwargs_chunk_spec = {}
+    output_chunk_spec = (TensorChunkSpec(0),)
+
+    # Finally, we instantiate the PipelineDriver. We pass in the pipe,
+    # chunk specs, and world size, and the constructor will distribute
+    # our code to the processes in the RPC group. `driver` is an object
+    # we can invoke to run the pipeline.
+    driver = PipelineDriverFillDrain(
+        pipe, args_chunk_spec=args_chunk_spec, kwargs_chunk_spec=kwargs_chunk_spec,
+        output_chunk_spec=output_chunk_spec, world_size=world_size)
+
+    # <following code goes here>
+
+rpc.shutdown()
+```
+
+Note that our script must now be replicated across multiple workers. For this example, we will use `torchrun` to run multiple processes within a single machine for demonstration purposes. So, if you've named the above code `example.py`, the `torchrun` invocation should look like:
+
+```
+torchrun --nproc_per_node=3 example.py
+```
+
+Note that we have launched 3 processes, as we have 3 pipeline stages.
 
 
 
