@@ -89,6 +89,7 @@ def run_master(args):
                                                                _debug_mask_minibatches=True)
 
     optimizer = pipe_driver.instantiate_optimizer(optim.Adam, lr=1e-3, betas=(0.9, 0.999), eps=1e-8)
+    lr_sched = pipe_driver.instantiate_lr_scheduler(optim.lr_scheduler.LinearLR, verbose=True)
 
     loaders = {
         "train": train_dataloader,
@@ -125,6 +126,9 @@ def run_master(args):
                         epoch_all += all
 
             print(f"Loader: {k}. Accuracy: {epoch_correct / epoch_all}")
+
+            if k == "train":
+                lr_sched.step()
 
 
 def run_worker(rank, world_size, args):
