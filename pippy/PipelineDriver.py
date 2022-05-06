@@ -814,7 +814,7 @@ class PipelineDriverBase:
     """
     def instantiate_lr_scheduler(self, lr_sched_class, *args, **kwargs):
         if not self.optimizer_inited:
-            raise AssertionError(f'instantiate_optimizer must be called before instantiate_lr_scheduler')
+            raise RuntimeError('[root] instantiate_optimizer must be called before instantiate_lr_scheduler')
 
         remote_lr_scheds = []
         for stage, optim in self.stage_to_optim.items():
