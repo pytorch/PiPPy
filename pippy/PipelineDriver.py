@@ -701,11 +701,50 @@ def _wait_for_all(rpc_futs):
     return results
 
 
-class PipelineOptimizer:
+class PipelineOptimizer(torch.optim.Optimizer):
     def __init__(self, remote_optims):
         self.remote_optims = remote_optims
 
-    def zero_grad(self, set_to_none : bool = False):
+        # TODO: enable this
+        # self._hook_for_profile()
+
+        # TODO: enable this
+        # self.state = defaultdict(dict)
+
+        self.param_groups = []
+
+        # Collect RRefs to remote parameters
+        param_group = {'params' : []}
+
+        for optim in self.remote_optims:
+            remote_state = optim.rpc_sync().__getstate__()
+            assert isinstance(remote_state, dict)
+            for group in remote_state['param_groups']:
+                param_group['params'].extend(group['params'])
+                for k in group:
+                    if k != 'params':
+                        param_group.setdefault(k, group[k])
+
+        self.param_groups = [param_group]
+
+    def __getstate__(self):
+        raise NotImplementedError()
+
+    def __setstate__(self, state):
+        raise NotImplementedError()
+
+    def _hook_for_profile(self):
+        raise NotImplementedError()
+
+    def state_dict(self):
+        raise NotImplementedError()
+
+    def load_state_dict(self, state_dict):
+        raise NotImplementedError()
+
+    # PyTorch type annotation for this function is wrong. See
+    # https://github.com/pytorch/pytorch/pull/76998 for proposed fix
+    def zero_grad(self, set_to_none : bool = False):  # type: ignore
         futs = []
         for optim in self.remote_optims:
             futs.append(optim.rpc_async().zero_grad(set_to_none))
@@ -717,6 +756,8 @@ class PipelineOptimizer:
             futs.append(optim.rpc_async().step(closure))
         _wait_for_all(futs)
 
+    def add_param_group(self, param_group):
+        raise NotImplementedError()
 
 class PipelineDriverBase:
     def __init__(self, pipe : Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size : int,
