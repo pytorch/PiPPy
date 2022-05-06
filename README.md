@@ -271,7 +271,7 @@ if local_rank == 0:
     # for args[0] and the output value.
     args_chunk_spec = (TensorChunkSpec(0),)
     kwargs_chunk_spec = {}
-    output_chunk_spec = (TensorChunkSpec(0),)
+    output_chunk_spec = TensorChunkSpec(0)
 
     # Finally, we instantiate the PipelineDriver. We pass in the pipe,
     # chunk specs, and world size, and the constructor will distribute
@@ -294,12 +294,27 @@ torchrun --nproc_per_node=3 example.py
 
 Note that we have launched 3 processes, as we have 3 pipeline stages.
 
-We can now run the pipeline by using the `PipelineDriver.run` method:
+We can now run the pipeline by using the `PipelineDriver.run` method (make sure to add this code in the `<bracketed>` area above):
 
 ```
+    # Run the pipeline with input `x`. Divide the batch into 64 micro-batches
+    # and run them in parallel on the pipeline
+    output = driver.run(64, x)
+
+    # Run the original code and get the output for comparison
+    reference_output = mn(x)
+
+    # Compare numerics of pipeline and original model
+    torch.testing.assert_close(output, reference_output)
 ```
+
+We can see that we can now execute our model in a pipelined fashion and get the same numeric outputs.
 
 ## Forward vs. Forward-loss-backward
+
+The above example demonstrated only pipelining the `forward()` computation, for example for the purposes of model evaluation. We can extend the example to include the loss and back-propagation computation for the purposes of model training.
+
+
 
 ## Pipeline Schedules
 
