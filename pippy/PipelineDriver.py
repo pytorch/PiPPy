@@ -904,15 +904,13 @@ class PipelineDriverBase:
         futs = []
         # Asks all stage executors to participate in DP process group init
         # These must be async calls because otherwise there will be deadlocks
-        for i, executor in self.stage_to_executor.items():
-            futs.append(executor.rpc_async(timeout=0).init_data_parallel(n_stages,
-                                                                         dp_group_size,
-                                                                         dp_pg_cb))
+        for executor in self.stage_to_executor.values():
+            futs.append(executor.rpc_async().init_data_parallel(n_stages,
+                                                                dp_group_size,
+                                                                dp_pg_cb))
 
         # Here we wait for all DP process groups to be initialized before the user can ask the PipeDriver to run
-        # TODO: see if this is necessary
-        for fut in futs:
-            fut.wait()
+        _wait_for_all(futs)
 
     def run(self, chunks: int, *args, **kwargs):
         raise NotImplementedError('PipelineDriverBase is an abstract base class, please use a concrete '
