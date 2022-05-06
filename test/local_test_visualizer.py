@@ -20,7 +20,7 @@ from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, Ph
 from pippy.events import Event
 from pippy.microbatch import TensorChunkSpec, CustomReducer
 from pippy.visualizer import events_to_json
-from test.test_commons import tp_transports
+from test_commons import tp_transports # type: ignore
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True

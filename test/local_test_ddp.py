@@ -15,7 +15,7 @@ from pippy.PipelineDriver import (
     PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverBase, PipelineDriverInterleaved1F1B
 )
 from pippy.microbatch import TensorChunkSpec, CustomReducer
-from test.test_commons import tp_transports
+from test_commons import tp_transports # type: ignore
 
 # TODOs for implementing forward/backward/loss with schedules:
 # * ability to switch between full-batch loss vs. per-microbatch loss. shen mentioned

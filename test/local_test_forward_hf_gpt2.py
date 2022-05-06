@@ -14,7 +14,7 @@ import transformers.utils.fx as fx
 from pippy.IR import MultiUseParameterConfig, Pipe, PipeSplitWrapper, annotate_split_points
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverBase
 from pippy.microbatch import TensorChunkSpec
-from test.test_commons import tp_transports
+from test_commons import tp_transports # type: ignore
 from transformers import GPT2Model, GPT2Config
 
 PROFILING_ENABLED = True
