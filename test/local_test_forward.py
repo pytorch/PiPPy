@@ -88,6 +88,10 @@ def run_master(args):
     out = pipe_driver.run(5, ec_input)
     ref_out = ec_pipe(ec_input)
 
+    # run with different chunk size to exercise microbatch and scheduling components
+    pipe_driver.run(1, ec_input)
+    pipe_driver.run(100, ec_input)
+
     if CHECK_NUMERIC_EQUIVALENCE:
         torch.testing.assert_close(out['out'], ref_out['out'])
         print(f'equivalence test passed {torch.sum(out["out"])} ref {torch.sum(ref_out["out"])}')
