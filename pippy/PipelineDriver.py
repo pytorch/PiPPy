@@ -579,6 +579,7 @@ class PipeStageExecutor(EventRecorder):
         return self.optimizer
 
     def instantiate_lr_scheduler(self, lr_sched_class, *args, **kwargs):
+        # Make sure optimizer has been created
         with self.optim_init_cv:
             while self.optimizer is None:
                 self.optim_init_cv.wait()
@@ -675,10 +676,12 @@ class PipelineOptimizer(torch.optim.Optimizer):
 
 class PipelineLRScheduler:
     def __init__(self, remote_lr_schedulers):
+        # A list of LR schedulers each for a stage/optimizer
         self.remote_lr_schedulers = remote_lr_schedulers
 
     def step(self, *args, **kwargs):
         futs = []
+        # Step all remote LR schedulers
         for scheduler in self.remote_lr_schedulers:
             futs.append(scheduler.rpc_async().step(*args, **kwargs))
         _wait_for_all(futs)
@@ -798,6 +801,7 @@ class PipelineDriverBase:
 
     def instantiate_optimizer(self, optim_class, *args, **kwargs):
         remote_optims = []
+        # Keeps track of stage to optimizer mapping
         self.stage_to_optim : Dict = {}
         for stage, executor in self.stage_to_executor.items():
             if executor.rpc_sync()._should_instantiate_optim():
