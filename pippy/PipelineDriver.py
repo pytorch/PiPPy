@@ -742,7 +742,9 @@ class PipelineOptimizer(torch.optim.Optimizer):
     def load_state_dict(self, state_dict):
         raise NotImplementedError()
 
-    def zero_grad(self, set_to_none : bool = False):
+    # PyTorch type annotation for this function is wrong. See
+    # https://github.com/pytorch/pytorch/pull/76998 for proposed fix
+    def zero_grad(self, set_to_none : bool = False):  # type: ignore
         futs = []
         for optim in self.remote_optims:
             futs.append(optim.rpc_async().zero_grad(set_to_none))
