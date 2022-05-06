@@ -1108,12 +1108,16 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 
         # Ramp-up, admit diagonal wavefront until we get to a full diagonal
         # location in the matrix
+
         for ramp_up_idx in range(len(self.microbatch_interpreters)):
             for i in range(ramp_up_idx + 1):
                 interp = self.microbatch_interpreters[i]
-                start_node = interp.node_list[interp.pc]
+                start_node = interp.node_list[min(interp.pc, len(interp.node_list) - 1)]
 
                 def run_including_indexing(n):
+                    if n.op == 'output':
+                        return True
+
                     # Run the node we start with including all nodes that are tuple
                     # indexing, then stop
                     return n != start_node and n.target != operator.getitem
@@ -1127,7 +1131,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         while any_valid:
             any_valid = False
             for interp in self.microbatch_interpreters:
-                start_node = interp.node_list[interp.pc]
+                start_node = interp.node_list[min(interp.pc, len(interp.node_list) - 1)]
 
                 def run_including_indexing(n):
                     # Run the node we start with including all nodes that are

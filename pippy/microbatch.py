@@ -15,6 +15,12 @@ class TensorChunkSpec:
 
     split_dim : int
 
+    def __repr__(self):
+        return f'{self.__class__.__module__}.{self.__class__.__name__}({self.split_dim})'
+
+    def __str__(self):
+        return f'TensorChunkSpec({self.split_dim})'
+
 def shard_dict_of_args(args_dict, args_chunk_spec, num_chunks, _debug_mask_minibatches : bool = False):
     # Stage 1+2: flatten and shard/replicate
 
@@ -43,7 +49,7 @@ def shard_dict_of_args(args_dict, args_chunk_spec, num_chunks, _debug_mask_minib
                 # Throw an error
                 assert isinstance(v, torch.Tensor)
 
-                chunk_tensors = torch.chunk(v, num_chunks, chunk_v.split_dim)
+                chunk_tensors = torch.tensor_split(v, num_chunks, chunk_v.split_dim)
 
                 if _debug_mask_minibatches:
                     expanded_chunks = []
@@ -196,11 +202,12 @@ def merge_chunks(chunks, chunk_spec, _debug_mask_minibatches : bool = False):
             partial_values = [chunks_flattened[chunk_idx][arg_idx] for chunk_idx in range(len(chunks_flattened))]
 
             if _debug_mask_minibatches:
-                # Infer size of individual chunks by running `chunk` again
+                # Infer size of individual chunks by running `tensor_split` again
                 overall_shape = partial_values[0].shape
                 for val in partial_values[1:]:
                     assert val.shape == overall_shape
-                meta_chunks = torch.chunk(torch.empty(*overall_shape, device='meta'), dim=arg.split_dim, chunks=len(partial_values))
+                meta_chunks = torch.tensor_split(
+                    torch.empty(*overall_shape, device='meta'), sections=len(partial_values), dim=arg.split_dim)
 
                 values_to_cat = []
                 chunk_start_idx = 0
