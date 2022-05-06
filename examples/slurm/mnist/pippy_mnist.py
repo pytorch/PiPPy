@@ -109,6 +109,7 @@ def run_master(args, pp_ranks):
     pipe_driver.init_data_parallel(dp_group_size=args.dp_group_size, dp_pg_cb=resolve_pg_per_stage)
 
     optimizer = pipe_driver.instantiate_optimizer(optim.Adam, lr=1e-3, betas=(0.9, 0.999), eps=1e-8)
+    lr_sched = pipe_driver.instantiate_lr_scheduler(optim.lr_scheduler.LinearLR, verbose=True)
 
     loaders = {
         "train": train_dataloader,
@@ -150,6 +151,9 @@ def run_master(args, pp_ranks):
                 if args.visualize:
                     batches_events_contexts.append(pipe_driver.retrieve_events())
             print(f"Loader: {k}. Accuracy: {epoch_correct / epoch_all}")
+
+            if k == "train":
+                lr_sched.step()
 
     if args.visualize:
         all_events_contexts: EventsContext = reduce(lambda c1, c2: EventsContext().update(c1).update(c2),

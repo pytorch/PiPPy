@@ -441,6 +441,11 @@ class PipeStageExecutor(EventRecorder):
         self.peer_executors : Dict[int, torch._C._distributed_rpc.PyRRef] = None
         self._record_mem_dumps = _record_mem_dumps
 
+        self.optimizer = None
+        # Used to ensure optimizer is created before we create learning rate scheduler
+        self.optim_init_lock = threading.Lock()
+        self.optim_init_cv = threading.Condition(self.optim_init_lock)
+
     def __getstate__(self):
         # Adding an empty __getstate__ function here to work around the DDP pickling issue (#153) that occurs when the
         # PipelineDiver asks PipeStageExecutors to install_peer_executor(a list of RRefs)
@@ -652,7 +657,19 @@ class PipeStageExecutor(EventRecorder):
 
     def instantiate_optimizer(self, optim_class, *args, **kwargs):
         assert self._should_instantiate_optim()
-        return optim_class(self.mod.parameters(), *args, **kwargs)
+        with self.optim_init_cv:
+            self.optimizer = optim_class(self.mod.parameters(), *args, **kwargs)
+            self.optim_init_cv.notify()
+        return self.optimizer
+
+    def instantiate_lr_scheduler(self, lr_sched_class, *args, **kwargs):
+        # Make sure optimizer has been created
+        with self.optim_init_cv:
+            while self.optimizer is None:
+                self.optim_init_cv.wait()
+
+        logging.info(f"[{self.stage_id}] Creating learning rate scheduler")
+        return lr_sched_class(self.optimizer, *args, **kwargs)
 
     def _record_dump(self, dump_id, ts):
         first_param = next(self.mod.parameters(), None)
@@ -759,6 +776,20 @@ class PipelineOptimizer(torch.optim.Optimizer):
     def add_param_group(self, param_group):
         raise NotImplementedError()
 
+
+class PipelineLRScheduler:
+    def __init__(self, remote_lr_schedulers):
+        # A list of LR schedulers each for a stage/optimizer
+        self.remote_lr_schedulers = remote_lr_schedulers
+
+    def step(self, *args, **kwargs):
+        futs = []
+        # Step all remote LR schedulers
+        for scheduler in self.remote_lr_schedulers:
+            futs.append(scheduler.rpc_async().step(*args, **kwargs))
+        _wait_for_all(futs)
+
+
 class PipelineDriverBase:
     def __init__(self, pipe : Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size : int,
                  all_ranks : List[int] = None, _debug_mask_minibatches : bool = False,
@@ -779,6 +810,7 @@ class PipelineDriverBase:
         self.microbatch_interpreters: List[RemoteInterpreter] = []
         self.batch_id = 0
         self._record_mem_dumps = _record_mem_dumps
+        self.optimizer_inited = False
         self.checkpoint = checkpoint
 
     def _init_remote_executors(self):
@@ -895,12 +927,33 @@ class PipelineDriverBase:
 
     def instantiate_optimizer(self, optim_class, *args, **kwargs):
         remote_optims = []
-        for executor in self.stage_to_executor.values():
+        # Keeps track of stage to optimizer mapping
+        self.stage_to_optim : Dict = {}
+        for stage, executor in self.stage_to_executor.items():
             if executor.rpc_sync()._should_instantiate_optim():
                 remote_optim = executor.remote().instantiate_optimizer(optim_class, *args, **kwargs)
                 remote_optims.append(remote_optim)
+                self.stage_to_optim[stage] = remote_optim
 
+        self.optimizer_inited = True
         return PipelineOptimizer([optim for optim in remote_optims if optim is not None])
+
+    """
+    Create learning rate scheduler for the optimizer of the pipeline.
+    Note: this API cannot be called before instantiate_optimizer is called.
+    """
+    def instantiate_lr_scheduler(self, lr_sched_class, *args, **kwargs):
+        if not self.optimizer_inited:
+            raise RuntimeError('[root] instantiate_optimizer must be called before instantiate_lr_scheduler')
+
+        remote_lr_scheds = []
+        for stage, optim in self.stage_to_optim.items():
+            if optim is not None:
+                executor = self.stage_to_executor[stage]
+                remote_lr_sched = executor.remote().instantiate_lr_scheduler(lr_sched_class, *args, **kwargs)
+                remote_lr_scheds.append(remote_lr_sched)
+
+        return PipelineLRScheduler([sched for sched in remote_lr_scheds if sched is not None])
 
     def _sync_replicated_params(self):
         logging.info(f'[root] Synchronizing gradients for {len(self.pipe.replicated_params)} sets of replicated parameters')
