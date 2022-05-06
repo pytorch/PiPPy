@@ -69,8 +69,8 @@ def event_to_json(event: Event, prev_events: Dict[str, List[EventDependency]],
             args=generate_dumps(event.allocators)
         ))
     else:
-        if event.id is not None:
-            for prev_event in prev_events[event.id]:
+        if event.name is not None:
+            for prev_event in prev_events[event.name]:
                 lines.append(generate_event_str(
                     pid=f"{event.rank}({event.host}/{event.pid})",
                     tid=0,
@@ -88,8 +88,8 @@ def event_to_json(event: Event, prev_events: Dict[str, List[EventDependency]],
             ph="B",
             ts=event.start_ts * 1_000_000
         ))
-        if event.id is not None:
-            for next_event in next_events[event.id]:
+        if event.name is not None:
+            for next_event in next_events[event.name]:
                 lines.append(generate_event_str(
                     pid=f"{event.rank}({event.host}/{event.pid})",
                     tid=0,

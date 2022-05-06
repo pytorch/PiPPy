@@ -10,4 +10,4 @@ export RANK=${SLURM_PROCID}
 
 export USE_TQDM=0
 
-python -u pippy_mnist.py --record_mem_dumps=0 --checkpoint=0
+python -u pippy_resnet.py --record_mem_dumps=0 --checkpoint=0

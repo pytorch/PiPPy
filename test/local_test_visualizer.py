@@ -1,12 +1,12 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import argparse
+import logging
 import os
 import socket
 import time
 from collections import defaultdict
 from functools import reduce
 from typing import List, Dict, Any
-import logging
 
 import torch
 import torch.distributed.rpc as rpc
@@ -20,6 +20,7 @@ from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, Ph
 from pippy.events import Event
 from pippy.microbatch import TensorChunkSpec, CustomReducer
 from pippy.visualizer import events_to_json
+from test.test_commons import tp_transports
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
@@ -176,7 +177,10 @@ def run_master(args):
     all_ranks = list(range(1, args.world_size))  # exclude master rank = 0
     pipe_driver: PipelineDriverBase = schedules[args.schedule](ec_pipe, args_chunk_spec, kwargs_chunk_spec,
                                                                output_chunk_spec, args.world_size - 1,
-                                                               all_ranks=all_ranks, _debug_mask_minibatches=True)
+                                                               all_ranks=all_ranks,
+                                                               _debug_mask_minibatches=True,
+                                                               _record_mem_dumps=bool(args.record_mem_dumps),
+                                                               checkpoint=bool(args.checkpoint))
 
     ec_input = torch.randn(bs, d_hid, device=args.device)
     target = torch.randn(bs, d_hid, device=args.device)
@@ -271,7 +275,8 @@ def run_worker(rank, world_size, args):
     os.environ['MASTER_PORT'] = args.master_port
     # Exclude IB for metadata transport due to lack of EFA support on AWS
     options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256,
-                                              _transports=["shm", "uv"])
+                                              rpc_timeout=1800,
+                                              _transports=tp_transports())
     if args.cuda:
         n_devs = torch.cuda.device_count()
         if n_devs > 0:
@@ -304,6 +309,8 @@ if __name__ == "__main__":
     parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
     parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
     parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
+    parser.add_argument('--record_mem_dumps', type=int, default=0, choices=[0, 1])
+    parser.add_argument('--checkpoint', type=int, default=0, choices=[0, 1])
     args = parser.parse_args()
 
     if args.rank == -1:

@@ -65,7 +65,10 @@ def run_master(args):
     output_chunk_spec = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
     pipe_driver: PipelineDriverBase = schedules[args.schedule](accum_pipe, args_chunk_spec, kwargs_chunk_spec,
                                                                output_chunk_spec, args.world_size - 1,
-                                                               all_ranks=all_ranks, _debug_mask_minibatches=True)
+                                                               all_ranks=all_ranks,
+                                                               _debug_mask_minibatches=True,
+                                                               _record_mem_dumps=bool(args.record_mem_dumps),
+                                                               checkpoint=bool(args.checkpoint))
 
     pipe_driver.run(chunks, input, target)
 
@@ -74,7 +77,9 @@ def run_worker(rank, world_size, args):
     print(f"rank = {rank} host/pid = {socket.gethostname()}/{os.getpid()}")
     os.environ['MASTER_ADDR'] = args.master_addr
     os.environ['MASTER_PORT'] = args.master_port
-    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256)
+    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256,
+                                              _transports=["shm", "uv"],
+                                              rpc_timeout=1800)
     rpc.init_rpc(
         f"worker{rank}",
         rank=rank,
@@ -94,6 +99,9 @@ if __name__ == "__main__":
     parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
     parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
     parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
+    parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
+    parser.add_argument('--record_mem_dumps', type=int, default=0, choices=[0, 1])
+    parser.add_argument('--checkpoint', type=int, default=0, choices=[0, 1])
     args = parser.parse_args()
 
     if args.rank == -1:

@@ -15,6 +15,7 @@ from pippy.PipelineDriver import (
     PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverBase, PipelineDriverInterleaved1F1B
 )
 from pippy.microbatch import TensorChunkSpec, CustomReducer
+from test.test_commons import tp_transports
 
 # TODOs for implementing forward/backward/loss with schedules:
 # * ability to switch between full-batch loss vs. per-microbatch loss. shen mentioned
@@ -45,13 +46,7 @@ def get_grad_from_executor(executor, qualname):
 
 torch.fx.Tracer.proxy_buffer_attributes = True
 
-dp_pg_per_pp_rank = None
 dp_pg_for_reference = None
-
-def resolve_pg_per_stage(pp_rank):
-    assert dp_pg_per_pp_rank
-    return dp_pg_per_pp_rank[pp_rank]
-
 
 def run_master(args, pp_ranks):
     torch.manual_seed(42)
@@ -116,9 +111,13 @@ def run_master(args, pp_ranks):
 
     pipe_driver : PipelineDriverBase = schedules[args.schedule](ec_pipe, args_chunk_spec, kwargs_chunk_spec,
                                                                 output_chunk_spec, args.pp_group_size,
-                                                                all_ranks=pp_ranks, dp_pg_cb=resolve_pg_per_stage,
-                                                                _debug_mask_minibatches=DEBUG_MASK_MINIBATCHES)
+                                                                all_ranks=pp_ranks,
+                                                                _debug_mask_minibatches=DEBUG_MASK_MINIBATCHES,
+                                                                _record_mem_dumps=bool(args.record_mem_dumps),
+                                                                checkpoint=bool(args.checkpoint))
     print(f'Rank {args.rank} Instantiated pipe with ranks {pp_ranks}')
+
+    pipe_driver.init_data_parallel(dp_group_size=args.dp_group_size)
 
     torch.manual_seed(args.rank)
     input = torch.randn(bs, d_hid, device=args.device)
@@ -174,7 +173,8 @@ def run_worker(rank, world_size, args):
     os.environ['MASTER_PORT'] = args.master_port
     # Exclude IB for metadata transport due to lack of EFA support on AWS
     options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256,
-                                              _transports=["shm", "uv"])
+                                              rpc_timeout=1800,
+                                              _transports=tp_transports())
     if args.cuda:
         n_devs = torch.cuda.device_count()
         if n_devs > 0:
@@ -197,10 +197,6 @@ def run_worker(rank, world_size, args):
         world_size=world_size,
         rpc_backend_options=options
     )
-
-    global dp_pg_per_pp_rank
-    dp_ranks_per_pp_rank = torch.arange(args.world_size).reshape(args.pp_group_size, args.dp_group_size).tolist()
-    dp_pg_per_pp_rank = [torch.distributed.new_group(ranks) for ranks in dp_ranks_per_pp_rank]
 
     pp_ranks_per_dp_group = [[i * args.dp_group_size + rank for i in range(args.pp_group_size)]
                              for rank in range(args.dp_group_size)]
@@ -237,6 +233,8 @@ if __name__ == "__main__":
     parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
     parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
     parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
+    parser.add_argument('--record_mem_dumps', type=int, default=0, choices=[0, 1])
+    parser.add_argument('--checkpoint', type=int, default=0, choices=[0, 1])
     args = parser.parse_args()
 
     assert args.dp_group_size * args.pp_group_size == args.world_size
