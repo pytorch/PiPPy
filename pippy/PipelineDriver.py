@@ -408,7 +408,11 @@ class PipeStageExecutor(EventRecorder):
         self.value_store : Dict[str, RefcountedFuture] = {}
 
         self.peer_executors : Dict[int, torch._C._distributed_rpc.PyRRef] = None
+
         self.optimizer = None
+        # Used to ensure optimizer is created before we create learning rate scheduler
+        self.optim_init_lock = threading.Lock()
+        self.optim_init_cv = threading.Condition(self.optim_init_lock)
 
     def __getstate__(self):
         # Adding an empty __getstate__ function here to work around the DDP pickling issue (#153) that occurs when the
@@ -569,11 +573,15 @@ class PipeStageExecutor(EventRecorder):
 
     def instantiate_optimizer(self, optim_class, *args, **kwargs):
         assert self._should_instantiate_optim()
-        self.optimizer = optim_class(self.mod.parameters(), *args, **kwargs)
+        with self.optim_init_cv:
+            self.optimizer = optim_class(self.mod.parameters(), *args, **kwargs)
+            self.optim_init_cv.notify()
         return self.optimizer
 
     def instantiate_lr_scheduler(self, lr_sched_class, *args, **kwargs):
-        assert self.optimizer is not None, f"Stage {self.stage_id} does not have an optimizer"
+        with self.optim_init_cv:
+            while self.optimizer is None:
+                self.optim_init_cv.wait()
 
         logging.info(f"[{self.stage_id}] Creating learning rate scheduler")
         return lr_sched_class(self.optimizer, *args, **kwargs)
