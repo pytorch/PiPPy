@@ -401,10 +401,18 @@ As before, we can now call the `driver` object to execute the pipeline; However 
     torch.testing.assert_close(output, reference_output)
 ```
 
+<!-- TODO: check gradients -->
+<!-- TODO: optimizer & LR scheduler -->
 
-## Pipeline Schedules
+## PiPPy on CUDA
+
+<!-- TODO -->
 
 ## PiPPy + Data Parallelism
+
+<!-- TODO -->
+
+## Advanced: Pipeline Schedules
 
 # Future Work
 
