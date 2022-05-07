@@ -296,7 +296,7 @@ Note that we have launched 3 processes, as we have 3 pipeline stages.
 
 We can now run the pipeline by using the `PipelineDriver.run` method (make sure to add this code in the `<bracketed>` area above):
 
-```
+```python
     # Run the pipeline with input `x`. Divide the batch into 64 micro-batches
     # and run them in parallel on the pipeline
     output = driver.run(64, x)
@@ -312,8 +312,94 @@ We can see that we can now execute our model in a pipelined fashion and get the 
 
 ## Forward vs. Forward-loss-backward
 
-The above example demonstrated only pipelining the `forward()` computation, for example for the purposes of model evaluation. We can extend the example to include the loss and back-propagation computation for the purposes of model training.
+The above example demonstrated only pipelining the `forward()` computation, for example for the purposes of model evaluation. We can extend the example to include the loss and back-propagation computation for the purposes of model training. Let us replace the code under the `if local_rank == 0:` block in the example:
 
+```python
+if local_rank == 0:
+    from pippy.PipelineDriver import PipelineDriverFillDrain
+    from pippy.microbatch import TensorChunkSpec
+
+    # LossWrapper is a convenient base class you can use to compose your model
+    # with the desired loss function for the purpose of pipeline parallel training.
+    # Since the loss is executed as part of the pipeline, it cannot reside in the
+    # training loop, so you must embed it like this
+    from pippy.IR import LossWrapper
+    class ModelLossWrapper(LossWrapper):
+        def forward(self, x, target):
+            return self.loss_fn(self.module(x), target)
+
+    # TODO: mean reduction
+    loss_wrapper = ModelLossWrapper(module=mn, loss_fn=torch.nn.MSELoss(reduction='sum'))
+
+    # Instantiate the `Pipe` similarly to before, but with two differences:
+    #   1) We pass in the `loss_wrapper` module to include the loss in the
+    #      computation
+    #   2) We specify `output_loss_value_spec`. This is a data structure
+    #      that should mimic the structure of the output of LossWrapper
+    #      and has a True value in the position where the loss value will
+    #      be. Since LossWrapper returns just the loss, we just pass True
+    pipe = Pipe.from_tracing(loss_wrapper, output_loss_value_spec=True)
+
+    # We now have two args: `x` and `target`, so specify batch dimension
+    # for both.
+    args_chunk_spec = (TensorChunkSpec(0), TensorChunkSpec(0))
+    kwargs_chunk_spec = {}
+    # The output is now a `loss` value, which is a scalar tensor.
+    # PiPPy's default is to concatenate outputs, but that will not
+    # work with a scalar tensor. So we use a CustomReducer instead
+    # to merge together the partial loss values.
+    from pippy.microbatch import CustomReducer
+    output_chunk_spec = CustomReducer(0.0, lambda a, b: a + b)
+
+    # Instantiate the driver as usual.
+    driver = PipelineDriverFillDrain(
+        pipe, args_chunk_spec=args_chunk_spec, kwargs_chunk_spec=kwargs_chunk_spec,
+        output_chunk_spec=output_chunk_spec, world_size=world_size)
+```
+
+The comments describe the new components that have been added to enable training. We can print out the new `pipe` to see the loss and backward stages:
+
+```python
+  print(pipe)
+
+  """
+  def forward(self, x, target):
+      submod_0 = self.submod_0(x)
+      submod_1 = self.submod_1(submod_0)
+      submod_2 = self.submod_2(submod_1, target)
+      stage_backward = pippy_IR_stage_backward(stage_output = (submod_2,), output_grads = (None,), input_values = [submod_1, target], outputs_with_grads_idxs = [0], stage_info = 'stage_backward for stage %submod_2 : [#users=2] = call_module[target=submod_2](args = (%submod_1, %target), kwargs = {})');  target = None
+      getitem = stage_backward[0]
+      getitem_1 = stage_backward[1];  stage_backward = None
+      getitem_2 = getitem[0]
+      getitem_3 = getitem[1];  getitem = None
+      stage_backward_1 = pippy_IR_stage_backward(stage_output = (submod_1,), output_grads = (getitem_2,), input_values = [submod_0], outputs_with_grads_idxs = [0], stage_info = 'stage_backward_1 for stage %submod_1 : [#users=3] = call_module[target=submod_1](args = (%submod_0,), kwargs = {})');  submod_1 = getitem_2 = None
+      getitem_4 = stage_backward_1[0]
+      getitem_5 = stage_backward_1[1];  stage_backward_1 = None
+      getitem_6 = getitem_4[0];  getitem_4 = None
+      stage_backward_2 = pippy_IR_stage_backward(stage_output = (submod_0,), output_grads = (getitem_6,), input_values = [x], outputs_with_grads_idxs = [0], stage_info = 'stage_backward_2 for stage %submod_0 : [#users=3] = call_module[target=submod_0](args = (%x,), kwargs = {})');  submod_0 = getitem_6 = x = None
+      getitem_7 = stage_backward_2[0]
+      getitem_8 = stage_backward_2[1];  stage_backward_2 = None
+      getitem_9 = getitem_7[0];  getitem_7 = None
+      sync_barrier = pippy_IR_sync_barrier(submod_2, [getitem_1, getitem_5, getitem_8]);  submod_2 = getitem_1 = getitem_5 = getitem_8 = None
+      return sync_barrier
+  """
+```
+
+As before, we can now call the `driver` object to execute the pipeline; However this time, the forward, loss, and backward passes will all be executed:
+
+```python
+    x = torch.randn(512, 512)
+    target = torch.randn(512, 256)
+
+    # note the additional `target` argument, as the module we're running is
+    # ModelLossWrapper
+    output = driver.run(64, x, target)
+
+    reference_output = loss_wrapper(x, target)
+
+    # Compare numerics of pipeline and original model
+    torch.testing.assert_close(output, reference_output)
+```
 
 
 ## Pipeline Schedules
