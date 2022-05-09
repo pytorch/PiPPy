@@ -6,7 +6,9 @@ def has_efa() -> bool:
     """
     try:
         import subprocess
-        return subprocess.run(["fi_info", "-p", "efa", "-t", "FI_EP_RDM"]).returncode == 0
+        return subprocess.run(["fi_info", "-p", "efa", "-t", "FI_EP_RDM"],
+                              stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL).returncode == 0
     except FileNotFoundError:
         return False
 

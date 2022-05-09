@@ -17,12 +17,26 @@ from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, Pi
 from pippy.events import EventsContext
 from pippy.microbatch import CustomReducer, TensorChunkSpec
 from pippy.visualizer import events_to_json
-from test.test_commons import tp_transports
 from transformers import BertLMHeadModel, BertConfig
 from transformers.modeling_utils import ModuleUtilsMixin
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
+
+
+def has_efa() -> bool:
+    try:
+        import subprocess
+        return subprocess.run(["fi_info", "-p", "efa", "-t", "FI_EP_RDM"],
+                              stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL).returncode == 0
+    except FileNotFoundError:
+        return False
+
+
+def tp_transports():
+    return ["shm", "uv"] if has_efa() else None
+
 
 schedules = {
     'FillDrain': PipelineDriverFillDrain,
@@ -133,7 +147,8 @@ def run_master(args):
         print(f"submod_{i} {get_number_of_params(sm) // 10 ** 6}M params")
 
     args_chunk_spec = ()
-    kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'labels': TensorChunkSpec(0), 'attention_mask': TensorChunkSpec(0)}
+    kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'labels': TensorChunkSpec(0),
+                         'attention_mask': TensorChunkSpec(0)}
     output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b), 'logits': TensorChunkSpec(0)}
     pipe_driver: PipelineDriverBase = schedules[args.schedule](bert_pipe, args_chunk_spec, kwargs_chunk_spec,
                                                                output_chunk_spec, len(all_worker_ranks),
@@ -160,7 +175,6 @@ def run_master(args):
 
 
 def run_worker(rank, world_size, args):
-    print(f"rank = {rank} host/pid = {socket.gethostname()}/{os.getpid()}")
     os.environ['MASTER_ADDR'] = args.master_addr
     os.environ['MASTER_PORT'] = args.master_port
     # Exclude IB for metadata transport due to lack of EFA support on AWS
