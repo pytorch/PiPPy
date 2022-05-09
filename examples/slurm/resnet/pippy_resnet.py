@@ -20,10 +20,24 @@ from pippy.events import EventsContext
 from pippy.microbatch import CustomReducer, TensorChunkSpec
 from pippy.visualizer import events_to_json
 from resnet import ResNet50
-from test.test_commons import tp_transports
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
+
+
+def has_efa() -> bool:
+    try:
+        import subprocess
+        return subprocess.run(["fi_info", "-p", "efa", "-t", "FI_EP_RDM"],
+                              stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL).returncode == 0
+    except FileNotFoundError:
+        return False
+
+
+def tp_transports():
+    return ["shm", "uv"] if has_efa() else None
+
 
 schedules = {
     'FillDrain': PipelineDriverFillDrain,

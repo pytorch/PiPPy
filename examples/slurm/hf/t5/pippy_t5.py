@@ -17,12 +17,26 @@ from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, Pi
 from pippy.events import EventsContext
 from pippy.microbatch import CustomReducer, TensorChunkSpec
 from pippy.visualizer import events_to_json
-from test.test_commons import tp_transports
 from transformers import T5ForConditionalGeneration, T5Config
 from transformers.modeling_utils import ModuleUtilsMixin
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
+
+
+def has_efa() -> bool:
+    try:
+        import subprocess
+        return subprocess.run(["fi_info", "-p", "efa", "-t", "FI_EP_RDM"],
+                              stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL).returncode == 0
+    except FileNotFoundError:
+        return False
+
+
+def tp_transports():
+    return ["shm", "uv"] if has_efa() else None
+
 
 schedules = {
     'FillDrain': PipelineDriverFillDrain,
@@ -257,8 +271,6 @@ def run_worker(rank, world_size, args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 16)))
-    parser.add_argument('--dp_group_size', type=int, default=int(os.getenv("DP_GROUP_SIZE", 2)))
-    # parser.add_argument('--pp_group_size', type=int, default=int(os.getenv("PP_GROUP_SIZE", 8)))
     parser.add_argument('--rank', type=int, default=int(os.getenv("RANK", -1)))
     parser.add_argument('--master_addr', type=str, default=os.getenv('MASTER_ADDR', 'localhost'))
     parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
@@ -279,7 +291,9 @@ if __name__ == "__main__":
 
     args.pp_group_size = 8  # This pipeline group requires exactly 7 workers + 1 master
 
-    assert args.dp_group_size * args.pp_group_size == args.world_size
+    assert args.world_size % args.pp_group_size == 0
+
+    args.dp_group_size = args.world_size // args.pp_group_size
 
     if args.rank == -1:
         mp.spawn(run_worker, args=(args.world_size, args,), nprocs=args.world_size, join=True)

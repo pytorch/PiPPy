@@ -20,10 +20,24 @@ from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, Pi
 from pippy.events import EventsContext
 from pippy.microbatch import CustomReducer, TensorChunkSpec
 from pippy.visualizer import events_to_json
-from test.test_commons import tp_transports
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
+
+
+def has_efa() -> bool:
+    try:
+        import subprocess
+        return subprocess.run(["fi_info", "-p", "efa", "-t", "FI_EP_RDM"],
+                              stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL).returncode == 0
+    except FileNotFoundError:
+        return False
+
+
+def tp_transports():
+    return ["shm", "uv"] if has_efa() else None
+
 
 schedules = {
     'FillDrain': PipelineDriverFillDrain,
@@ -66,7 +80,8 @@ def run_master(args, pp_ranks):
     train_data = datasets.MNIST('./data', train=True, download=True, transform=transform)
     valid_data = datasets.MNIST('./data', train=False, transform=transform)
 
-    train_sampler = DistributedSampler(train_data, num_replicas=args.dp_group_size, rank=args.rank, shuffle=False, drop_last=False)
+    train_sampler = DistributedSampler(train_data, num_replicas=args.dp_group_size, rank=args.rank, shuffle=False,
+                                       drop_last=False)
 
     train_dataloader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, sampler=train_sampler)
     valid_dataloader = torch.utils.data.DataLoader(valid_data, batch_size=batch_size)
