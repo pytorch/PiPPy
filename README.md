@@ -414,6 +414,22 @@ As before, we can now call the `driver` object to execute the pipeline; However 
 
 ## Advanced: Pipeline Schedules
 
+Pipeline parallel training of deep neural networks is _bidirectional_ since training requires running both forward- and back-propagation of the network. As a result, multiple items of work may be ready to run on a pipeline stage at a given time. The problem of selecting between these work items is known as _scheduling_, and a specific policy for selecting work-items is known as a _pipeline schedule_.
+
+PiPPy provides both off-the-shelf pipeline schedules as described in the research literature as well as a programmable interface for creating new schedules. The schedules include:
+
+* Fill-Drain. Fill-drain is a schedule that executes all forward microbatches before executing any backward microbatches. This is the "standard" schedule used in GPipe (Huang, 2018). Fill-drain scheduling can be used in PiPPy via the `PipelineDriverFillDrain` driver class. A diagram illustrating the fill-drain schedule is below.
+
+![GPipe Schedule](https://i.imgur.com/eyUc947.png)
+
+* 1F1B (one forward, one backward) is a schedule that provides good hardware utilization as well as limits the amount of memory neeed on a stage. At steady-state, a pipeline stage will alternate between processing forward and backward micro-batches. 1F1B was introduced in its asynchronous form in (Harlap, 2018) and in its synchronous form in (Narayanan, 2021). 1F1B scheduling can be used in PiPPy via the `PipelineDriver1F1B` driver class. A diagram illustrating the 1F1B schedule is below.
+
+![Synchronous 1F1B Schedule](https://i.imgur.com/Voomtcd.png)
+
+* Interleaved 1F1B. Interleaved 1F1B is a variant of 1F1B that divides the program into smaller chunks and assigns multiple chunks per stage in a wrap-around fashion. Interleaving improves pipeline throughput with similar memory characteristics to 1F1B. Interleaved 1F1B was introduced by (Narayanan, 2021). Interleaved 1F1B can be using in PiPPy via the `PipelineDriverInterleaved1F1B` driver class.
+
+![Interleaved 1F1B Schedule](https://i.imgur.com/ujCPZAU.png)
+
 # Future Work
 
 # References
