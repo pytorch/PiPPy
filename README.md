@@ -1,14 +1,38 @@
-# [WIPPy] PiPPy: Pipeline Parallelism for PyTorch
+# [experimental] PiPPy: Pipeline Parallelism for PyTorch
 
-This project is an attempt to build a state-of-the-art automated Pipeline Parallelism system for PyTorch subject to the design considerations brought up in these [RFCs](https://github.com/pytorch/rfcs/pull/32). Some of the main design considerations include:
+[**Why PiPPy?**](#why-pippy)
+| [**Install guide**](#install)
+| [**PiPPy Quickstart**](#pippy-quickstart)
+| [**Future Work**](#future-work)
+| [**References**](#references)
 
-* An eye toward making running PyTorch code under Pipeline Parallelism as seamless as possible; that is, the user should have to make as few changes to their code as possible. In particular, we wish to elide the requirement of existing systems to structure your code as an `nn.Sequential`.
-* First-class support for cross-host pipeline parallelism, as this is where PP is typically used (over slower interconnects). This is currently missing from the torchgpipe-based `torch.distributed.pipeline.sync.Pipe`
-* Composability with other parallelism schemes such as data parallelism or tensor splitting model parallelism (overall, known as "3d parallelism")
+# Why PiPPy?
+
+One of the most important techniques for advancing the state of the art in deep learning is scaling. Common techniques for scaling neural networks include _data parallelism_, _tensor/model parallelism_, and _pipeline parallelism_. In many cases, pipeline parallelism in particular can be an effective technique for scaling, however it is often difficult to implement, requiring intrusive code changes to model code and difficult-to-implement runtime orchestration code. PiPPy aims to provide a toolkit that does said things automatically to allow high-productivity scaling of models.
+
+# What is PiPPy?
+
+The PiPPy project consists of a compiler and runtime stack for automated parallelism and scaling of PyTorch models. Currently, PiPPy focuses on _pipeline parallelism_, a technique in which the code of the model is partitioned and multiple _micro-batches_ execute different parts of the model code concurrently. To learn more about pipeline parallelism, see [this article](https://www.deepspeed.ai/tutorials/pipeline/).
+
+![GPipe Schedule](https://i.imgur.com/eyUc947.png)
+
+PiPPy provides the following features that make pipeline parallelism easier:
+
+* Automatic splitting of model code via `torch.fx`. The goal is for the user to provide model code as-is to the system for parallelization, without having to make heavyweight modifications to make parallelism work.
+* Related to the last point, PiPPY supports non-trivial topologies, including skip connections and tied weights/layers. Pippy provides configurable behavior for tied weights, allowing for transmission across pipeline stages or replication and gradient synchronization.
+* First-class support for cross-host pipeline parallelism, as this is where PP is typically used (over slower interconnects). This is currently missing from the torchgpipe-based `torch.distributed.pipeline.sync.Pipe`.
+* Composability with other parallelism schemes such as data parallelism or tensor splitting model parallelism (overall, known as "3d parallelism"). Currently, pipelining and data parallelism can be composed. Other compositions will be available in the future.
 * Support for pipeline scheduling paradigms, including static schedules like fill-drain (GPipe), 1f1b, interleaved 1f1b and dynamic schedules like lookahead or registers/back-pressure.
-* Support non-trivial topologies, including skip connections and tied weights/layers.
 
-# Quickstart
+For in-depth technical architecture, see [ARCHITECTURE.md](ARCHITECTURE.md).
+
+# Install
+
+PiPPy currently requires the PyTorch nightly release to work. To quickly install PyTorch nightly, run the following command from the same directory as this README:
+
+```
+pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html
+```
 
 To install PiPPy from source, run the following command in the same directory as this README:
 
@@ -22,98 +46,63 @@ To expose PiPPy for development such that changes to this repo are reflected in 
 python setup.py develop
 ```
 
-# Testing Entrypoints
+# PiPPy Quickstart
 
-Testing entrypoints are the following:
+PiPPy consists of two parts: a _compiler_ and a _runtime_. The compiler takes your model code, splits it up, and transforms it into a `Pipe`, which is a wrapper that describes how to execute the model in pipeline parallelism. The runtime executes the `Pipe` in parallel, handling things like micro-batch splitting and gradient propagation/syncing. We will cover the APIs for these concepts in this section.
 
-* `local_test_forward.py` tests forward-only execution of a pipelined model with multiple processes on a single host. It should be launched via `launch_local_test_forward.sh`, which internally uses torchrun to spawn multiple processes and assign them all a unique rank
-* `local_test_forward_backward.py` is similar to `local_test_forward.py` but tests running the loss and gradient computations. There is also a corresponding `launch_local_test_forward_backward.sh`. Note that correctness testing here is not very strict, as there are some numerical differences due to the reduction order of accumulating gradient values. TODO: figure out a more systematic way to fix this: 1) log individual accumulations & compare? 2) test in fp64? 3) Craft the test case in such a way that it does not create grads with values in the lower bits of the mantissa?
+## Splitting a Model with Pipe
 
-# Design and Codebase Roadmap
+To see how we can split a model into a pipeline, let's first take an example trivial neural network:
 
-## Program Capture and Intermediate Representation
+```python
+import torch
 
-`IR.py` defines the `Pipe` class, which is the main intermediate representation used in PiPPy. This intermediate representation consists of a restricted `fx.GraphModule`. In the top level `fx.Graph` representation, the IR is limited to only the following node types:
-  * `placeholder` and `output` nodes to specify overall pipeline inputs and outputs, respectively
-  * `call_module` nodes to represents calls into the pipeline stages
-    * A single call to the `_loss` submodule can also be present to represent the loss computation for training
-  * `call_function` with a target of `operator.getitem`, for unpacking tuple outputs from pipeline stages
-  * `call_function` with a target of `IR.stage_backward` for the purpose of modeling the backward computation of each pipeline stage. This is described later in the section about IR for the backward pass.
-  * `call_function` with a target of `torch.add`, emitted solely for accumulating gradients of values that have multiple uses in the backward pass.
+class MyNetworkBlock(torch.nn.Module):
+    def __init__(self, in_dim, out_dim):
+        super().__init__()
+        self.lin = torch.nn.Linear(in_dim, out_dim)
 
-The top-level `fx.Graph` gives us 1) a topological ordering of pipeline stages and 2) the data dependencies between these pipeline stages. Note that this is more general than existing pipeline APIs, as it supports arbitrary non-local (i.e. skip) connections between stages.
+    def forward(self, x):
+        x = self.lin(x)
+        x = torch.relu(x)
+        return x
 
-We can create IR from existing PyTorch modules using one of several front-ends, exposed as static methods on `Pipe`. `Pipe.from_sequential` takes as argument an instance of `torch.nn.Sequential` and returns a `Pipe` instance that represents the trivial feed-forward nature of that sequential. For example:
 
+class MyNetwork(torch.nn.Module):
+    def __init__(self, in_dim, layer_dims):
+        super().__init__()
+
+        prev_dim = in_dim
+        for i, dim in enumerate(layer_dims):
+            setattr(self, f'layer{i}', MyNetworkBlock(prev_dim, dim))
+            prev_dim = dim
+
+        self.num_layers = len(layer_dims)
+
+    def forward(self, x):
+        for i in range(self.num_layers):
+            x = getattr(self, f'layer{i}')(x)
+
+        return x
+
+mn = MyNetwork(512, [512, 1024, 256])
 ```
-mods = [torch.nn.Linear(512, 512) for _ in range(5)]
-mods += [mods[0]]
-seq = torch.nn.Sequential(*mods)
 
-seq_pipe = Pipe.from_sequential(seq)
+This network is written as free-form Python code; it has not been modified for any specific parallelism technique.
 
-print(seq_pipe.split_gm)
+Let us see our first usage of the `pippy.IR.Pipe` interface:
+
+```python
+from pippy.IR import Pipe
+
+pipe = Pipe.from_tracing(mn)
+print(pipe)
 """
 GraphModule(
-  (submod_0): Linear(in_features=512, out_features=512, bias=True)
-  (submod_1): Linear(in_features=512, out_features=512, bias=True)
-  (submod_2): Linear(in_features=512, out_features=512, bias=True)
-  (submod_3): Linear(in_features=512, out_features=512, bias=True)
-  (submod_4): Linear(in_features=512, out_features=512, bias=True)
-  (submod_5): Linear(in_features=512, out_features=512, bias=True)
-)
-
-
-
-def forward(self, input):
-    input_1 = input
-    _0 = self.submod_0(input_1);  input_1 = None
-    _1 = self.submod_1(_0);  _0 = None
-    _2 = self.submod_2(_1);  _1 = None
-    _3 = self.submod_3(_2);  _2 = None
-    _4 = self.submod_4(_3);  _3 = None
-    _5 = self.submod_5(_4);  _4 = None
-    return _5
-"""
-```
-
-Similarly, we can use `Pipe.from_tracing` to use `torch.fx` tracing to convert an arbitrary `nn.Module` instance to this form. For example:
-
-```
-class ExampleCode(torch.nn.Module):
-  def __init__(self):
-    super().__init__()
-    self.mm_param = torch.nn.Parameter(torch.randn(512, 512))
-    self.mm_param2 = torch.nn.Parameter(torch.randn(512, 512))
-    self.lin = torch.nn.Linear(512, 512)
-
-  def forward(self, x):
-    x = torch.mm(x, self.mm_param)
-    skip_connection = x
-    x = torch.relu(x)
-    pipe_split()
-    x = torch.mm(x, self.mm_param)
-    x = self.lin(x)
-    pipe_split()
-    x = torch.relu(x)
-    x = x + skip_connection
-    x = torch.mm(x, self.mm_param2)
-    x = self.lin(x)
-    return x
-
-ec = ExampleCode()
-ec(torch.randn(50, 512))
-
-ec_pipe = Pipe.from_tracing(ec, MultiUseParameterConfig.TRANSMIT)
-print(ec_pipe.split_gm)
-"""
-GraphModule(
-  (submod_0): GraphModule()
-  (submod_1): GraphModule(
-    (lin): Linear(in_features=512, out_features=512, bias=True)
-  )
-  (submod_2): GraphModule(
-    (lin): Linear(in_features=512, out_features=512, bias=True)
+  (submod_0): GraphModule(
+    (layer0_lin): Linear(in_features=512, out_features=512, bias=True)
+    (layer1_lin): Linear(in_features=512, out_features=1024, bias=True)
+    (layer2_lin): Linear(in_features=1024, out_features=256, bias=True)
   )
 )
 
@@ -121,230 +110,313 @@ GraphModule(
 
 def forward(self, x):
     submod_0 = self.submod_0(x);  x = None
-    getitem_2 = submod_0[2]
-    getitem = submod_0[0]
-    getitem_1 = submod_0[1];  submod_0 = None
-    submod_1 = self.submod_1(getitem, getitem_2);  getitem = getitem_2 = None
-    submod_2 = self.submod_2(submod_1, getitem_1);  submod_1 = getitem_1 = None
-    return submod_2
+    return submod_0
+"""
+print(pipe.split_gm.submod_0)
+"""
+def forward(self, x):
+    layer0_lin = self.layer0_lin(x);  x = None
+    relu = torch.relu(layer0_lin);  layer0_lin = None
+    layer1_lin = self.layer1_lin(relu);  relu = None
+    relu_1 = torch.relu(layer1_lin);  layer1_lin = None
+    layer2_lin = self.layer2_lin(relu_1);  relu_1 = None
+    relu_2 = torch.relu(layer2_lin);  layer2_lin = None
+    return relu_2
 """
 ```
 
-There are a few things to note about the above example:
+So what's going on here? First, `Pipe.from_tracing` uses `torch.fx` symbolic tracing to turn our model into a directed acyclic graph (DAG) representation. Then, it groups together the operations and parameters into _pipeline stages_. Stages are represented as `submod_N` submodules, where `N` is a natural number.
 
-1. We use `IR.pipe_split` to explicitly demarcate within the code where we want pipeline boundaries to be. `from_tracing` will collect all data dependencies across these calls to `pipe_split` and emit corresponding data dependencies in the pipeline graph.
-    * Note that `IR.PipeSplitWrapper` and `IR.annotate_split_points` can be used to unintrusively specify split points at the beginning or end of execution of any Module in the module hierarchy
-2. Note the `skip_connection` value in the original program. `from_tracing` will correctly detect the usage of this value in non-adjacent pipeline stages and emit a connection in the top-level graph to forward this dependency from stage 0 to 2.
-3. Notice that `self.mm_param` is used both in pipeline stage 0 and pipeline stage 1. Since we have specified `MultiUseParameterConfig.TRANSMIT` as the `multi_use_param_spec` argument to `from_tracing`, the system will emit code that will keep `mm_param` resident on stage 0 and transmit that value for use within stage 1. `multi_use_param_spec` can also be specified as a dictionary mapping parameter qualified names to a `MultiUseParameterConfig` value (one of `TRANSMIT` or `REPLICATE`) or it can be left as `None` to specify the default behavior (`TRANSMIT`) for all shared parameters. We will discuss replication in the following section.
+The above code groups together our model's operators and parameters into only one stage, since we have not specified a splitting policy. Let us add a custom splitting policy:
 
+```python
+from pippy.IR import annotate_split_points, PipeSplitWrapper
 
-Multi-use parameters can also be replicated. That is, each pipeline stage that uses a replicated parameter will have its own copy of the parameter and the system will record information about this replication such that the runtime can insert the proper synchronization operations upon update of these parameters. For example, let us rerun the above example with `multi_use_param_spec=MultiUseParameterConfig.REPLICATE`:
+annotate_split_points(mn, {'layer0': PipeSplitWrapper.SplitPoint.END,
+                           'layer1': PipeSplitWrapper.SplitPoint.END})
 
-```
-ec_pipe_replicated = Pipe.from_tracing(ec, MultiUseParameterConfig.REPLICATE)
-print(ec_pipe_replicated.replicated_params)
+pipe = Pipe.from_tracing(mn)
+
+print(' pipe '.center(80, '*'))
+print(pipe)
 """
-[{'submod_0': '__mm_param', 'submod_1': '__mm_param'},
- {'submod_1': 'lin.weight', 'submod_2': 'lin.weight'},
- {'submod_1': 'lin.bias', 'submod_2': 'lin.bias'}]
-"""
-```
-
-Note that the `Pipe` instance has an attribute `replicated_params`, which is a record of all of the parameters that are replicated across pipeline stages. This object is a list of dictionaries. Each dictionary represents a single value that has been replicated across stages. The keys of the dictionary are the qualified name of the pipeline stage submodules that hold copies of this parameter, and the values are the qualified name of the parameter itself within those pipeline stage modules. Note that not only do we see `mm_param` in the above example, but we also see parameter replication from the usage of the `self.lin` module in multiple pipeline stages. `self.lin` is a "leaf module" in `torch.fx` parlance, and since we cannot see into the implementation of a leaf module, we automatically replicate leaf module parameters (note that we could hypothetically emit code to fetch the parameters values from leaf modules and transmit them to use sites, but that will require further development work).
-
-### Aside: Futher Considerations for Program Capture
-
-* `torch.fx` tracing imposes limitations on the classes of programs that can be captured (as described in [Limitations of Symbolic Tracing](https://pytorch.org/docs/stable/fx.html#limitations-of-symbolic-tracing)). Thus, this limits the applicability of the above-described system. However, we can think of several ways to address this:
-    * Convert tracing into a "just-in-time" system, where program capture happens on each invocation, and is specialized to certain parameters like shapes flowing throughout the program. By using ephemeral traces that are transmitted to each worker on each invocation, we can address the limitations of e.g. dynamic control flow. However, we will need to figure out the semantics of parameter placement in this scenario, as moving those around on each invocation will likely be sub-optimal
-      * Note that the obvious drawback here is that program capture happens on each invocation, thus leading to overhead in the latency of the process. Projects like LazyTensor have been trying to address this via dispatch optimizations and pipelining scalar program computation with scalar program computation, but these approaches have proven difficult to achieve in a performant way. We can think of ways to make it so that large subsections of the program are seen as "basic blocks", or "builtin-instructions", analogous to the instructions of a processor. For example, the user could certify that a module and its recursive callees are straightline code, and we can dispatch directly to the pipelined version of those modules. We can also explore techniques of speculative execution + cancellation, speculating that we will enter a pipelined block when we see the prefix of its instructions and stall, cancel, and reissue if our speculation is wrong.
-    * We can formulate pipeline paralellism as a program (program counter, call stack, live heap content) that migrates through multiple devices. Thus, rather than defining semantics for program capture and analysis, we simply need to define runtime semantics for migrating a running coroutine between devices. This may be difficult to implement in existing languages (Python). This could be implemented in TorchScript, but then that would require the program to be admissible to TorchScript's program capture limitations. Maybe we should just make a new language.
-
-
-The above ideas may be candidates for research investigation.
-
-## Intermediate Representation: Loss and backward() Computation
-
-`Pipe.from_sequential` and `Pipe.from_tracing` also take a `loss_fn` argument to specify the loss computation in the training scenario. `loss_fn` can be an `nn.Module` instance or a free function. The module/function should take two positional arguments: the output of the feedforward computation and the `target` values. An example of using this API and the IR it produces can be seen here:
-
-```
-ec_pipe_with_loss = Pipe.from_tracing(ec, loss_fn=mse_loss)
-print(ec_pipe_with_loss.split_gm)
-"""
+************************************* pipe *************************************
 GraphModule(
-  (submod_0): GraphModule()
+  (submod_0): GraphModule(
+    (layer0_mod_lin): Linear(in_features=512, out_features=512, bias=True)
+  )
   (submod_1): GraphModule(
-    (lin): Linear(in_features=512, out_features=512, bias=True)
+    (layer1_mod_lin): Linear(in_features=512, out_features=1024, bias=True)
   )
   (submod_2): GraphModule(
-    (lin): Linear(in_features=512, out_features=512, bias=True)
+    (layer2_lin): Linear(in_features=1024, out_features=256, bias=True)
   )
-  (_loss): MSELoss()
 )
 
 
 
-def forward(self, x, target):
-    submod_0 = self.submod_0(x)
-    getitem_2 = submod_0[2]
-    getitem = submod_0[0]
-    getitem_1 = submod_0[1]
-    submod_1 = self.submod_1(getitem, getitem_2)
-    submod_2 = self.submod_2(submod_1, getitem_1)
-    _loss = self._loss(submod_2, target)
-    stage_backward = __main___stage_backward(stage_output = _loss, output_grads = None, input_values = [submod_2, target]);  target = None
-    getitem_3 = stage_backward[0]
-    getitem_4 = stage_backward[1];  stage_backward = None
-    stage_backward_1 = __main___stage_backward(stage_output = submod_2, output_grads = getitem_3, input_values = [submod_1, getitem_1]);  submod_2 = getitem_3 = getitem_1 = None
-    getitem_5 = stage_backward_1[0]
-    getitem_6 = stage_backward_1[1];  stage_backward_1 = None
-    stage_backward_2 = __main___stage_backward(stage_output = submod_1, output_grads = getitem_5, input_values = [getitem, getitem_2]);  submod_1 = getitem_5 = getitem = getitem_2 = None
-    getitem_7 = stage_backward_2[0]
-    getitem_8 = stage_backward_2[1];  stage_backward_2 = None
-    stage_backward_3 = __main___stage_backward(stage_output = submod_0, output_grads = [getitem_7, getitem_6, getitem_8], input_values = [x]);  submod_0 = getitem_7 = getitem_6 = getitem_8 = x = None
-    return _loss
+def forward(self, x):
+    submod_0 = self.submod_0(x);  x = None
+    submod_1 = self.submod_1(submod_0);  submod_0 = None
+    submod_2 = self.submod_2(submod_1);  submod_1 = None
+    return submod_2
+"""
+
+print(' submod0 '.center(80, '*'))
+print(pipe.split_gm.submod_0)
+"""
+*********************************** submod0 ************************************
+GraphModule(
+  (layer0_mod_lin): Linear(in_features=512, out_features=512, bias=True)
+)
+
+
+
+def forward(self, x):
+    layer0_mod_lin = self.layer0_mod_lin(x);  x = None
+    relu = torch.relu(layer0_mod_lin);  layer0_mod_lin = None
+    return relu
+"""
+
+print(' submod1 '.center(80, '*'))
+print(pipe.split_gm.submod_1)
+"""
+*********************************** submod1 ************************************
+GraphModule(
+  (layer1_mod_lin): Linear(in_features=512, out_features=1024, bias=True)
+)
+
+
+
+def forward(self, relu):
+    layer1_mod_lin = self.layer1_mod_lin(relu);  relu = None
+    relu_1 = torch.relu(layer1_mod_lin);  layer1_mod_lin = None
+    return relu_1
+"""
+
+print(' submod2 '.center(80, '*'))
+print(pipe.split_gm.submod_2)
+"""
+*********************************** submod2 ************************************
+GraphModule(
+  (layer2_lin): Linear(in_features=1024, out_features=256, bias=True)
+)
+
+
+
+def forward(self, relu_1):
+    layer2_lin = self.layer2_lin(relu_1);  relu_1 = None
+    relu = torch.relu(layer2_lin);  layer2_lin = None
+    return relu
 """
 ```
 
-Note the following:
+Our code has now been split into _three_ pipeline stages. We used `annotate_split_points` to specify that the code should be split and the end of `layer0` and `layer1`.
 
-1. When `loss_fn` is specified, an additional positional input (`target`) is added to the signature of the model. During training, the value representing the target label used in loss computation should be passed in as this argument.
-2. The loss value is returned, allowing for e.g. logging of loss values during training.
-3. A simple symbolic automatic differentiation process emits code for computing the gradients of the model training process in a pipelined way. This is described below.
+This covers the basic usage of the `Pipe` API. For more information, see the documentation.
 
-## Symbolic Autodiff
+<!-- (TODO: link to docs when live) -->
 
-When thinking about how to implement backwards() in a pipeline parallel scenario, there are two considerations:
+## Using PipelineDriver for Pipelined Execution
 
+Given the above `Pipe` object, we can use one of the `PipelineDriver` classes to execute our model in a pipelined fashion. First off, let us instantiate a `PipelineExecutorFillDrain` instance:
 
-* In PyTorch autograd, `requires_grad` dictates whether operations record values/functions in the autograd tape. However, this does not compel execution of the backward for those operations.
-* `backward` is only run when a corresponding `backward()` call later in the program initiates gradient computation.
+```python
+# To run a distributed training job, we must launch the script in multiple
+# different processes. We are using `torchrun` to do so in this example.
+# `torchrun` defines two environment variables: `LOCAL_RANK` and `WORLD_SIZE`,
+# which represent the index of this process within the set of processes and
+# the total number of processes, respectively.
+#
+# To learn more about `torchrun`, see
+# https://pytorch.org/docs/stable/elastic/run.html
+import os
+local_rank = int(os.environ["LOCAL_RANK"])
+world_size = int(os.environ['WORLD_SIZE'])
 
+# PiPPy uses the PyTorch RPC interface. To use RPC, we must call `init_rpc`
+# and inform the RPC framework of this process's rank and the total world
+# size. We can directly pass values `torchrun` provided.`
+#
+# To learn more about the PyTorch RPC framework, see
+# https://pytorch.org/docs/stable/rpc.html
+import torch.distributed.rpc as rpc
+rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
 
-Given this, we should think about how these semantics could map onto pipeline parallel execution, especially given that we would like to arbitrarily schedule the forward/backward jobs in the computation (such as in 1f1b scheduling). There are basically two options here:
+# PiPPy relies on the concept of a "driver" process. The driver process
+# should be a single process within the RPC group that instantiates the
+# PipelineDriver and issues commands on that object. The other processes
+# in the RPC group will receive commands from this process and execute
+# the pipeline stages
+if local_rank == 0:
+    # We are going to use the PipelineDriverFillDrain class. This class
+    # provides an interface for executing the `Pipe` in a style similar
+    # to the GPipe fill-drain schedule. To learn more about GPipe and
+    # the fill-drain schedule, see https://arxiv.org/abs/1811.06965
+    from pippy.PipelineDriver import PipelineDriverFillDrain
+    from pippy.microbatch import TensorChunkSpec
 
+    # Pipelining relies on _micro-batching_--that is--the process of
+    # dividing the program's input data into smaller chunks and
+    # feeding those chunks through the pipeline sequentially. Doing
+    # this requires that the data and operations be _separable_, i.e.
+    # there should be at least one dimension along which data can be
+    # split such that the program does not have interactions across
+    # this dimension. PiPPy provides `chunk_spec` arguments for this
+    # purpose, to specify the batch dimension for tensors in each of
+    # the args, kwargs, and outputs. The structure of the `chunk_spec`s
+    # should mirror that of the data type. Here, the program has a
+    # single tensor input and single tensor output, so we specify
+    # a single `TensorChunkSpec` instance indicating dimension 0
+    # for args[0] and the output value.
+    args_chunk_spec = (TensorChunkSpec(0),)
+    kwargs_chunk_spec = {}
+    output_chunk_spec = TensorChunkSpec(0)
 
-1. Emulate the “autograd tracing + just-in-time gradient computation” of Eager mode PyTorch. This may be a bit difficult to do in conjunction with schedules, as the dynamic nature of this type of autograd makes it more difficult to reason about if/when/what is run in autograd or to reference specific forward/backward executions in a schedule
-2. Model `backward` ahead-of-time by emitting stages into the IR. This allows us to schedule all stages uniformly (we don’t need to essentially replicate the autograd machinery in the runtime) and allows us to know what backward stages will be run ahead of time and reference them in the scheduling system.
+    # Finally, we instantiate the PipelineDriver. We pass in the pipe,
+    # chunk specs, and world size, and the constructor will distribute
+    # our code to the processes in the RPC group. `driver` is an object
+    # we can invoke to run the pipeline.
+    driver = PipelineDriverFillDrain(
+        pipe, args_chunk_spec=args_chunk_spec, kwargs_chunk_spec=kwargs_chunk_spec,
+        output_chunk_spec=output_chunk_spec, world_size=world_size)
 
-We elect to implement option (2). We implement this by doing a reverse iteration over the nodes of the `Pipe` module and applying the following rules for each type of node:
+    # <following code goes here>
 
-* *call_module*. For module calls, we want to compute the gradient of each tensor input or module parameter with `requires_grad` with respect to the gradient of each tensor output that `requires_grad`. We can emit a call to a function `stage_backward(output_vals, dout)` that is a wrapper over `autograd.backward` (or autograd.grad). This wrapper handles unpacking/packing collection type inputs/outputs (like a pytree) and delegates to autograd.backward to compute and accumulates gradient values into the .grad attribute for each input and parameter value of this pipeline stage. `stage_backward` returns the gradients of the input values of the pipeline stage.
-    * TODO: For gradient checkpointing, we should wrap the forward() invocation of the forward module with torch.utils.checkpoint. Then we can compute gradients in the same manner (TODO: is this right?)
-    * TODO: is it good enough to dynamically figure out which tensor inputs require grad?
-    * TODO: if the input tensors are values sent over the wire from the remote, do they have any attached grad_fn? If so, do we need to block the gradient somehow? Can we detach?
-    * TODO: how to transmit saved output tensors on the same device without putting them through RPC? i.e. the data dependencies from the forward to the backward phase should just be passing a tensor reference, not going over RPC
-        * Maybe just special-case this in the executor?
-    * TODO: Zach mentioned that it is not always necessary to save the whole output tensor for computing the gradient. e.g. gradient of matmul does not require the output in the formulae for gradient of its inputs. Is there a way to call autograd.backward and only pass in the grad_fns and not the output tensors themselves? ask alban
+rpc.shutdown()
+```
 
-* `call_function` + `operator.getitem`. This is used solely for the purpose of indexing into tuple outputs of stages if a stage has multiple outputs. In the backwards, the corresponding operation should be to rebuild the collection type for the purpose of passing it to `stage_backward`. We need to lazily build these collection types as we iterate in reverse order over the program
-* placeholder - TODO: should we return gradients of pipeline inputs? Does anyone need this?
+Note that our script must now be replicated across multiple workers. For this example, we will use `torchrun` to run multiple processes within a single machine for demonstration purposes. So, if you've named the above code `example.py`, the `torchrun` invocation should look like:
 
-## Runtime
+```
+torchrun --nproc_per_node=3 example.py
+```
 
-`PipelineDriver.py` contains the implementation for a single-driver multiple-follower runtime that interprets the abstract IR described above. The classes contained within this file are the following:
+Note that we have launched 3 processes, as we have 3 pipeline stages.
 
-* `PipelineDriverBase` is the base class that specifies the interface for pipeline runtimes. This abstract class must override and its abstract methods implemented to specify a given pipeline parallel schedule/execution semantics. `PipelineDriverBase` specifies the following methods:
-  * `__init__` takes various configuration parameters for this schedule. `pipe` is the pipelined program to run. `world_size` and `all_ranks` specify the execution environment using parameters that match the `torch.distributed.rpc` rank and world size concepts. `all_ranks` allows you to specify arbitrary ranks to run the pipeline on, otherwise `range(world_size)` is assumed. `single_loss` allows you to specify that losses from all micro-batches should be computed via a single application of the loss function, rather than individual applications for each micro-batch. (Note that `single_loss=True` is not currently implemented). `_debug_mask_minibatches` specifies to send masked versions of the mini-batch through instead of micro-batch slices--this can be used for more stable numerical testing (see [A Note About Correctness Testing])
-  * `run(self, chunks : int, *args, **kwargs)`. This is the main entrypoint for running a mini-batch through the pipeline. `chunks` is the number of chunks (micro-batches) to split the minibatch into. `*args` and `**kwargs` are the input values to the model code (Tensor values should have exactly one batch dimension along which to divide). `batch-dims` specifies--for each `Tensor` input in the same order they appear in `args`-- what the batch dimensions are for each Tensor (if `None`, the 0th dimension is assumed to be the batch dimension for each tensor).
-  * `MicroBatchSplitTensor` is a data structure to represent an input (an element of `args`) that has been split into chunks.
+We can now run the pipeline by using the `PipelineDriver.run` method (make sure to add this code in the `<bracketed>` area above):
 
-The following implementations of `PipelineDriverBase` exist:
-* `PipelineDriverFillDrain` implements a GPipe-style fill-drain schedule.
-  * `run` implements the run interface from `PipelineDriverBase` and will execute a mini-batch of examples by splitting it up into micro-batches, pumping those through the ranks in a fill-drain pipeline manner, and returning the result (or loss value) and computing gradients (if the `Pipe` instance has backwards specified).
-* `PipelineDriver1F1B` implements a 1F1B schedule.
+```python
+    # Run the pipeline with input `x`. Divide the batch into 64 micro-batches
+    # and run them in parallel on the pipeline
+    output = driver.run(64, x)
 
-Implementation details:
+    # Run the original code and get the output for comparison
+    reference_output = mn(x)
 
-* `RemoteInterpreter` splits an input mini-batch into micro-batches and interprets the top-level `Pipe` graph, issuing `invoke` calls to the associated `PipeStageExecutors` to orchestrate execution of the program in a pipelined fashion. `RemoteInterpreter` exposes a custom `run_until` method, which allows you to run the given interpreter until a given predicate is true for the next node to be executed. This allows you to implement schedules by executing subsets of the full pipeline and interleaving the computation from different micro-batches onto the `PipeStageExecutor`.
+    # Compare numerics of pipeline and original model
+    torch.testing.assert_close(output, reference_output)
+```
 
-# UI: Input and Output Chunking Specification and Program Replication
+We can see that we can now execute our model in a pipelined fashion and get the same numeric outputs.
 
-In general, the inputs and outputs to a given PyTorch model/program can be any combination of primitive or collection types (including `torch.Tensor`). Pipelining in DL training relies upon the following two assumptions:
+## Forward vs. Forward-loss-backward
 
-* The program can be split across instructions (i.e. program text) and
-* The program can be split and parallelized across input data, run in parallel, and joined together at the output data
+The above example demonstrated only pipelining the `forward()` computation, for example for the purposes of model evaluation. We can extend the example to include the loss and back-propagation computation for the purposes of model training. Let us replace the code under the `if local_rank == 0:` block in the example:
 
-Regarding the second requirement, we need to define both an API and a splitting semantics to a) confirm the program is splittable this way as well as b) actually do the splitting at runtime.
+```python
+if local_rank == 0:
+    from pippy.PipelineDriver import PipelineDriverFillDrain
+    from pippy.microbatch import TensorChunkSpec
 
-We'll need two components:
+    # LossWrapper is a convenient base class you can use to compose your model
+    # with the desired loss function for the purpose of pipeline parallel training.
+    # Since the loss is executed as part of the pipeline, it cannot reside in the
+    # training loop, so you must embed it like this
+    from pippy.IR import LossWrapper
+    class ModelLossWrapper(LossWrapper):
+        def forward(self, x, target):
+            return self.loss_fn(self.module(x), target)
 
-1. An API specifying how to decompose input values into constituent chunked (or replicated) components. This could be implemented with something like pytree
-2. An inference algorithm to ensure that the program can indeed be split in this way. Some cases where this breaks includes cases like BatchNorm, which has a reduction operation across the batch dimension
-3. An API similar to (1) that specifies how the single output value should be reconstructed from the chunked outputs.
+    # TODO: mean reduction
+    loss_wrapper = ModelLossWrapper(module=mn, loss_fn=torch.nn.MSELoss(reduction='sum'))
 
-# Scheduler Design Notes
+    # Instantiate the `Pipe` similarly to before, but with two differences:
+    #   1) We pass in the `loss_wrapper` module to include the loss in the
+    #      computation
+    #   2) We specify `output_loss_value_spec`. This is a data structure
+    #      that should mimic the structure of the output of LossWrapper
+    #      and has a True value in the position where the loss value will
+    #      be. Since LossWrapper returns just the loss, we just pass True
+    pipe = Pipe.from_tracing(loss_wrapper, output_loss_value_spec=True)
 
-We can examine two types of schedules to extract out the requirements for a general, programmable system for issuing and scheduling computation:
+    # We now have two args: `x` and `target`, so specify batch dimension
+    # for both.
+    args_chunk_spec = (TensorChunkSpec(0), TensorChunkSpec(0))
+    kwargs_chunk_spec = {}
+    # The output is now a `loss` value, which is a scalar tensor.
+    # PiPPy's default is to concatenate outputs, but that will not
+    # work with a scalar tensor. So we use a CustomReducer instead
+    # to merge together the partial loss values.
+    from pippy.microbatch import CustomReducer
+    output_chunk_spec = CustomReducer(0.0, lambda a, b: a + b)
 
-* Synchronous Fill-Drain (aka GPipe[1]) 
+    # Instantiate the driver as usual.
+    driver = PipelineDriverFillDrain(
+        pipe, args_chunk_spec=args_chunk_spec, kwargs_chunk_spec=kwargs_chunk_spec,
+        output_chunk_spec=output_chunk_spec, world_size=world_size)
+```
 
-![GPipe Schedule](https://i.imgur.com/eyUc947.png)
+The comments describe the new components that have been added to enable training. We can print out the new `pipe` to see the loss and backward stages:
 
-* Synchronous 1F1B (aka PipeDream-Flush) (from PipeDream[2] + Megatron 2 paper[3])
+```python
+  print(pipe)
 
-![Synchronous 1F1B Schedule](https://i.imgur.com/Voomtcd.png)
+  """
+  def forward(self, x, target):
+      submod_0 = self.submod_0(x)
+      submod_1 = self.submod_1(submod_0)
+      submod_2 = self.submod_2(submod_1, target)
+      stage_backward = pippy_IR_stage_backward(stage_output = (submod_2,), output_grads = (None,), input_values = [submod_1, target], outputs_with_grads_idxs = [0], stage_info = 'stage_backward for stage %submod_2 : [#users=2] = call_module[target=submod_2](args = (%submod_1, %target), kwargs = {})');  target = None
+      getitem = stage_backward[0]
+      getitem_1 = stage_backward[1];  stage_backward = None
+      getitem_2 = getitem[0]
+      getitem_3 = getitem[1];  getitem = None
+      stage_backward_1 = pippy_IR_stage_backward(stage_output = (submod_1,), output_grads = (getitem_2,), input_values = [submod_0], outputs_with_grads_idxs = [0], stage_info = 'stage_backward_1 for stage %submod_1 : [#users=3] = call_module[target=submod_1](args = (%submod_0,), kwargs = {})');  submod_1 = getitem_2 = None
+      getitem_4 = stage_backward_1[0]
+      getitem_5 = stage_backward_1[1];  stage_backward_1 = None
+      getitem_6 = getitem_4[0];  getitem_4 = None
+      stage_backward_2 = pippy_IR_stage_backward(stage_output = (submod_0,), output_grads = (getitem_6,), input_values = [x], outputs_with_grads_idxs = [0], stage_info = 'stage_backward_2 for stage %submod_0 : [#users=3] = call_module[target=submod_0](args = (%x,), kwargs = {})');  submod_0 = getitem_6 = x = None
+      getitem_7 = stage_backward_2[0]
+      getitem_8 = stage_backward_2[1];  stage_backward_2 = None
+      getitem_9 = getitem_7[0];  getitem_7 = None
+      sync_barrier = pippy_IR_sync_barrier(submod_2, [getitem_1, getitem_5, getitem_8]);  submod_2 = getitem_1 = getitem_5 = getitem_8 = None
+      return sync_barrier
+  """
+```
 
+As before, we can now call the `driver` object to execute the pipeline; However this time, the forward, loss, and backward passes will all be executed:
 
-We can further examine what needs to happen at different stages of the runtime for each strategy. The two stages we'll examine are:
+```python
+    x = torch.randn(512, 512)
+    target = torch.randn(512, 256)
 
-* Partitioning the work and distributing (microbatch, phase) pairs to each of the pipeline stages (in the form of `WorkItem`s)
-* Scheduling `WorkItems` at runtime, subject to the policy specified by a schedule
+    # note the additional `target` argument, as the module we're running is
+    # ModelLossWrapper
+    output = driver.run(64, x, target)
 
+    reference_output = loss_wrapper(x, target)
 
-|                   | *Fill-Drain (GPipe)*        | *Synchronous 1F1B*             |
-| ----------------- | --------------------------- | ------------------------------ |
-| *WorkItem Issue*  | All forward WorkItems, then full mini-batch loss, then all backward WorkItems    | All forward WorkItems, then micro-batch loss, then all backward WorkItems         |
-| *Online Schedule* | Consume and process WorkItems in order. Note that we my want to make the loss computation configurable in terms of whether it happens over the full mini-batch or per-micro-batch.      | Consume forward WorkItems in order until steady state, then alternate forward and backward until drain, then consume backward WorkItems in-order. Note that the last stage must execute the loss computation per-micro-batch |
+    # Compare numerics of pipeline and original model
+    torch.testing.assert_close(output, reference_output)
+```
 
-Given the above, we should implement extension points for both the `RemoteInterpreter` class that issues `WorkItem`s to each stage, as well as the `PipeStageExecutor` class that handles execution of `WorkItem`s at runtime.
+<!-- TODO: check gradients -->
+<!-- TODO: optimizer & LR scheduler -->
 
-Idea: compiler/processor split
-  * Compiler: orders instructions from each micro-batch into some order for consumption by the processor
-  * Processor: configurable execution engine. Mainly can be configured for in-order or out-of-order
-              execution.
+## PiPPy on CUDA
 
-We can organize the schedules along the compiler/processor split:
+<!-- TODO -->
 
-  * Fill-drain: Compiler orders all forward chunks, loss, then all backward. Could either be an in-order
-              processor or an out-of-order processor. In the case of OOO, compiler will emit barrier
-              instruction
-  * 1F1B: Compiler orders chunks in 1f1b order. In-order processor, strict about ordering
-  * Dynamic: Compiler orders chunks in any order. Out-of-order processor with registers/resource
-            limits.
+## PiPPy + Data Parallelism
 
-# A Note About Correctness Testing
+<!-- TODO -->
 
-Note that micro-batch splitting and reconstruction is not guaranteed to be bitwise-equivalent to running the same program on the full batch (see [here](https://pytorch.org/docs/master/notes/numerical_accuracy.html#batched-computations-or-slice-computations)). See also `exps/split_example.py`, which demonstrates this when constant `USE_WHOLE_BATCH` is set to `False`. A proposed way to get around this is, when testing for correctness, is to run the _full batch_ through the network for each micro-batch invocation and slice out the results from the full batch that correspond to each micro-batch, then cat those partial results together. This is demonstrated when `USE_WHOLE_BATCH` is `True`. This should guarantee numerical equivalence during testing while still exercising the micro-batch pipelining machinery.
+## Advanced: Pipeline Schedules
 
-# Training Loop API Considerations
+# Future Work
 
-During the training loop, we should focus on a few important elements:
-
-* Data loader
-* `forward`
-  * This is already trivially handled by the current implementation. `Pipe` handles
-    micro-batch computation of the model in the `forward` execution
-* Loss
-  * There are a few alternatives for API design here:
-    1. We can preserve the training loop as-is and make it so that invoking a loss computation on the output
-       of the forward() computation issues jobs on the last stage to compute the loss. We could use something
-       similar to [DistributedLoss](https://github.com/facebookresearch/fairscale/blob/main/fairscale/experimental/nn/distributed_pipeline/loss.py#L16). An open question is how to represent the output of forward() in such a way
-       that it can represent the forward() output _for all micro-batches_. This might look like a data structure
-       that is a list of RRefs backed by async futures on the pipeline stages. Then, if we intercept computation
-       on this loss object, we would issue `WorkItem`s for each operation for each micro-batch. However, this
-       seems to degenerate down to a full-on tracing/single-coordinator system
-    2. We can make it so that the pipeline API takes the loss as a funciton argument and essentially encapsulates the
-       whole training loop. This is much easier, probably less flaky (in terms of not needing to build a whole tracing
-       mechanism), but is not super Pythonic. It may facilitate implementing async pipeline parallelism in the future
-* `backward`
-  * There are similar considerations for `backward` as there are for `loss`. `backward` is an invocation on the
-    scalar loss value that will need to schedule jobs in the backend.
-* Optimizer
-  * Requirements here are similar to loss and backwards, but the optimizer step happens only once for the
-    whole mini-batch, so it may be the case that this can literally be the same as the normal optimizer
-    (potentially using [DistributedOptimizer](https://pytorch.org/docs/master/distributed.optim.html)).
-
-# Citations
+# References
 
 * Chi-Chung Chen, Chia-Lin Yang, & Hsiang-Yun Cheng (2018). Efficient and Robust Parallel DNN Training through Model Parallelism on Multi-GPU Platform. CoRR, abs/1809.02839.
 * Geng, J., Li, D., & Wang, S. (2019). ElasticPipe: An Efficient and Dynamic Model-Parallel Solution to DNN Training. In Proceedings of the 10th Workshop on Scientific Cloud Computing (pp. 5–9). Association for Computing Machinery.
@@ -361,3 +433,16 @@ During the training loop, we should focus on a few important elements:
 
 ## License
 PiPPy is 3-clause BSD licensed, as found in the LICENSE file.
+
+## Citing PiPPy
+
+If you use PiPPy in your publication, please cite it by using the following BibTeX entry.
+
+```bibtex
+@Misc{pippy2022,
+  author =       {James Reed, Pavel Belevich, Ke Wen},
+  title =        {PiPPy: Pipeline Parallelism for PyTorch},
+  howpublished = {\url{https://github.com/pytorch/PiPPy}},
+  year =         {2022}
+}
+```
