@@ -121,12 +121,12 @@ print(ec_pipe_replicated.replicated_params)
 
 Note that the `Pipe` instance has an attribute `replicated_params`, which is a record of all of the parameters that are replicated across pipeline stages. This object is a list of dictionaries. Each dictionary represents a single value that has been replicated across stages. The keys of the dictionary are the qualified name of the pipeline stage submodules that hold copies of this parameter, and the values are the qualified name of the parameter itself within those pipeline stage modules. Note that not only do we see `mm_param` in the above example, but we also see parameter replication from the usage of the `self.lin` module in multiple pipeline stages. `self.lin` is a "leaf module" in `torch.fx` parlance, and since we cannot see into the implementation of a leaf module, we automatically replicate leaf module parameters (note that we could hypothetically emit code to fetch the parameters values from leaf modules and transmit them to use sites, but that will require further development work).
 
-### Aside: Futher Considerations for Program Capture
+### Aside: Further Considerations for Program Capture
 
 * `torch.fx` tracing imposes limitations on the classes of programs that can be captured (as described in [Limitations of Symbolic Tracing](https://pytorch.org/docs/stable/fx.html#limitations-of-symbolic-tracing)). Thus, this limits the applicability of the above-described system. However, we can think of several ways to address this:
-    * Convert tracing into a "just-in-time" system, where program capture happens on each invocation, and is specialized to certain parameters like shapes flowing throughout the program. By using ephemeral traces that are transmitted to each worker on each invocation, we can address the limitations of e.g. dynamic control flow. However, we will need to figure out the semantics of parameter placement in this scenario, as moving those around on each invocation will likely be sub-optimal
+    * Convert tracing into a "just-in-time" system, where program capture happens on each invocation, and is specialized to certain parameters like shapes flowing throughout the program. By using ephemeral traces that are transmitted to each worker on each invocation, we can address the limitations of e.g. dynamic control flow. However, we will need to figure out the semantics of parameter placement in this scenario, as moving those around on each invocation will likely be suboptimal
       * Note that the obvious drawback here is that program capture happens on each invocation, thus leading to overhead in the latency of the process. Projects like LazyTensor have been trying to address this via dispatch optimizations and pipelining scalar program computation with scalar program computation, but these approaches have proven difficult to achieve in a performant way. We can think of ways to make it so that large subsections of the program are seen as "basic blocks", or "builtin-instructions", analogous to the instructions of a processor. For example, the user could certify that a module and its recursive callees are straightline code, and we can dispatch directly to the pipelined version of those modules. We can also explore techniques of speculative execution + cancellation, speculating that we will enter a pipelined block when we see the prefix of its instructions and stall, cancel, and reissue if our speculation is wrong.
-    * We can formulate pipeline paralellism as a program (program counter, call stack, live heap content) that migrates through multiple devices. Thus, rather than defining semantics for program capture and analysis, we simply need to define runtime semantics for migrating a running coroutine between devices. This may be difficult to implement in existing languages (Python). This could be implemented in TorchScript, but then that would require the program to be admissible to TorchScript's program capture limitations. Maybe we should just make a new language.
+    * We can formulate pipeline parallelism as a program (program counter, call stack, live heap content) that migrates through multiple devices. Thus, rather than defining semantics for program capture and analysis, we simply need to define runtime semantics for migrating a running coroutine between devices. This may be difficult to implement in existing languages (Python). This could be implemented in TorchScript, but then that would require the program to be admissible to TorchScript's program capture limitations. Maybe we should just make a new language.
 
 
 The above ideas may be candidates for research investigation.
@@ -238,7 +238,7 @@ Regarding the second requirement, we need to define both an API and a splitting 
 We'll need two components:
 
 1. An API specifying how to decompose input values into constituent chunked (or replicated) components. This could be implemented with something like pytree
-2. An inference algorithm to ensure that the program can indeed be split in this way. Some cases where this breaks includes cases like BatchNorm, which has a reduction operation across the batch dimension
+2. An inference algorithm to ensure that the program can indeed be split in this way. Some cases where this breaks include cases like BatchNorm, which has a reduction operation across the batch dimension
 3. An API similar to (1) that specifies how the single output value should be reconstructed from the chunked outputs.
 
 # Scheduler Design Notes
@@ -302,7 +302,7 @@ During the training loop, we should focus on a few important elements:
        that is a list of RRefs backed by async futures on the pipeline stages. Then, if we intercept computation
        on this loss object, we would issue `WorkItem`s for each operation for each micro-batch. However, this
        seems to degenerate down to a full-on tracing/single-coordinator system
-    2. We can make it so that the pipeline API takes the loss as a funciton argument and essentially encapsulates the
+    2. We can make it so that the pipeline API takes the loss as a function argument and essentially encapsulates the
        whole training loop. This is much easier, probably less flaky (in terms of not needing to build a whole tracing
        mechanism), but is not super Pythonic. It may facilitate implementing async pipeline parallelism in the future
 * `backward`

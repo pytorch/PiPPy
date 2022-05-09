@@ -48,7 +48,7 @@ python setup.py develop
 
 # PiPPy Quickstart
 
-PiPPy consists of two parts: a _compiler_ and a _runtime_. The compiler takes your model code, splits it up, and transforms it into a `Pipe`, which is a wrapper that describes how to execute the model in pipeline paralleism. The runtime executes the `Pipe` in parallel, handling things like micro-batch splitting and gradient propagation/syncing. We will cover the APIs for these concepts in this section.
+PiPPy consists of two parts: a _compiler_ and a _runtime_. The compiler takes your model code, splits it up, and transforms it into a `Pipe`, which is a wrapper that describes how to execute the model in pipeline parallelism. The runtime executes the `Pipe` in parallel, handling things like micro-batch splitting and gradient propagation/syncing. We will cover the APIs for these concepts in this section.
 
 ## Splitting a Model with Pipe
 
@@ -246,7 +246,7 @@ rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
 # PiPPy relies on the concept of a "driver" process. The driver process
 # should be a single process within the RPC group that instantiates the
 # PipelineDriver and issues commands on that object. The other processes
-# in the RPC group will received commands from this process and execute
+# in the RPC group will receive commands from this process and execute
 # the pipeline stages
 if local_rank == 0:
     # We are going to use the PipelineDriverFillDrain class. This class
