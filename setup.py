@@ -1,6 +1,8 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import distutils.command.clean
+import glob
 import os
+import shutil
 import subprocess
 from typing import Dict
 
