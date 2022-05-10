@@ -777,7 +777,7 @@ class PipelineOptimizer(torch.optim.Optimizer):
         raise NotImplementedError()
 
 
-class PipelineLRScheduler(torch.optim._LRScheduler):
+class PipelineLRScheduler(torch.optim.lr_scheduler._LRScheduler):
     def __init__(self, stage_to_scheds):
         # A dict from stage id to LR schedulers
         self.stage_to_scheds = stage_to_scheds
