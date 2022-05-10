@@ -777,7 +777,7 @@ class PipelineOptimizer(torch.optim.Optimizer):
         raise NotImplementedError()
 
 
-class PipelineLRScheduler:
+class PipelineLRScheduler(torch.optim._LRScheduler):
     def __init__(self, stage_to_scheds):
         # A dict from stage id to LR schedulers
         self.stage_to_scheds = stage_to_scheds
@@ -815,6 +815,35 @@ class PipelineLRScheduler:
         for stage, scheduler in self.stage_to_scheds.items():
             rv[stage] = scheduler.remote().state_dict().to_here()
         return rv
+
+    def load_state_dict(self, stage_state_dict):
+        """Loads the schedulers state.
+        Args:
+            stage_state_dict (dict[int, dict]): per-stage scheduler state. Should be an object returned
+                from a call to :meth:`state_dict`.
+        """
+        futs = []
+        for stage, state_dict in stage_state_dict.items():
+            try:
+                scheduler = self.stage_to_scheds[stage]
+            except KeyError:
+                raise RuntimeError(f'PipelineLRScheduler does not have stage {stage}')
+            futs.append(scheduler.rpc_async().load_state_dict(state_dict))
+
+        _wait_for_all(futs)
+
+    def get_lr(self):
+        # Even in single scheduler setting, get_lr is more of an internal method to be called by step()
+        # See: pytorch/torch/optim/lr_scheduler.py
+        warnings.warn("To get the last learning rate computed by the scheduler, "
+                      "please use `get_last_lr()`.")
+        raise NotImplementedError
+
+    def print_lr(self, is_verbose, group, lr, epoch=None):
+        """Display the current learning rate.
+        """
+        # TODO: implement when we can support param_group
+        raise NotImplementedError
 
 
 class PipelineDriverBase:
