@@ -124,7 +124,7 @@ def run_master(args, pp_ranks):
     pipe_driver.init_data_parallel(dp_group_size=args.dp_group_size, dp_pg_cb=resolve_pg_per_stage)
 
     optimizer = pipe_driver.instantiate_optimizer(optim.Adam, lr=1e-3, betas=(0.9, 0.999), eps=1e-8)
-    lr_sched = pipe_driver.instantiate_lr_scheduler(optim.lr_scheduler.LinearLR, verbose=True)
+    lr_sched = pipe_driver.instantiate_lr_scheduler(optim.lr_scheduler.LinearLR, verbose=VERBOSE)
 
     loaders = {
         "train": train_dataloader,
@@ -169,6 +169,9 @@ def run_master(args, pp_ranks):
 
             if k == "train":
                 lr_sched.step()
+                if VERBOSE:
+                    print(f"Pipe {pp_ranks} last_lr: {lr_sched.get_last_lr()}")
+                    print(f"Pipe {pp_ranks} state_dict: {lr_sched.state_dict()}")
 
     if args.visualize:
         all_events_contexts: EventsContext = reduce(lambda c1, c2: EventsContext().update(c1).update(c2),
