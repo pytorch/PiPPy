@@ -92,6 +92,7 @@ if local_rank == 0:
     # Since the loss is executed as part of the pipeline, it cannot reside in the
     # training loop, so you must embed it like this
     from pippy.IR import LossWrapper
+
     class ModelLossWrapper(LossWrapper):
         def forward(self, x, target):
             return self.loss_fn(self.module(x), target)
@@ -110,14 +111,14 @@ if local_rank == 0:
 
     # We now have two args: `x` and `target`, so specify batch dimension
     # for both.
-    args_chunk_spec = (TensorChunkSpec(0), TensorChunkSpec(0))
-    kwargs_chunk_spec = {}
+    args_chunk_spec : Any = (TensorChunkSpec(0), TensorChunkSpec(0))
+    kwargs_chunk_spec : Any = {}
     # The output is now a `loss` value, which is a scalar tensor.
     # PiPPy's default is to concatenate outputs, but that will not
     # work with a scalar tensor. So we use a CustomReducer instead
     # to merge together the partial loss values.
     from pippy.microbatch import CustomReducer
-    output_chunk_spec = CustomReducer(0.0, lambda a, b: a + b)
+    output_chunk_spec : Any = CustomReducer(0.0, lambda a, b: a + b)
 
     # Instantiate the driver as usual.
     driver = PipelineDriverFillDrain(
@@ -138,13 +139,13 @@ if local_rank == 0:
     x = torch.randn(512, 512)
     target = torch.randn(512, 10)
     for i in range(N_TRAINING_STEPS):
-      optimizer.zero_grad()
-      pipe_loss = driver.run(64, x, target)
-      optimizer.step()
-      lr_scheduler.step()
+        optimizer.zero_grad()
+        pipe_loss = driver.run(64, x, target)
+        optimizer.step()
+        lr_scheduler.step()
 
-      log_info = f' Training step {i}, loss: {pipe_loss}, LR: {lr_scheduler.get_last_lr()} '
-      print(log_info.center(80, '*'))
+        log_info = f' Training step {i}, loss: {pipe_loss}, LR: {lr_scheduler.get_last_lr()} '
+        print(log_info.center(80, '*'))
 
 
     print(' Pipeline parallel model ran successfully! '.center(80, '*'))
