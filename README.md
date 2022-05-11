@@ -410,7 +410,64 @@ As before, we can now call the `driver` object to execute the pipeline; However 
 
 ## PiPPy + Data Parallelism
 
-<!-- TODO -->
+PiPPy supports combination with Distributed Data Parallel (DDP) via the `init_data_parallel` API. Users can create
+multiple pipelines each targeting a distinct subset of ranks. For the same stages of the different pipelines, data
+parallel training is possible as these stages are replica of the same model chunk. The created pipelines can
+collectively call the `init_data_parallel` API, with which PiPPy will create a DDP group for each set of same stages
+across the pipelines. In the backward pass of training, gradient exchange among the same stages will be handled
+automatically.
+
+Here is an example of PiPPy + Distributed Data Parallel:
+
+```python
+# Number of ranks in each pipeline
+pp_group_size = 3
+# Number of pipelines that coordinate in DDP fashion
+dp_group_size = 4
+# The total number of ranks
+world_size = pp_group_size * dp_group_size
+
+# In this example:
+# DP ranks are contiguous rows of size `dp_group_size`
+# PP ranks are non-contiguous columns of size `pp_group_size`
+#         PP ranks
+#             |
+#             v
+# DP ranks -> 0   1   2   3
+#             4   5   6   7
+#             8   9   10  11
+
+# The driver of each pipeline creates and runs the pipeline
+def run_driver(pp_ranks):
+    # Code to create the pipe object
+    # ...
+
+    # Create a PipelineDriver using the pipeline group size and the pipeline ranks given to this driver,
+    # e.g. [0, 4, 8] for driver 0
+    pipe_driver = PipelineDriverFillDrain(pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec,
+                                          pp_group_size, pp_ranks)
+
+    # Create DDP groups for same pipeline stages, across pipelines
+    pipe_driver.init_data_parallel(dp_group_size)
+
+    # Run training combining PiPPy and DDP
+    out = pipe_driver.run(chunks, input, target)
+
+# Initialize the default distributed process group (involving all ranks)
+torch.distributed.init_process_group(backend=backend, rank=rank, world_size=world_size)
+
+# Initialize RPC (involving all ranks)
+rpc.init_rpc(f'worker{rank}', rank=rank, world_size=world_size)
+
+# Assuming each driver process is the first rank in its respective pipeline,
+# then the driver processs are the first `dp_group_size` ranks of the world
+if rank < dp_group_size:
+    # The list of ranks belonging to the pipeline of this driver
+    pp_ranks = [i * dp_group_size + rank for i in range(pp_group_size)]
+    run_driver(pp_ranks)
+
+rpc.shutdown()
+```
 
 ## Advanced: Pipeline Schedules
 
