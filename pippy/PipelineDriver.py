@@ -782,7 +782,7 @@ class PipelineLRScheduler(torch.optim.lr_scheduler._LRScheduler):
         # A dict from stage id to LR schedulers
         self.stage_to_scheds = stage_to_scheds
         self.new_step_called = False
-        self.stage_last_lrs : Dict = {}
+        self.stage_last_lrs = []
 
     def step(self, *args, **kwargs):
         futs = []
@@ -801,8 +801,13 @@ class PipelineLRScheduler(torch.optim.lr_scheduler._LRScheduler):
             return self.stage_last_lrs
 
         # Ask all remote LR schedulers to return new learning rate
-        for stage, scheduler in self.stage_to_scheds.items():
-            self.stage_last_lrs[stage] = scheduler.remote().get_last_lr().to_here()
+        self.stage_last_lrs = []
+        rrefs = []
+        for scheduler in self.stage_to_scheds.values():
+            rrefs.append(scheduler.remote().get_last_lr())
+
+        for rref in rrefs:
+            self.stage_last_lrs.append(rref.to_here())
 
         self.new_step_called = False
         return self.stage_last_lrs
@@ -812,8 +817,13 @@ class PipelineLRScheduler(torch.optim.lr_scheduler._LRScheduler):
         where int is the stage id
         """
         rv : Dict[int, Dict] = {}
+        stage_to_rref : Dict = {}
         for stage, scheduler in self.stage_to_scheds.items():
-            rv[stage] = scheduler.remote().state_dict().to_here()
+            stage_to_rref[stage] = scheduler.remote().state_dict()
+
+        for stage in self.stage_to_scheds.keys():
+            rv[stage] = stage_to_rref[stage].to_here()
+
         return rv
 
     def load_state_dict(self, stage_state_dict):
