@@ -219,7 +219,7 @@ This covers the basic usage of the `Pipe` API. For more information, see the doc
 
 ## Using PipelineDriver for Pipelined Execution
 
-Given the above `Pipe` object, we can use one of the `PipelineDriver` classes to execute our model in a pipelined fashion. First off, let us instantiate a `PipelineExecutorFillDrain` instance:
+Given the above `Pipe` object, we can use one of the `PipelineDriver` classes to execute our model in a pipelined fashion. First off, let us instantiate a `PipelineDriverFillDrain` instance:
 
 ```python
 # To run a distributed training job, we must launch the script in multiple
