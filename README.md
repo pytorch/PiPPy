@@ -286,7 +286,7 @@ if local_rank == 0:
 rpc.shutdown()
 ```
 
-Note that our script must now be replicated across multiple workers. For this example, we will use `torchrun` to run multiple processes within a single machine for demonstration purposes. So, if you've named the above code `example.py`, the `torchrun` invocation should look like:
+Note that our script must now be replicated across multiple workers. For this example, we will use `torchrun` to run multiple processes within a single machine for demonstration purposes. We can collect up all of the code blocks above into a file named [example.py](example.py) and then run it with `torchrun` like so:
 
 ```
 torchrun --nproc_per_node=3 example.py
@@ -297,6 +297,9 @@ Note that we have launched 3 processes, as we have 3 pipeline stages.
 We can now run the pipeline by using the `PipelineDriver.run` method (make sure to add this code in the `<bracketed>` area above):
 
 ```python
+    # Instantiate a random input for testing purposes.
+    x = torch.randn(512, 512)
+
     # Run the pipeline with input `x`. Divide the batch into 64 micro-batches
     # and run them in parallel on the pipeline
     output = driver.run(64, x)
@@ -306,6 +309,8 @@ We can now run the pipeline by using the `PipelineDriver.run` method (make sure 
 
     # Compare numerics of pipeline and original model
     torch.testing.assert_close(output, reference_output)
+
+    print(' Pipeline parallel model ran successfully! '.center(80, '*'))
 ```
 
 We can see that we can now execute our model in a pipelined fashion and get the same numeric outputs.
