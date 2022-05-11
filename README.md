@@ -465,7 +465,7 @@ torch.distributed.init_process_group(backend=backend, rank=rank,
 rpc.init_rpc(f'worker{rank}', rank=rank, world_size=world_size)
 
 # Assuming each driver process is the first rank in its respective pipeline,
-# then the driver processs are the first `dp_group_size` ranks of the world
+# then the driver processes are the first `dp_group_size` ranks of the world
 if rank < dp_group_size:
     # The list of ranks belonging to the pipeline of this driver
     pp_ranks = [i * dp_group_size + rank for i in range(pp_group_size)]
