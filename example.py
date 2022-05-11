@@ -1,4 +1,6 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
+from typing import Any
 
 class MyNetworkBlock(torch.nn.Module):
     def __init__(self, in_dim, out_dim):
@@ -100,9 +102,9 @@ if local_rank == 0:
     # single tensor input and single tensor output, so we specify
     # a single `TensorChunkSpec` instance indicating dimension 0
     # for args[0] and the output value.
-    args_chunk_spec = (TensorChunkSpec(0),)
-    kwargs_chunk_spec = {}
-    output_chunk_spec = TensorChunkSpec(0)
+    args_chunk_spec : Any = (TensorChunkSpec(0),)
+    kwargs_chunk_spec : Any = {}
+    output_chunk_spec : Any = TensorChunkSpec(0)
 
     # Finally, we instantiate the PipelineDriver. We pass in the pipe,
     # chunk specs, and world size, and the constructor will distribute
@@ -125,6 +127,6 @@ if local_rank == 0:
     torch.testing.assert_close(output, reference_output)
 
     print(' Pipeline parallel model ran successfully! '.center(80, '*'))
-    
+
 
 rpc.shutdown()
