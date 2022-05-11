@@ -456,6 +456,7 @@ def run_driver(pp_ranks):
     # Run training combining PiPPy and DDP
     out = pipe_driver.run(chunks, input, target)
 
+
 # Initialize the default distributed process group (involving all ranks)
 torch.distributed.init_process_group(backend=backend, rank=rank,
                                      world_size=world_size)
