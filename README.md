@@ -297,6 +297,9 @@ Note that we have launched 3 processes, as we have 3 pipeline stages.
 We can now run the pipeline by using the `PipelineDriver.run` method (make sure to add this code in the `<bracketed>` area above):
 
 ```python
+    # Instantiate a random input for testing purposes.
+    x = torch.randn(512, 512)
+
     # Run the pipeline with input `x`. Divide the batch into 64 micro-batches
     # and run them in parallel on the pipeline
     output = driver.run(64, x)
