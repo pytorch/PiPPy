@@ -23,12 +23,14 @@ class MyNetwork(torch.nn.Module):
             prev_dim = dim
 
         self.num_layers = len(layer_dims)
+        # 10 output classes
+        self.output_proj = torch.nn.Linear(layer_dims[-1], 10)
 
     def forward(self, x):
         for i in range(self.num_layers):
             x = getattr(self, f'layer{i}')(x)
 
-        return x
+        return self.output_proj(x)
 
 mn = MyNetwork(512, [512, 1024, 256])
 

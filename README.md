@@ -78,12 +78,14 @@ class MyNetwork(torch.nn.Module):
             prev_dim = dim
 
         self.num_layers = len(layer_dims)
+        # 10 output classes
+        self.output_proj = torch.nn.Linear(layer_dims[-1], 10)
 
     def forward(self, x):
         for i in range(self.num_layers):
             x = getattr(self, f'layer{i}')(x)
 
-        return x
+        return self.output_proj(x)
 
 mn = MyNetwork(512, [512, 1024, 256])
 ```
@@ -114,6 +116,15 @@ def forward(self, x):
 """
 print(pipe.split_gm.submod_0)
 """
+GraphModule(
+  (layer0_lin): Linear(in_features=512, out_features=512, bias=True)
+  (layer1_lin): Linear(in_features=512, out_features=1024, bias=True)
+  (layer2_lin): Linear(in_features=1024, out_features=256, bias=True)
+  (output_proj): Linear(in_features=256, out_features=10, bias=True)
+)
+
+
+
 def forward(self, x):
     layer0_lin = self.layer0_lin(x);  x = None
     relu = torch.relu(layer0_lin);  layer0_lin = None
@@ -121,7 +132,8 @@ def forward(self, x):
     relu_1 = torch.relu(layer1_lin);  layer1_lin = None
     layer2_lin = self.layer2_lin(relu_1);  relu_1 = None
     relu_2 = torch.relu(layer2_lin);  layer2_lin = None
-    return relu_2
+    output_proj = self.output_proj(relu_2);  relu_2 = None
+    return output_proj
 """
 ```
 
@@ -150,6 +162,7 @@ GraphModule(
   )
   (submod_2): GraphModule(
     (layer2_lin): Linear(in_features=1024, out_features=256, bias=True)
+    (output_proj): Linear(in_features=256, out_features=10, bias=True)
   )
 )
 
@@ -200,6 +213,7 @@ print(pipe.split_gm.submod_2)
 *********************************** submod2 ************************************
 GraphModule(
   (layer2_lin): Linear(in_features=1024, out_features=256, bias=True)
+  (output_proj): Linear(in_features=256, out_features=10, bias=True)
 )
 
 
@@ -207,7 +221,8 @@ GraphModule(
 def forward(self, relu_1):
     layer2_lin = self.layer2_lin(relu_1);  relu_1 = None
     relu = torch.relu(layer2_lin);  layer2_lin = None
-    return relu
+    output_proj = self.output_proj(relu);  relu = None
+    return output_proj
 """
 ```
 
@@ -400,14 +415,74 @@ As before, we can now call the `driver` object to execute the pipeline; However 
     # ModelLossWrapper
     output = driver.run(64, x, target)
 
+    # NOTE: Backpropagation is run implicitly by `driver.run()` when supplied with
+    # a Pipe with loss computation. You should not run `output.backward()`; PiPPy's
+    # runtime has already done that. This divergence from the PyTorch API exists
+    # because of the distributed nature of pipeline parallelism.
+
     reference_output = loss_wrapper(x, target)
 
     # Compare numerics of pipeline and original model
     torch.testing.assert_close(output, reference_output)
+
+    print(' Pipeline parallel model ran successfully! '.center(80, '*'))
 ```
 
 <!-- TODO: check gradients -->
-<!-- TODO: optimizer & LR scheduler -->
+
+The above code has computed the gradients for the parameters of the model, but has not applied updates to the parameters. We use an `Optimizer` to do this by using the `instantiate_optimizer()` method on the pipeline driver:
+
+```python
+    # Instantiate remote Adam optimizers. `instantiate_optimizer` takes the
+    # optimizer class as the first argument, then additional arguments to that
+    # optimizer. Note that the `parameters` argument is omitted; PiPPy will
+    # populate that value for each pipeline stage for you.
+    optimizer = driver.instantiate_optimizer(torch.optim.Adam)
+    # Also instantiate a learning rate scheduler. Note that the `optimizer` argument is
+    # omitted; PiPPy will populate that argument for each pipeline stage
+    lr_scheduler = driver.instantiate_lr_scheduler(torch.optim.lr_scheduler.LinearLR, total_iters=100)
+
+    N_TRAINING_STEPS = 100
+
+    x = torch.randn(512, 512)
+    target = torch.randn(512, 10)
+    for i in range(N_TRAINING_STEPS):
+      optimizer.zero_grad()
+      pipe_loss = driver.run(64, x, target)
+      optimizer.step()
+      lr_scheduler.step()
+
+      log_info = f' Training step {i}, loss: {pipe_loss}, LR: {lr_scheduler.get_last_lr()} '
+      print(log_info.center(80, '*'))
+
+
+    print(' Pipeline parallel model ran successfully! '.center(80, '*'))
+```
+
+Launching this file [example_train.py](example_train.py) with torchrun similarly as before:
+
+```
+torchrun --nproc_per_node=3 example_train.py
+```
+
+We see the model train, memorizing the 512 examples in our input batch:
+
+```
+***** Training step 0, loss: 5197.943359375, LR: [0.00033999999999999997] ******
+***** Training step 1, loss: 5104.2080078125, LR: [0.0003466666666666666] ******
+**** Training step 2, loss: 5025.17236328125, LR: [0.00035333333333333327] *****
+****** Training step 3, loss: 4940.39453125, LR: [0.0003599999999999999] *******
+***** Training step 4, loss: 4845.97998046875, LR: [0.0003666666666666666] *****
+**** Training step 5, loss: 4742.01220703125, LR: [0.00037333333333333326] *****
+<...>
+**** Training step 94, loss: 16.55620765686035, LR: [0.0009666666666666657] ****
+*** Training step 95, loss: 12.990996360778809, LR: [0.0009733333333333323] ****
+**** Training step 96, loss: 8.712753295898438, LR: [0.000979999999999999] *****
+*** Training step 97, loss: 3.0083038806915283, LR: [0.0009866666666666659] ****
+*** Training step 98, loss: 6.2024617195129395, LR: [0.0009933333333333326] ****
+*** Training step 99, loss: 12.104667663574219, LR: [0.0009999999999999994] ****
+****************** Pipeline parallel model ran successfully! *******************
+```
 
 ## PiPPy on CUDA
 
