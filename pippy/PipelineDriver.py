@@ -777,17 +777,74 @@ class PipelineOptimizer(torch.optim.Optimizer):
         raise NotImplementedError()
 
 
-class PipelineLRScheduler:
-    def __init__(self, remote_lr_schedulers):
-        # A list of LR schedulers each for a stage/optimizer
-        self.remote_lr_schedulers = remote_lr_schedulers
+class PipelineLRScheduler(torch.optim.lr_scheduler._LRScheduler):
+    def __init__(self, stage_to_scheds):
+        # A dict from stage id to LR schedulers
+        self.stage_to_scheds = stage_to_scheds
+        self.new_step_called = False
+        self.last_lr = []
 
     def step(self, *args, **kwargs):
         futs = []
         # Step all remote LR schedulers
-        for scheduler in self.remote_lr_schedulers:
+        for scheduler in self.stage_to_scheds.values():
             futs.append(scheduler.rpc_async().step(*args, **kwargs))
         _wait_for_all(futs)
+        # Mark new step (invalidates last_lr)
+        self.new_step_called = True
+
+    def get_last_lr(self):
+        """ Return last computed learning rate by remote schedulers.
+        """
+        # No need to involve remote schedulers if no new step calls
+        if not self.new_step_called:
+            return self.last_lr
+
+        # Ask LR scheduler of stage 0 to return new learning rate as representation of all stages, because:
+        # (i) we do not support multiple parameter groups yet (neither PipelineOptimizer nor PipelineLRScheduler does),
+        # so there are not param group specific LR's; and
+        # (ii) current LRS implementations do not relies on state within the optimizer, so the LR's of different stages
+        # will not diverge
+        assert self.stage_to_scheds, "No learning rate scheduler"
+        self.last_lr = self.stage_to_scheds[0].remote().get_last_lr().to_here()
+        self.new_step_called = False
+        return self.last_lr
+
+    def state_dict(self):
+        """Returns the state of the remote schedulers as a :class:`dict`
+        """
+        # Ask LR scheduler of stage 0 to return state_dict as representation of all stages, for the same reason as
+        # stated in get_last_lr()
+        rv : Dict = {}
+        assert self.stage_to_scheds, "No learning rate scheduler"
+        rv = self.stage_to_scheds[0].remote().state_dict().to_here()
+        return rv
+
+    def load_state_dict(self, state_dict):
+        """Loads the scheduler state.
+        Args:
+            state_dict (dict): scheduler state. Should be an object returned
+                from a call to :meth:`state_dict`.
+        """
+        futs = []
+        for scheduler in stage_to_scheds.values():
+            futs.append(scheduler.rpc_async().load_state_dict(state_dict))
+
+        _wait_for_all(futs)
+
+    def get_lr(self):
+        # Even in single scheduler setting, get_lr is more of an internal method to be called by step()
+        # See: pytorch/torch/optim/lr_scheduler.py
+        warnings.warn("To get the last learning rate computed by the scheduler, "
+                      "please use `get_last_lr()`.")
+        raise NotImplementedError
+
+    def print_lr(self, is_verbose, group, lr, epoch=None):
+        """Display the current learning rate.
+        """
+        # This is more of an internal method of native scheduler
+        # See: pytorch/torch/optim/lr_scheduler.py
+        raise NotImplementedError
 
 
 class PipelineDriverBase:
@@ -944,14 +1001,14 @@ class PipelineDriverBase:
         if not self.optimizer_inited:
             raise RuntimeError('[root] instantiate_optimizer must be called before instantiate_lr_scheduler')
 
-        remote_lr_scheds = []
+        stage_to_scheds : Dict = {}
         for stage, optim in self.stage_to_optim.items():
             if optim is not None:
                 executor = self.stage_to_executor[stage]
                 remote_lr_sched = executor.remote().instantiate_lr_scheduler(lr_sched_class, *args, **kwargs)
-                remote_lr_scheds.append(remote_lr_sched)
+                stage_to_scheds[stage] = remote_lr_sched
 
-        return PipelineLRScheduler([sched for sched in remote_lr_scheds if sched is not None])
+        return PipelineLRScheduler(stage_to_scheds)
 
     def _sync_replicated_params(self):
         logging.info(f'[root] Synchronizing gradients for {len(self.pipe.replicated_params)} sets of replicated parameters')
