@@ -842,7 +842,8 @@ class PipelineLRScheduler(torch.optim.lr_scheduler._LRScheduler):
     def print_lr(self, is_verbose, group, lr, epoch=None):
         """Display the current learning rate.
         """
-        # TODO: implement when we can support param_group
+        # This is more of an internal method of native scheduler
+        # See: pytorch/torch/optim/lr_scheduler.py
         raise NotImplementedError
 
 
