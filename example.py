@@ -123,6 +123,8 @@ if local_rank == 0:
 
     # Compare numerics of pipeline and original model
     torch.testing.assert_close(output, reference_output)
+
+    print(' Pipeline parallel model ran successfully! '.center(80, '*'))
     
 
 rpc.shutdown()

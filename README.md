@@ -309,6 +309,8 @@ We can now run the pipeline by using the `PipelineDriver.run` method (make sure 
 
     # Compare numerics of pipeline and original model
     torch.testing.assert_close(output, reference_output)
+
+    print(' Pipeline parallel model ran successfully! '.center(80, '*'))
 ```
 
 We can see that we can now execute our model in a pipelined fashion and get the same numeric outputs.
