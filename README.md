@@ -442,20 +442,23 @@ def run_driver(pp_ranks):
     # Code to create the pipe object
     # ...
 
-    # Create a PipelineDriver using the pipeline group size and the pipeline ranks given to this driver,
-    # e.g. [0, 4, 8] for driver 0
-    pipe_driver = PipelineDriverFillDrain(pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec,
+    # Create a PipelineDriver using the pipeline group size and the pipeline
+    # ranks given to this driver, e.g. [0, 4, 8] for driver 0
+    pipe_driver = PipelineDriverFillDrain(pipe, args_chunk_spec,
+                                          kwargs_chunk_spec, output_chunk_spec,
                                           pp_group_size, pp_ranks)
 
     # Create DDP groups for same pipeline stages, across pipelines
-    # `dp_group_size` specifies the number of pipelines expected to collectively make this call
+    # `dp_group_size` specifies the number of pipelines expected to collectively
+    # make this call
     pipe_driver.init_data_parallel(dp_group_size)
 
     # Run training combining PiPPy and DDP
     out = pipe_driver.run(chunks, input, target)
 
 # Initialize the default distributed process group (involving all ranks)
-torch.distributed.init_process_group(backend=backend, rank=rank, world_size=world_size)
+torch.distributed.init_process_group(backend=backend, rank=rank,
+                                     world_size=world_size)
 
 # Initialize RPC (involving all ranks)
 rpc.init_rpc(f'worker{rank}', rank=rank, world_size=world_size)
