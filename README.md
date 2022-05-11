@@ -458,10 +458,12 @@ def run_driver(pp_ranks):
 
 
 # Initialize the default distributed process group (involving all ranks)
+# This is needed for DDP collectives
 torch.distributed.init_process_group(backend=backend, rank=rank,
                                      world_size=world_size)
 
 # Initialize RPC (involving all ranks)
+# This is needed by PiPPy
 rpc.init_rpc(f'worker{rank}', rank=rank, world_size=world_size)
 
 # Assuming each driver process is the first rank in its respective pipeline,
