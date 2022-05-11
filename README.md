@@ -413,9 +413,9 @@ As before, we can now call the `driver` object to execute the pipeline; However 
 PiPPy supports combination with Distributed Data Parallel (DDP) via the `init_data_parallel` API. Users can create
 multiple pipelines each targeting a distinct subset of ranks. For the same stages of the different pipelines, data
 parallel training is possible as these stages are replica of the same model chunk. The created pipelines can
-collectively call the `init_data_parallel` API, with which PiPPy will create a DDP group for each set of same stages
-across the pipelines. In the backward pass of training, gradient exchange among the same stages will be handled
-automatically.
+collectively call the `init_data_parallel` API. PiPPy will then create a DDP group for each stage, across the pipelines.
+In the backward pass of the training, gradients will be exchanged among the same stages of the different pipelines via
+the DDP groups.
 
 Here is an example of PiPPy + Distributed Data Parallel:
 
@@ -448,6 +448,7 @@ def run_driver(pp_ranks):
                                           pp_group_size, pp_ranks)
 
     # Create DDP groups for same pipeline stages, across pipelines
+    # `dp_group_size` specifies the number of pipelines expected to collectively make this call
     pipe_driver.init_data_parallel(dp_group_size)
 
     # Run training combining PiPPy and DDP
