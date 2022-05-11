@@ -286,7 +286,7 @@ if local_rank == 0:
 rpc.shutdown()
 ```
 
-Note that our script must now be replicated across multiple workers. For this example, we will use `torchrun` to run multiple processes within a single machine for demonstration purposes. So, if you've named the above code `example.py`, the `torchrun` invocation should look like:
+Note that our script must now be replicated across multiple workers. For this example, we will use `torchrun` to run multiple processes within a single machine for demonstration purposes. We can collect up all of the code blocks above into a file named [example.py](example.py) and then run it with `torchrun` like so:
 
 ```
 torchrun --nproc_per_node=3 example.py
