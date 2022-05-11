@@ -782,7 +782,7 @@ class PipelineLRScheduler(torch.optim.lr_scheduler._LRScheduler):
         # A dict from stage id to LR schedulers
         self.stage_to_scheds = stage_to_scheds
         self.new_step_called = False
-        self.stage_last_lrs = []
+        self.last_lr = []
 
     def step(self, *args, **kwargs):
         futs = []
@@ -790,7 +790,7 @@ class PipelineLRScheduler(torch.optim.lr_scheduler._LRScheduler):
         for scheduler in self.stage_to_scheds.values():
             futs.append(scheduler.rpc_async().step(*args, **kwargs))
         _wait_for_all(futs)
-        # Mark new step (invalidates stage_last_lrs)
+        # Mark new step (invalidates last_lr)
         self.new_step_called = True
 
     def get_last_lr(self):
@@ -798,46 +798,36 @@ class PipelineLRScheduler(torch.optim.lr_scheduler._LRScheduler):
         """
         # No need to involve remote schedulers if no new step calls
         if not self.new_step_called:
-            return self.stage_last_lrs
+            return self.last_lr
 
-        # Ask all remote LR schedulers to return new learning rate
-        self.stage_last_lrs = []
-        rrefs = []
-        for scheduler in self.stage_to_scheds.values():
-            rrefs.append(scheduler.remote().get_last_lr())
-
-        for rref in rrefs:
-            self.stage_last_lrs.append(rref.to_here())
-
+        # Ask LR scheduler of stage 0 to return new learning rate as representation of all stages, because:
+        # (i) we do not support multiple parameter groups yet (neither PipelineOptimizer nor PipelineLRScheduler does),
+        # so there are not param group specific LR's; and
+        # (ii) current LRS implementations do not relies on state within the optimizer, so the LR's of different stages
+        # will not diverge
+        assert self.stage_to_scheds, "No learning rate scheduler"
+        self.last_lr = self.stage_to_scheds[0].remote().get_last_lr().to_here()
         self.new_step_called = False
-        return self.stage_last_lrs
+        return self.last_lr
 
     def state_dict(self):
-        """Returns the state of the remote schedulers as a :class:`dict[int, dict]`,
-        where int is the stage id
+        """Returns the state of the remote schedulers as a :class:`dict`
         """
-        rv : Dict[int, Dict] = {}
-        stage_to_rref : Dict = {}
-        for stage, scheduler in self.stage_to_scheds.items():
-            stage_to_rref[stage] = scheduler.remote().state_dict()
-
-        for stage in self.stage_to_scheds.keys():
-            rv[stage] = stage_to_rref[stage].to_here()
-
+        # Ask LR scheduler of stage 0 to return state_dict as representation of all stages, for the same reason as
+        # stated in get_last_lr()
+        rv : Dict = {}
+        assert self.stage_to_scheds, "No learning rate scheduler"
+        rv = self.stage_to_scheds[0].remote().state_dict().to_here()
         return rv
 
-    def load_state_dict(self, stage_state_dict):
-        """Loads the schedulers state.
+    def load_state_dict(self, state_dict):
+        """Loads the scheduler state.
         Args:
-            stage_state_dict (dict[int, dict]): per-stage scheduler state. Should be an object returned
+            state_dict (dict): scheduler state. Should be an object returned
                 from a call to :meth:`state_dict`.
         """
         futs = []
-        for stage, state_dict in stage_state_dict.items():
-            try:
-                scheduler = self.stage_to_scheds[stage]
-            except KeyError:
-                raise RuntimeError(f'PipelineLRScheduler does not have stage {stage}')
+        for scheduler in stage_to_scheds.values():
             futs.append(scheduler.rpc_async().load_state_dict(state_dict))
 
         _wait_for_all(futs)
