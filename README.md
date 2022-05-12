@@ -490,6 +490,8 @@ We see the model train, memorizing the 512 examples in our input batch:
 
 ## PiPPy + Data Parallelism
 
+![pippy-ddp](pippy-ddp.svg)
+
 PiPPy supports combination with Distributed Data Parallel (DDP) via the `init_data_parallel` API. Users can create
 multiple pipelines each targeting a distinct subset of ranks. For the same stages of the different pipelines, data
 parallel training is possible as these stages are replicas of the same model chunk. The created pipelines can
