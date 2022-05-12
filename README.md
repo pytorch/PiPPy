@@ -486,7 +486,42 @@ We see the model train, memorizing the 512 examples in our input batch:
 
 ## PiPPy on CUDA
 
-<!-- TODO -->
+When using PiPPy on CUDA devices, it should be noted that the model must be on CUDA device before being passed to PiPPy,
+for example:
+
+```python
+model = MyNetwork()
+# `dev_id` is the GPU index
+model.to(f'cuda:{dev_id}')
+pipe = Pipe.from_tracing(model)
+```
+
+In adition, some backend options need to be passed to RPC initialization. RPC by default uses the TensorPipe backend
+that supports point-to-point communication in an asynchronous manner. Configurations for TensorPipe can be specified
+with a `TensorPipeRpcBackendOptions` object. Here is an example:
+
+```python
+# Create a backend option with 256 threads in the thread-pool used by
+# TensorPipeAgent to execute requests
+options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256)
+
+# Number of GPUs per node
+# (Assuming each node has the same number of GPUs)
+n_devs = torch.cuda.device_count()
+# Local GPU index of this worker within the node
+dev_id = rank % n_devs
+# Set device mappings from this worker to other RPC callees
+for i in range(world_size):
+    options.set_device_map(f"worker{i}", {dev_id: i % n_devs})
+
+# Initialize RPC
+rpc.init_rpc(f'worker{rank}', rank=rank, world_size=world_size,
+             rpc_backend_options=options)
+```
+
+The `set_device_map` call takes two arguments: the first one is the callee worker's name, the second one is a dictionary
+that maps from this worker's device to the callee worker's device. For more details, please refer to the documentation
+of `TensorPipeRpcBackendOptions`.
 
 ## PiPPy + Data Parallelism
 
