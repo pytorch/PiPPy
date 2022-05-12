@@ -113,10 +113,11 @@ if local_rank == 0:
     # for both.
     args_chunk_spec : Any = (TensorChunkSpec(0), TensorChunkSpec(0))
     kwargs_chunk_spec : Any = {}
-    # The output is now a `loss` value, which is a scalar tensor.
+    # The output of our model is now a `loss` value, which is a scalar tensor.
     # PiPPy's default is to concatenate outputs, but that will not
     # work with a scalar tensor. So we use a CustomReducer instead
-    # to merge together the partial loss values.
+    # to merge together the loss values from each microbatch into a
+    # single unified loss.
     from pippy.microbatch import CustomReducer
     output_chunk_spec : Any = CustomReducer(0.0, lambda a, b: a + b)
 
