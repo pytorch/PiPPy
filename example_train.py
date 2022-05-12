@@ -84,51 +84,71 @@ rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
 # in the RPC group will receive commands from this process and execute
 # the pipeline stages
 if local_rank == 0:
-    # We are going to use the PipelineDriverFillDrain class. This class
-    # provides an interface for executing the `Pipe` in a style similar
-    # to the GPipe fill-drain schedule. To learn more about GPipe and
-    # the fill-drain schedule, see https://arxiv.org/abs/1811.06965
     from pippy.PipelineDriver import PipelineDriverFillDrain
     from pippy.microbatch import TensorChunkSpec
 
-    # Pipelining relies on _micro-batching_--that is--the process of
-    # dividing the program's input data into smaller chunks and
-    # feeding those chunks through the pipeline sequentially. Doing
-    # this requires that the data and operations be _separable_, i.e.
-    # there should be at least one dimension along which data can be
-    # split such that the program does not have interactions across
-    # this dimension. PiPPy provides `chunk_spec` arguments for this
-    # purpose, to specify the batch dimension for tensors in each of
-    # the args, kwargs, and outputs. The structure of the `chunk_spec`s
-    # should mirror that of the data type. Here, the program has a
-    # single tensor input and single tensor output, so we specify
-    # a single `TensorChunkSpec` instance indicating dimension 0
-    # for args[0] and the output value.
-    args_chunk_spec : Any = (TensorChunkSpec(0),)
-    kwargs_chunk_spec : Any = {}
-    output_chunk_spec : Any = TensorChunkSpec(0)
+    # LossWrapper is a convenient base class you can use to compose your model
+    # with the desired loss function for the purpose of pipeline parallel training.
+    # Since the loss is executed as part of the pipeline, it cannot reside in the
+    # training loop, so you must embed it like this
+    from pippy.IR import LossWrapper
 
-    # Finally, we instantiate the PipelineDriver. We pass in the pipe,
-    # chunk specs, and world size, and the constructor will distribute
-    # our code to the processes in the RPC group. `driver` is an object
-    # we can invoke to run the pipeline.
+    class ModelLossWrapper(LossWrapper):
+        def forward(self, x, target):
+            return self.loss_fn(self.module(x), target)
+
+    # TODO: mean reduction
+    loss_wrapper = ModelLossWrapper(module=mn, loss_fn=torch.nn.MSELoss(reduction='sum'))
+
+    # Instantiate the `Pipe` similarly to before, but with two differences:
+    #   1) We pass in the `loss_wrapper` module to include the loss in the
+    #      computation
+    #   2) We specify `output_loss_value_spec`. This is a data structure
+    #      that should mimic the structure of the output of LossWrapper
+    #      and has a True value in the position where the loss value will
+    #      be. Since LossWrapper returns just the loss, we just pass True
+    pipe = Pipe.from_tracing(loss_wrapper, output_loss_value_spec=True)
+
+    # We now have two args: `x` and `target`, so specify batch dimension
+    # for both.
+    args_chunk_spec : Any = (TensorChunkSpec(0), TensorChunkSpec(0))
+    kwargs_chunk_spec : Any = {}
+    # The output of our model is now a `loss` value, which is a scalar tensor.
+    # PiPPy's default is to concatenate outputs, but that will not
+    # work with a scalar tensor. So we use a CustomReducer instead
+    # to merge together the loss values from each microbatch into a
+    # single unified loss.
+    from pippy.microbatch import CustomReducer
+    output_chunk_spec : Any = CustomReducer(0.0, lambda a, b: a + b)
+
+    # Instantiate the driver as usual.
     driver = PipelineDriverFillDrain(
         pipe, args_chunk_spec=args_chunk_spec, kwargs_chunk_spec=kwargs_chunk_spec,
         output_chunk_spec=output_chunk_spec, world_size=world_size)
 
+    # Instantiate remote Adam optimizers. `instantiate_optimizer` takes the
+    # optimizer class as the first argument, then additional arguments to that
+    # optimizer. Note that the `parameters` argument is omitted; PiPPy will
+    # populate that value for each pipeline stage for you.
+    optimizer = driver.instantiate_optimizer(torch.optim.Adam)
+    # Also instantiate a learning rate scheduler. Note that the `optimizer` argument is
+    # omitted; PiPPy will populate that argument for each pipeline stage
+    lr_scheduler = driver.instantiate_lr_scheduler(torch.optim.lr_scheduler.LinearLR, total_iters=100)
+
+    N_TRAINING_STEPS = 100
+
     x = torch.randn(512, 512)
+    target = torch.randn(512, 10)
+    for i in range(N_TRAINING_STEPS):
+        optimizer.zero_grad()
+        pipe_loss = driver.run(64, x, target)
+        optimizer.step()
+        lr_scheduler.step()
 
-    # Run the pipeline with input `x`. Divide the batch into 64 micro-batches
-    # and run them in parallel on the pipeline
-    output = driver.run(64, x)
+        log_info = f' Training step {i}, loss: {pipe_loss}, LR: {lr_scheduler.get_last_lr()} '
+        print(log_info.center(80, '*'))
 
-    # Run the original code and get the output for comparison
-    reference_output = mn(x)
-
-    # Compare numerics of pipeline and original model
-    torch.testing.assert_close(output, reference_output)
 
     print(' Pipeline parallel model ran successfully! '.center(80, '*'))
-
 
 rpc.shutdown()
