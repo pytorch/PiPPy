@@ -81,7 +81,7 @@ rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
 # PiPPy relies on the concept of a "driver" process. The driver process
 # should be a single process within the RPC group that instantiates the
 # PipelineDriver and issues commands on that object. The other processes
-# in the RPC group will received commands from this process and execute
+# in the RPC group will receive commands from this process and execute
 # the pipeline stages
 if local_rank == 0:
     from pippy.PipelineDriver import PipelineDriverFillDrain
