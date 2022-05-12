@@ -415,7 +415,7 @@ As before, we can now call the `driver` object to execute the pipeline; However 
 
 ## PiPPy + Data Parallelism
 
-![pippy-ddp-wb](https://user-images.githubusercontent.com/6676466/168120514-ff0e082a-17e2-499a-bb37-d1870b47175d.svg)
+![pippy-ddp](pippy-ddp.svg)
 
 PiPPy supports combination with Distributed Data Parallel (DDP) via the `init_data_parallel` API. Users can create
 multiple pipelines each targeting a distinct subset of ranks. For the same stages of the different pipelines, data
