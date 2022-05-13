@@ -369,6 +369,21 @@ class DetachExecutor(torch.fx.Interpreter):
         return super().call_function(target, args, kwargs)
 
 
+class DirectSerializedGraphModule(torch.fx.GraphModule):
+    def __reduce__(self):
+        """
+        Custom `__reduce__` method for serialization.
+        DO AS I SAY -- NOT AS I DO. This violates the principle that
+        GraphModules serialize via code export & re-tracing. We allow
+        for this here because **PIPE STAGES SHOULD NOT BE PERSISTED
+        TO DISK -- THIS IS ONLY FOR TRANSMISSION VIA RPC**. Persisting
+        these instances to disk will expose internal implementation
+        details of `fx.Graph` and related data structures and is
+        NOT advised.
+        """
+        return object.__reduce__(self)
+
+
 class Pipe(torch.nn.Module):
     def __init__(self, split_gm : torch.fx.GraphModule, qualname_mapping : Dict[str, str],
                  num_stages : int, has_loss_and_backward : bool):
@@ -423,6 +438,17 @@ class Pipe(torch.nn.Module):
         def throw(self, *args, **kwargs):
             raise RuntimeError('To run pipeline locally, invoke the Pipe object directly, not `split_gm`')
         self.split_gm.forward = throw  # type: ignore
+
+        # Make submodules use custom direct-serialized GraphModule
+        i = 0
+        while True:
+            try:
+                name = f'submod_{i}'
+                submod = getattr(self.split_gm, name)
+                submod.__class__ = DirectSerializedGraphModule
+                i += 1
+            except AttributeError:
+                break
 
     def forward(self, *args, **kwargs):
         executor_args = args
