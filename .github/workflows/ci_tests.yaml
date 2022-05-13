@@ -163,6 +163,10 @@ jobs:
       DOCKER_IMAGE: pytorch/manylinux-builder:cuda10.2
       DESIRED_PYTHON: "3.7"
       PIPPY_ROOT: /PiPPy
+      VERBOSE: "0"
+      OMP_NUM_THREADS: "1"
+      REPLICATE: ${{ matrix.replicate }}
+      SCHEDULE: ${{ matrix.schedule }}
 
     steps:
       - uses: actions/checkout@v2
@@ -187,6 +191,10 @@ jobs:
             -e GPU_ARCH_TYPE \
             -e GPU_ARCH_VERSION \
             -e PACKAGE_TYPE \
+            -e VERBOSE \
+            -e OMP_NUM_THREADS \
+            -e REPLICATE \
+            -e SCHEDULE \
             --tty \
             --detach \
             -v "$(pwd):${PIPPY_ROOT}" \
