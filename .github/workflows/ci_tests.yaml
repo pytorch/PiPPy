@@ -163,13 +163,13 @@ jobs:
       DOCKER_IMAGE: pytorch/manylinux-builder:cuda10.2
       DESIRED_PYTHON: "3.7"
       PIPPY_ROOT: /PiPPy
+
     steps:
       - name: Install nvidia driver, nvidia-docker runtime, set GPU_FLAG
         run: |
-          pushd PiPPy
+          pwd
           bash .github/workflows/install_nvidia_utils_linux.sh
           echo "GPU_FLAG=--gpus all" >> "${GITHUB_ENV}"
-          popd
       - name: Pull Docker image
         run: |
           retry () {
