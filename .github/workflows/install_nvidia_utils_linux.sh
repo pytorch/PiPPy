@@ -25,7 +25,7 @@ install_nvidia_driver_amzn2() {
         # groupinstall "Development Tools" has a habit of mismatching kernel headers
         sudo yum install -y "kernel-devel-uname-r == $(uname -r)"
         sudo curl -fsL -o /tmp/nvidia_driver "https://s3.amazonaws.com/ossci-linux/nvidia_driver/$DRIVER_FN"
-        sudo /bin/bash /tmp/nvidia_driver -s --no-drm || (sudo cat /var/log/nvidia-installer.log && false)
+        sudo /bin/bash /tmp/nvidia_driver -s --no-drm || sudo cat /var/log/nvidia-installer.log
         sudo rm -fv /tmp/nvidia_driver
         nvidia-smi
     )
