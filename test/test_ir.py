@@ -284,14 +284,15 @@ class TestIR(unittest.TestCase):
         tracer = CustomTracer()
         pipe = Pipe.from_tracing(fm, tracer=tracer)
 
-        print(type(pipe.split_gm.submod_0))
-
         with tempfile.TemporaryDirectory() as d:
             with open(d + 'tmp.pkl', 'wb') as f:
                 pickle.dump(pipe.split_gm.submod_0, f)
 
             with open(d + 'tmp.pkl', 'rb') as f:
                 loaded = pickle.load(f)
+
+        x = torch.randn(5, 3)
+        torch.testing.assert_close(pipe.split_gm.submod_0(x), loaded(x))
 
     def test_deeply_nested_parameter(self):
         class Nest(torch.nn.Module):

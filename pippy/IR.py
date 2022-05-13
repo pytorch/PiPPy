@@ -369,19 +369,31 @@ class DetachExecutor(torch.fx.Interpreter):
         return super().call_function(target, args, kwargs)
 
 
-class DirectSerializedGraphModule(torch.fx.GraphModule):
-    def __reduce__(self):
-        """
-        Custom `__reduce__` method for serialization.
-        DO AS I SAY -- NOT AS I DO. This violates the principle that
-        GraphModules serialize via code export & re-tracing. We allow
-        for this here because **PIPE STAGES SHOULD NOT BE PERSISTED
-        TO DISK -- THIS IS ONLY FOR TRANSMISSION VIA RPC**. Persisting
-        these instances to disk will expose internal implementation
-        details of `fx.Graph` and related data structures and is
-        NOT advised.
-        """
-        return object.__reduce__(self)
+def _direct_serialization_deserialize(body, nodes):
+    """
+    Custom `__reduce__` method for serialization.
+    DO AS I SAY -- NOT AS I DO. This violates the principle that
+    GraphModules serialize via code export & re-tracing. We allow
+    for this here because **PIPE STAGES SHOULD NOT BE PERSISTED
+    TO DISK -- THIS IS ONLY FOR TRANSMISSION VIA RPC**. Persisting
+    these instances to disk will expose internal implementation
+    details of `fx.Graph` and related data structures and is
+    NOT advised.
+    """
+    class DummyModule(torch.nn.Module):
+        def __init__(self, body):
+            self.__dict__ = body
+
+    graph = torch.fx.Graph()
+
+    for node in nodes:
+        graph.node_copy(node)
+
+    return torch.fx.GraphModule(DummyModule(body), graph)
+
+
+def _direct_serialization_reduce(self):
+    return (_direct_serialization_deserialize, (self.__dict__, list(self.graph.nodes)))
 
 
 class Pipe(torch.nn.Module):
@@ -445,7 +457,7 @@ class Pipe(torch.nn.Module):
             try:
                 name = f'submod_{i}'
                 submod = getattr(self.split_gm, name)
-                submod.__class__ = DirectSerializedGraphModule
+                submod.__class__.__reduce__ = _direct_serialization_reduce
                 i += 1
             except AttributeError:
                 break
