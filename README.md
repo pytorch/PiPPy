@@ -498,7 +498,7 @@ pipe = Pipe.from_tracing(model)
 ```
 
 Note: we are working on supporting meta initialization for cases in which a model's parameters do not fit into the
-memory of one GPU.
+memory of a single GPU.
 
 In adition, some backend options need to be passed to RPC initialization. RPC by default uses the TensorPipe backend
 that supports point-to-point communication in an asynchronous manner. Configurations for TensorPipe can be specified
