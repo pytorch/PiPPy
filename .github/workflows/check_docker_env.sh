@@ -14,6 +14,7 @@ echo "REPLICATE: ${REPLICATE}"
 echo "SCHEDULE: ${SCHEDULE}"
 
 # Install dependencies
+pip3 config set global.progress_bar off
 pip3 install flake8 pytest pytest-cov numpy
 if [ -f requirements.txt ]; then pip3 install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cu102/torch_nightly.html; fi
 
