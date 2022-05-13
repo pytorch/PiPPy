@@ -168,8 +168,6 @@ jobs:
       - uses: actions/checkout@v2
       - name: Install nvidia driver, nvidia-docker runtime, set GPU_FLAG
         run: |
-          pwd
-          ls -aR
           bash .github/workflows/install_nvidia_utils_linux.sh
           echo "GPU_FLAG=--gpus all" >> "${GITHUB_ENV}"
       - name: Pull Docker image
@@ -196,6 +194,7 @@ jobs:
             "${DOCKER_IMAGE}"
           )
           docker exec -t -w "${PIPPY_ROOT}" "${container_name}" bash -c "nvidia-smi"
+          docker exec -t -w "${PIPPY_ROOT}" "${container_name}" bash -c "bash .github/workflows/check_docker_env.sh"
       - name: Kill containers, clean up images
         if: always()
         run: |
