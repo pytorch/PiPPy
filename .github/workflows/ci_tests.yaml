@@ -168,6 +168,7 @@ jobs:
       - name: Install nvidia driver, nvidia-docker runtime, set GPU_FLAG
         run: |
           pwd
+          ls -aR
           bash .github/workflows/install_nvidia_utils_linux.sh
           echo "GPU_FLAG=--gpus all" >> "${GITHUB_ENV}"
       - name: Pull Docker image
