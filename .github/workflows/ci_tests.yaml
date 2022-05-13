@@ -165,6 +165,7 @@ jobs:
       PIPPY_ROOT: /PiPPy
 
     steps:
+      - uses: actions/checkout@v2
       - name: Install nvidia driver, nvidia-docker runtime, set GPU_FLAG
         run: |
           pwd
