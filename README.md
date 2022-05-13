@@ -5,6 +5,8 @@
 | [**PiPPy Quickstart**](#pippy-quickstart)
 | [**Future Work**](#future-work)
 | [**References**](#references)
+| [**License**](#license)
+| [**Citing PiPPy**](#citing-pippy)
 
 # Why PiPPy?
 
