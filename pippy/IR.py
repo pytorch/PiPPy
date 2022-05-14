@@ -387,8 +387,9 @@ def _direct_serialization_deserialize(body, nodes):
 
     graph = torch.fx.Graph()
 
+    env = {}
     for node in nodes:
-        graph.node_copy(node)
+        env[node] = graph.node_copy(node, lambda n: env[n])
 
     dummy = DummyModule(body)
 
