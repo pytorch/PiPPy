@@ -298,6 +298,25 @@ class TestIR(unittest.TestCase):
         x = torch.randn(5, 3)
         torch.testing.assert_close(pipe.split_gm.submod_0(x), loaded(x))
 
+    def test_direct_serialization_recursion_depth(self):
+        class LomgBoi(torch.nn.Module):
+            def forward(self, x):
+                for _ in range(1000):
+                    x = torch.sigmoid(x)
+                return x
+        lb = LomgBoi()
+
+        pipe = Pipe.from_tracing(lb)
+        with tempfile.TemporaryDirectory() as d:
+            with open(d + 'tmp.pkl', 'wb') as f:
+                pickle.dump(pipe.split_gm.submod_0, f)
+
+            with open(d + 'tmp.pkl', 'rb') as f:
+                loaded = pickle.load(f)
+
+        x = torch.randn(5, 3)
+        torch.testing.assert_close(pipe.split_gm.submod_0(x), loaded(x))
+
     def test_deeply_nested_parameter(self):
         class Nest(torch.nn.Module):
             def __init__(self):

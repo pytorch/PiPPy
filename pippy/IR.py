@@ -2,7 +2,7 @@
 import copy
 import operator
 from enum import Enum
-from typing import Dict, List, Optional, Tuple, Union, cast
+from typing import Dict, List, NamedTuple, Optional, Tuple, Union, cast
 
 import torch
 import torch.fx
@@ -369,6 +369,44 @@ class DetachExecutor(torch.fx.Interpreter):
         return super().call_function(target, args, kwargs)
 
 
+class _NodeReference:
+    def __init__(self, name):
+        self.name = name
+
+    name : str
+
+class _LinearNodeList:
+    def __init__(self, node_list):
+        self.serialize_node_list = []
+        for node in node_list:
+            node_args = torch.fx.node.map_arg(node.args, lambda n: _NodeReference(n.name))
+            node_kwargs = torch.fx.node.map_arg(node.kwargs, lambda n: _NodeReference(n.name))
+            serialize_node = torch.fx.Node(graph=None, name=node.name, op=node.op, target=node.target, args=node_args,
+                                           kwargs=node_kwargs, return_type=node.type)
+            serialize_node.meta = copy.copy(node.meta)
+            self.serialize_node_list.append(serialize_node)
+
+    def to_graph(self):
+        graph = torch.fx.Graph()
+
+        ref_str_to_node : Dict[str, torch.fx.Node] = {}
+        
+        def ref_to_node(arg):
+            if isinstance(arg, _NodeReference):
+                return ref_str_to_node[arg.name]
+            else:
+                return arg
+
+        for node in self.serialize_node_list:
+            node_args = torch.fx.node.map_aggregate(node.args, ref_to_node)
+            node_kwargs = torch.fx.node.map_aggregate(node.kwargs, ref_to_node)
+            deser_node = graph.create_node(op=node.op, target=node.target, args=node_args,
+                                           kwargs=node_kwargs, name=node.name, type_expr=node.type)
+            ref_str_to_node[node.name] = deser_node
+
+        return graph
+
+
 def _direct_serialization_deserialize(body, nodes):
     """
     Custom `__reduce__` method for serialization.
@@ -385,19 +423,15 @@ def _direct_serialization_deserialize(body, nodes):
             super().__init__()
             self.__dict__.update(body)
 
-    graph = torch.fx.Graph()
-
-    env = {}
-    for node in nodes:
-        env[node] = graph.node_copy(node, lambda n: env[n])
-
     dummy = DummyModule(body)
 
-    return torch.fx.GraphModule(dummy, graph)
+    return torch.fx.GraphModule(dummy, nodes.to_graph())
 
 
 def _direct_serialization_reduce(self):
-    return (_direct_serialization_deserialize, (dict(self.__dict__), list(self.graph.nodes)))
+    serialization_dict = dict(self.__dict__)
+    serialization_dict.pop('_graph')
+    return (_direct_serialization_deserialize, (serialization_dict, _LinearNodeList(self.graph.nodes)))
 
 
 class Pipe(torch.nn.Module):
