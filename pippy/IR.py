@@ -369,6 +369,37 @@ class DetachExecutor(torch.fx.Interpreter):
         return super().call_function(target, args, kwargs)
 
 
+def _direct_serialization_deserialize(body, nodes):
+    """
+    Custom `__reduce__` method for serialization.
+    DO AS I SAY -- NOT AS I DO. This violates the principle that
+    GraphModules serialize via code export & re-tracing. We allow
+    for this here because **PIPE STAGES SHOULD NOT BE PERSISTED
+    TO DISK -- THIS IS ONLY FOR TRANSMISSION VIA RPC**. Persisting
+    these instances to disk will expose internal implementation
+    details of `fx.Graph` and related data structures and is
+    NOT advised.
+    """
+    class DummyModule(torch.nn.Module):
+        def __init__(self, body):
+            super().__init__()
+            self.__dict__.update(body)
+
+    graph = torch.fx.Graph()
+
+    env = {}
+    for node in nodes:
+        env[node] = graph.node_copy(node, lambda n: env[n])
+
+    dummy = DummyModule(body)
+
+    return torch.fx.GraphModule(dummy, graph)
+
+
+def _direct_serialization_reduce(self):
+    return (_direct_serialization_deserialize, (dict(self.__dict__), list(self.graph.nodes)))
+
+
 class Pipe(torch.nn.Module):
     def __init__(self, split_gm : torch.fx.GraphModule, qualname_mapping : Dict[str, str],
                  num_stages : int, has_loss_and_backward : bool):
@@ -423,6 +454,17 @@ class Pipe(torch.nn.Module):
         def throw(self, *args, **kwargs):
             raise RuntimeError('To run pipeline locally, invoke the Pipe object directly, not `split_gm`')
         self.split_gm.forward = throw  # type: ignore
+
+        # Make submodules use custom direct-serialized GraphModule
+        i = 0
+        while True:
+            try:
+                name = f'submod_{i}'
+                submod = getattr(self.split_gm, name)
+                submod.__class__.__reduce__ = _direct_serialization_reduce
+                i += 1
+            except AttributeError:
+                break
 
     def forward(self, *args, **kwargs):
         executor_args = args

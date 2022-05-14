@@ -1,11 +1,19 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-import torch
 import copy
+import pickle
+import tempfile
+import torch
 import unittest
 from typing import NamedTuple
 
 from pippy.IR import Pipe, PipeSequential, TrivialLossWrapper, pipe_split, MultiUseParameterConfig, annotate_split_points, PipeSplitWrapper, _null_coalesce_accumulate
 from pippy.microbatch import TensorChunkSpec, split_args_kwargs_into_chunks, merge_chunks
+
+import torch.fx
+
+@torch.fx.wrap
+def arange_wrapper(*args, **kwargs):
+    return torch.arange(*args, **kwargs)
 
 class ExampleCode(torch.nn.Module):
     def __init__(self):
@@ -256,6 +264,39 @@ class TestIR(unittest.TestCase):
             k_ref = pipe.remap_qualname(k_test)
             v_ref = ref_grads[k_ref]
             torch.testing.assert_allclose(v_test, v_ref)
+
+    def test_custom_tracer_serialization(self):
+        class CustomTracer(torch.fx.Tracer):
+            def trace(self, root, concrete_args=None):
+                rv = super().trace(root, concrete_args)
+                for node in rv.nodes:
+                    if node.target == arange_wrapper:
+                        node.target = torch.arange
+                        node.meta.clear()
+                return rv
+
+        class FooMod(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.param = torch.nn.Parameter(torch.randn(1))
+
+            def forward(self, x):
+                return x + arange_wrapper(x.shape[-1]) + 1 + torch.zeros(1)
+
+        fm = FooMod()
+
+        tracer = CustomTracer()
+        pipe = Pipe.from_tracing(fm, tracer=tracer)
+
+        with tempfile.TemporaryDirectory() as d:
+            with open(d + 'tmp.pkl', 'wb') as f:
+                pickle.dump(pipe.split_gm.submod_0, f)
+
+            with open(d + 'tmp.pkl', 'rb') as f:
+                loaded = pickle.load(f)
+
+        x = torch.randn(5, 3)
+        torch.testing.assert_close(pipe.split_gm.submod_0(x), loaded(x))
 
     def test_deeply_nested_parameter(self):
         class Nest(torch.nn.Module):
