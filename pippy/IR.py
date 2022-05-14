@@ -2,7 +2,7 @@
 import copy
 import operator
 from enum import Enum
-from typing import Dict, List, NamedTuple, Optional, Tuple, Union, cast
+from typing import Dict, List, Optional, Tuple, Union, cast
 
 import torch
 import torch.fx
@@ -390,7 +390,7 @@ class _LinearNodeList:
         graph = torch.fx.Graph()
 
         ref_str_to_node : Dict[str, torch.fx.Node] = {}
-        
+
         def ref_to_node(arg):
             if isinstance(arg, _NodeReference):
                 return ref_str_to_node[arg.name]
