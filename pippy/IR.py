@@ -382,18 +382,21 @@ def _direct_serialization_deserialize(body, nodes):
     """
     class DummyModule(torch.nn.Module):
         def __init__(self, body):
-            self.__dict__ = body
+            super().__init__()
+            self.__dict__.update(body)
 
     graph = torch.fx.Graph()
 
     for node in nodes:
         graph.node_copy(node)
 
-    return torch.fx.GraphModule(DummyModule(body), graph)
+    dummy = DummyModule(body)
+
+    return torch.fx.GraphModule(dummy, graph)
 
 
 def _direct_serialization_reduce(self):
-    return (_direct_serialization_deserialize, (self.__dict__, list(self.graph.nodes)))
+    return (_direct_serialization_deserialize, (dict(self.__dict__), list(self.graph.nodes)))
 
 
 class Pipe(torch.nn.Module):

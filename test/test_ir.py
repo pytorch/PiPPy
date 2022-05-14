@@ -276,8 +276,12 @@ class TestIR(unittest.TestCase):
                 return rv
 
         class FooMod(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.param = torch.nn.Parameter(torch.randn(1))
+
             def forward(self, x):
-                return x + arange_wrapper(x.shape[-1])
+                return x + arange_wrapper(x.shape[-1]) + 1 + torch.zeros(1)
 
         fm = FooMod()
 
