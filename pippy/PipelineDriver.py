@@ -827,7 +827,7 @@ class PipelineLRScheduler(torch.optim.lr_scheduler._LRScheduler):
                 from a call to :meth:`state_dict`.
         """
         futs = []
-        for scheduler in stage_to_scheds.values():
+        for scheduler in self.stage_to_scheds.values():
             futs.append(scheduler.rpc_async().load_state_dict(state_dict))
 
         _wait_for_all(futs)
