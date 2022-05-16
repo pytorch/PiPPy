@@ -94,7 +94,8 @@ def run_master(args):
                                                                checkpoint=bool(args.checkpoint))
 
     # # Warm up and correctness runs
-    out = pipe_driver.run(5, bert_input)
+    pipe_driver.chunks = 5
+    out = pipe_driver(bert_input)
     ref_out = bert_pipe(bert_input)
 
     if CHECK_NUMERIC_EQUIVALENCE:
@@ -106,7 +107,8 @@ def run_master(args):
     # # Profiling runs
     with torch.autograd.profiler_legacy.profile(enabled=PROFILING_ENABLED) as prof:
         pipe_driver._debug_mask_minibatches = False
-        out = pipe_driver.run(5, bert_input)
+        pipe_driver.chunks = 5
+        out = pipe_driver(bert_input)
         ref_out = bert_pipe(bert_input)
         print(
             f'profiling run completed {torch.sum(out["last_hidden_state"])} ref {torch.sum(ref_out["last_hidden_state"])}')

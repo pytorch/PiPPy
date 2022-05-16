@@ -320,7 +320,8 @@ We can now run the pipeline by using the `PipelineDriver.run` method (make sure 
 
     # Run the pipeline with input `x`. Divide the batch into 64 micro-batches
     # and run them in parallel on the pipeline
-    output = driver.run(64, x)
+    driver.chunks = 64
+    output = driver(x)
 
     # Run the original code and get the output for comparison
     reference_output = mn(x)
@@ -416,9 +417,10 @@ As before, we can now call the `driver` object to execute the pipeline; However 
 
     # note the additional `target` argument, as the module we're running is
     # ModelLossWrapper
-    output = driver.run(64, x, target)
+    driver.chunks = 64
+    output = driver(x, target)
 
-    # NOTE: Backpropagation is run implicitly by `driver.run()` when supplied with
+    # NOTE: Backpropagation is run implicitly by `driver.forward()` when supplied with
     # a Pipe with loss computation. You should not run `output.backward()`; PiPPy's
     # runtime has already done that. This divergence from the PyTorch API exists
     # because of the distributed nature of pipeline parallelism.
@@ -449,9 +451,10 @@ The above code has computed the gradients for the parameters of the model, but h
 
     x = torch.randn(512, 512)
     target = torch.randn(512, 10)
+    driver.chunks = 64
     for i in range(N_TRAINING_STEPS):
       optimizer.zero_grad()
-      pipe_loss = driver.run(64, x, target)
+      pipe_loss = driver(x, target)
       optimizer.step()
       lr_scheduler.step()
 
@@ -576,7 +579,8 @@ def run_driver(pp_ranks):
     pipe_driver.init_data_parallel(dp_group_size)
 
     # Run training combining PiPPy and DDP
-    out = pipe_driver.run(chunks, input, target)
+    pipe_driver.chunks = chunks
+    out = pipe_driver(input, target)
 
 
 # Initialize the default distributed process group (involving all ranks)

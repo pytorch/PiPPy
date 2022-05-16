@@ -120,7 +120,8 @@ if local_rank == 0:
 
     # Run the pipeline with input `x`. Divide the batch into 64 micro-batches
     # and run them in parallel on the pipeline
-    output = driver.run(64, x)
+    driver.chunks = 64
+    output = driver(x)
 
     # Run the original code and get the output for comparison
     reference_output = mn(x)

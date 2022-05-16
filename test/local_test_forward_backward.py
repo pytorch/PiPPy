@@ -134,7 +134,8 @@ def run_master(args):
     target = torch.randn(bs, d_hid, device=args.device)
 
     # TODO: distributed optimizer
-    out = pipe_driver.run(CHUNKS, ec_input, target)
+    pipe_driver.chunks = CHUNKS
+    out = pipe_driver(ec_input, target)
 
     all_grad_qualnames = {k: None for k, v in ec_pipe.named_parameters()}
 
@@ -231,7 +232,8 @@ def run_master(args):
     # # # Profiling runs
     # with torch.autograd.profiler_legacy.profile(enabled=PROFILING_ENABLED) as prof:
     #     pipe_driver._debug_mask_minibatches = False
-    #     out = pipe_driver.run(CHUNKS, ec_input, target)
+    #     pipe_driver.chunks = CHUNKS
+    #     out = pipe_driver(ec_input, target)
     #     ref_out = ec_pipe.split_gm(ec_input, target)
     #     print(f'profiling run completed {torch.sum(ref_out)} ref {torch.sum(ref_out)}')
     # if PROFILING_ENABLED:

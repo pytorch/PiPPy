@@ -188,7 +188,8 @@ def run_master(args):
     pipe_visualized_filename = "pipe_visualized.json"
     batches_events_contexts = []
     for i in range(batches):
-        pipe_driver.run(chunks, ec_input, target)
+        pipe_driver.chunks = chunks
+        pipe_driver(ec_input, target)
         batches_events_contexts.append(pipe_driver.retrieve_events())
 
     # first: save file
