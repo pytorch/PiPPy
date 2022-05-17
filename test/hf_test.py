@@ -255,6 +255,10 @@ for _model_cls in fx._SUPPORTED_MODELS:
             if model_cls in [SwinForMaskedImageModeling, SwinModel]:
                 self.skipTest('Need to support SWIN models')
 
+            # TODO: support ViT models
+            if model_cls in [ViTForMaskedImageModeling, ViTModel]:
+                self.skipTest('Need to support ViT models')
+
             model, splitter = generate_hf_model(model_cls)
 
             submodules_cnt = splitter(model)
@@ -319,6 +323,14 @@ for _model_cls in fx._SUPPORTED_MODELS:
             if model_cls in [MegatronBertForNextSentencePrediction, BertForNextSentencePrediction,
                              MobileBertForNextSentencePrediction]:
                 self.skipTest('Need to fix handling of kwargs')
+
+            # TODO: support SWIN models
+            if model_cls in [SwinForMaskedImageModeling, SwinModel]:
+                self.skipTest('Need to support SWIN models')
+
+            # TODO: support ViT models
+            if model_cls in [ViTForMaskedImageModeling, ViTModel]:
+                self.skipTest('Need to support ViT models')
 
             model, splitter = generate_hf_model(model_cls)
             model.eval() # Disable nondeterminism for testing
