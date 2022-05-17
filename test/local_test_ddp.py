@@ -124,7 +124,8 @@ def run_master(args, pp_ranks):
     target = torch.randn(bs, d_hid, device=args.device)
 
     # TODO: distributed optimizer
-    out = pipe_driver.run(CHUNKS, input, target)
+    pipe_driver.chunks = CHUNKS
+    out = pipe_driver(input, target)
 
     print(f'Rank {args.rank} got loss value {out}')
 

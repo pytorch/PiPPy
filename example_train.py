@@ -141,7 +141,8 @@ if local_rank == 0:
     target = torch.randn(512, 10)
     for i in range(N_TRAINING_STEPS):
         optimizer.zero_grad()
-        pipe_loss = driver.run(64, x, target)
+        driver.chunks = 64
+        pipe_loss = driver(x, target)
         optimizer.step()
         lr_scheduler.step()
 

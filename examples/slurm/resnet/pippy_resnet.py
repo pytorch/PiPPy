@@ -131,7 +131,8 @@ def run_master(args):
                 if k == "train":
                     pipe_driver.train()
                     optimizer.zero_grad()
-                    outp, _ = pipe_driver.run(chunks, x_batch, y_batch)
+                    pipe_driver.chunks = chunks
+                    outp, _ = pipe_driver(x_batch, y_batch)
                     preds = outp.argmax(-1)
                     correct = (preds == y_batch).sum()
                     all = len(y_batch)
@@ -141,7 +142,8 @@ def run_master(args):
                 else:
                     pipe_driver.eval()
                     with torch.no_grad():
-                        outp, _ = pipe_driver.run(chunks, x_batch, y_batch)
+                        pipe_driver.chunks = chunks
+                        outp, _ = pipe_driver(x_batch, y_batch)
                         preds = outp.argmax(-1)
                         correct = (preds == y_batch).sum()
                         all = len(y_batch)

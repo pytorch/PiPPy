@@ -209,7 +209,8 @@ def run_master(args, pp_ranks):
     pipe_visualized_filename = f"{this_file_name}_visualized_{args.rank}.json"
     batches_events_contexts = []
     for i in range(args.batches):
-        pipe_driver.run(chunks, **t5_input_dict)
+        pipe_driver.chunks = chunks
+        pipe_driver(**t5_input_dict)
         if args.visualize:
             batches_events_contexts.append(pipe_driver.retrieve_events())
 
