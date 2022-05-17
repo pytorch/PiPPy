@@ -166,11 +166,12 @@ jobs:
       - name: Clean up previous CUDA driver installations
         shell: bash
         run: |
+          set -x
           yum list installed | grep nvidia ||
           yum list installed | grep cuda ||
           sudo yum remove -y cuda ||
           sudo yum remove -y cuda-drivers ||
-          sudo yum remove -y nvidia-driver-latest-dkms || true
+          sudo yum remove -y "*nvidia*" || true
       - name: Install nvidia driver, nvidia-docker runtime, set GPU_FLAG
         run: |
           bash .github/workflows/install_nvidia_utils_linux.sh || true
