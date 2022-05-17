@@ -154,14 +154,7 @@ jobs:
         replicate: ["0", "1"]
         schedule: ["FillDrain", "1F1B"]
     env:
-      PACKAGE_TYPE: manywheel
-      # TODO: This is a legacy variable that we eventually want to get rid of in
-      #       favor of GPU_ARCH_VERSION
-      DESIRED_CUDA: cu102
-      GPU_ARCH_VERSION: 10.2
-      GPU_ARCH_TYPE: cuda
-      DOCKER_IMAGE: pytorch/manylinux-builder:cuda10.2
-      DESIRED_PYTHON: "3.7"
+      DOCKER_IMAGE: qts8n/cuda-python:devel
       PIPPY_ROOT: /PiPPy
       VERBOSE: "0"
       OMP_NUM_THREADS: "1"
@@ -185,12 +178,7 @@ jobs:
           set -x
           # shellcheck disable=SC2086,SC2090
           container_name=$(docker run \
-            ${GPU_FLAG:-} \
-            -e DESIRED_CUDA \
-            -e DESIRED_PYTHON \
-            -e GPU_ARCH_TYPE \
-            -e GPU_ARCH_VERSION \
-            -e PACKAGE_TYPE \
+            --gpus all \
             -e VERBOSE \
             -e OMP_NUM_THREADS \
             -e REPLICATE \
