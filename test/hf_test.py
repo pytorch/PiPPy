@@ -252,11 +252,11 @@ for _model_cls in fx._SUPPORTED_MODELS:
                 self.skipTest('Need to fix handling of kwargs')
 
             # TODO: support SWIN models
-            if model_cls in [SwinForMaskedImageModeling, SwinModel]:
+            if model_cls in [SwinForMaskedImageModeling, SwinForImageClassification, SwinModel]:
                 self.skipTest('Need to support SWIN models')
 
             # TODO: support ViT models
-            if model_cls in [ViTForMaskedImageModeling, ViTModel]:
+            if model_cls in [ViTForMaskedImageModeling, ViTForImageClassification, ViTModel]:
                 self.skipTest('Need to support ViT models')
 
             model, splitter = generate_hf_model(model_cls)
@@ -325,11 +325,11 @@ for _model_cls in fx._SUPPORTED_MODELS:
                 self.skipTest('Need to fix handling of kwargs')
 
             # TODO: support SWIN models
-            if model_cls in [SwinForMaskedImageModeling, SwinModel]:
+            if model_cls in [SwinForMaskedImageModeling, SwinForImageClassification, SwinModel]:
                 self.skipTest('Need to support SWIN models')
 
             # TODO: support ViT models
-            if model_cls in [ViTForMaskedImageModeling, ViTModel]:
+            if model_cls in [ViTForMaskedImageModeling, ViTForImageClassification, ViTModel]:
                 self.skipTest('Need to support ViT models')
 
             model, splitter = generate_hf_model(model_cls)
