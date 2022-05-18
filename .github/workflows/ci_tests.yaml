@@ -199,6 +199,20 @@ jobs:
             "${DOCKER_IMAGE}"
           )
           docker exec -t -w "${PIPPY_ROOT}" "${container_name}" bash -c "bash .github/workflows/check_docker_env.sh"
+      - name: Enable SSH (Click me for details)
+        uses: seemethere/add-github-ssh-key@v1.0.0
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          activate-with-label: true
+          label: with-ssh
+      - name: Hold runner for 30 minutes or until ssh sessions have drained
+        timeout-minutes: 30
+        run: |
+          echo "Holding runner until all ssh sessions have logged out"
+          while [[ "$(who)" != "" ]]; do
+            echo "."
+            sleep 5
+          done
       - name: Kill containers, clean up images
         if: always()
         run: |
