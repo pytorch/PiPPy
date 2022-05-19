@@ -85,12 +85,15 @@ def run_master(args):
                                                                checkpoint=bool(args.checkpoint))
 
     # # Warm up and correctness runs
-    out = pipe_driver.run(5, ec_input)
+    pipe_driver.chunks = 5
+    out = pipe_driver(ec_input)
     ref_out = ec_pipe(ec_input)
 
     # run with different chunk size to exercise microbatch and scheduling components
-    pipe_driver.run(1, ec_input)
-    pipe_driver.run(100, ec_input)
+    pipe_driver.chunks = 1
+    pipe_driver(ec_input)
+    pipe_driver.chunks = 100
+    pipe_driver(ec_input)
 
     if CHECK_NUMERIC_EQUIVALENCE:
         torch.testing.assert_close(out['out'], ref_out['out'])
@@ -98,7 +101,8 @@ def run_master(args):
 
     # # Profiling runs
     with torch.autograd.profiler_legacy.profile(enabled=PROFILING_ENABLED) as prof:
-        out = pipe_driver.run(5, ec_input)
+        pipe_driver.chunks = 5
+        out = pipe_driver(ec_input)
         ref_out = ec_pipe(ec_input)
         print(f'profiling run completed {torch.sum(out["out"])} ref {torch.sum(ref_out["out"])}')
     if PROFILING_ENABLED:

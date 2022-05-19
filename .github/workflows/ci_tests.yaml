@@ -24,7 +24,7 @@ jobs:
           pip install flake8 pytest pytest-cov pytest-xdist numpy
           if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
       - name: Install pavel's huggingface fork
-        run: pip install git+https://github.com/pbelevich/transformers.git@compatible_with_pt_master sentencepiece
+        run: pip install git+https://github.com/pbelevich/transformers.git@fx_issues sentencepiece six sacremoses
       - name: Install pippy
         run: "python setup.py install"
       - name: Test with pytest
@@ -48,7 +48,7 @@ jobs:
           pip install flake8 pytest pytest-cov pytest-xdist pytest-shard numpy
           if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
       - name: Install pavel's huggingface fork
-        run: pip install git+https://github.com/pbelevich/transformers.git@compatible_with_pt_master sentencepiece
+        run: pip install git+https://github.com/pbelevich/transformers.git@fx_issues sentencepiece six sacremoses
       - name: Install pippy
         run: "python setup.py install"
       # Single thread to avoid OOM
@@ -73,7 +73,7 @@ jobs:
           pip install flake8 pytest pytest-cov pytest-xdist pytest-shard numpy
           if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
       - name: Install pavel's huggingface fork
-        run: pip install git+https://github.com/pbelevich/transformers.git@compatible_with_pt_master sentencepiece
+        run: pip install git+https://github.com/pbelevich/transformers.git@fx_issues sentencepiece six sacremoses
       - name: Install pippy
         run: "python setup.py install"
       # Single thread to avoid OOM
@@ -125,7 +125,7 @@ jobs:
           pip install flake8 pytest pytest-cov numpy
           if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
       - name: Install pavel's huggingface fork
-        run: pip install git+https://github.com/pbelevich/transformers.git@compatible_with_pt_master sentencepiece
+        run: pip install git+https://github.com/pbelevich/transformers.git@fx_issues sentencepiece six sacremoses
       - name: Install pippy
         run: "python setup.py install"
       - name: Run forward-only integration test
@@ -238,7 +238,7 @@ jobs:
           pip install flake8 pytest pytest-cov numpy
           if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
       - name: Install pavel's huggingface fork
-        run: pip install git+https://github.com/pbelevich/transformers.git@compatible_with_pt_master sentencepiece
+        run: pip install git+https://github.com/pbelevich/transformers.git@fx_issues sentencepiece six sacremoses
       - name: Install pippy
         run: "python setup.py install"
       - name: Run PP + DDP test - Transmitted parameters

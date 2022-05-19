@@ -31,7 +31,7 @@ schedules = {
     'Interleaved1F1B': PipelineDriverInterleaved1F1B
 }
 
-VERBOSE = bool(os.environ.get('VERBOSE', False))
+VERBOSE = bool(int(os.environ.get('VERBOSE', False)))
 
 if VERBOSE:
     logging.getLogger().setLevel(logging.DEBUG)
@@ -124,7 +124,8 @@ def run_master(args, pp_ranks):
     target = torch.randn(bs, d_hid, device=args.device)
 
     # TODO: distributed optimizer
-    out = pipe_driver.run(CHUNKS, input, target)
+    pipe_driver.chunks = CHUNKS
+    out = pipe_driver(input, target)
 
     print(f'Rank {args.rank} got loss value {out}')
 

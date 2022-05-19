@@ -182,7 +182,8 @@ def run_master(args):
     pipe_visualized_filename = f"{this_file_name}_visualized.json"
     batches_events_contexts = []
     for i in range(batches):
-        pipe_driver.run(chunks, **gpt2_input_dict)
+        pipe_driver.chunks = chunks
+        pipe_driver(**gpt2_input_dict)
         batches_events_contexts.append(pipe_driver.retrieve_events())
 
     all_events_contexts: EventsContext = reduce(lambda c1, c2: EventsContext().update(c1).update(c2),

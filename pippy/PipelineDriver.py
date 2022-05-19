@@ -470,7 +470,9 @@ class PipeStageExecutor(EventRecorder):
                      f'creating DP process groups internally')
         # Discover DP peers via Store
         # HACK: using the Store coming with the default process group
-        store = torch.distributed.distributed_c10d._get_default_store()
+        _store = torch.distributed.distributed_c10d._get_default_store()
+        # Wrap default store by adding a prefix to each key inserted so as not to step into default store's space
+        store = torch.distributed.PrefixStore('PiPPy', _store)
         # TODO: figure out the unique global "stage rank" for Interleaved 1F1B
         my_rank = str(worker_rank)
         my_stage = str(self.stage_id)
@@ -499,8 +501,9 @@ class PipeStageExecutor(EventRecorder):
         for stage in range(n_stages):
             dp_group_ranks = stage_to_dp_ranks[stage]
             dp_pg_for_stage = torch.distributed.new_group(dp_group_ranks)
-            logging.info(f'Rank[{worker_rank}] stage[{self.stage_id}] '
-                         f'DP group {dp_group_ranks} -- init complete')
+            if stage == self.stage_id:
+                logging.info(f'Rank[{worker_rank}] stage[{self.stage_id}] '
+                             f'DP group {dp_group_ranks} -- init complete')
 
             # Wrap stage module with DDP using the DP group corresponding to own stage
             if self.stage_id == stage:
@@ -827,7 +830,7 @@ class PipelineLRScheduler(torch.optim.lr_scheduler._LRScheduler):
                 from a call to :meth:`state_dict`.
         """
         futs = []
-        for scheduler in stage_to_scheds.values():
+        for scheduler in self.stage_to_scheds.values():
             futs.append(scheduler.rpc_async().load_state_dict(state_dict))
 
         _wait_for_all(futs)
@@ -847,11 +850,11 @@ class PipelineLRScheduler(torch.optim.lr_scheduler._LRScheduler):
         raise NotImplementedError
 
 
-class PipelineDriverBase:
-    def __init__(self, pipe : Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size : int,
-                 all_ranks : List[int] = None, _debug_mask_minibatches : bool = False,
-                 max_outstanding=None, interleave_stages=False, _record_mem_dumps=False,
-                 checkpoint=False):
+class PipelineDriverBase(torch.nn.Module):
+    def __init__(self, pipe: Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size: int,
+                 all_ranks: List[int] = None, _debug_mask_minibatches: bool = False, max_outstanding=None,
+                 interleave_stages=False, _record_mem_dumps=False, checkpoint=False):
+        super().__init__()
         self.pipe = pipe
         self.world_size = world_size
         self.all_ranks = all_ranks
@@ -869,6 +872,7 @@ class PipelineDriverBase:
         self._record_mem_dumps = _record_mem_dumps
         self.optimizer_inited = False
         self.checkpoint = checkpoint
+        self.chunks = 1
 
     def _init_remote_executors(self):
         self.rank_worker_rrefs : Dict[int, torch.distributed.rpc.RRef] = {}
@@ -969,7 +973,7 @@ class PipelineDriverBase:
         # Here we wait for all DP process groups to be initialized before the user can ask the PipeDriver to run
         _wait_for_all(futs)
 
-    def run(self, chunks: int, *args, **kwargs):
+    def forward(self, *args, **kwargs):
         raise NotImplementedError('PipelineDriverBase is an abstract base class, please use a concrete '
                                   'implementation class.')
 
@@ -1219,7 +1223,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 
         self._init_remote_executors()
 
-    def run(self, chunks: int, *args, **kwargs):
+    def forward(self, *args, **kwargs):
         if self.single_loss:
             raise NotImplementedError('Single minibatch loss not implemented')
 
@@ -1231,7 +1235,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         #       forward work items, then round-robin losses, then round-robin backwards
 
         args_split, kwargs_split = split_args_kwargs_into_chunks(args, kwargs, self.args_chunk_spec,
-                                                                 self.kwargs_chunk_spec, chunks,
+                                                                 self.kwargs_chunk_spec, self.chunks,
                                                                  self._debug_mask_minibatches)
 
         self.microbatch_interpreters = []
@@ -1239,12 +1243,12 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         batch_id = self.batch_id
         self.batch_id += 1
 
-        for chunk in range(chunks):
+        for chunk in range(self.chunks):
             logging.info(f'[root] Instantiating microbatch interpreter for chunk {chunk}')
             interp = RemoteInterpreter(remote_stage_executor_rrefs=self.remote_stage_executor_rrefs,
                                        stage_to_executor=self.stage_to_executor, module=self.pipe.split_gm,
                                        cur_microbatch=chunk, args=args_split[chunk], kwargs=kwargs_split[chunk],
-                                       batch_id=batch_id, num_microbatches=chunks)
+                                       batch_id=batch_id, num_microbatches=self.chunks)
             self.microbatch_interpreters.append(interp)
 
         logging.info(f'[root] {len(self.microbatch_interpreters)} instantiated')

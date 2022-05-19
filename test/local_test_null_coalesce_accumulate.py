@@ -70,7 +70,8 @@ def run_master(args):
                                                                _record_mem_dumps=bool(args.record_mem_dumps),
                                                                checkpoint=bool(args.checkpoint))
 
-    pipe_driver.run(chunks, input, target)
+    pipe_driver.chunks = chunks
+    pipe_driver(input, target)
 
 
 def run_worker(rank, world_size, args):
