@@ -31,7 +31,7 @@ schedules = {
     'Interleaved1F1B': PipelineDriverInterleaved1F1B
 }
 
-VERBOSE = bool(os.environ.get('VERBOSE', False))
+VERBOSE = bool(int(os.environ.get('VERBOSE', False)))
 
 if VERBOSE:
     logging.getLogger().setLevel(logging.DEBUG)
