@@ -397,19 +397,11 @@ As before, we can now call the `driver` object to execute the pipeline; However 
     x = torch.randn(512, 512)
     target = torch.randn(512, 256)
 
-    # note the additional `target` argument, as the module we're running is
-    # ModelLossWrapper
     driver.chunks = 64
     output = driver(x, target)
 
-    # NOTE: Backpropagation is run implicitly by `driver.forward()` when supplied with
-    # a Pipe with loss computation. You should not run `output.backward()`; PiPPy's
-    # runtime has already done that. This divergence from the PyTorch API exists
-    # because of the distributed nature of pipeline parallelism.
-
     reference_output = loss_wrapper(x, target)
 
-    # Compare numerics of pipeline and original model
     torch.testing.assert_close(output, reference_output)
 
     print(' Pipeline parallel model ran successfully! '.center(80, '*'))
