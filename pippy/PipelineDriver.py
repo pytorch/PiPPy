@@ -470,7 +470,9 @@ class PipeStageExecutor(EventRecorder):
                      f'creating DP process groups internally')
         # Discover DP peers via Store
         # HACK: using the Store coming with the default process group
-        store = torch.distributed.distributed_c10d._get_default_store()
+        _store = torch.distributed.distributed_c10d._get_default_store()
+        # Wrap default store by adding a prefix to each key inserted so as not to step into default store's space
+        store = torch.distributed.PrefixStore('PiPPy', _store)
         # TODO: figure out the unique global "stage rank" for Interleaved 1F1B
         my_rank = str(worker_rank)
         my_stage = str(self.stage_id)
@@ -499,8 +501,9 @@ class PipeStageExecutor(EventRecorder):
         for stage in range(n_stages):
             dp_group_ranks = stage_to_dp_ranks[stage]
             dp_pg_for_stage = torch.distributed.new_group(dp_group_ranks)
-            logging.info(f'Rank[{worker_rank}] stage[{self.stage_id}] '
-                         f'DP group {dp_group_ranks} -- init complete')
+            if stage == self.stage_id:
+                logging.info(f'Rank[{worker_rank}] stage[{self.stage_id}] '
+                             f'DP group {dp_group_ranks} -- init complete')
 
             # Wrap stage module with DDP using the DP group corresponding to own stage
             if self.stage_id == stage:
