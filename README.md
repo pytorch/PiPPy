@@ -412,13 +412,7 @@ As before, we can now call the `driver` object to execute the pipeline; However 
 The above code has computed the gradients for the parameters of the model, but has not applied updates to the parameters. We use an `Optimizer` to do this by using the `instantiate_optimizer()` method on the pipeline driver:
 
 ```python
-    # Instantiate remote Adam optimizers. `instantiate_optimizer` takes the
-    # optimizer class as the first argument, then additional arguments to that
-    # optimizer. Note that the `parameters` argument is omitted; PiPPy will
-    # populate that value for each pipeline stage for you.
     optimizer = driver.instantiate_optimizer(torch.optim.Adam)
-    # Also instantiate a learning rate scheduler. Note that the `optimizer` argument is
-    # omitted; PiPPy will populate that argument for each pipeline stage
     lr_scheduler = driver.instantiate_lr_scheduler(torch.optim.lr_scheduler.LinearLR, total_iters=100)
 
     N_TRAINING_STEPS = 100
