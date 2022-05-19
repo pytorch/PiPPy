@@ -343,35 +343,17 @@ if local_rank == 0:
     from pippy.PipelineDriver import PipelineDriverFillDrain
     from pippy.microbatch import TensorChunkSpec
 
-    # LossWrapper is a convenient base class you can use to compose your model
-    # with the desired loss function for the purpose of pipeline parallel training.
-    # Since the loss is executed as part of the pipeline, it cannot reside in the
-    # training loop, so you must embed it like this
     from pippy.IR import LossWrapper
     class ModelLossWrapper(LossWrapper):
         def forward(self, x, target):
             return self.loss_fn(self.module(x), target)
 
-    # TODO: mean reduction
     loss_wrapper = ModelLossWrapper(module=mn, loss_fn=torch.nn.MSELoss(reduction='sum'))
 
-    # Instantiate the `Pipe` similarly to before, but with two differences:
-    #   1) We pass in the `loss_wrapper` module to include the loss in the
-    #      computation
-    #   2) We specify `output_loss_value_spec`. This is a data structure
-    #      that should mimic the structure of the output of LossWrapper
-    #      and has a True value in the position where the loss value will
-    #      be. Since LossWrapper returns just the loss, we just pass True
     pipe = Pipe.from_tracing(loss_wrapper, output_loss_value_spec=True)
 
-    # We now have two args: `x` and `target`, so specify batch dimension
-    # for both.
     args_chunk_spec = (TensorChunkSpec(0), TensorChunkSpec(0))
     kwargs_chunk_spec = {}
-    # The output is now a `loss` value, which is a scalar tensor.
-    # PiPPy's default is to concatenate outputs, but that will not
-    # work with a scalar tensor. So we use a CustomReducer instead
-    # to merge together the partial loss values.
     from pippy.microbatch import CustomReducer
     output_chunk_spec = CustomReducer(0.0, lambda a, b: a + b)
 
