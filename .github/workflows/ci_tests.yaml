@@ -162,15 +162,25 @@ jobs:
       SCHEDULE: ${{ matrix.schedule }}
 
     steps:
+      - name: Clean working directory
+        shell: bash
+        run: |
+          sudo rm -rf /home/ec2-user/actions-runner/_work/PiPPy/PiPPy/* || true
       - uses: actions/checkout@v2
+      - name: Enable SSH (Click me for details)
+        uses: seemethere/add-github-ssh-key@v1.0.0
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          activate-with-label: true
+          label: with-ssh
       - name: Clean up previous CUDA driver installations
         shell: bash
         run: |
           set -x
-          yum list installed | grep nvidia ||
-          yum list installed | grep cuda ||
-          sudo yum remove -y cuda ||
-          sudo yum remove -y cuda-drivers ||
+          yum list installed | grep nvidia || true
+          yum list installed | grep cuda || true
+          sudo yum remove -y cuda || true
+          sudo yum remove -y cuda-drivers || true
           sudo yum remove -y "*nvidia*" || true
       - name: Install nvidia driver, nvidia-docker runtime, set GPU_FLAG
         run: |
@@ -199,12 +209,6 @@ jobs:
             "${DOCKER_IMAGE}"
           )
           docker exec -t -w "${PIPPY_ROOT}" "${container_name}" bash -c "bash .github/workflows/check_docker_env.sh"
-      - name: Enable SSH (Click me for details)
-        uses: seemethere/add-github-ssh-key@v1.0.0
-        with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          activate-with-label: true
-          label: with-ssh
       - name: Hold runner for 30 minutes or until ssh sessions have drained
         timeout-minutes: 30
         run: |
@@ -213,6 +217,11 @@ jobs:
             echo "."
             sleep 5
           done
+      - name: Chown workspace
+        if: always()
+        run: |
+          # Ensure the working directory gets chowned back to the current user
+          docker exec -t -w "${PIPPY_ROOT}" "${container_name}" chown -R "$(id -u):$(id -g)" .
       - name: Kill containers, clean up images
         if: always()
         run: |
