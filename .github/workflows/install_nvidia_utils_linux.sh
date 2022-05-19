@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -eou pipefail
+set -ou pipefail
 
 DISTRIBUTION=$(. /etc/os-release;echo $ID$VERSION_ID) \
 DRIVER_FN="NVIDIA-Linux-x86_64-510.60.02.run"
