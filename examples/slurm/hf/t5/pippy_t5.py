@@ -255,8 +255,8 @@ def run_worker(rank, world_size, args):
     # Init DDP process group among the workers
     # Note: this is a special setting for T5 which has 7 workers and 1 master
         backend = "nccl" if args.cuda else "gloo"
-        pg_rank = rank - dp_group_size
-        pg_world_size = world_size - dp_group_size
+        pg_rank = rank - args.dp_group_size
+        pg_world_size = world_size - args.dp_group_size
         torch.distributed.init_process_group(backend=backend, rank=pg_rank, world_size=pg_world_size)
 
     rpc.shutdown()
