@@ -113,11 +113,6 @@ def add_split_points(t5, decoders_per_rank):
     return t5.config.num_decoder_layers // decoders_per_rank + 1
 
 
-def resolve_pg_per_stage(pp_rank):
-    assert dp_pg_per_pp_rank
-    return dp_pg_per_pp_rank[pp_rank + 1]  # exclude master
-
-
 def run_master(args, pp_ranks):
     torch.manual_seed(42)
 
@@ -143,8 +138,7 @@ def run_master(args, pp_ranks):
     number_of_workers = enc + t5.config.num_decoder_layers // decoders_per_rank
     print(f"number_of_workers = {number_of_workers}")
 
-    all_worker_ranks = pp_ranks[1:1 + number_of_workers]  # exclude master
-    chunks = len(all_worker_ranks)
+    chunks = len(pp_ranks)
     bs = args.batch_size * chunks
     seq_length = args.seq_length
 
@@ -157,7 +151,7 @@ def run_master(args, pp_ranks):
                          t5.config.vocab_size - 1)}
 
     sm_cnt = add_split_points(t5, decoders_per_rank)
-    assert sm_cnt == len(all_worker_ranks), f"sm_cnt = {sm_cnt} all_worker_ranks = {all_worker_ranks}"
+    assert sm_cnt == len(pp_ranks), f"sm_cnt = {sm_cnt} pp_ranks = {pp_ranks}"
 
     # print(t5)
 
@@ -195,8 +189,8 @@ def run_master(args, pp_ranks):
                          'encoder_last_hidden_state': TensorChunkSpec(0)}
     pipe_driver: PipelineDriverBase = schedules[args.schedule](t5_pipe, args_chunk_spec, kwargs_chunk_spec,
                                                                output_chunk_spec,
-                                                               world_size=len(all_worker_ranks),
-                                                               all_ranks=all_worker_ranks,
+                                                               world_size=len(pp_ranks),
+                                                               all_ranks=pp_ranks,
                                                                _debug_mask_minibatches=False,
                                                                _record_mem_dumps=bool(args.record_mem_dumps),
                                                                checkpoint=bool(args.checkpoint))
@@ -242,10 +236,6 @@ def run_worker(rank, world_size, args):
     print(f"rank = {rank} host/pid/device = "
           f"{socket.gethostname()}/{os.getpid()}/{args.device}")
 
-    # Init DDP process group
-    backend = "nccl" if args.cuda else "gloo"
-    torch.distributed.init_process_group(backend=backend, rank=rank, world_size=world_size)
-
     rpc.init_rpc(
         f"worker{rank}",
         rank=rank,
@@ -253,19 +243,22 @@ def run_worker(rank, world_size, args):
         rpc_backend_options=options
     )
 
-    global dp_pg_per_pp_rank
-    dp_ranks_per_pp_rank = torch.arange(args.world_size).reshape(args.pp_group_size, args.dp_group_size).tolist()
-    dp_pg_per_pp_rank = [torch.distributed.new_group(ranks) for ranks in dp_ranks_per_pp_rank]
-
-    pp_ranks_per_dp_group = [[i * args.dp_group_size + rank for i in range(args.pp_group_size)]
+    # Use range starting from 1 to exclude master
+    pp_ranks_per_dp_group = [[i * args.dp_group_size + rank for i in range(1, args.pp_group_size)]
                              for rank in range(args.dp_group_size)]
 
-    global dp_pg_for_reference
-    dp_pg_for_reference = torch.distributed.new_group(list(range(args.dp_group_size)))
-
+    # Run master
     if rank >= 0 and rank // args.dp_group_size == 0:
         args.rank = rank
         run_master(args, pp_ranks_per_dp_group[rank])
+    else:
+    # Init DDP process group among the workers
+    # Note: this is a special setting for T5 which has 7 workers and 1 master
+        backend = "nccl" if args.cuda else "gloo"
+        pg_rank = rank - dp_group_size
+        pg_world_size = world_size - dp_group_size
+        torch.distributed.init_process_group(backend=backend, rank=pg_rank, world_size=pg_world_size)
+
     rpc.shutdown()
 
 
