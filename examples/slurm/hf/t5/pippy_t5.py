@@ -195,7 +195,7 @@ def run_master(args, pp_ranks):
                                                                _record_mem_dumps=bool(args.record_mem_dumps),
                                                                checkpoint=bool(args.checkpoint))
 
-    pipe_driver.init_data_parallel(dp_group_size=args.dp_group_size, dp_pg_cb=resolve_pg_per_stage)
+    pipe_driver.init_data_parallel(dp_group_size=args.dp_group_size)
 
     this_file_name = os.path.splitext(os.path.basename(__file__))[0]
 
@@ -257,7 +257,9 @@ def run_worker(rank, world_size, args):
         backend = "nccl" if args.cuda else "gloo"
         pg_rank = rank - args.dp_group_size
         pg_world_size = world_size - args.dp_group_size
-        torch.distributed.init_process_group(backend=backend, rank=pg_rank, world_size=pg_world_size)
+        # Use a different port than RPC's to init c10d
+        init_method = f'tcp://{args.master_addr}:{int(args.master_port)+1}'
+        torch.distributed.init_process_group(backend=backend, init_method=init_method, rank=pg_rank, world_size=pg_world_size)
 
     rpc.shutdown()
 
