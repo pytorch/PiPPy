@@ -97,25 +97,16 @@ class HFT5Tracer(fx.HFTracer):
         return graph
 
 
-# def add_split_points(t5, encoders_per_rank, decoders_per_rank):
-#     for i in range((t5.config.num_layers + encoders_per_rank - 1) // encoders_per_rank):
-#         annotate_split_points(t5, {f'encoder.block.{i * encoders_per_rank}': PipeSplitWrapper.SplitPoint.BEGINNING})
-#     annotate_split_points(t5, {f'decoder.embed_tokens': PipeSplitWrapper.SplitPoint.BEGINNING})
-#     for i in range((t5.config.num_decoder_layers + decoders_per_rank - 1) // decoders_per_rank):
-#         annotate_split_points(t5, {f'decoder.block.{i * decoders_per_rank}': PipeSplitWrapper.SplitPoint.BEGINNING})
-#     annotate_split_points(t5, {f'lm_head': PipeSplitWrapper.SplitPoint.BEGINNING})
-#     return t5.config.num_layers // encoders_per_rank + t5.config.num_decoder_layers // t5.config.num_decoder_layers + 3
-
-
 def add_split_points(t5, decoders_per_rank):
     for i in range(0, (t5.config.num_decoder_layers + decoders_per_rank - 1) // decoders_per_rank):
         annotate_split_points(t5, {f'decoder.block.{i * decoders_per_rank}': PipeSplitWrapper.SplitPoint.BEGINNING})
-    return t5.config.num_decoder_layers // decoders_per_rank + 1
+    annotate_split_points(t5, {f'lm_head': PipeSplitWrapper.SplitPoint.BEGINNING})
+    return t5.config.num_decoder_layers // decoders_per_rank + 2
 
 
 def resolve_pg_per_stage(pp_rank):
     assert dp_pg_per_pp_rank
-    return dp_pg_per_pp_rank[pp_rank + 1]  # exclude master
+    return dp_pg_per_pp_rank[pp_rank]
 
 
 def run_master(args, pp_ranks):
@@ -125,25 +116,25 @@ def run_master(args, pp_ranks):
     print(f'REPLICATE config: {args.replicate} -> {MULTI_USE_PARAM_CONFIG}')
     print("Using schedule:", args.schedule)
 
-    assert args.pp_group_size == 8, "This pipeline group requires exactly 7 workers + 1 master"
+    assert args.pp_group_size == 8, "This pipeline group requires exactly 8 workers"
 
     device = args.device
 
     t5_config = T5Config.from_pretrained(args.model_config)
     t5_config.use_cache = False  # don't output `past_key_values`
     t5 = T5ForConditionalGeneration(t5_config)
-    t5.to(device)  # TODO: Delete this after https://github.com/pytorch/PiPPy/issues/142
     t5.eval()
     print(t5.config)
     print(f"T5 total number of params = {get_number_of_params(t5) // 10 ** 6}M")
 
     enc = 1  # encoders
     decoders_per_rank = 6
+    head = 1  # lm head
     print(f"decoders_per_rank = {decoders_per_rank}")
-    number_of_workers = enc + t5.config.num_decoder_layers // decoders_per_rank
+    number_of_workers = enc + t5.config.num_decoder_layers // decoders_per_rank + head
     print(f"number_of_workers = {number_of_workers}")
 
-    all_worker_ranks = pp_ranks[1:1 + number_of_workers]  # exclude master
+    all_worker_ranks = pp_ranks
     chunks = len(all_worker_ranks)
     bs = args.batch_size * chunks
     seq_length = args.seq_length
@@ -176,7 +167,7 @@ def run_master(args, pp_ranks):
     split_gm_children = list(t5_pipe.split_gm.children())
     assert sm_cnt == len(
         split_gm_children), f"sm_cnt = {sm_cnt} len(split_gm_children) = {len(split_gm_children)}"
-    # t5_pipe.to(device) TODO: Uncomment this after https://github.com/pytorch/PiPPy/issues/142
+    t5_pipe.to(device)
 
     # t5_pipe(**t5_input_dict)
 
@@ -290,7 +281,7 @@ if __name__ == "__main__":
     parser.add_argument('--checkpoint', type=int, default=1, choices=[0, 1])
     args = parser.parse_args()
 
-    args.pp_group_size = 8  # This pipeline group requires exactly 7 workers + 1 master
+    args.pp_group_size = 8  # This pipeline group requires exactly 8 workers
 
     assert args.world_size % args.pp_group_size == 0
 
