@@ -349,6 +349,13 @@ for _model_cls in fx._SUPPORTED_MODELS:
                 # sentence_order_label
                 hf_tracer.input_vals = input_dict
 
+            if model_cls in [AlbertForSequenceClassification, BertForSequenceClassification,
+                             DistilBertForSequenceClassification, ElectraForSequenceClassification,
+                             GPT2ForSequenceClassification, GPTJForSequenceClassification,
+                             GPTNeoForSequenceClassification, MegatronBertForSequenceClassification,
+                             MobileBertForSequenceClassification, RobertaForSequenceClassification]:
+                model.config.problem_type = "single_label_classification"
+
             concrete_args = generate_concrete_args_for_model(model, input_dict.keys())
             multi_use_param_config = MultiUseParameterConfig.REPLICATE if replicate else MultiUseParameterConfig.TRANSMIT
             output_loss_value_spec = get_output_loss_value_spec_for_model(model_cls)
