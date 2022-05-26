@@ -342,13 +342,6 @@ for _model_cls in fx._SUPPORTED_MODELS:
 
             hf_tracer = fx.HFTracer()
 
-            if model_cls in [AlbertForPreTraining, BertForPreTraining, MegatronBertForPreTraining,
-                             MobileBertForPreTraining]:
-                # HACK: patching this in for HFTracer to use during concrete value recording
-                # otherwise, HFTracer.record generates inputs with bogus shapes for e.g.
-                # sentence_order_label
-                hf_tracer.input_vals = input_dict
-
             if model_cls in [AlbertForSequenceClassification, BertForSequenceClassification,
                              DistilBertForSequenceClassification, ElectraForSequenceClassification,
                              GPT2ForSequenceClassification, GPTJForSequenceClassification,
