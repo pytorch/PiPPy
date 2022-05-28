@@ -1,5 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import copy
+import importlib
 import inspect
 import sys
 import unittest
@@ -10,6 +11,20 @@ import torch
 import transformers.utils.fx as fx
 from pippy.IR import MultiUseParameterConfig, Pipe, annotate_split_points, PipeSplitWrapper, stage_backward
 from transformers import *
+
+_module_by_model_name = {'Speech2Text2Decoder': 'transformers.models.speech_to_text_2.modeling_speech_to_text_2',
+                         'TrOCRDecoder': 'transformers.models.trocr.modeling_trocr'}
+
+
+def get_module_cls_by_model_name(model_cls_name):
+    module_name = _module_by_model_name.get(model_cls_name, 'transformers')
+    module = importlib.import_module(module_name)
+    return getattr(module, model_cls_name)
+
+
+def noop_splitter(model) -> int:
+    return 1
+
 
 def albert_splitter(model) -> int:
     if isinstance(model, AlbertModel):
@@ -138,12 +153,12 @@ num_choices = 3
 seq_length = 32
 
 def generate_hf_model(model_cls):
-    splitter = splitters.get(model_cls.base_model_prefix)
+    splitter = splitters.get(model_cls.base_model_prefix, noop_splitter)
     assert splitter is not None
     config_cls = model_cls.config_class
     config = config_cls()
-    if model_cls in [GPT2ForSequenceClassification, GPTNeoForSequenceClassification,
-                    GPTJForSequenceClassification] or model_cls.__name__.startswith("Roberta"):
+    if model_cls in [GPT2ForSequenceClassification, GPTNeoForSequenceClassification, GPTJForSequenceClassification] or \
+            model_cls.__name__.startswith("Roberta") or model_cls.__name__.startswith("Marian"):
         config.pad_token_id = 0
     model = model_cls(config)
     model.eval()
@@ -166,9 +181,17 @@ def generate_inputs_for_model(model_cls, model, include_loss_args=False):
     else:
         input = torch.zeros(bs, seq_length, dtype=torch.long).random_(model.config.vocab_size)
 
+    if 'Bart' in model_cls.__name__:
+        input[:, -1] = model.config.eos_token_id
+
     input_dict = {'input_ids': input}
 
-    if model_cls.__name__.startswith("T5"):
+    if model_cls.__name__.startswith("T5") or model_cls.__name__.startswith("M2M100") \
+        or model_cls.__name__.startswith("MT5") or model_cls in [BlenderbotModel, BlenderbotSmallModel,
+                                                                 BlenderbotForConditionalGeneration,
+                                                                 BlenderbotSmallForConditionalGeneration,
+                                                                 PegasusModel, PegasusForConditionalGeneration,
+                                                                 MarianModel, MarianMTModel]:
         input_dict.update({'decoder_input_ids': input})
 
     if include_loss_args:
@@ -240,7 +263,9 @@ class HFModelsForwardTest(unittest.TestCase):
     pass
 
 
-for _model_cls in fx._SUPPORTED_MODELS:
+for _model_cls_name in fx._SUPPORTED_MODELS:
+    _model_cls = get_module_cls_by_model_name(_model_cls_name)
+
     def scope(model_cls, replicate):
         def test_case(self):
             # TODO: https://github.com/pytorch/PiPPy/issues/149
@@ -248,13 +273,26 @@ for _model_cls in fx._SUPPORTED_MODELS:
                              MobileBertForNextSentencePrediction]:
                 self.skipTest('Need to fix handling of kwargs')
 
-            # TODO: support SWIN models
+            # TODO: support SWIN models https://github.com/pytorch/PiPPy/issues/243
             if model_cls in [SwinForMaskedImageModeling, SwinForImageClassification, SwinModel]:
                 self.skipTest('Need to support SWIN models')
 
-            # TODO: support ViT models
+            # TODO: support ViT models https://github.com/pytorch/PiPPy/issues/244
             if model_cls in [ViTForMaskedImageModeling, ViTForImageClassification, ViTModel]:
                 self.skipTest('Need to support ViT models')
+
+            # TODO: support LayoutLM models
+            if model_cls in [LayoutLMModel, LayoutLMForMaskedLM, LayoutLMForSequenceClassification,
+                             LayoutLMForTokenClassification]:
+                self.skipTest('Need to support LayoutLM models')
+
+            # TODO: support CLIP models
+            if model_cls in [CLIPModel, CLIPVisionModel]:
+                self.skipTest('Need to support CLIP models')
+
+            # TODO: support Speech2TextModel models
+            if model_cls in [Speech2TextModel, Speech2TextForConditionalGeneration]:
+                self.skipTest('Need to support Speech2TextModel models')
 
             model, splitter = generate_hf_model(model_cls)
 
@@ -278,12 +316,14 @@ for _model_cls in fx._SUPPORTED_MODELS:
 
         return test_case
 
-
     setattr(HFModelsForwardTest, f'test_{_model_cls.__name__}_transmit', scope(_model_cls, False))
     setattr(HFModelsForwardTest, f'test_{_model_cls.__name__}_replicate', scope(_model_cls, True))
 
 
 def get_output_loss_value_spec_for_model(model_cls):
+    if model_cls in [BartForQuestionAnswering, MBartForQuestionAnswering]:
+        return {'loss': True, 'start_logits': False, 'end_logits': False, 'encoder_last_hidden_state': False}
+
     if model_cls.__name__.endswith('QuestionAnswering'):
         return {'loss': True, 'start_logits': False, 'end_logits': False}
 
@@ -291,7 +331,10 @@ def get_output_loss_value_spec_for_model(model_cls):
         return {'loss': True, 'logits': False, 'mc_logits': False, 'past_key_values': False}
 
     if model_cls in [GPT2ForSequenceClassification, GPT2LMHeadModel, GPTNeoForCausalLM,
-                     GPTNeoForSequenceClassification, GPTJForCausalLM, GPTJForSequenceClassification]:
+                     GPTNeoForSequenceClassification, GPTJForCausalLM, GPTJForSequenceClassification,
+                     BlenderbotSmallForCausalLM, BlenderbotForCausalLM, BartForCausalLM, MBartForCausalLM,
+                     OPTForCausalLM, MarianForCausalLM, PLBartForCausalLM, PegasusForCausalLM, Speech2Text2ForCausalLM,
+                     XGLMForCausalLM]:
         return {'loss': True, 'logits': False, 'past_key_values': False}
 
     if model_cls in [AlbertForPreTraining]:
@@ -300,8 +343,14 @@ def get_output_loss_value_spec_for_model(model_cls):
     if model_cls in [BertForPreTraining, MegatronBertForPreTraining, MobileBertForPreTraining]:
         return {'loss': True, 'prediction_logits': False, 'seq_relationship_logits': False}
 
-    if model_cls in [T5ForConditionalGeneration]:
+    if model_cls in [T5ForConditionalGeneration, M2M100ForConditionalGeneration,
+                     MT5ForConditionalGeneration, PLBartForConditionalGeneration]:
         return {'loss': True, 'logits': False, 'past_key_values': False, 'encoder_last_hidden_state': False}
+
+    if model_cls in [BartForSequenceClassification, BlenderbotForConditionalGeneration, MBartForConditionalGeneration,
+                     BlenderbotSmallForConditionalGeneration, MBartForSequenceClassification,
+                     PLBartForSequenceClassification, PegasusForConditionalGeneration, BartForConditionalGeneration]:
+        return {'loss': True, 'logits': False, 'encoder_last_hidden_state': False}
 
     return {'loss': True, 'logits': False}
 
@@ -311,7 +360,9 @@ class HFModelsForwardBackwardTest(unittest.TestCase):
 
 
 # Forward-backward tests
-for _model_cls in fx._SUPPORTED_MODELS:
+for _model_cls_name in fx._SUPPORTED_MODELS:
+    _model_cls = get_module_cls_by_model_name(_model_cls_name)
+
     def scope(model_cls, replicate):
         def test_case(self):
             # TODO: https://github.com/pytorch/PiPPy/issues/149
@@ -319,13 +370,26 @@ for _model_cls in fx._SUPPORTED_MODELS:
                              MobileBertForNextSentencePrediction]:
                 self.skipTest('Need to fix handling of kwargs')
 
-            # TODO: support SWIN models
+            # TODO: support SWIN models https://github.com/pytorch/PiPPy/issues/243
             if model_cls in [SwinForMaskedImageModeling, SwinForImageClassification, SwinModel]:
                 self.skipTest('Need to support SWIN models')
 
-            # TODO: support ViT models
+            # TODO: support ViT models https://github.com/pytorch/PiPPy/issues/244
             if model_cls in [ViTForMaskedImageModeling, ViTForImageClassification, ViTModel]:
                 self.skipTest('Need to support ViT models')
+
+            # TODO: support LayoutLM models https://github.com/pytorch/PiPPy/issues/247
+            if model_cls in [LayoutLMModel, LayoutLMForMaskedLM, LayoutLMForSequenceClassification,
+                             LayoutLMForTokenClassification]:
+                self.skipTest('Need to support LayoutLM models')
+
+            # TODO: support CLIP models https://github.com/pytorch/PiPPy/issues/248
+            if model_cls in [CLIPModel, CLIPVisionModel]:
+                self.skipTest('Need to support CLIP models')
+
+            # TODO: support Speech2TextModel models https://github.com/pytorch/PiPPy/issues/249
+            if model_cls in [Speech2TextModel, Speech2TextForConditionalGeneration]:
+                self.skipTest('Need to support Speech2TextModel models')
 
             model, splitter = generate_hf_model(model_cls)
             model.eval() # Disable nondeterminism for testing
@@ -334,19 +398,25 @@ for _model_cls in fx._SUPPORTED_MODELS:
             try:
                 input_dict = generate_inputs_for_model(model_cls, model, include_loss_args=True)
             except NotImplementedError as e:
-                if model_cls in [AlbertModel, BertModel, DistilBertModel, ElectraModel, GPT2Model,
-                                 GPTJModel, GPTNeoModel, MegatronBertModel, MobileBertModel, RobertaModel, T5Model]:
+                from transformers.models.speech_to_text_2.modeling_speech_to_text_2 import Speech2Text2Decoder
+                from transformers.models.trocr.modeling_trocr import TrOCRDecoder
+                if model_cls in [AlbertModel, BartModel, BertModel, DistilBertModel, ElectraModel, GPT2Model,
+                                 GPTJModel, GPTNeoModel, MegatronBertModel, MobileBertModel, RobertaModel, T5Model,
+                                 BlenderbotModel, BlenderbotSmallModel, M2M100Model, MT5Model, MarianMTModel,
+                                 MarianModel, PegasusModel, OPTModel, Speech2Text2Decoder, TrOCRDecoder, MBartModel,
+                                 CLIPTextModel, PLBartModel, XGLMModel]:
                     self.skipTest('Base models do not have embedded loss')
                 else:
                     raise e
 
             hf_tracer = fx.HFTracer()
 
-            if model_cls in [AlbertForSequenceClassification, BertForSequenceClassification,
+            if model_cls in [AlbertForSequenceClassification, BertForSequenceClassification, BartForSequenceClassification,
                              DistilBertForSequenceClassification, ElectraForSequenceClassification,
                              GPT2ForSequenceClassification, GPTJForSequenceClassification,
                              GPTNeoForSequenceClassification, MegatronBertForSequenceClassification,
-                             MobileBertForSequenceClassification, RobertaForSequenceClassification]:
+                             MobileBertForSequenceClassification, RobertaForSequenceClassification,
+                             MBartForSequenceClassification, PLBartForSequenceClassification]:
                 model.config.problem_type = "single_label_classification"
 
             concrete_args = generate_concrete_args_for_model(model, input_dict.keys())
