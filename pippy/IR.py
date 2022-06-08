@@ -6,7 +6,17 @@ from typing import Dict, List, Optional, Tuple, Union, cast
 
 import torch
 import torch.fx
+from packaging import version
 from torch.fx.passes.split_module import split_module
+
+# Because split_module with 4 arguments is available only in PT 1.12+
+TORCH_FX_REQUIRED_VERSION = version.parse("1.12")
+
+torch_version = version.parse(torch.__version__)
+assert (torch_version.major, torch_version.minor) >= (
+    TORCH_FX_REQUIRED_VERSION.major,
+    TORCH_FX_REQUIRED_VERSION.minor,
+), "PiPPy requires PyTorch >= 1.12"
 
 # TODO:
 # 1. investigate gradient sync for shared parameters. how does DDP do it?
