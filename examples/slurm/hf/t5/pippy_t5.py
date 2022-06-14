@@ -97,25 +97,21 @@ class HFT5Tracer(fx.HFTracer):
         return graph
 
 
-# def add_split_points(t5, encoders_per_rank, decoders_per_rank):
-#     for i in range((t5.config.num_layers + encoders_per_rank - 1) // encoders_per_rank):
-#         annotate_split_points(t5, {f'encoder.block.{i * encoders_per_rank}': PipeSplitWrapper.SplitPoint.BEGINNING})
-#     annotate_split_points(t5, {f'decoder.embed_tokens': PipeSplitWrapper.SplitPoint.BEGINNING})
-#     for i in range((t5.config.num_decoder_layers + decoders_per_rank - 1) // decoders_per_rank):
-#         annotate_split_points(t5, {f'decoder.block.{i * decoders_per_rank}': PipeSplitWrapper.SplitPoint.BEGINNING})
-#     annotate_split_points(t5, {f'lm_head': PipeSplitWrapper.SplitPoint.BEGINNING})
-#     return t5.config.num_layers // encoders_per_rank + t5.config.num_decoder_layers // t5.config.num_decoder_layers + 3
-
-
-def add_split_points(t5, decoders_per_rank):
-    for i in range(0, (t5.config.num_decoder_layers + decoders_per_rank - 1) // decoders_per_rank):
-        annotate_split_points(t5, {f'decoder.block.{i * decoders_per_rank}': PipeSplitWrapper.SplitPoint.BEGINNING})
-    return t5.config.num_decoder_layers // decoders_per_rank + 1
+def add_split_points(t5, sm_cnt):
+    num_encoders = 6  # encoders
+    num_lm_head = 1  # lm head
+    total_layers = t5.config.num_decoder_layers + num_encoders + num_lm_head
+    layers_per_rank = total_layers // sm_cnt
+    residual = total_layers % sm_cnt
+    split_after_layer = [ (i * layers_per_rank + (i if i < residual else residual)) for i in range(0, sm_cnt) ]
+    split_after_decoder = [ x - num_encoders for x in split_after_layer ]
+    for i in range(1, sm_cnt):
+        annotate_split_points(t5, {f'decoder.block.{split_after_decoder[i]}': PipeSplitWrapper.SplitPoint.BEGINNING})
 
 
 def resolve_pg_per_stage(pp_rank):
     assert dp_pg_per_pp_rank
-    return dp_pg_per_pp_rank[pp_rank + 1]  # exclude master
+    return dp_pg_per_pp_rank[pp_rank]
 
 
 def run_master(args, pp_ranks):
@@ -124,8 +120,6 @@ def run_master(args, pp_ranks):
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if args.replicate else MultiUseParameterConfig.TRANSMIT
     print(f'REPLICATE config: {args.replicate} -> {MULTI_USE_PARAM_CONFIG}')
     print("Using schedule:", args.schedule)
-
-    assert args.pp_group_size == 8, "This pipeline group requires exactly 7 workers + 1 master"
 
     device = args.device
 
@@ -137,13 +131,9 @@ def run_master(args, pp_ranks):
     print(t5.config)
     print(f"T5 total number of params = {get_number_of_params(t5) // 10 ** 6}M")
 
-    enc = 1  # encoders
-    decoders_per_rank = 6
-    print(f"decoders_per_rank = {decoders_per_rank}")
-    number_of_workers = enc + t5.config.num_decoder_layers // decoders_per_rank
-    print(f"number_of_workers = {number_of_workers}")
-
-    all_worker_ranks = pp_ranks[1:1 + number_of_workers]  # exclude master
+    sm_cnt = len(pp_ranks)
+    add_split_points(t5, sm_cnt)
+    all_worker_ranks = pp_ranks
     chunks = len(all_worker_ranks)
     bs = args.batch_size * chunks
     seq_length = args.seq_length
@@ -155,9 +145,6 @@ def run_master(args, pp_ranks):
     t5_input_dict = {'input_ids': inp, 'decoder_input_ids': inp,
                      'labels': torch.empty(bs, seq_length, dtype=torch.long, device=device).random_(
                          t5.config.vocab_size - 1)}
-
-    sm_cnt = add_split_points(t5, decoders_per_rank)
-    assert sm_cnt == len(all_worker_ranks), f"sm_cnt = {sm_cnt} all_worker_ranks = {all_worker_ranks}"
 
     # print(t5)
 
@@ -288,13 +275,12 @@ if __name__ == "__main__":
     parser.add_argument('--visualize', type=int, default=1, choices=[0, 1])
     parser.add_argument('--record_mem_dumps', type=int, default=0, choices=[0, 1])
     parser.add_argument('--checkpoint', type=int, default=1, choices=[0, 1])
+    parser.add_argument('--dp_group_size', type=int, default=8)
     args = parser.parse_args()
 
-    args.pp_group_size = 8  # This pipeline group requires exactly 7 workers + 1 master
+    assert args.world_size % args.dp_group_size == 0
 
-    assert args.world_size % args.pp_group_size == 0
-
-    args.dp_group_size = args.world_size // args.pp_group_size
+    args.pp_group_size = args.world_size // args.dp_group_size
 
     if args.rank == -1:
         mp.spawn(run_worker, args=(args.world_size, args,), nprocs=args.world_size, join=True)
