@@ -13,9 +13,9 @@ from torch.fx.passes.split_module import split_module
 TORCH_FX_REQUIRED_VERSION = version.parse("1.12")
 
 torch_version = version.parse(torch.__version__)
-assert (torch_version.major, torch_version.minor) >= (
-    TORCH_FX_REQUIRED_VERSION.major,
-    TORCH_FX_REQUIRED_VERSION.minor,
+assert (torch_version.major, torch_version.minor) >= (  # type: ignore
+    TORCH_FX_REQUIRED_VERSION.major,  # type: ignore
+    TORCH_FX_REQUIRED_VERSION.minor,  # type: ignore
 ), "PiPPy requires PyTorch >= 1.12"
 
 # TODO:

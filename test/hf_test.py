@@ -175,11 +175,11 @@ def generate_concrete_args_for_model(model, input_names=None):
 
 def generate_inputs_for_model(model_cls, model, include_loss_args=False):
     if model_cls.__name__.endswith('MultipleChoice'):
-        input = torch.zeros(bs, num_choices, seq_length, dtype=torch.long).random_(model.config.vocab_size)
+        input = torch.empty(bs, num_choices, seq_length, dtype=torch.long).random_(model.config.vocab_size)
     elif model_cls.__name__.startswith("Roberta"):
         input = torch.zeros(bs, seq_length, dtype=torch.long)
     else:
-        input = torch.zeros(bs, seq_length, dtype=torch.long).random_(model.config.vocab_size)
+        input = torch.empty(bs, seq_length, dtype=torch.long).random_(model.config.vocab_size)
 
     if 'Bart' in model_cls.__name__:
         input[:, -1] = model.config.eos_token_id
@@ -198,43 +198,43 @@ def generate_inputs_for_model(model_cls, model, include_loss_args=False):
         if model_cls.__name__.endswith('PreTraining'):
             if model_cls == ElectraForPreTraining:
                 input_dict.update({
-                    'labels': torch.zeros(bs, seq_length, dtype=torch.long).random_(1),
+                    'labels': torch.empty(bs, seq_length, dtype=torch.long).random_(1),
                 })
             else:
                 label_name = 'sentence_order_label' if model_cls in [AlbertForPreTraining] else 'next_sentence_label'
                 input_dict.update({
-                    'labels': torch.zeros(bs, seq_length, dtype=torch.long).random_(model.config.vocab_size),
-                    label_name: torch.zeros(bs, dtype=torch.long).random_(1),
+                    'labels': torch.empty(bs, seq_length, dtype=torch.long).random_(model.config.vocab_size),
+                    label_name: torch.empty(bs, dtype=torch.long).random_(1),
                 })
         elif model_cls.__name__.endswith('QuestionAnswering'):
             input_dict.update({
-                'start_positions': torch.zeros(bs, dtype=torch.long).random_(seq_length),
-                'end_positions': torch.zeros(bs, dtype=torch.long).random_(seq_length)
+                'start_positions': torch.empty(bs, dtype=torch.long).random_(seq_length),
+                'end_positions': torch.empty(bs, dtype=torch.long).random_(seq_length)
             })
         elif (model_cls.__name__.endswith('MaskedLM') or model_cls.__name__.endswith('HeadModel') or
               model_cls.__name__.endswith('CausalLM') or model_cls.__name__.endswith('DoubleHeadsModel')):
             input_dict.update({
-                'labels': torch.zeros(bs, seq_length, dtype=torch.long).random_(model.config.vocab_size),
+                'labels': torch.empty(bs, seq_length, dtype=torch.long).random_(model.config.vocab_size),
             })
         elif model_cls.__name__.endswith('TokenClassification'):
             input_dict.update({
-                'labels': torch.zeros(bs, seq_length, dtype=torch.long).random_(model.config.num_labels - 1),
+                'labels': torch.empty(bs, seq_length, dtype=torch.long).random_(model.config.num_labels - 1),
             })
         elif model_cls.__name__.endswith('MultipleChoice'):
             input_dict.update({
-                'labels': torch.zeros(bs, dtype=torch.long).random_(num_choices),
+                'labels': torch.empty(bs, dtype=torch.long).random_(num_choices),
             })
         elif model_cls.__name__.endswith('SequenceClassification'):
             input_dict.update({
-                'labels': torch.zeros(bs, dtype=torch.long).random_(model.config.num_labels - 1),
+                'labels': torch.empty(bs, dtype=torch.long).random_(model.config.num_labels - 1),
             })
         elif model_cls.__name__.endswith('NextSentencePrediction'):
             input_dict.update({
-                'labels': torch.zeros(bs, dtype=torch.long).random_(1),
+                'labels': torch.empty(bs, dtype=torch.long).random_(1),
             })
         elif model_cls.__name__.endswith('ForConditionalGeneration'):
             input_dict.update({
-                'labels': torch.zeros(bs, seq_length, dtype=torch.long).random_(model.config.vocab_size - 1),
+                'labels': torch.empty(bs, seq_length, dtype=torch.long).random_(model.config.vocab_size - 1),
             })
         else:
             raise NotImplementedError(f'Class {model_cls.__name__} unsupported for training test ')
@@ -281,18 +281,35 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
             if model_cls in [ViTForMaskedImageModeling, ViTForImageClassification, ViTModel]:
                 self.skipTest('Need to support ViT models')
 
-            # TODO: support LayoutLM models
+            # TODO: support LayoutLM models https://github.com/pytorch/PiPPy/issues/247
             if model_cls in [LayoutLMModel, LayoutLMForMaskedLM, LayoutLMForSequenceClassification,
                              LayoutLMForTokenClassification]:
                 self.skipTest('Need to support LayoutLM models')
 
-            # TODO: support CLIP models
+            # TODO: support CLIP models https://github.com/pytorch/PiPPy/issues/248
             if model_cls in [CLIPModel, CLIPVisionModel]:
                 self.skipTest('Need to support CLIP models')
 
-            # TODO: support Speech2TextModel models
+            # TODO: support Speech2Text models https://github.com/pytorch/PiPPy/issues/249
             if model_cls in [Speech2TextModel, Speech2TextForConditionalGeneration]:
-                self.skipTest('Need to support Speech2TextModel models')
+                self.skipTest('Need to support Speech2Text models')
+
+            # TODO: support Lxmert models https://github.com/pytorch/PiPPy/issues/253
+            if model_cls in [LxmertForPreTraining, LxmertForQuestionAnswering, LxmertModel]:
+                self.skipTest('Need to support Lxmert models')
+
+            # TODO: support Hubert models https://github.com/pytorch/PiPPy/issues/254
+            if model_cls in [HubertModel, HubertForSequenceClassification, HubertForCTC]:
+                self.skipTest('Need to support Hubert models')
+
+            # TODO: support Deberta models https://github.com/pytorch/PiPPy/issues/261
+            if model_cls in [DebertaModel, DebertaV2ForMaskedLM, DebertaV2ForSequenceClassification,
+                             DebertaV2ForTokenClassification, DebertaForQuestionAnswering,
+                             DebertaForTokenClassification, DebertaV2ForQuestionAnswering,
+                             DebertaV2ForQuestionAnswering, DebertaV2ForMultipleChoice,
+                             DebertaV2ForMultipleChoice, DebertaV2Model, DebertaForMaskedLM,
+                             DebertaForSequenceClassification]:
+                self.skipTest('Need to support Deberta models')
 
             model, splitter = generate_hf_model(model_cls)
 
@@ -387,9 +404,26 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
             if model_cls in [CLIPModel, CLIPVisionModel]:
                 self.skipTest('Need to support CLIP models')
 
-            # TODO: support Speech2TextModel models https://github.com/pytorch/PiPPy/issues/249
+            # TODO: support Speech2Text models https://github.com/pytorch/PiPPy/issues/249
             if model_cls in [Speech2TextModel, Speech2TextForConditionalGeneration]:
-                self.skipTest('Need to support Speech2TextModel models')
+                self.skipTest('Need to support Speech2Text models')
+
+            # TODO: support Lxmert models https://github.com/pytorch/PiPPy/issues/253
+            if model_cls in [LxmertForPreTraining, LxmertForQuestionAnswering, LxmertModel]:
+                self.skipTest('Need to support Lxmert models')
+
+            # TODO: support Hubert models https://github.com/pytorch/PiPPy/issues/254
+            if model_cls in [HubertModel, HubertForSequenceClassification, HubertForCTC]:
+                self.skipTest('Need to support Hubert models')
+
+            # TODO: support Deberta models https://github.com/pytorch/PiPPy/issues/261
+            if model_cls in [DebertaModel, DebertaV2ForMaskedLM, DebertaV2ForSequenceClassification,
+                             DebertaV2ForTokenClassification, DebertaForQuestionAnswering,
+                             DebertaForTokenClassification, DebertaV2ForQuestionAnswering,
+                             DebertaV2ForQuestionAnswering, DebertaV2ForMultipleChoice,
+                             DebertaV2ForMultipleChoice, DebertaV2Model, DebertaForMaskedLM,
+                             DebertaForSequenceClassification]:
+                self.skipTest('Need to support Deberta models')
 
             model, splitter = generate_hf_model(model_cls)
             model.eval() # Disable nondeterminism for testing

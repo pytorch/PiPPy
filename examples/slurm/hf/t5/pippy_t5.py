@@ -77,8 +77,8 @@ def torch_zeros_wrapper(*args, **kwargs):
 
 
 class HFT5Tracer(fx.HFTracer):
-    def trace(self, root, concrete_args=None, method_names=None):
-        graph = super().trace(root, concrete_args, method_names)
+    def trace(self, root, concrete_args=None):
+        graph = super().trace(root, concrete_args)
         # HACK to replace HF's non-resolvable wrappers with the original
         # tensor constructor functions
         # Requires this patch to HF: https://github.com/jamesr66a/transformers/commit/ede9d30f36f12be390692617ef76e2928b1612bd
