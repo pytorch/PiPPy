@@ -175,12 +175,12 @@ class RankWorker(EventRecorder):
                     specify resource limits and how to implement backpressure?)
     """
 
-    def __init__(self, local_rank, all_stages, max_outstanding=None, pp_rank=None,
+    def __init__(self, rank, all_stages, max_outstanding=None, pp_rank=None,
                  _record_mem_dumps=False, checkpoint=False):
-        logging.info(f'[{local_rank}] Instantiating RankWorker')
-        self.local_rank = local_rank
+        logging.info(f'[{rank}] Instantiating RankWorker')
+        self.rank = rank
         self.all_stages = all_stages
-        self.local_rank = local_rank
+        self.rank = rank
         self.pp_rank = pp_rank
         self._record_mem_dumps = _record_mem_dumps
         self.checkpoint = checkpoint
@@ -202,13 +202,13 @@ class RankWorker(EventRecorder):
         self.ready_runlist : Dict[str, WorkItem] = {}
 
         self.worker_thread = threading.Thread(target=self.worker_loop,
-                                              name=f'worker_{self.local_rank}', daemon=True)
+                                              name=f'worker_{self.rank}', daemon=True)
         self.worker_thread.start()
 
 
     def create_stage_executor(self, stage_id, mod):
         if stage_id in self.stage_executors:
-            raise AssertionError(f'Rank {self.local_rank} already has stage {stage_id}')
+            raise AssertionError(f'Rank {self.rank} already has stage {stage_id}')
         self.stage_executors[stage_id] = PipeStageExecutor(stage_id=stage_id,
                                                            mod=mod, rank_worker=self,
                                                            _record_mem_dumps=self._record_mem_dumps)
@@ -216,13 +216,13 @@ class RankWorker(EventRecorder):
 
     def enqueue_ready_runlist(self, unique_key, work_item):
         with self.ready_runlist_cv:
-            logging.info(f'[{self.local_rank}] Current ready runlist keys: {self.ready_runlist.keys()}')
+            logging.info(f'[{self.rank}] Current ready runlist keys: {self.ready_runlist.keys()}')
             self.ready_runlist[unique_key] = work_item
             self.ready_runlist_cv.notify()
 
     def enqueue_waiting_runlist(self, unique_key, work_item):
         with self.waiting_runlist_lock:
-            logging.info(f'[{self.local_rank}] Current waiting runlist keys: {self.waiting_runlist.keys()}')
+            logging.info(f'[{self.rank}] Current waiting runlist keys: {self.waiting_runlist.keys()}')
             assert unique_key not in self.waiting_runlist, f'key {unique_key} already in waiting runlist {self.waiting_runlist}'
             self.waiting_runlist[unique_key] = work_item
 
@@ -234,7 +234,7 @@ class RankWorker(EventRecorder):
                 while len(self.ready_runlist) == 0:
                     self.ready_runlist_cv.wait()
 
-                logging.info(f'[{self.local_rank}] Dequeueing workitem from set of {len(self.ready_runlist)}')
+                logging.info(f'[{self.rank}] Dequeueing workitem from set of {len(self.ready_runlist)}')
                 # TODO: extra priorities
                 for key in iter(self.ready_runlist.keys()):
                     # Skip forward work items if we hit the max outstanding limit
@@ -254,7 +254,7 @@ class RankWorker(EventRecorder):
             # back to the loop in this case
             if work_item is None:
                 continue
-            logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Got WorkItem {work_item}')
+            logging.info(f'[{self.rank}][{work_item.microbatch_id}] Got WorkItem {work_item}')
 
             work_item.state = SchedState.RUNNING
             args_value_refs = work_item.args
@@ -266,7 +266,7 @@ class RankWorker(EventRecorder):
             try:
                 stage_executor = self.stage_executors[work_item.stage_id]
             except KeyError:
-                raise RuntimeError(f'Rank {self.local_rank} does not have stage {work_item.stage_id}'
+                raise RuntimeError(f'Rank {self.rank} does not have stage {work_item.stage_id}'
                                    f'Current keys {self.stage_executors.keys()}')
 
             batch_id = work_item.batch_id
@@ -309,7 +309,7 @@ class RankWorker(EventRecorder):
 
                 args = torch.fx.node.map_aggregate(args, extract_tensor_args)
                 kwargs = torch.fx.node.map_aggregate(kwargs, extract_tensor_args)
-                logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running forward module')
+                logging.info(f'[{self.rank}][{work_item.microbatch_id}] Running forward module')
 
                 def forward_maybe_with_ddp(args, kwargs):
                     if isinstance(stage_executor.mod, torch.nn.parallel.distributed.DistributedDataParallel):
@@ -337,7 +337,7 @@ class RankWorker(EventRecorder):
             if phase == Phase.BACKWARD:
                 if self.checkpoint:
                     logging.info(
-                        f'[{self.local_rank}][{work_item.microbatch_id}] Running backward phase. '
+                        f'[{self.rank}][{work_item.microbatch_id}] Running backward phase. '
                         f'Rerunning forward because of checkpointing')
                     f_args, f_kwargs = stage_executor.fwd_cache.pop(microbatch_id)
                     out_val, flat_tensor_args = forward(f_args, f_kwargs, no_grad=False)
@@ -346,7 +346,7 @@ class RankWorker(EventRecorder):
                         (out_val if isinstance(out_val, tuple) else (out_val,), flat_tensor_args)
                 else:
                     logging.info(
-                        f'[{self.local_rank}][{work_item.microbatch_id}] Running backward phase. '
+                        f'[{self.rank}][{work_item.microbatch_id}] Running backward phase. '
                         f'Retrieving stashed values')
                     # HACK: here we are directly accessing the saved tensor outputs
                     # for closed-over outputs so that they still have the grad_fn
@@ -364,7 +364,7 @@ class RankWorker(EventRecorder):
                         (out_val if isinstance(out_val, tuple) else (out_val,), flat_tensor_args)
 
             elif work_item.phase == Phase.BACKWARD:
-                logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running backward')
+                logging.info(f'[{self.rank}][{work_item.microbatch_id}] Running backward')
 
                 batch_id_to_remaining_backward_microbatches[batch_id] -= 1
 
@@ -379,15 +379,15 @@ class RankWorker(EventRecorder):
                 # Schedule forward stage of a new micro-batch
                 self.outstanding -= 1
             elif work_item.phase == Phase.ACCUMULATE_GRAD:
-                logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running accumulate grad')
+                logging.info(f'[{self.rank}][{work_item.microbatch_id}] Running accumulate grad')
                 out_val = _null_coalesce_accumulate(*args, **kwargs)
             elif work_item.phase == Phase.SYNC_BARRIER:
-                logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Running sync_barrier')
+                logging.info(f'[{self.rank}][{work_item.microbatch_id}] Running sync_barrier')
                 out_val = sync_barrier(*args, **kwargs)
             else:
                 assert False, f'Unrecognized phase {work_item.phase} encountered in execution'
 
-            logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] Populating result of type {type(out_val)} '
+            logging.info(f'[{self.rank}][{work_item.microbatch_id}] Populating result of type {type(out_val)} '
                          f'for {key}')
             future.set_result(out_val)
             work_item.state = SchedState.DONE
@@ -395,7 +395,7 @@ class RankWorker(EventRecorder):
             prev_name = prev_event_name(work_item.phase, self.all_stages, work_item.stage_id, work_item.microbatch_id)
             next_name = next_event_name(work_item.phase, self.all_stages, work_item.stage_id, work_item.microbatch_id)
             finish_ts = time.time()
-            self.record_event(rank=self.local_rank, start_ts=start_ts, finish_ts=finish_ts, id=id,
+            self.record_event(rank=self.rank, start_ts=start_ts, finish_ts=finish_ts, id=id,
                               name=name, type=work_item.phase, mbid=work_item.microbatch_id)
             self.record_event_dependency(from_id=prev_name, to_id=name, type='transfer')
             self.record_event_dependency(from_id=name, to_id=next_name, type='transfer')
@@ -414,7 +414,7 @@ class RankWorker(EventRecorder):
                     work_item.state = SchedState.READY
                     self.ready_runlist[runlist_key] = self.waiting_runlist.pop(runlist_key)
                     self.ready_runlist_cv.notify()
-                logging.info(f'[{self.local_rank}][{work_item.microbatch_id}] all operands ready')
+                logging.info(f'[{self.rank}][{work_item.microbatch_id}] all operands ready')
 
 
 class PipeStageExecutor(EventRecorder):
@@ -459,7 +459,7 @@ class PipeStageExecutor(EventRecorder):
         return None
 
     def init_data_parallel(self, n_stages, dp_group_size, dp_pg_cb=None):
-        worker_rank = self.rank_worker.local_rank
+        worker_rank = self.rank_worker.rank
         if dp_pg_cb is not None:
             logging.info(f'Rank[{worker_rank}] stage[{self.stage_id}] Initializing data parallel: '
                          f'using DP process groups provided by user')
@@ -516,7 +516,7 @@ class PipeStageExecutor(EventRecorder):
         forward_id = event_id(Phase.FORWARD, self.stage_id, cur_microbatch, batch_id)
         name = f"R{forward_name}"
         id = f"R{forward_id}"
-        self.record_event(rank=self.rank_worker.local_rank, start_ts=ts, finish_ts=ts, id=id, name=name, type='received', mbid=cur_microbatch)
+        self.record_event(rank=self.rank_worker.rank, start_ts=ts, finish_ts=ts, id=id, name=name, type='received', mbid=cur_microbatch)
         self.record_event_dependency(from_id=name, to_id=forward_name, type='waiting')
         if self._record_mem_dumps:
             self._record_dumps_on_all_peer_executors(f'M{id}_invoke', ts)
@@ -685,18 +685,18 @@ class PipeStageExecutor(EventRecorder):
             assert alloc <= max_alloc, f"alloc = {alloc} max_alloc = {max_alloc}"
             assert rsrvd <= max_rsrvd, f"rsrvd = {rsrvd} max_rsrvd = {max_rsrvd}"
             assert max_alloc <= max_rsrvd, f"max_alloc = {max_alloc} max_rsrvd = {max_rsrvd}"
-            self.record_dump(rank=self.rank_worker.local_rank, ts=ts, id=dump_id, name=dump_id, type='dump',
+            self.record_dump(rank=self.rank_worker.rank, ts=ts, id=dump_id, name=dump_id, type='dump',
                              allocators={
-                                 "cuda.4.alloc": Allocator(f"alloc_{self.rank_worker.local_rank}", {
+                                 "cuda.4.alloc": Allocator(f"alloc_{self.rank_worker.rank}", {
                                      "size": alloc,
                                  }),
-                                 "cuda.3.max_alloc-alloc": Allocator(f"max_alloc-alloc_{self.rank_worker.local_rank}", {
+                                 "cuda.3.max_alloc-alloc": Allocator(f"max_alloc-alloc_{self.rank_worker.rank}", {
                                      "size": max_alloc - alloc,
                                  }),
-                                 "cuda.2.rsrvd-max_alloc": Allocator(f"rsrvd-max_alloc_{self.rank_worker.local_rank}", {
+                                 "cuda.2.rsrvd-max_alloc": Allocator(f"rsrvd-max_alloc_{self.rank_worker.rank}", {
                                      "size": max(rsrvd - max_alloc, 0),
                                  }),
-                                 "cuda.1.max_rsrvd-max_alloc_or_rsrvd": Allocator(f"max_rsrvd-max_alloc_or_rsrvd_{self.rank_worker.local_rank}", {
+                                 "cuda.1.max_rsrvd-max_alloc_or_rsrvd": Allocator(f"max_rsrvd-max_alloc_or_rsrvd_{self.rank_worker.rank}", {
                                      "size": max_rsrvd - (max_alloc if max_alloc > rsrvd else rsrvd),
                                  }),
                              })
@@ -929,7 +929,7 @@ class PipelineDriverBase(torch.nn.Module):
         all_stages = list(range(n_stages))
         pp_rank = 0
         for rank in self.all_ranks[:ranks_to_launch]:
-            kwargs = {'local_rank': rank,
+            kwargs = {'rank': rank,
                       'all_stages': all_stages,
                       'max_outstanding': self.max_outstanding,
                       'pp_rank': pp_rank,
