@@ -597,6 +597,18 @@ class Pipe(torch.nn.Module):
                     node.replace_all_uses_with(get_attr_nodes[node.target])
                     traced.graph.erase_node(node)
 
+        # avoid looking at next node by keeping track of previous pipe_split
+        prev_pipe_split_idx = -1
+        pipe_split_nodes_to_erase = set()
+        for i, node in enumerate(traced.graph.nodes):
+            if (node.op, node.target) == ('call_function', pipe_split):
+                if prev_pipe_split_idx == i - 1:
+                    pipe_split_nodes_to_erase.add(node)
+                prev_pipe_split_idx = i
+
+        for node in pipe_split_nodes_to_erase:
+            traced.graph.erase_node(node)
+
         traced.recompile()
 
         part_idx = 0
