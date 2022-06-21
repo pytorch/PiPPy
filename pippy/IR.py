@@ -597,6 +597,14 @@ class Pipe(torch.nn.Module):
                     node.replace_all_uses_with(get_attr_nodes[node.target])
                     traced.graph.erase_node(node)
 
+        for node in traced.graph.nodes:
+            if (node.op, node.target) == ('call_function', pipe_split):
+                nxt = node._next
+                while (nxt.op, nxt.target) == ('call_function', pipe_split):
+                    nxtnxt = nxt._next
+                    traced.graph.erase_node(nxt)
+                    nxt = nxtnxt
+
         traced.recompile()
 
         part_idx = 0
