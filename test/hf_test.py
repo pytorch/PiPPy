@@ -138,6 +138,18 @@ def roberta_splitter(model) -> int:
             return model.config.num_hidden_layers + 1
 
 
+def vit_splitter(model) -> int:
+    if isinstance(model, ViTModel):
+        for i in range(model.config.num_hidden_layers):
+            annotate_split_points(model, {f'encoder.layer.{i}': PipeSplitWrapper.SplitPoint.BEGINNING})
+        annotate_split_points(model, {'pooler': PipeSplitWrapper.SplitPoint.BEGINNING})
+        return model.config.num_hidden_layers + 2
+    else:
+        for i in range(model.config.num_hidden_layers):
+            annotate_split_points(model, {f'vit.encoder.layer.{i}': PipeSplitWrapper.SplitPoint.BEGINNING})
+        return model.config.num_hidden_layers + 1
+
+
 splitters = {
     'albert': albert_splitter,
     'bert': bert_splitter,
@@ -146,6 +158,7 @@ splitters = {
     'electra': electra_splitter,
     'transformer': transformer_splitter,
     'roberta': roberta_splitter,
+    'vit': vit_splitter,
 }
 
 bs = 4
@@ -178,6 +191,8 @@ def generate_inputs_for_model(model_cls, model, include_loss_args=False):
         input = torch.empty(bs, num_choices, seq_length, dtype=torch.long).random_(model.config.vocab_size)
     elif model_cls.__name__.startswith("Roberta"):
         input = torch.zeros(bs, seq_length, dtype=torch.long)
+    elif model_cls.__name__.startswith("ViT"):
+        input = torch.randn(bs, model.config.num_channels, model.config.image_size, model.config.image_size)
     else:
         input = torch.empty(bs, seq_length, dtype=torch.long).random_(model.config.vocab_size)
 
@@ -193,6 +208,9 @@ def generate_inputs_for_model(model_cls, model, include_loss_args=False):
                                                                  PegasusModel, PegasusForConditionalGeneration,
                                                                  MarianModel, MarianMTModel]:
         input_dict.update({'decoder_input_ids': input})
+
+    if model_cls.__name__.startswith("ViT"):
+        input_dict["pixel_values"] = input_dict.pop("input_ids")
 
     if include_loss_args:
         if model_cls.__name__.endswith('PreTraining'):
@@ -236,6 +254,15 @@ def generate_inputs_for_model(model_cls, model, include_loss_args=False):
             input_dict.update({
                 'labels': torch.empty(bs, seq_length, dtype=torch.long).random_(model.config.vocab_size - 1),
             })
+        elif model_cls == ViTForImageClassification:
+            input_dict.update({
+                'labels': torch.empty(bs, dtype=torch.long).random_(model.config.num_labels - 1),
+            })
+        elif model_cls == ViTForMaskedImageModeling:
+            num_patches = (model.config.image_size // model.config.patch_size) ** 2
+            input_dict.update({
+                "bool_masked_pos": torch.randint(low=0, high=2, size=(1, num_patches)).bool()
+            })
         else:
             raise NotImplementedError(f'Class {model_cls.__name__} unsupported for training test ')
 
@@ -276,10 +303,6 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
             # TODO: support SWIN models https://github.com/pytorch/PiPPy/issues/243
             if model_cls in [SwinForMaskedImageModeling, SwinForImageClassification, SwinModel]:
                 self.skipTest('Need to support SWIN models')
-
-            # TODO: support ViT models https://github.com/pytorch/PiPPy/issues/244
-            if model_cls in [ViTForMaskedImageModeling, ViTForImageClassification, ViTModel]:
-                self.skipTest('Need to support ViT models')
 
             # TODO: support LayoutLM models https://github.com/pytorch/PiPPy/issues/247
             if model_cls in [LayoutLMModel, LayoutLMForMaskedLM, LayoutLMForSequenceClassification,
@@ -369,6 +392,9 @@ def get_output_loss_value_spec_for_model(model_cls):
                      PLBartForSequenceClassification, PegasusForConditionalGeneration, BartForConditionalGeneration]:
         return {'loss': True, 'logits': False, 'encoder_last_hidden_state': False}
 
+    if model_cls in [ViTForMaskedImageModeling, ViTForImageClassification, ViTModel]:
+        return {'loss': True, 'logits': True}
+
     return {'loss': True, 'logits': False}
 
 
@@ -391,9 +417,8 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
             if model_cls in [SwinForMaskedImageModeling, SwinForImageClassification, SwinModel]:
                 self.skipTest('Need to support SWIN models')
 
-            # TODO: support ViT models https://github.com/pytorch/PiPPy/issues/244
-            if model_cls in [ViTForMaskedImageModeling, ViTForImageClassification, ViTModel]:
-                self.skipTest('Need to support ViT models')
+            if model_cls in [ViTModel]:
+                self.skipTest('ViT base model doesn\'t returning loss')
 
             # TODO: support LayoutLM models https://github.com/pytorch/PiPPy/issues/247
             if model_cls in [LayoutLMModel, LayoutLMForMaskedLM, LayoutLMForSequenceClassification,
