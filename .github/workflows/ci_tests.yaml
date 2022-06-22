@@ -1,7 +1,8 @@
 name: Python package
 
-on:
+on: 
   push:
+  pull_request:
     paths-ignore:
       - 'docs/**'
       - '**.md'
