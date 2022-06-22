@@ -1,6 +1,9 @@
 name: Code Quality Checks
 
 on:
+  push:
+    branches:
+    - master
   pull_request:
     paths-ignore:
       - 'docs/**'
