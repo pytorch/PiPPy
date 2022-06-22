@@ -3,7 +3,7 @@ name: Code Quality Checks
 on:
   push:
     branches:
-    - master
+    - main
   pull_request:
     paths-ignore:
       - 'docs/**'
