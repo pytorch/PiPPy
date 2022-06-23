@@ -320,7 +320,7 @@ class RankWorker(EventRecorder):
                     return out_val
 
                 def set_requires_grad(a):
-                    if isinstance(a, torch.Tensor):
+                    if isinstance(a, torch.Tensor) and a.is_floating_point():
                         a.requires_grad_(True)
                     return a
 
