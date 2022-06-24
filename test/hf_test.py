@@ -165,6 +165,7 @@ bs = 4
 num_choices = 3
 seq_length = 32
 
+
 def generate_hf_model(model_cls):
     splitter = splitters.get(model_cls.base_model_prefix, noop_splitter)
     assert splitter is not None
@@ -202,11 +203,11 @@ def generate_inputs_for_model(model_cls, model, include_loss_args=False):
     input_dict = {'input_ids': input}
 
     if model_cls.__name__.startswith("T5") or model_cls.__name__.startswith("M2M100") \
-        or model_cls.__name__.startswith("MT5") or model_cls in [BlenderbotModel, BlenderbotSmallModel,
-                                                                 BlenderbotForConditionalGeneration,
-                                                                 BlenderbotSmallForConditionalGeneration,
-                                                                 PegasusModel, PegasusForConditionalGeneration,
-                                                                 MarianModel, MarianMTModel]:
+            or model_cls.__name__.startswith("MT5") or model_cls in [BlenderbotModel, BlenderbotSmallModel,
+                                                                     BlenderbotForConditionalGeneration,
+                                                                     BlenderbotSmallForConditionalGeneration,
+                                                                     PegasusModel, PegasusForConditionalGeneration,
+                                                                     MarianModel, MarianMTModel]:
         input_dict.update({'decoder_input_ids': input})
 
     if model_cls.__name__.startswith("ViT"):
@@ -293,6 +294,7 @@ class HFModelsForwardTest(unittest.TestCase):
 for _model_cls_name in fx._SUPPORTED_MODELS:
     _model_cls = get_module_cls_by_model_name(_model_cls_name)
 
+
     def scope(model_cls, replicate):
         def test_case(self):
             # TODO: https://github.com/pytorch/PiPPy/issues/149
@@ -356,6 +358,7 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
 
         return test_case
 
+
     setattr(HFModelsForwardTest, f'test_{_model_cls.__name__}_transmit', scope(_model_cls, False))
     setattr(HFModelsForwardTest, f'test_{_model_cls.__name__}_replicate', scope(_model_cls, True))
 
@@ -392,8 +395,8 @@ def get_output_loss_value_spec_for_model(model_cls):
                      PLBartForSequenceClassification, PegasusForConditionalGeneration, BartForConditionalGeneration]:
         return {'loss': True, 'logits': False, 'encoder_last_hidden_state': False}
 
-    if model_cls in [ViTForMaskedImageModeling, ViTForImageClassification, ViTModel]:
-        return {'loss': True, 'logits': False}
+    if model_cls in [NezhaForPreTraining]:
+        return {'loss': True, 'prediction_logits': False, 'seq_relationship_logits': False}
 
     return {'loss': True, 'logits': False}
 
@@ -405,6 +408,7 @@ class HFModelsForwardBackwardTest(unittest.TestCase):
 # Forward-backward tests
 for _model_cls_name in fx._SUPPORTED_MODELS:
     _model_cls = get_module_cls_by_model_name(_model_cls_name)
+
 
     def scope(model_cls, replicate):
         def test_case(self):
@@ -448,7 +452,7 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
                 self.skipTest('Need to support Deberta models')
 
             model, splitter = generate_hf_model(model_cls)
-            model.eval() # Disable nondeterminism for testing
+            model.eval()  # Disable nondeterminism for testing
             submodules_cnt = splitter(model)
 
             try:
@@ -460,19 +464,20 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
                                  GPTJModel, GPTNeoModel, MegatronBertModel, MobileBertModel, RobertaModel, T5Model,
                                  BlenderbotModel, BlenderbotSmallModel, M2M100Model, MT5Model, MarianMTModel,
                                  MarianModel, PegasusModel, OPTModel, Speech2Text2Decoder, TrOCRDecoder, MBartModel,
-                                 CLIPTextModel, PLBartModel, XGLMModel, ViTModel]:
+                                 CLIPTextModel, PLBartModel, XGLMModel, ViTModel, NezhaModel]:
                     self.skipTest('Base models do not have embedded loss')
                 else:
                     raise e
 
             hf_tracer = fx.HFTracer()
 
-            if model_cls in [AlbertForSequenceClassification, BertForSequenceClassification, BartForSequenceClassification,
-                             DistilBertForSequenceClassification, ElectraForSequenceClassification,
-                             GPT2ForSequenceClassification, GPTJForSequenceClassification,
-                             GPTNeoForSequenceClassification, MegatronBertForSequenceClassification,
-                             MobileBertForSequenceClassification, RobertaForSequenceClassification,
-                             MBartForSequenceClassification, PLBartForSequenceClassification]:
+            if model_cls in [AlbertForSequenceClassification, BertForSequenceClassification,
+                             BartForSequenceClassification, DistilBertForSequenceClassification,
+                             ElectraForSequenceClassification, GPT2ForSequenceClassification,
+                             GPTJForSequenceClassification, GPTNeoForSequenceClassification,
+                             MegatronBertForSequenceClassification, MobileBertForSequenceClassification,
+                             RobertaForSequenceClassification, MBartForSequenceClassification,
+                             PLBartForSequenceClassification, NezhaForSequenceClassification]:
                 model.config.problem_type = "single_label_classification"
 
             concrete_args = generate_concrete_args_for_model(model, input_dict.keys())
@@ -523,6 +528,7 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
             print(f'Correctness check for model {model_cls.__name__}_{multi_use_param_config} passed', file=sys.stderr)
 
         return test_case
+
 
     setattr(HFModelsForwardBackwardTest, f'test_{_model_cls.__name__}_backward_transmit', scope(_model_cls, False))
     setattr(HFModelsForwardBackwardTest, f'test_{_model_cls.__name__}_backward_replicate', scope(_model_cls, True))
