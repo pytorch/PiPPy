@@ -275,12 +275,12 @@ if __name__ == "__main__":
     parser.add_argument('--visualize', type=int, default=1, choices=[0, 1])
     parser.add_argument('--record_mem_dumps', type=int, default=0, choices=[0, 1])
     parser.add_argument('--checkpoint', type=int, default=1, choices=[0, 1])
-    parser.add_argument('--dp_group_size', type=int, default=8)
+    parser.add_argument('--pp_group_size', type=int, default=8)
     args = parser.parse_args()
 
-    assert args.world_size % args.dp_group_size == 0
+    assert args.world_size % args.pp_group_size == 0
 
-    args.pp_group_size = args.world_size // args.dp_group_size
+    args.dp_group_size = args.world_size // args.pp_group_size
 
     if args.rank == -1:
         mp.spawn(run_worker, args=(args.world_size, args,), nprocs=args.world_size, join=True)
