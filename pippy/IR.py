@@ -2,7 +2,7 @@
 import copy
 import operator
 from enum import Enum
-from typing import Dict, List, Optional, Tuple, Union, cast
+from typing import Callable, cast, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.fx
@@ -837,7 +837,9 @@ class Pipe(torch.nn.Module):
 
     @staticmethod
     def from_tracing(mod : torch.nn.Module, multi_use_param_spec : Optional[MultiUseParamSpec] = None,
-                     tracer=None, output_loss_value_spec=None, deep_copy_module=False, **kwargs):
+                     tracer=None, output_loss_value_spec=None, deep_copy_module=False,
+                     auto_parallel_strategy : Optional[Callable[[torch.fx.GraphModule], torch.fx.GraphModule]] = None,
+                     **kwargs):
         # TODO: abstract partitioning policy
 
         global _pipeline_tracer
@@ -852,8 +854,10 @@ class Pipe(torch.nn.Module):
         finally:
             _pipeline_tracer = old__pipeline_tracer
 
-        return Pipe._from_traced(mod, traced, multi_use_param_spec, output_loss_value_spec=output_loss_value_spec)
+        if auto_parallel_strategy is not None:
+            traced = auto_parallel_strategy(traced)
 
+        return Pipe._from_traced(mod, traced, multi_use_param_spec, output_loss_value_spec=output_loss_value_spec)
 
     def __str__(self):
         return self.split_gm.__str__()
