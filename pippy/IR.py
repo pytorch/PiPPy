@@ -2,7 +2,7 @@
 import copy
 import operator
 from enum import Enum
-from typing import Dict, List, Optional, Tuple, Union, cast
+from typing import Dict, List, Optional, Tuple, Union, cast, Callable, Any
 
 import torch
 import torch.fx
@@ -837,7 +837,9 @@ class Pipe(torch.nn.Module):
 
     @staticmethod
     def from_tracing(mod : torch.nn.Module, multi_use_param_spec : Optional[MultiUseParamSpec] = None,
-                     tracer=None, output_loss_value_spec=None, deep_copy_module=False, **kwargs):
+                     tracer=None, output_loss_value_spec=None, deep_copy_module=False,
+                     auto_parallel_strategy : Optional[Callable[[torch.fx.GraphModule], torch.fx.GraphModule]] = None,
+                     **kwargs):
         # TODO: abstract partitioning policy
 
         global _pipeline_tracer
@@ -852,8 +854,28 @@ class Pipe(torch.nn.Module):
         finally:
             _pipeline_tracer = old__pipeline_tracer
 
+        if auto_parallel_strategy is not None:
+            traced = auto_parallel_strategy(traced)
+
         return Pipe._from_traced(mod, traced, multi_use_param_spec, output_loss_value_spec=output_loss_value_spec)
 
+    @staticmethod
+    def dp_auto_parallel(context: Dict[str, Any]):
+        def _dp_auto_parallel(fx_mod: torch.fx.GraphModule):
+            world_size = context["world_size"]
+            step_size = len(fx_mod.graph.nodes) // world_size
+            n_inserted = 0
+            for i, node in reversed(list(enumerate(fx_mod.graph.nodes))):
+                if i % step_size == 0:
+                    with fx_mod.graph.inserting_before(node):
+                        fx_mod.graph.call_function(pipe_split, (), {})
+                        n_inserted += 1
+                if n_inserted == world_size - 1:
+                    break
+            fx_mod.recompile()
+            return fx_mod
+
+        return _dp_auto_parallel
 
     def __str__(self):
         return self.split_gm.__str__()
