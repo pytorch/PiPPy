@@ -240,19 +240,44 @@ def run_worker(rank, world_size, args):
         rpc_backend_options=options
     )
 
-    global dp_pg_per_pp_rank
-    dp_ranks_per_pp_rank = torch.arange(args.world_size).reshape(args.pp_group_size, args.dp_group_size).tolist()
-    dp_pg_per_pp_rank = [torch.distributed.new_group(ranks) for ranks in dp_ranks_per_pp_rank]
+    # Not used
+    #global dp_pg_for_reference
+    #dp_pg_for_reference = torch.distributed.new_group(list(range(args.dp_group_size)))
 
-    pp_ranks_per_dp_group = [[i * args.dp_group_size + rank for i in range(args.pp_group_size)]
-                             for rank in range(args.dp_group_size)]
 
-    global dp_pg_for_reference
-    dp_pg_for_reference = torch.distributed.new_group(list(range(args.dp_group_size)))
+    def run_regular_pipe():
+        global dp_pg_per_pp_rank
+        dp_ranks_per_pp_rank = torch.arange(args.world_size).reshape(args.pp_group_size, args.dp_group_size).tolist()
+        dp_pg_per_pp_rank = [torch.distributed.new_group(ranks) for ranks in dp_ranks_per_pp_rank]
 
-    if rank >= 0 and rank // args.dp_group_size == 0:
-        args.rank = rank
-        run_master(args, pp_ranks_per_dp_group[rank])
+        pp_ranks_per_dp_group = [[i * args.dp_group_size + rank for i in range(args.pp_group_size)]
+                                 for rank in range(args.dp_group_size)]
+
+        if rank >= 0 and rank // args.dp_group_size == 0:
+            args.rank = rank
+            run_master(args, pp_ranks_per_dp_group[rank])
+
+    def run_double_pipe():
+        forward_pipe = torch.arange(args.world_size // 2)
+        backward_pipe = torch.arange(args.world_size//2, args.world_size).flip(0)
+
+        global dp_pg_per_pp_rank
+        dp_ranks_per_pp_rank = torch.stack((forward_pipe, backward_pipe)).transpose(0, 1).tolist()
+        print(dp_ranks_per_pp_rank)
+        dp_pg_per_pp_rank = [torch.distributed.new_group(ranks) for ranks in dp_ranks_per_pp_rank]
+
+        if rank == 0:
+            args.rank = rank
+            run_master(args, forward_pipe.tolist())
+        elif rank == args.world_size - 1:
+            args.rank = rank
+            run_master(args, backward_pipe.tolist())
+
+    if args.double_pipe:
+        run_double_pipe()
+    else:
+        run_regular_pipe()
+
     rpc.shutdown()
 
 
@@ -276,6 +301,7 @@ if __name__ == "__main__":
     parser.add_argument('--record_mem_dumps', type=int, default=0, choices=[0, 1])
     parser.add_argument('--checkpoint', type=int, default=1, choices=[0, 1])
     parser.add_argument('--pp_group_size', type=int, default=8)
+    parser.add_argument('--double_pipe', type=int, default=0)
     args = parser.parse_args()
 
     assert args.world_size % args.pp_group_size == 0
