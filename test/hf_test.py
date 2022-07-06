@@ -327,6 +327,21 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
             if model_cls in [HubertModel, HubertForSequenceClassification, HubertForCTC]:
                 self.skipTest('Need to support Hubert models')
 
+            # TODO: support DistilBert models https://github.com/pytorch/PiPPy/issues/272
+            if model_cls in [DistilBertModel, DistilBertForMaskedLM, DistilBertForQuestionAnswering,
+                             DistilBertForSequenceClassification, DistilBertForTokenClassification,
+                             DistilBertForMultipleChoice]:
+                self.skipTest('Need to support DistilBert models')
+
+            # TODO: support Deberta models https://github.com/pytorch/PiPPy/issues/261
+            if model_cls in [DebertaModel, DebertaV2ForMaskedLM, DebertaV2ForSequenceClassification,
+                             DebertaV2ForTokenClassification, DebertaForQuestionAnswering,
+                             DebertaForTokenClassification, DebertaV2ForQuestionAnswering,
+                             DebertaV2ForQuestionAnswering, DebertaV2ForMultipleChoice,
+                             DebertaV2ForMultipleChoice, DebertaV2Model, DebertaForMaskedLM,
+                             DebertaForSequenceClassification]:
+                self.skipTest('Need to support Deberta models')
+
             model, splitter = generate_hf_model(model_cls)
 
             submodules_cnt = splitter(model)
@@ -432,6 +447,12 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
             # TODO: support Hubert models https://github.com/pytorch/PiPPy/issues/254
             if model_cls in [HubertModel, HubertForSequenceClassification, HubertForCTC]:
                 self.skipTest('Need to support Hubert models')
+
+            # TODO: support DistilBert models https://github.com/pytorch/PiPPy/issues/272
+            if model_cls in [DistilBertModel, DistilBertForMaskedLM, DistilBertForQuestionAnswering,
+                             DistilBertForSequenceClassification, DistilBertForTokenClassification,
+                             DistilBertForMultipleChoice]:
+                self.skipTest('Need to support DistilBert models')
 
             # TODO: support Deberta models https://github.com/pytorch/PiPPy/issues/261
             if model_cls in [DebertaModel, DebertaV2ForMaskedLM, DebertaV2ForSequenceClassification,
