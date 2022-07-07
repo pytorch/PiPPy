@@ -255,39 +255,47 @@ def run_worker(rank, world_size, args):
 
     def run_double_pipe():
         per_pipe_dp_size = args.dp_group_size // 2
-        # Create forward pipe first
+        # Create forward pipes first
+        # They take half number of ranks
         forward_pipe_ranks = torch.arange(args.world_size // 2)
+        # Pipeline along row, DP along column
         forward_pipe_pp_dp = forward_pipe_ranks.reshape(args.pp_group_size, per_pipe_dp_size)
-        # Wrap pipe around
-        even_rows = range(0, args.pp_group_size, 2)
-        upper_half = forward_pipe_pp_dp[even_rows]
-        odd_rows = range(1, args.pp_group_size, 2)
-        lower_half = forward_pipe_pp_dp[odd_rows]
+        # Wrap pipes around so that we get ] shape pipes
+        # Upper half takes even rows; lower half takes odd rows
+        upper_half = forward_pipe_pp_dp[range(0, args.pp_group_size, 2)]
+        lower_half = forward_pipe_pp_dp[range(1, args.pp_group_size, 2)]
+        # Re-form the pipes by reversing the lower half
         forward_pipe = torch.cat(
                 (upper_half,
                  lower_half.flip([0]))
         )
         if rank == 0:
-            print(f'Forward pipe: {forward_pipe}')
+            print(f'Forward pipes:\n{forward_pipe}')
 
-        # Now create backward pipe
+        # Now create backward pipes
+        # Backward pipes reverse direction of forward pipes
         backward_pipe = torch.flip(forward_pipe, [0])
-        # Offset the rank values by world_size/2 as we use a separate set of ranks for backward pipe
+        # Offset the rank values by world_size/2 as we use a separate set of ranks for backward pipes
         backward_pipe = torch.add(backward_pipe, args.world_size // 2)
         if rank == 0:
-            print(f'Backward pipe: {backward_pipe}')
+            print(f'Backward pipes:\n{backward_pipe}')
 
         global dp_pg_per_pp_rank
-        # Concatenate two pipes on DP dimension
+        # Concatenate forward and backward pipes on DP dimension
+        # because they share same stages which would need DDP syncs
         dp_ranks_per_pp_rank = torch.cat((forward_pipe, backward_pipe), dim=1)
         dp_pg_per_pp_rank = [torch.distributed.new_group(ranks) for ranks in dp_ranks_per_pp_rank.tolist()]
 
+        # Head ranks in forward pipes become master
         if rank in forward_pipe[0]:
             args.rank = rank
+            # Use column index to select pipeline
             pp_group = rank - forward_pipe[0][0]
             run_master(args, forward_pipe[:, pp_group].tolist())
+        # Head ranks in backward pipes become master
         elif rank in backward_pipe[0]:
             args.rank = rank
+            # Use column index to select pipeline
             pp_group = rank - backward_pipe[0][0]
             run_master(args, backward_pipe[:, pp_group].tolist())
 
@@ -319,6 +327,7 @@ if __name__ == "__main__":
     parser.add_argument('--record_mem_dumps', type=int, default=0, choices=[0, 1])
     parser.add_argument('--checkpoint', type=int, default=1, choices=[0, 1])
     parser.add_argument('--pp_group_size', type=int, default=8)
+    # Note: if using double_pipe, the world_size must be twice the number of total devices
     parser.add_argument('--double_pipe', type=int, default=0)
     args = parser.parse_args()
 
