@@ -473,8 +473,9 @@ class PipeStageExecutor(EventRecorder):
         _store = torch.distributed.distributed_c10d._get_default_store()
         # Wrap default store by adding a prefix to each key inserted so as not to step into default store's space
         store = torch.distributed.PrefixStore('PiPPy', _store)
+        # Get my rank in global DDP group
         # TODO: figure out the unique global "stage rank" for Interleaved 1F1B
-        my_rank = str(worker_rank)
+        my_rank = str(torch.distributed.get_rank())
         my_stage = str(self.stage_id)
         # Each stage rank checks in with their stage id in respective pipe
         store.set(my_rank, my_stage)
@@ -502,12 +503,10 @@ class PipeStageExecutor(EventRecorder):
             dp_group_ranks = stage_to_dp_ranks[stage]
             dp_pg_for_stage = torch.distributed.new_group(dp_group_ranks)
             if stage == self.stage_id:
+                # Wrap stage module with DDP using the DP group corresponding to own stage
+                self.mod = torch.nn.parallel.DistributedDataParallel(self.mod, process_group=dp_pg_for_stage)
                 logging.info(f'Rank[{worker_rank}] stage[{self.stage_id}] '
                              f'DP group {dp_group_ranks} -- init complete')
-
-            # Wrap stage module with DDP using the DP group corresponding to own stage
-            if self.stage_id == stage:
-                self.mod = torch.nn.parallel.DistributedDataParallel(self.mod, process_group=dp_pg_for_stage)
 
     def invoke(self, output_unique_key : str, phase : Phase, args, kwargs, cur_microbatch : int, debug_str : str,
                output_refcount : int, batch_id : int, num_microbatches : int):
