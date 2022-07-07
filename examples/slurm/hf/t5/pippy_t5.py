@@ -115,6 +115,7 @@ def resolve_pg_per_stage(pp_rank):
 
 
 def run_master(args, pp_ranks):
+    print(f'Master {args.rank}, workers {pp_ranks}')
     torch.manual_seed(42)
 
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if args.replicate else MultiUseParameterConfig.TRANSMIT
@@ -240,11 +241,6 @@ def run_worker(rank, world_size, args):
         rpc_backend_options=options
     )
 
-    # Not used
-    #global dp_pg_for_reference
-    #dp_pg_for_reference = torch.distributed.new_group(list(range(args.dp_group_size)))
-
-
     def run_regular_pipe():
         global dp_pg_per_pp_rank
         dp_ranks_per_pp_rank = torch.arange(args.world_size).reshape(args.pp_group_size, args.dp_group_size).tolist()
@@ -258,20 +254,42 @@ def run_worker(rank, world_size, args):
             run_master(args, pp_ranks_per_dp_group[rank])
 
     def run_double_pipe():
-        forward_pipe = torch.arange(args.world_size // 2)
-        backward_pipe = torch.arange(args.world_size//2, args.world_size).flip(0)
+        per_pipe_dp_size = args.dp_group_size // 2
+        # Create forward pipe first
+        forward_pipe_ranks = torch.arange(args.world_size // 2)
+        forward_pipe_pp_dp = forward_pipe_ranks.reshape(args.pp_group_size, per_pipe_dp_size)
+        # Wrap pipe around
+        even_rows = range(0, args.pp_group_size, 2)
+        upper_half = forward_pipe_pp_dp[even_rows]
+        odd_rows = range(1, args.pp_group_size, 2)
+        lower_half = forward_pipe_pp_dp[odd_rows]
+        forward_pipe = torch.cat(
+                (upper_half,
+                 lower_half.flip([0]))
+        )
+        if rank == 0:
+            print(f'Forward pipe: {forward_pipe}')
+
+        # Now create backward pipe
+        backward_pipe = torch.flip(forward_pipe, [0])
+        # Offset the rank values by world_size/2 as we use a separate set of ranks for backward pipe
+        backward_pipe = torch.add(backward_pipe, args.world_size // 2)
+        if rank == 0:
+            print(f'Backward pipe: {backward_pipe}')
 
         global dp_pg_per_pp_rank
-        dp_ranks_per_pp_rank = torch.stack((forward_pipe, backward_pipe)).transpose(0, 1).tolist()
-        print(dp_ranks_per_pp_rank)
-        dp_pg_per_pp_rank = [torch.distributed.new_group(ranks) for ranks in dp_ranks_per_pp_rank]
+        # Concatenate two pipes on DP dimension
+        dp_ranks_per_pp_rank = torch.cat((forward_pipe, backward_pipe), dim=1)
+        dp_pg_per_pp_rank = [torch.distributed.new_group(ranks) for ranks in dp_ranks_per_pp_rank.tolist()]
 
-        if rank == 0:
+        if rank in forward_pipe[0]:
             args.rank = rank
-            run_master(args, forward_pipe.tolist())
-        elif rank == args.world_size - 1:
+            pp_group = rank - forward_pipe[0][0]
+            run_master(args, forward_pipe[:, pp_group].tolist())
+        elif rank in backward_pipe[0]:
             args.rank = rank
-            run_master(args, backward_pipe.tolist())
+            pp_group = rank - backward_pipe[0][0]
+            run_master(args, backward_pipe[:, pp_group].tolist())
 
     if args.double_pipe:
         run_double_pipe()
