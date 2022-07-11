@@ -211,7 +211,73 @@ def run_master(args, pp_ranks):
     print('Finished')
 
 
+# Run regular pipeline scheme
+def run_regular_pipe(args):
+    global dp_pg_per_pp_rank
+    dp_ranks_per_pp_rank = torch.arange(args.world_size).reshape(args.pp_group_size, args.dp_group_size).tolist()
+    dp_pg_per_pp_rank = [torch.distributed.new_group(ranks) for ranks in dp_ranks_per_pp_rank]
+
+    pp_ranks_per_dp_group = [[i * args.dp_group_size + rank for i in range(args.pp_group_size)]
+                             for rank in range(args.dp_group_size)]
+
+    if args.rank >= 0 and args.rank // args.dp_group_size == 0:
+        run_master(args, pp_ranks_per_dp_group[args.rank])
+
+
+# The Double Pipe scheme launches pipelines in both the regular direction as well as the reverse direction
+# In addition, the Double Pipe scheme wraps each forward pipe into ] shape and each backward pipe into [ shape in the
+# node plane, to make sure corresponding stages of a forward and a backward pipe are always on the same node (faster
+# DDP)
+def run_double_pipe(args):
+    if args.rank == 0:
+        print(f'Running Double Pipe scheme')
+
+    per_pipe_dp_size = args.dp_group_size // 2
+    # Create forward pipes first
+    # They take half number of ranks
+    forward_pipe_ranks = torch.arange(args.world_size // 2)
+    # Pipeline along row, DP along column
+    forward_pipe_pp_dp = forward_pipe_ranks.reshape(args.pp_group_size, per_pipe_dp_size)
+    # Wrap pipes around so that we get ] shape pipes
+    # Upper half takes even rows; lower half takes odd rows
+    upper_half = forward_pipe_pp_dp[range(0, args.pp_group_size, 2)]
+    lower_half = forward_pipe_pp_dp[range(1, args.pp_group_size, 2)]
+    # Re-form the pipes by reversing the lower half
+    forward_pipe = torch.cat(
+            (upper_half,
+             lower_half.flip([0]))
+    )
+    if args.rank == 0:
+        print(f'Forward pipes:\n{forward_pipe}')
+
+    # Now create backward pipes
+    # Backward pipes reverse direction of forward pipes
+    backward_pipe = torch.flip(forward_pipe, [0])
+    # Offset the rank values by world_size/2 as we use a separate set of ranks for backward pipes
+    backward_pipe = torch.add(backward_pipe, args.world_size // 2)
+    if args.rank == 0:
+        print(f'Backward pipes:\n{backward_pipe}')
+
+    global dp_pg_per_pp_rank
+    # Concatenate forward and backward pipes on DP dimension
+    # because they share same stages which would need DDP syncs
+    dp_ranks_per_pp_rank = torch.cat((forward_pipe, backward_pipe), dim=1)
+    dp_pg_per_pp_rank = [torch.distributed.new_group(ranks) for ranks in dp_ranks_per_pp_rank.tolist()]
+
+    # Head ranks in forward pipes become master
+    if args.rank in forward_pipe[0]:
+        # Use column index to select pipeline
+        pp_group = args.rank - forward_pipe[0][0]
+        run_master(args, forward_pipe[:, pp_group].tolist())
+    # Head ranks in backward pipes become master
+    elif args.rank in backward_pipe[0]:
+        # Use column index to select pipeline
+        pp_group = args.rank - backward_pipe[0][0]
+        run_master(args, backward_pipe[:, pp_group].tolist())
+
+
 def run_worker(rank, world_size, args):
+    args.rank = rank
     os.environ['MASTER_ADDR'] = args.master_addr
     os.environ['MASTER_PORT'] = args.master_port
     # Exclude IB for metadata transport due to lack of EFA support on AWS
@@ -241,68 +307,10 @@ def run_worker(rank, world_size, args):
         rpc_backend_options=options
     )
 
-    def run_regular_pipe():
-        global dp_pg_per_pp_rank
-        dp_ranks_per_pp_rank = torch.arange(args.world_size).reshape(args.pp_group_size, args.dp_group_size).tolist()
-        dp_pg_per_pp_rank = [torch.distributed.new_group(ranks) for ranks in dp_ranks_per_pp_rank]
-
-        pp_ranks_per_dp_group = [[i * args.dp_group_size + rank for i in range(args.pp_group_size)]
-                                 for rank in range(args.dp_group_size)]
-
-        if rank >= 0 and rank // args.dp_group_size == 0:
-            args.rank = rank
-            run_master(args, pp_ranks_per_dp_group[rank])
-
-    def run_double_pipe():
-        per_pipe_dp_size = args.dp_group_size // 2
-        # Create forward pipes first
-        # They take half number of ranks
-        forward_pipe_ranks = torch.arange(args.world_size // 2)
-        # Pipeline along row, DP along column
-        forward_pipe_pp_dp = forward_pipe_ranks.reshape(args.pp_group_size, per_pipe_dp_size)
-        # Wrap pipes around so that we get ] shape pipes
-        # Upper half takes even rows; lower half takes odd rows
-        upper_half = forward_pipe_pp_dp[range(0, args.pp_group_size, 2)]
-        lower_half = forward_pipe_pp_dp[range(1, args.pp_group_size, 2)]
-        # Re-form the pipes by reversing the lower half
-        forward_pipe = torch.cat(
-                (upper_half,
-                 lower_half.flip([0]))
-        )
-        if rank == 0:
-            print(f'Forward pipes:\n{forward_pipe}')
-
-        # Now create backward pipes
-        # Backward pipes reverse direction of forward pipes
-        backward_pipe = torch.flip(forward_pipe, [0])
-        # Offset the rank values by world_size/2 as we use a separate set of ranks for backward pipes
-        backward_pipe = torch.add(backward_pipe, args.world_size // 2)
-        if rank == 0:
-            print(f'Backward pipes:\n{backward_pipe}')
-
-        global dp_pg_per_pp_rank
-        # Concatenate forward and backward pipes on DP dimension
-        # because they share same stages which would need DDP syncs
-        dp_ranks_per_pp_rank = torch.cat((forward_pipe, backward_pipe), dim=1)
-        dp_pg_per_pp_rank = [torch.distributed.new_group(ranks) for ranks in dp_ranks_per_pp_rank.tolist()]
-
-        # Head ranks in forward pipes become master
-        if rank in forward_pipe[0]:
-            args.rank = rank
-            # Use column index to select pipeline
-            pp_group = rank - forward_pipe[0][0]
-            run_master(args, forward_pipe[:, pp_group].tolist())
-        # Head ranks in backward pipes become master
-        elif rank in backward_pipe[0]:
-            args.rank = rank
-            # Use column index to select pipeline
-            pp_group = rank - backward_pipe[0][0]
-            run_master(args, backward_pipe[:, pp_group].tolist())
-
     if args.double_pipe:
-        run_double_pipe()
+        run_double_pipe(args)
     else:
-        run_regular_pipe()
+        run_regular_pipe(args)
 
     rpc.shutdown()
 
