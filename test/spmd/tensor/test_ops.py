@@ -5,7 +5,6 @@ from torch.testing._internal.common_utils import (
 from ..test_utils import DistTensorTestBase, with_comms
 from spmd import (
     distribute_tensor,
-    distribute_module,
     DeviceMesh,
     Tensor,
     Shard,

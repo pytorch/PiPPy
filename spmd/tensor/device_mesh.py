@@ -2,7 +2,6 @@ import torch
 from torch.distributed.distributed_c10d import (
     get_rank,
     ReduceOp,
-    ProcessGroup,
     _get_default_group
 )
 
@@ -17,13 +16,16 @@ from torch.distributed.nn.functional import (
 
 _global_device_mesh = None
 
+
 def get_global_device_mesh():
     global _global_device_mesh
     return _global_device_mesh
 
+
 def set_global_device_mesh(mesh):
     global _global_device_mesh
     _global_device_mesh = mesh
+
 
 class DeviceMesh(object):
     '''

@@ -1,7 +1,7 @@
 import copy
 import torch
 from torch.utils._pytree import tree_map
-from typing import Dict, List, Callable
+from typing import Dict, List, Callable, Optional
 from spmd.tensor.device_mesh import (
     get_global_device_mesh,
     DeviceMesh
@@ -12,7 +12,6 @@ from spmd.tensor.placement_types import (
     Replicate,
     _Partial
 )
-from spmd.tensor.utils import all_equal
 
 
 class Tensor(torch.Tensor):
@@ -38,7 +37,7 @@ class Tensor(torch.Tensor):
         layout = kwargs['layout']
         requires_grad = kwargs['requires_grad']
         device = kwargs.get('device', 'cpu')
-        
+
         r = torch.Tensor._make_wrapper_subclass(  # type: ignore[attr-defined]
             cls,
             size,
@@ -65,7 +64,7 @@ class Tensor(torch.Tensor):
             if not isinstance(e, Tensor):
                 return None
             return e.device_mesh
-        
+
         def unwrap(e):
             return e._local_tensor if isinstance(e, Tensor) else e
 
@@ -92,11 +91,10 @@ class Tensor(torch.Tensor):
             return Tensor._dist_tensor_dispatch_ops[str(func)](*args, **kwargs)
         else:
             # default to local tensor ops, this is wrong
-            # but we use it now to enable more tensor property access 
+            # but we use it now to enable more tensor property access
             rs = func(*tree_map(unwrap, args), **tree_map(unwrap, kwargs))
             rs = wrap(rs, args_mesh[0], args[0].placements)
             return rs
-
 
     @classmethod
     def from_local(cls, local_tensor, device_mesh=None, placements=None, run_check=True):
@@ -128,7 +126,7 @@ class Tensor(torch.Tensor):
                 pass
             else:
                 raise RuntimeError(f"placement type {type(placement)} not supported!")
-        
+
         if run_check:
             # TODO: by default check tensor metas across rank
             pass
@@ -145,31 +143,36 @@ class Tensor(torch.Tensor):
         dist_tensor._local_tensor = local_tensor
         return dist_tensor
 
-    def redistribute(self, device_mesh=None, placements: List[Placement]=None) -> "Tensor":
+    def redistribute(self, device_mesh: Optional[DeviceMesh] = None, placements: Optional[List[Placement]] = None) -> "Tensor":
         # This API perform necessary transformations and get
         # a new DistributedTensor with the new spec. i.e. for
         # sharding it's a reshard behavior.
         # TODO: handle last shard uneven with padding
         # right now we assume all local shard equal size
         device_mesh = get_global_device_mesh() if device_mesh is None else device_mesh
+        # raise error if new placements not specified
+        if placements is None:
+            raise RuntimeError("placements is needed for redistribute!")
+
         current_placements = self.placements
         assert len(placements) == 1, "Only support 1-d placement for now"
         assert self.device_mesh.mesh.equal(device_mesh.mesh), "cross mesh comm not support yet"
+        local_tensor = self.local_tensor()
         if isinstance(current_placements[0], Shard) and isinstance(placements[0], Replicate):
             # for shard, all_gather all shards and return the global tensor
             global_tensor = torch.empty(
-                self.size(),
-                device=self._local_tensor.device,
+                *self.size(),
+                device=local_tensor.device,
                 dtype=self.dtype
             )
             # NOTE: all_gather_base only works well when tensor
             # sharded on a sequential list of devices
-            device_mesh.all_gather_base(global_tensor, self._local_tensor)
+            device_mesh.all_gather_base(global_tensor, local_tensor)
             replica_tensor = Tensor.from_local(global_tensor, device_mesh, placements)
             replica_tensor._placements[0] = Replicate()
             return replica_tensor
         elif isinstance(current_placements[0], _Partial) and isinstance(placements[0], Replicate):
-            reduced_tensor = device_mesh.all_reduce(self._local_tensor, current_placements[0].reduce_op)
+            reduced_tensor = device_mesh.all_reduce(local_tensor, current_placements[0].reduce_op)
             replica_tensor = Tensor.from_local(reduced_tensor, device_mesh, current_placements)
             # change placement to replicate
             replica_tensor._placements[0] = Replicate()
@@ -180,7 +183,7 @@ class Tensor(torch.Tensor):
             raise RuntimeError(f"Converting from {current_placements} to {placements} not supported!")
 
     def local_tensor(self) -> torch.Tensor:
-        return self._local_tensor
+        return self._local_tensor  # type: ignore
 
     @property
     def placements(self):

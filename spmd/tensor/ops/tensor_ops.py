@@ -10,14 +10,14 @@ def dist_detach(self):
     detached_tensor = self.local_tensor().detach()
     return Tensor.from_local(detached_tensor, device_mesh, self.placements)
 
-    
+
 @register_impl("aten.ones_like.default")
 def dist_ones_like(self, dtype=None, layout=None, device=None, pin_memory=None, memory_format=None):
     device_mesh = self.device_mesh
 
     new_local_tensor = torch.ones_like(self.local_tensor())
     return Tensor.from_local(new_local_tensor, device_mesh, self.placements)
-    
+
 # @register_impl("aten.expand.default")
 # def dist_expand(types, args=(), kwargs=None):
 #     self_tensor = args[0]
@@ -25,4 +25,3 @@ def dist_ones_like(self, dtype=None, layout=None, device=None, pin_memory=None, 
 
 #     new_local_tensor = torch.ones_like(self_tensor.local_tensor())
 #     return Tensor.from_local(new_local_tensor, device_mesh, self_tensor.placements)
-    

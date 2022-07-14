@@ -1,5 +1,4 @@
 # implement matrix related ops for distributed tensor
-import torch
 import torch.utils._pytree as pytree
 from torch.distributed.distributed_c10d import (
     ReduceOp
@@ -33,7 +32,7 @@ def dist_addmm(input: Tensor, mat1: Tensor, mat2: Tensor, beta=1, alpha=1) -> Te
     current_rank = device_mesh.get_rank()
 
     assert isinstance(input_placement, Replicate), "only support replication now"
-    
+
     # only implemented combo with no comm for now
     # TODO: implement all combinations
     if isinstance(mat1_placement, Shard) and isinstance(mat2_placement, Replicate):
@@ -50,9 +49,10 @@ def dist_addmm(input: Tensor, mat1: Tensor, mat2: Tensor, beta=1, alpha=1) -> Te
         return Tensor.from_local(local_res, device_mesh, mat2.placements)
     elif isinstance(mat1_placement, Replicate) and isinstance(mat2_placement, Replicate):
         local_res = local_input.addmm(local_mat1, local_mat2, beta=beta, alpha=alpha)
-        return Tensor.from_local(local_res, device_mesh, mat1.placement, run_check=False)
+        return Tensor.from_local(local_res, device_mesh, mat1.placements, run_check=False)
     else:
         raise RuntimeError(f"addmm operator supported for inputs: {mat1}, {mat2}")
+
 
 @register_impl("aten.mm.default")
 def dist_mm(mat1: Tensor, mat2: Tensor) -> Tensor:
@@ -81,8 +81,8 @@ def dist_mm(mat1: Tensor, mat2: Tensor) -> Tensor:
         placements = [_Partial(ReduceOp.SUM)]
         partial_sum = Tensor.from_local(local_res, device_mesh, placements)
         # all reduce across ranks
-        placements[0] = Replicate()
-        return partial_sum.redistribute(device_mesh, placements)
+        replicate_placements = [Replicate()]
+        return partial_sum.redistribute(device_mesh, replicate_placements)
     else:
         raise RuntimeError(f"mm operator supported for inputs: {mat1}, {mat2}")
 

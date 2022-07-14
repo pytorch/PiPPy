@@ -1,6 +1,5 @@
 import os
 import torch
-import torch.distributed as distributed
 from spmd.tensor import Tensor, DeviceMesh, Shard, Replicate
 
 

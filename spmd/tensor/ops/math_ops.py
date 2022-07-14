@@ -1,10 +1,10 @@
-import torch
 from torch.distributed.distributed_c10d import (
     ReduceOp
 )
 from spmd.tensor.api import Tensor
 from spmd.tensor.placement_types import Shard, Replicate, _Partial
 from spmd.tensor.ops.utils import register_impl
+
 
 @register_impl("aten.sum.default")
 def dist_sum(self: Tensor) -> Tensor:
@@ -19,8 +19,8 @@ def dist_sum(self: Tensor) -> Tensor:
         # partial reduce
         partial_sum = Tensor.from_local(local_sum, device_mesh, placements)
         # all_reduce across device
-        placements[0] = Replicate()
-        return partial_sum.redistribute(device_mesh, placements)
+        replicate_placements = [Replicate()]
+        return partial_sum.redistribute(device_mesh, replicate_placements)
     elif isinstance(self_placement, Replicate):
         return Tensor.from_local(local_sum, device_mesh=device_mesh, placements=self.placements)
     else:

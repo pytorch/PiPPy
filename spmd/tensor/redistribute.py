@@ -6,6 +6,7 @@ from spmd.tensor.placement_types import (
     _Partial
 )
 
+
 def redistribute_spmd_tensor(input, device_mesh, placements):
     current_placements = input.placements
     if isinstance(current_placements[0], Shard) and isinstance(placements[0], Replicate):

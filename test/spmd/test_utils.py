@@ -4,11 +4,10 @@ import sys
 import torch
 import torch.distributed as dist
 
-from functools import wraps, partial
+from functools import wraps
 from torch.testing._internal.common_distributed import (
     MultiProcessTestCase,
     TEST_SKIPS,
-    tp_transports,
 )
 
 TEST_GPU_NUM = 4
