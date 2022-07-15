@@ -17,4 +17,10 @@
 
 #SBATCH --time=1:00:00
 
+# Use the following settings instead if using double pipes
+# as it uses 2x number of processes
+##SBATCH --ntasks-per-node=16
+##SBATCH --cpus-per-task=6
+##SBATCH -m plane=8
+
 srun --label pippy_wrapper.sh
