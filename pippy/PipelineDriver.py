@@ -1184,7 +1184,7 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
             if predicate(node):
                 return node
 
-            return self.run_one(node)
+            self.run_one(node)
 
     def run_one(self, node):
         # TODO: hoist run() implementation
