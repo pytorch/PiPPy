@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 from spmd.tensor.api import Tensor
 from spmd.tensor.ops.utils import register_impl

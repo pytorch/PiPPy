@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 import torch.distributed.distributed_c10d as c10d
 
 from dataclasses import dataclass

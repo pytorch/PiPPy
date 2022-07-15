@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 import spmd.tensor.api as spmd_tensor
 from spmd.tensor.placement_types import (
