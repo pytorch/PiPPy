@@ -366,8 +366,11 @@ class DetachExecutor(torch.fx.Interpreter):
             else:
                 return a
 
-        args = torch.fx.node.map_aggregate(args, detach_tensors)
-        kwargs = torch.fx.node.map_aggregate(kwargs, detach_tensors)
+        def dont_traverse_size(a):
+            return type(a) != torch.Size
+
+        args = torch.fx.node.map_aggregate(args, detach_tensors, dont_traverse_size)
+        kwargs = torch.fx.node.map_aggregate(kwargs, detach_tensors, dont_traverse_size)
 
         return super().call_module(target, args, kwargs)
 

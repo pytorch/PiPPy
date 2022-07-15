@@ -96,15 +96,21 @@ def run_master(args):
             x = torch.mm(x, self.mm_param)
             skip_connection = x
             x = torch.relu(x)
+            size = x.size()  # for https://github.com/pytorch/PiPPy/issues/256
             pipe_split()
+            x.reshape(size[0], size[1])  # for https://github.com/pytorch/PiPPy/issues/256
             x = torch.mm(x, self.mm_param) + self.buffer[:x.shape[0]]
             x = self.lin(x)
+            size = x.size()  # for https://github.com/pytorch/PiPPy/issues/256
             pipe_split()
+            x.reshape(size[0], size[1])  # for https://github.com/pytorch/PiPPy/issues/256
             x = torch.relu(x)
             x = x + skip_connection
             x = torch.mm(x, self.mm_param2)
             x = self.lin(x)
+            size = x.size()  # for https://github.com/pytorch/PiPPy/issues/256
             pipe_split()
+            x.reshape(size[0], size[1])  # for https://github.com/pytorch/PiPPy/issues/256
             x = torch.relu(x)
             return x
 
