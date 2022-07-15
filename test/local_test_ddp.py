@@ -109,7 +109,7 @@ def run_master(args, pp_ranks):
     kwargs_chunk_spec: Dict = {}
     output_chunk_spec = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
 
-    pipe_driver : PipelineDriverBase = schedules[args.schedule](ec_pipe, args_chunk_spec, kwargs_chunk_spec,
+    pipe_driver : PipelineDriverBase = schedules[args.schedule](ec_pipe, CHUNKS, args_chunk_spec, kwargs_chunk_spec,
                                                                 output_chunk_spec, args.pp_group_size,
                                                                 all_ranks=pp_ranks,
                                                                 _debug_mask_minibatches=DEBUG_MASK_MINIBATCHES,
@@ -124,7 +124,6 @@ def run_master(args, pp_ranks):
     target = torch.randn(bs, d_hid, device=args.device)
 
     # TODO: distributed optimizer
-    pipe_driver.chunks = CHUNKS
     out = pipe_driver(input, target)
 
     print(f'Rank {args.rank} got loss value {out}')

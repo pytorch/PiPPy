@@ -86,7 +86,7 @@ def run_master(args):
     kwargs_chunk_spec: Dict = {}
     output_chunk_spec = {'last_hidden_state': TensorChunkSpec(0), 'pooler_output': TensorChunkSpec(0)}
 
-    pipe_driver: PipelineDriverBase = schedules[args.schedule](bert_pipe, args_chunk_spec, kwargs_chunk_spec,
+    pipe_driver: PipelineDriverBase = schedules[args.schedule](bert_pipe, 5, args_chunk_spec, kwargs_chunk_spec,
                                                                output_chunk_spec,
                                                                args.world_size,
                                                                _debug_mask_minibatches=True,
@@ -94,7 +94,6 @@ def run_master(args):
                                                                checkpoint=bool(args.checkpoint))
 
     # # Warm up and correctness runs
-    pipe_driver.chunks = 5
     out = pipe_driver(bert_input)
     ref_out = bert_pipe(bert_input)
 

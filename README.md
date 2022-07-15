@@ -569,7 +569,7 @@ def run_driver(pp_ranks):
 
     # Create a PipelineDriver using the pipeline group size and the pipeline
     # ranks given to this driver, e.g. [0, 4, 8] for driver 0
-    pipe_driver = PipelineDriverFillDrain(pipe, args_chunk_spec,
+    pipe_driver = PipelineDriverFillDrain(pipe, chunks, args_chunk_spec,
                                           kwargs_chunk_spec, output_chunk_spec,
                                           pp_group_size, pp_ranks)
 
@@ -579,7 +579,6 @@ def run_driver(pp_ranks):
     pipe_driver.init_data_parallel(dp_group_size)
 
     # Run training combining PiPPy and DDP
-    pipe_driver.chunks = chunks
     out = pipe_driver(input, target)
 
 
