@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 # implement matrix related ops for distributed tensor
 import torch.utils._pytree as pytree
 from torch.distributed.distributed_c10d import (

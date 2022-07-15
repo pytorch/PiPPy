@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 import copy
 import torch
 from torch.utils._pytree import tree_map

@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 from torch.distributed.distributed_c10d import (
     get_rank,
