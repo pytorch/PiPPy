@@ -1177,7 +1177,7 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
         else:
             raise AssertionError(f'Unknown operator {torch.typename(target)}')
 
-    def run_until(self, predicate: Callable[[torch.fx.Node], bool]):
+    def run_until(self, predicate: Callable[[torch.fx.Node], bool]) -> Optional[torch.fx.Node]:
         while self.pc < len(self.node_list):
             node = self.node_list[self.pc]
 
@@ -1185,6 +1185,9 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
                 return node
 
             self.run_one(node)
+
+        # Have run through the entire node_list, using None to mean no node left to run
+        return None
 
     def run_one(self, node):
         # TODO: hoist run() implementation
