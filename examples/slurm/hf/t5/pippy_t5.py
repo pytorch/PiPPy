@@ -97,21 +97,76 @@ class HFT5Tracer(fx.HFTracer):
         return graph
 
 
-def add_split_points(t5, sm_cnt):
-    num_encoders = 6  # encoders
-    num_lm_head = 1  # lm head
-    total_layers = t5.config.num_decoder_layers + num_encoders + num_lm_head
-    layers_per_rank = total_layers // sm_cnt
-    residual = total_layers % sm_cnt
-    split_after_layer = [ (i * layers_per_rank + (i if i < residual else residual)) for i in range(0, sm_cnt) ]
-    split_after_decoder = [ x - num_encoders for x in split_after_layer ]
-    for i in range(1, sm_cnt):
-        annotate_split_points(t5, {f'decoder.block.{split_after_decoder[i]}': PipeSplitWrapper.SplitPoint.BEGINNING})
+def add_split_points(t5, num_submodules):
+    if num_submodules == 1:
+        pass
+    elif num_submodules == 3:
+        # assert num_submodules == _add_split_points(t5, [16, 30])
+        assert num_submodules == _add_split_points(t5, [17, 31])
+    elif num_submodules == 4:
+        assert num_submodules == _add_split_points(t5, [13, 24, 35])
+    elif num_submodules == 7:
+        # assert num_submodules == _add_split_points(t5, [8, 14, 20, 26, 32, 38])
+        assert num_submodules == _add_split_points(t5, [9, 15, 21, 27, 33, 39])
+    elif num_submodules == 8:
+        # assert num_submodules == _add_split_points(t5, [7, 13, 19, 25, 31, 37, 43])
+        assert num_submodules == _add_split_points(t5, [9, 14, 19, 24, 29, 34, 39])
+    elif num_submodules == 15:
+        # assert num_submodules == _add_split_points(t5, [3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42])
+        assert num_submodules == _add_split_points(t5, [1, 5, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42])
+    elif num_submodules == 16:
+        # assert num_submodules == _add_split_points(t5, [3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 44])
+        # assert num_submodules == _add_split_points(t5, [1, 4, 7, 8, 11, 14, 17, 20, 23, 26, 29, 32, 35, 38, 41])
+        assert num_submodules == _add_split_points(t5, [1, 4, 7, 10, 13, 16, 19, 22, 25, 28, 31, 34, 37, 40, 43])
+    else:
+        raise ValueError(f'Unsupported num_submodules = {num_submodules}')
+
+
+def _add_split_points(t5, split_indices):
+    enc_emb = 1
+    num_enc = t5.config.num_layers
+    dec_emb = 1
+    num_dec = t5.config.num_decoder_layers
+    lm_head = 1
+    count = 0
+    for index in split_indices:
+        if index < enc_emb:
+            # index = 0: do nothing
+            pass
+        elif index < enc_emb + num_enc:
+            if index == enc_emb:
+                # index = 1: insert a split point after `encoder.embed_tokens` before the first encoder
+                # to put encoder's dropout with the first encoder and not with encoders' embeddings
+                annotate_split_points(t5, {f'encoder.embed_tokens': PipeSplitWrapper.SplitPoint.END})
+            else:
+                # 1 < index < 1 + num_enc: insert a split point before the `index - enc_emb`-th encoder
+                annotate_split_points(t5, {f'encoder.block.{index - enc_emb}': PipeSplitWrapper.SplitPoint.BEGINNING})
+            count += 1
+        elif index < enc_emb + num_enc + dec_emb + num_dec:
+            # 1 + num_enc <= index < 1 + num_enc + 1 + num_dec
+            if index == enc_emb + num_enc:
+                # index = 1 + num_enc: insert a split point before `decoder.embed_tokens`
+                annotate_split_points(t5, {f'decoder.embed_tokens': PipeSplitWrapper.SplitPoint.BEGINNING})
+            elif index == enc_emb + num_enc + dec_emb:
+                # index = 1 + num_enc + 1: insert a split point after `decoder.embed_tokens` before the first decoder
+                # to put decoder's dropout with the first decoder and not with decoders' embeddings
+                annotate_split_points(t5, {f'decoder.embed_tokens': PipeSplitWrapper.SplitPoint.END})
+            else:
+                # 1 + num_enc + 1 < index < 1 + num_enc + 1 + num_dec:
+                # insert a split point before the `index - (enc_emb + num_enc + dec_emb)`-th encoder
+                annotate_split_points(t5, {
+                    f'decoder.block.{index - (enc_emb + num_enc + dec_emb)}': PipeSplitWrapper.SplitPoint.BEGINNING})
+            count += 1
+        elif index < enc_emb + num_enc + dec_emb + num_dec + lm_head:
+            # index = 1 + num_enc + 1 + num_dec: insert a split point before the `lm_head`
+            annotate_split_points(t5, {f'lm_head': PipeSplitWrapper.SplitPoint.BEGINNING})
+            count += 1
+    return count + 1
 
 
 def resolve_pg_per_stage(pp_rank):
     assert dp_pg_per_pp_rank
-    return dp_pg_per_pp_rank[pp_rank]
+    return dp_pg_per_pp_rank[pp_rank + exclude_master]
 
 
 def run_master(args, pp_ranks):
@@ -124,6 +179,8 @@ def run_master(args, pp_ranks):
     device = args.device
 
     t5_config = T5Config.from_pretrained(args.model_config)
+    t5_config.num_layers = args.num_encoder_layers or t5_config.num_layers
+    t5_config.num_decoder_layers = args.num_decoder_layers or t5_config.num_decoder_layers
     t5_config.use_cache = False  # don't output `past_key_values`
     t5 = T5ForConditionalGeneration(t5_config)
     t5.to(device)  # TODO: Delete this after https://github.com/pytorch/PiPPy/issues/142
@@ -131,9 +188,10 @@ def run_master(args, pp_ranks):
     print(t5.config)
     print(f"T5 total number of params = {get_number_of_params(t5) // 10 ** 6}M")
 
-    sm_cnt = len(pp_ranks)
-    add_split_points(t5, sm_cnt)
-    all_worker_ranks = pp_ranks
+    number_of_workers = len(pp_ranks) - exclude_master
+    print(f"number_of_workers = {number_of_workers}")
+    add_split_points(t5, number_of_workers)
+    all_worker_ranks = pp_ranks[exclude_master:exclude_master + number_of_workers]
     chunks = len(all_worker_ranks)
     bs = args.batch_size * chunks
     seq_length = args.seq_length
@@ -161,8 +219,8 @@ def run_master(args, pp_ranks):
     t5_pipe = Pipe.from_tracing(t5, MULTI_USE_PARAM_CONFIG, tracer=hf_tracer, concrete_args=concrete_args,
                                 output_loss_value_spec=output_loss_value_spec)
     split_gm_children = list(t5_pipe.split_gm.children())
-    assert sm_cnt == len(
-        split_gm_children), f"sm_cnt = {sm_cnt} len(split_gm_children) = {len(split_gm_children)}"
+    assert number_of_workers == len(
+        split_gm_children), f"number_of_workers = {number_of_workers} len(split_gm_children) = {len(split_gm_children)}"
     # t5_pipe.to(device) TODO: Uncomment this after https://github.com/pytorch/PiPPy/issues/142
 
     # t5_pipe(**t5_input_dict)
@@ -250,6 +308,9 @@ def run_worker(rank, world_size, args):
     global dp_pg_for_reference
     dp_pg_for_reference = torch.distributed.new_group(list(range(args.dp_group_size)))
 
+    global exclude_master
+    exclude_master = args.exclude_master
+
     if rank >= 0 and rank // args.dp_group_size == 0:
         args.rank = rank
         run_master(args, pp_ranks_per_dp_group[rank])
@@ -269,6 +330,9 @@ if __name__ == "__main__":
     parser.add_argument('--batches', type=int, default=1)
     parser.add_argument('--seq_length', type=int, default=16)
 
+    parser.add_argument('--num_encoder_layers', type=int, default=None)
+    parser.add_argument('--num_decoder_layers', type=int, default=None)
+
     parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
     parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
     parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
@@ -276,6 +340,7 @@ if __name__ == "__main__":
     parser.add_argument('--record_mem_dumps', type=int, default=0, choices=[0, 1])
     parser.add_argument('--checkpoint', type=int, default=1, choices=[0, 1])
     parser.add_argument('--pp_group_size', type=int, default=8)
+    parser.add_argument('--exclude_master', type=int, default=0, choices=[0, 1])
     args = parser.parse_args()
 
     assert args.world_size % args.pp_group_size == 0
