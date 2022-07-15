@@ -81,7 +81,7 @@ def run_master(args):
     kwargs_chunk_spec: Dict = {}
     output_chunk_spec = {'out': TensorChunkSpec(0)}
 
-    pipe_driver: PipelineDriverBase = schedules[args.schedule](ec_pipe, args_chunk_spec, kwargs_chunk_spec,
+    pipe_driver: PipelineDriverBase = schedules[args.schedule](ec_pipe, 5, args_chunk_spec, kwargs_chunk_spec,
                                                                output_chunk_spec,
                                                                args.world_size,
                                                                _debug_mask_minibatches=True,
@@ -89,7 +89,6 @@ def run_master(args):
                                                                checkpoint=bool(args.checkpoint))
 
     # # Warm up and correctness runs
-    pipe_driver.chunks = 5
     out = pipe_driver(ec_input)
     ref_out = ec_pipe(ec_input)
 
