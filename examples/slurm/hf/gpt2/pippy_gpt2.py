@@ -169,7 +169,7 @@ def run_master(args):
     kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'labels': TensorChunkSpec(0), 'position_ids': None}
     output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b), 'logits': TensorChunkSpec(0),
                          'past_key_values': [[TensorChunkSpec(0) for _ in range(2)] for _ in range(12)]}
-    pipe_driver: PipelineDriverBase = schedules[args.schedule](gpt2_pipe, args_chunk_spec, kwargs_chunk_spec,
+    pipe_driver: PipelineDriverBase = schedules[args.schedule](gpt2_pipe, chunks, args_chunk_spec, kwargs_chunk_spec,
                                                                output_chunk_spec, len(all_worker_ranks),
                                                                all_ranks=all_worker_ranks,
                                                                _debug_mask_minibatches=False,
@@ -182,7 +182,6 @@ def run_master(args):
     pipe_visualized_filename = f"{this_file_name}_visualized.json"
     batches_events_contexts = []
     for i in range(batches):
-        pipe_driver.chunks = chunks
         pipe_driver(**gpt2_input_dict)
         batches_events_contexts.append(pipe_driver.retrieve_events())
 

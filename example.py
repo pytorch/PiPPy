@@ -113,14 +113,13 @@ if local_rank == 0:
     # our code to the processes in the RPC group. `driver` is an object
     # we can invoke to run the pipeline.
     driver = PipelineDriverFillDrain(
-        pipe, args_chunk_spec=args_chunk_spec, kwargs_chunk_spec=kwargs_chunk_spec,
+        pipe, 64, args_chunk_spec=args_chunk_spec, kwargs_chunk_spec=kwargs_chunk_spec,
         output_chunk_spec=output_chunk_spec, world_size=world_size)
 
     x = torch.randn(512, 512)
 
     # Run the pipeline with input `x`. Divide the batch into 64 micro-batches
     # and run them in parallel on the pipeline
-    driver.chunks = 64
     output = driver(x)
 
     # Run the original code and get the output for comparison

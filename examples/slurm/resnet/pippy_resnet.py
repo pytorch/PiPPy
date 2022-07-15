@@ -101,7 +101,7 @@ def run_master(args):
     args_chunk_spec = (TensorChunkSpec(0), TensorChunkSpec(0))
     kwargs_chunk_spec = {}
     output_chunk_spec = (TensorChunkSpec(0), CustomReducer(torch.tensor(0.0), lambda a, b: a + b))
-    pipe_driver: PipelineDriverBase = schedules[args.schedule](pipe, args_chunk_spec, kwargs_chunk_spec,
+    pipe_driver: PipelineDriverBase = schedules[args.schedule](pipe, chunks, args_chunk_spec, kwargs_chunk_spec,
                                                                output_chunk_spec,
                                                                len(all_worker_ranks),
                                                                all_ranks=all_worker_ranks,
@@ -131,7 +131,6 @@ def run_master(args):
                 if k == "train":
                     pipe_driver.train()
                     optimizer.zero_grad()
-                    pipe_driver.chunks = chunks
                     outp, _ = pipe_driver(x_batch, y_batch)
                     preds = outp.argmax(-1)
                     correct = (preds == y_batch).sum()
@@ -142,7 +141,6 @@ def run_master(args):
                 else:
                     pipe_driver.eval()
                     with torch.no_grad():
-                        pipe_driver.chunks = chunks
                         outp, _ = pipe_driver(x_batch, y_batch)
                         preds = outp.argmax(-1)
                         correct = (preds == y_batch).sum()

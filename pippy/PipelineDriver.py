@@ -851,11 +851,12 @@ class PipelineLRScheduler(torch.optim.lr_scheduler._LRScheduler):
 
 
 class PipelineDriverBase(torch.nn.Module):
-    def __init__(self, pipe: Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size: int,
+    def __init__(self, pipe: Pipe, chunks: int, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size: int,
                  all_ranks: List[int] = None, _debug_mask_minibatches: bool = False, max_outstanding=None,
                  interleave_stages=False, _record_mem_dumps=False, checkpoint=False):
         super().__init__()
         self.pipe = pipe
+        self.chunks = chunks
         self.world_size = world_size
         self.all_ranks = all_ranks
         self.args_chunk_spec = args_chunk_spec
@@ -872,7 +873,6 @@ class PipelineDriverBase(torch.nn.Module):
         self._record_mem_dumps = _record_mem_dumps
         self.optimizer_inited = False
         self.checkpoint = checkpoint
-        self.chunks = 1
 
     def _init_remote_executors(self):
         self.rank_worker_rrefs : Dict[int, torch.distributed.rpc.RRef] = {}
@@ -1211,11 +1211,11 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
 
 
 class PipelineDriverFillDrain(PipelineDriverBase):
-    def __init__(self, pipe: Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size: int,
+    def __init__(self, pipe: Pipe, chunks: int, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size: int,
                  all_ranks: List[int] = None, single_loss: bool = False, _debug_mask_minibatches: bool = False,
                  max_outstanding=None, interleave_stages=False, _record_mem_dumps=False,
                  checkpoint=False):
-        super().__init__(pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size, all_ranks,
+        super().__init__(pipe, chunks, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size, all_ranks,
                          _debug_mask_minibatches, max_outstanding=max_outstanding,
                          interleave_stages=interleave_stages, _record_mem_dumps=_record_mem_dumps,
                          checkpoint=checkpoint)
@@ -1317,23 +1317,23 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 
 
 class PipelineDriver1F1B(PipelineDriverFillDrain):
-    def __init__(self, pipe: Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size: int,
+    def __init__(self, pipe: Pipe, chunks: int, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size: int,
                  all_ranks: List[int] = None, single_loss: bool = False, _debug_mask_minibatches: bool = False,
                  interleave_stages=False, _record_mem_dumps=False, checkpoint=False):
         # In 1F1B with backward stages, the maximum number of outstanding
         # micro-batches equals the number of pipeline stages
         max_outstanding = pipe.num_stages if pipe.has_loss_and_backwards else None
 
-        super().__init__(pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size, all_ranks,
+        super().__init__(pipe, chunks, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size, all_ranks,
                          single_loss, _debug_mask_minibatches, max_outstanding=max_outstanding,
                          interleave_stages=interleave_stages, _record_mem_dumps=_record_mem_dumps,
                          checkpoint=checkpoint)
 
 class PipelineDriverInterleaved1F1B(PipelineDriver1F1B):
-    def __init__(self, pipe : Pipe, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size : int,
+    def __init__(self, pipe : Pipe, chunks: int, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec, world_size : int,
                  all_ranks : List[int] = None, single_loss : bool = False, _debug_mask_minibatches: bool = False,
                  _record_mem_dumps=False, checkpoint=False):
-        super().__init__(pipe, args_chunk_spec, kwargs_chunk_spec,
+        super().__init__(pipe, chunks, args_chunk_spec, kwargs_chunk_spec,
                          output_chunk_spec, world_size, all_ranks, single_loss,
                          _debug_mask_minibatches, interleave_stages=True,
                          _record_mem_dumps=_record_mem_dumps, checkpoint=checkpoint)

@@ -85,7 +85,7 @@ def run_master(args):
     kwargs_chunk_spec: Dict = {}
     output_chunk_spec = {'last_hidden_state': TensorChunkSpec(0)}
 
-    pipe_driver: PipelineDriverBase = schedules[args.schedule](gpt2_pipe, args_chunk_spec, kwargs_chunk_spec,
+    pipe_driver: PipelineDriverBase = schedules[args.schedule](gpt2_pipe, 5, args_chunk_spec, kwargs_chunk_spec,
                                                                output_chunk_spec,
                                                                args.world_size,
                                                                _debug_mask_minibatches=True,
@@ -94,7 +94,6 @@ def run_master(args):
 
     # # Warm up and correctness runs
     print('Running GPT2 pipeline. NB: if this is too slow, set OMP_NUM_THREADS to a higher value')
-    pipe_driver.chunks = 5
     out = pipe_driver(gpt2_input)
     print('Running reference pipeline')
     ref_out = gpt2_pipe(gpt2_input)

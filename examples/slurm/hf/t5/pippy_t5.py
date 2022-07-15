@@ -180,7 +180,7 @@ def run_master(args, pp_ranks):
     output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b), 'logits': TensorChunkSpec(0),
                          # 'past_key_values': [[TensorChunkSpec(0) for _ in range(36)] for _ in range(4)],
                          'encoder_last_hidden_state': TensorChunkSpec(0)}
-    pipe_driver: PipelineDriverBase = schedules[args.schedule](t5_pipe, args_chunk_spec, kwargs_chunk_spec,
+    pipe_driver: PipelineDriverBase = schedules[args.schedule](t5_pipe, chunks, args_chunk_spec, kwargs_chunk_spec,
                                                                output_chunk_spec,
                                                                world_size=len(all_worker_ranks),
                                                                all_ranks=all_worker_ranks,
@@ -196,7 +196,6 @@ def run_master(args, pp_ranks):
     pipe_visualized_filename = f"{this_file_name}_visualized_{args.rank}.json"
     batches_events_contexts = []
     for i in range(args.batches):
-        pipe_driver.chunks = chunks
         pipe_driver(**t5_input_dict)
         if args.visualize:
             batches_events_contexts.append(pipe_driver.retrieve_events())

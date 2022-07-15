@@ -123,7 +123,7 @@ if local_rank == 0:
 
     # Instantiate the driver as usual.
     driver = PipelineDriverFillDrain(
-        pipe, args_chunk_spec=args_chunk_spec, kwargs_chunk_spec=kwargs_chunk_spec,
+        pipe, 64, args_chunk_spec=args_chunk_spec, kwargs_chunk_spec=kwargs_chunk_spec,
         output_chunk_spec=output_chunk_spec, world_size=world_size)
 
     # Instantiate remote Adam optimizers. `instantiate_optimizer` takes the
@@ -141,7 +141,6 @@ if local_rank == 0:
     target = torch.randn(512, 10)
     for i in range(N_TRAINING_STEPS):
         optimizer.zero_grad()
-        driver.chunks = 64
         pipe_loss = driver(x, target)
         optimizer.step()
         lr_scheduler.step()

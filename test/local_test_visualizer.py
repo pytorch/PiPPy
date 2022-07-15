@@ -175,7 +175,7 @@ def run_master(args):
     output_chunk_spec = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
 
     all_ranks = list(range(1, args.world_size))  # exclude master rank = 0
-    pipe_driver: PipelineDriverBase = schedules[args.schedule](ec_pipe, args_chunk_spec, kwargs_chunk_spec,
+    pipe_driver: PipelineDriverBase = schedules[args.schedule](ec_pipe, chunks, args_chunk_spec, kwargs_chunk_spec,
                                                                output_chunk_spec, args.world_size - 1,
                                                                all_ranks=all_ranks,
                                                                _debug_mask_minibatches=True,
@@ -188,7 +188,6 @@ def run_master(args):
     pipe_visualized_filename = "pipe_visualized.json"
     batches_events_contexts = []
     for i in range(batches):
-        pipe_driver.chunks = chunks
         pipe_driver(ec_input, target)
         batches_events_contexts.append(pipe_driver.retrieve_events())
 

@@ -124,7 +124,7 @@ def run_master(args):
     kwargs_chunk_spec: Dict = {}
     output_chunk_spec = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
 
-    pipe_driver: PipelineDriverBase = schedules[args.schedule](ec_pipe, args_chunk_spec, kwargs_chunk_spec,
+    pipe_driver: PipelineDriverBase = schedules[args.schedule](ec_pipe, CHUNKS, args_chunk_spec, kwargs_chunk_spec,
                                                                output_chunk_spec,
                                                                args.world_size,
                                                                _debug_mask_minibatches=DEBUG_MASK_MINIBATCHES,
@@ -134,7 +134,6 @@ def run_master(args):
     target = torch.randn(bs, d_hid, device=args.device)
 
     # TODO: distributed optimizer
-    pipe_driver.chunks = CHUNKS
     out = pipe_driver(ec_input, target)
 
     all_grad_qualnames = {k: None for k, v in ec_pipe.named_parameters()}
