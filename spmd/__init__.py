@@ -20,6 +20,8 @@ torch.__future__.set_overwrite_module_params_on_conversion(True)
 def distribute_tensor(tensor: torch.Tensor, device_mesh: DeviceMesh = None, placements: List[Placement] = None):
     # get default device mesh if there's nothing specified
     device_mesh = get_global_device_mesh() if device_mesh is None else device_mesh
+    # convert tensor to the correponding device type if it's not in that device type
+    tensor = tensor.to(device_mesh.device_type)
     # set default placements to replicated if not specified
     if placements is None:
         placements = [Replicate() for _ in device_mesh.ndim]
