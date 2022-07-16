@@ -296,19 +296,23 @@ class RankWorker(EventRecorder):
             kwargs = torch.fx.node.map_aggregate(kwargs_value_refs, retrieve_value_ref_args_by_idx)
 
             def forward(args, kwargs, no_grad):
-                flat_tensor_args = []
+                flat_args = []
 
                 def extract_tensor_args(a):
+                    nonlocal flat_args
                     if isinstance(a, torch.Tensor):
-                        nonlocal flat_tensor_args
                         val = a.detach().requires_grad_(a.requires_grad)
-                        flat_tensor_args.append(val)
+                        flat_args.append(val)
                         return val
                     else:
+                        flat_args.append(a)
                         return a
 
-                args = torch.fx.node.map_aggregate(args, extract_tensor_args)
-                kwargs = torch.fx.node.map_aggregate(kwargs, extract_tensor_args)
+                def dont_traverse_size(a):
+                    return type(a) != torch.Size
+
+                args = torch.fx.node.map_aggregate(args, extract_tensor_args, dont_traverse_size)
+                kwargs = torch.fx.node.map_aggregate(kwargs, extract_tensor_args, dont_traverse_size)
                 logging.info(f'[{self.rank}][{work_item.microbatch_id}] Running forward module')
 
                 def forward_maybe_with_ddp(args, kwargs):
@@ -327,12 +331,12 @@ class RankWorker(EventRecorder):
                 if no_grad:
                     with torch.no_grad():
                         out_val = forward_maybe_with_ddp(args, kwargs)
-                        out_val = torch.fx.node.map_aggregate(out_val, set_requires_grad)
+                        out_val = torch.fx.node.map_aggregate(out_val, set_requires_grad, dont_traverse_size)
                 else:
                     with torch.enable_grad():
                         out_val = forward_maybe_with_ddp(args, kwargs)
 
-                return out_val, flat_tensor_args
+                return out_val, flat_args
 
             if phase == Phase.BACKWARD:
                 if self.checkpoint:
