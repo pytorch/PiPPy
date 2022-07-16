@@ -4,6 +4,7 @@ from torch.distributed.distributed_c10d import (
     get_rank,
     ReduceOp,
     _get_default_group,
+    _reduce_scatter_base,
 )
 
 # autograd enabled collective
@@ -115,3 +116,29 @@ class DeviceMesh(object):
 
     def all_reduce(self, tensor, op=ReduceOp.SUM):
         return all_reduce(tensor, op=op)
+
+    def reduce_scatter_base(self, output, input, op=ReduceOp.SUM):
+        # NOTE: two caveats:
+        # 1. only NCCL support reduce_scatter
+        # 2. we are using a non-autograd enabled reduce_scatter
+        #    this is fine as we are using it now on redistribute
+        #    which have backward enabled, but if we want to use
+        #    this in other case which requires autograd, we should
+        #    add the autograd enabled collective in distributed/nn/functional
+        if self.backend() == "nccl":
+            _reduce_scatter_base(output, input, op)
+            return output
+        else:
+            # it's gloo, which does not have reduce_scatter
+            # we have to do all_reduce + scatter
+            reduced_tensor = self.all_reduce(input)
+            shard_dim = 0
+            num_chunks = 0
+            for i in range(input.ndim):
+                if input.size(i) > output.size(i):
+                    num_chunks = input.size(i) // output.size(i)
+                    shard_dim = i
+                    break
+
+            chunks = reduced_tensor.chunk(num_chunks, dim=shard_dim)
+            return self.scatter(chunks)
