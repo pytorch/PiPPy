@@ -5,9 +5,6 @@ import torch
 import spmd.tensor.api as spmd_tensor
 from spmd.tensor.placement_types import (
     Placement,
-    Shard,
-    Replicate,
-    _Partial,
     is_shard,
     is_partial,
     is_replicate
