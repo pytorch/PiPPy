@@ -18,7 +18,7 @@ def redistribute_spmd_tensor(
     placements: List[Placement]
 ):
     current_placements = input.placements
-    local_tensor = input._local_tensor
+    local_tensor = input.local_tensor()
     if input.device_mesh != device_mesh:
         # TODO: alltoall reshuffling to change device_mesh if they are not the same
         raise NotImplementedError("Cross device mesh comm not supported yet!")
@@ -55,7 +55,7 @@ def redistribute_spmd_tensor(
         else:
             # Case 2: target is Shard
             assert is_shard(target)
-            shard_dim = target.dim
+            shard_dim = target.dim  # type: ignore
             num_chunks = device_mesh.size()
             assert input.size(shard_dim) % num_chunks == 0, "Only support chunk sharding evenly now"
             chunk_size = input.size(shard_dim) // num_chunks
@@ -92,7 +92,7 @@ def redistribute_spmd_tensor(
 
 class Redistribute(torch.autograd.Function):
     @staticmethod
-    def forward(ctx,
+    def forward(ctx,  # type: ignore
                 input: "spmd_tensor.Tensor",
                 device_mesh: DeviceMesh,
                 placements: List[Placement]
@@ -106,7 +106,7 @@ class Redistribute(torch.autograd.Function):
         )
 
     @staticmethod
-    def backward(ctx, grad_output: "spmd_tensor.Tensor"):
+    def backward(ctx, grad_output: "spmd_tensor.Tensor"):  # type: ignore
         previous_placement = ctx.previous_placement
         previous_device_mesh = ctx.previous_device_mesh
         return redistribute_spmd_tensor(

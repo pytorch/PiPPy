@@ -132,3 +132,6 @@ class RedistributeTest(DistTensorTestBase):
         self.assertEqual(scatter_shard_tensor.size(), partial_tensor.size())
         self.assertEqual(scatter_shard_tensor.placements, shard1_spec)
         self.assertEqual(scatter_shard_tensor.local_tensor(), torch.ones(4, 3) * 4)
+
+if __name__ == '__main__':
+    run_tests()

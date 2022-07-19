@@ -31,8 +31,10 @@ class _Partial(Placement):
 
 # convenient utils to check for placement types
 def is_shard(placement: Placement, dim: Optional[int] = None) -> bool:
-    is_shard = isinstance(placement, Shard)
-    return is_shard and placement.dim == dim if dim is not None else is_shard
+    if dim is not None and isinstance(placement, Shard):
+        return placement.dim == dim
+    else:
+        return isinstance(placement, Shard)
 
 def is_replicate(placement: Placement) -> bool:
     return isinstance(placement, Replicate)
