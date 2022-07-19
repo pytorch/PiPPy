@@ -3,7 +3,7 @@ import torch
 from torch.distributed.distributed_c10d import (
     get_rank,
     ReduceOp,
-    _get_default_group
+    _get_default_group,
 )
 
 # autograd enabled collective
@@ -12,7 +12,7 @@ from torch.distributed.nn.functional import (
     _all_gather_base,
     all_reduce,
     broadcast,
-    scatter
+    scatter,
 )
 
 _global_device_mesh = None
@@ -29,7 +29,7 @@ def set_global_device_mesh(mesh):
 
 
 class DeviceMesh(object):
-    '''
+    """
     Device Mesh object, can be used as a context manager.
     By default describes the device ids, layout and serves
     as a proxy for communication among the device lists.
@@ -39,7 +39,8 @@ class DeviceMesh(object):
     add collective wrappers in this class. This is used to
     decouple detailed communication backend with the underlying
     DistributedTensor implementation.
-    '''
+    """
+
     device_type: str
     mesh: torch.Tensor
     # _world_pg: ProcessGroup
@@ -51,11 +52,15 @@ class DeviceMesh(object):
         default_pg = _get_default_group()
         backend_name = default_pg._get_backend_name()
         if device_type == "cpu":
-            assert backend_name == "gloo", f"ProcessGroup backend: {backend_name} not supporting CPU!"
+            assert (
+                backend_name == "gloo"
+            ), f"ProcessGroup backend: {backend_name} not supporting CPU!"
         elif device_type == "cuda":
             assert backend_name == "gloo" or backend_name == "nccl"
         else:
-            raise RuntimeError(f"DeviceMesh only support cpu or cuda device type, but got {device_type}")
+            raise RuntimeError(
+                f"DeviceMesh only support cpu or cuda device type, but got {device_type}"
+            )
 
         # TODO: support multi-dimensional device mesh
         assert self.mesh.ndim == 1, "Only support 1-d device mesh for now"

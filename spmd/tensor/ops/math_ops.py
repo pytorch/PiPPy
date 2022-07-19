@@ -1,7 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from torch.distributed.distributed_c10d import (
-    ReduceOp
-)
+from torch.distributed.distributed_c10d import ReduceOp
 from spmd.tensor.api import Tensor
 from spmd.tensor.placement_types import Shard, Replicate, _Partial
 from spmd.tensor.ops.utils import register_impl
@@ -15,7 +13,9 @@ def dist_sum(self: Tensor) -> Tensor:
 
     local_sum = self_local.sum()
 
-    if isinstance(self_placement, Shard) or isinstance(self_placement, _Partial):
+    if isinstance(self_placement, Shard) or isinstance(
+        self_placement, _Partial
+    ):
         placements = [_Partial(ReduceOp.SUM)]
         # partial reduce
         partial_sum = Tensor.from_local(local_sum, device_mesh, placements)
@@ -23,6 +23,8 @@ def dist_sum(self: Tensor) -> Tensor:
         replicate_placements = [Replicate()]
         return partial_sum.redistribute(device_mesh, replicate_placements)
     elif isinstance(self_placement, Replicate):
-        return Tensor.from_local(local_sum, device_mesh=device_mesh, placements=self.placements)
+        return Tensor.from_local(
+            local_sum, device_mesh=device_mesh, placements=self.placements
+        )
     else:
         raise RuntimeError("Not supported!")

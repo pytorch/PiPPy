@@ -13,6 +13,7 @@ def synthetic_data(w, b, num_examples):
 def model(X, w, b):
     return torch.addmm(b, X, w)
 
+
 def loss_func(y_hat, y):
     return (y_hat - y.reshape(y_hat.shape)) ** 2 / 2
 
@@ -20,7 +21,9 @@ def loss_func(y_hat, y):
 def main():
     rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
-    torch.distributed.init_process_group(backend='nccl', world_size=world_size, rank=rank)
+    torch.distributed.init_process_group(
+        backend="nccl", world_size=world_size, rank=rank
+    )
 
     mesh = DeviceMesh("cuda", list(range(world_size)))
     shard_0_placement = [Shard[0]]
@@ -50,8 +53,12 @@ def main():
             # X, y are local tensors, we need to create distributed tensor from local
             # torch.Tensor, and use DistributedTensor as model input to implement data parallel
             X, y = synthetic_data(true_w, true_b, batch_size)
-            g_X = Tensor.from_local(x, device_mesh=mesh, placements=shard_0_placement)
-            g_y = Tensor.from_local(y, device_mesh=mesh, placements=shard_0_placement)
+            g_X = Tensor.from_local(
+                x, device_mesh=mesh, placements=shard_0_placement
+            )
+            g_y = Tensor.from_local(
+                y, device_mesh=mesh, placements=shard_0_placement
+            )
             l = loss_func(model(g_X, w, b), g_y)
 
             optimizer.zero_grad()
