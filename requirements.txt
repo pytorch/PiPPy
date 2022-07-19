@@ -4,3 +4,4 @@ torch-mlir
 
 packaging >= 21.3
 numba==0.55.2
+pathos==0.2.9
