@@ -96,8 +96,8 @@ def redistribute_spmd_tensor(
 
 class Redistribute(torch.autograd.Function):
     @staticmethod
-    def forward(
-        ctx,  # type: ignore
+    def forward(  # type: ignore
+        ctx,
         input: "spmd_tensor.Tensor",
         device_mesh: DeviceMesh,
         placements: List[Placement],
