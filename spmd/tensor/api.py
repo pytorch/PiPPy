@@ -3,16 +3,8 @@ import copy
 import torch
 from torch.utils._pytree import tree_map
 from typing import Dict, List, Callable, Optional
-from spmd.tensor.device_mesh import (
-    get_global_device_mesh,
-    DeviceMesh
-)
-from spmd.tensor.placement_types import (
-    Placement,
-    Shard,
-    Replicate,
-    _Partial
-)
+from spmd.tensor.device_mesh import get_global_device_mesh, DeviceMesh
+from spmd.tensor.placement_types import Placement, Shard, Replicate, _Partial
 from spmd.tensor.redistribute import Redistribute
 
 

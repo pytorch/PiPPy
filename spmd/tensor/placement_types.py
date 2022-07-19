@@ -36,8 +36,10 @@ def is_shard(placement: Placement, dim: Optional[int] = None) -> bool:
     else:
         return isinstance(placement, Shard)
 
+
 def is_replicate(placement: Placement) -> bool:
     return isinstance(placement, Replicate)
+
 
 def is_partial(placement: Placement) -> bool:
     return isinstance(placement, _Partial)
