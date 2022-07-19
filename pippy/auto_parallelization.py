@@ -76,9 +76,6 @@ def get_possible_submesh_shapes(
     return submeshes
 
 
-NUMPY_RANDOM_SEED = 42
-
-
 @njit(fastmath=True, nogil=True, cache=True)
 def get_optimal_submesh_assignments(
     best_n_stages, F_argmin, n_devices, n_ops, submesh_sizes
@@ -158,7 +155,7 @@ def inter_op_dp_inner_loop(
 
                     new_cost = F[s - 1, i + 1, d - n_submesh_devices] + stage_cost
                     if new_cost < F[s, l, d]:
-                        # print(f"DP index", s, l, d, ", new cost", new_cost)
+                        print(f"DP index", s, l, d, ", new cost", new_cost)
                         F[s, l, d] = new_cost
                         F_argmin[s, l, d] = (
                             i + 1,
@@ -193,6 +190,7 @@ def inter_op_dp(
     for n, m in submesh_shapes:
         submesh_sizes.append(n * m)
 
+    overall_max_layer = 0
     for loop_i, intra_cost in enumerate(np.sort(np.unique(intra_compute_costs))):
         if intra_cost - prev_intra_cost < gap:
             continue
@@ -209,15 +207,14 @@ def inter_op_dp(
         ]
         valid_costs = intra_compute_costs[tuple(valid_cost_idxs.T)]
         valid_idxs_costs = np.hstack([valid_cost_idxs, valid_costs[:, np.newaxis]])
-        # valid_idxs_costs = valid_idxs_costs[valid_cost_idxs[:, 1].argsort()]
+        # sort by descending layer idx because DP initializes F[0, n_layers, 0] = 0
+        valid_idxs_costs = valid_idxs_costs[np.flip(valid_cost_idxs[:, 1].argsort())]
+        max_layer = int(valid_idxs_costs[:, 1][0])
+        overall_max_layer = max(overall_max_layer, max_layer)
 
         logging.info(f"DP outer loop {loop_i}")
         F, F_stage_max, F_argmin = inter_op_dp_inner_loop(
-            n_layers,
-            n_devices,
-            submesh_sizes,
-            valid_idxs_costs,
-            max_n_succ_stages,
+            max_layer + 1, n_devices, submesh_sizes, valid_idxs_costs, max_n_succ_stages
         )
 
         best_n_stages = F[:, 0, n_devices].argmin()
@@ -237,8 +234,12 @@ def inter_op_dp(
     assert best_solution is not None
     best_n_stages, F_argmin = best_solution
     optimal_layer_submesh_assignments = get_optimal_submesh_assignments(
-        best_n_stages, F_argmin, n_devices, n_layers, submesh_sizes
+        best_n_stages, F_argmin, n_devices, overall_max_layer + 1, submesh_sizes
     )
+    optimal_layer_submesh_assignments = [
+        ((a, b), submesh_shapes[c], d)
+        for (a, b), c, d in optimal_layer_submesh_assignments
+    ]
     return optimal_layer_submesh_assignments
 
 
@@ -266,16 +267,56 @@ def estimate_intra_costs(
 
     # Lower op-by-op to MLIR modules (matched to op name).
     logging.info("Compiling model through MLIR")
-    node_mlir_modules = compile_model_op_by_op(
-        model, example_inputs, tracer=tracer, **tracer_kwargs
+    node_mlir_modules, node_shapes = compile_model_op_by_op(
+        model, example_inputs, tracer=tracer, return_shapes=True, **tracer_kwargs
     )
     # Count up all of the floating point ops and multiply by
     # op latency (TODO: arithmetic intensity model).
     logging.info("Counting FP latencies for torch ops")
     known_latencies = count_flop_latency_in_mlir_modules(node_mlir_modules)
     all_latencies = np.zeros(n_graph_nodes)
+    cum_inputs = []
+    nodes = []
     for i, node in enumerate(traced.graph.nodes):
         all_latencies[i] = known_latencies.get(node.name, 0)
+        node: torch.fx.Node
+        nodes.append(node)
+        if cum_inputs:
+            cum_inputs.append(
+                set((n.name, node.name) for n in node.all_input_nodes) | cum_inputs[-1]
+            )
+        else:
+            cum_inputs.append(set((n.name, node.name) for n in node.all_input_nodes))
+
+    cum_outputs = []
+    for node in reversed(traced.graph.nodes):
+        if cum_outputs:
+            cum_outputs.append(
+                set((node.name, n.name) for n in node.users) | cum_outputs[-1]
+            )
+        else:
+            cum_outputs.append(set((node.name, n.name) for n in node.users))
+
+    cum_outputs = cum_outputs[::-1]
+
+    ingress_traffic = np.zeros((n_graph_nodes, n_graph_nodes))
+    egress_traffic = np.zeros((n_graph_nodes, n_graph_nodes))
+    for i in range(n_graph_nodes):
+        for j in range(i, n_graph_nodes):
+            input_edges = (cum_inputs[j] - cum_inputs[i]) | set(
+                [(n.name, nodes[i].name) for n in nodes[i].all_input_nodes]
+            )
+            output_edges = (cum_outputs[i] - cum_outputs[j]) | set(
+                [(nodes[j].name, n.name) for n in nodes[j].users]
+            )
+            ingress_edges = input_edges - output_edges
+            egress_edges = output_edges - input_edges
+            ingress_traffic[i, j] = sum(
+                np.prod(node_shapes.get(n, [0])[0]) for n, _ in ingress_edges
+            )
+            egress_traffic[i, j] = sum(
+                np.prod(node_shapes.get(n, [0])[0]) for n, _ in egress_edges
+            )
 
     # intra_costs[i, j, k, l] is the total latency of [node_i, ..., node_j]
     # for the k submesh choice and lth autosharding choice (with inclusive endpoints).
@@ -287,11 +328,13 @@ def estimate_intra_costs(
     cum_latencies = np.cumsum(all_latencies)
     for i in range(n_graph_nodes):
         for j in range(i, n_graph_nodes):
-            lat = (
-                cum_latencies[j] - cum_latencies[i] + all_latencies[i]
-            )
+            lat = cum_latencies[j] - cum_latencies[i] + all_latencies[i]
             for k, shape in enumerate(submesh_shapes):
-                intra_costs[i, j, k, :] = lat / np.prod(shape)
+                intra_costs[i, j, k, :] = (
+                    (lat / np.prod(shape))
+                    + ingress_traffic[i, j]
+                    + egress_traffic[i, j]
+                )
 
     # TODO: obviously this isn't right.
     max_n_succ_stages = np.full(
@@ -336,7 +379,9 @@ def dp_auto_parallel(config: AutoParallelConfig):
             intra_compute_costs=intra_costs,
             max_n_succ_stages=max_n_succ_stages,
         )
-        logging.info(f"DP optimal layer submesh assignments {optimal_layer_submesh_assignments}")
+        logging.info(
+            f"DP optimal layer submesh assignments {optimal_layer_submesh_assignments}"
+        )
         split_points = {
             current_layer
             for (
