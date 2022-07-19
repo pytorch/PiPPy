@@ -128,7 +128,7 @@ class DropoutRemover(torch.fx.Transformer):
             return super().call_module(target, args, kwargs)
 
 
-def compile_model_op_by_op(model, example_inputs, tracer=None, **tracer_kwargs):
+def compile_model_op_by_op(model, example_inputs, tracer=None, return_shapes=False, **tracer_kwargs):
     """
     High-level this:
 
@@ -172,7 +172,11 @@ def compile_model_op_by_op(model, example_inputs, tracer=None, **tracer_kwargs):
     with Pool(cpu_count() - 1) as pool:
         node_mlir_modules = pool.map(lambda x: (x[0], body(x[1])), node_sub_gms)
 
-    return list(filter(None, node_mlir_modules))
+    if return_shapes:
+        return list(filter(None, node_mlir_modules)), node_shapes_dtypes
+    else:
+        return list(filter(None, node_mlir_modules))
+
 
 
 FP_OP_LATENCIES = {

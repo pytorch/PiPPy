@@ -90,7 +90,7 @@ def run_master(args):
     }
 
     auto_parallel_config = AutoParallelConfig(
-        n_compute_nodes=16, n_devices_per_node=1, n_microbatches=5
+        n_compute_nodes=8, n_devices_per_node=1, n_microbatches=5
     )
     albert_pipe = Pipe.from_tracing(
         albert,
