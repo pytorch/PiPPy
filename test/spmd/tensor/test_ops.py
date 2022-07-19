@@ -1,15 +1,8 @@
 import torch
-from torch.testing._internal.common_utils import (
-    run_tests
-)
+from torch.testing._internal.common_utils import run_tests
 from ..test_utils import DistTensorTestBase, with_comms
-from spmd import (
-    distribute_tensor,
-    DeviceMesh,
-    Tensor,
-    Shard,
-    Replicate
-)
+from spmd import distribute_tensor, DeviceMesh, Tensor, Shard, Replicate
+
 
 class DistTensorOpsTest(DistTensorTestBase):
     @with_comms
@@ -26,8 +19,13 @@ class DistTensorOpsTest(DistTensorTestBase):
         input = distribute_tensor(input_tensor, device_mesh, replica_spec)
 
         dist_res = torch.addmm(input, mat1, mat2)
-        local_res = torch.addmm(input_tensor, tensor_to_shard, tensor_to_replicate)
-        self.assertEqual(dist_res.redistribute(device_mesh, replica_spec).local_tensor(), local_res)
+        local_res = torch.addmm(
+            input_tensor, tensor_to_shard, tensor_to_replicate
+        )
+        self.assertEqual(
+            dist_res.redistribute(device_mesh, replica_spec).local_tensor(),
+            local_res,
+        )
 
     @with_comms
     def test_mm(self):
@@ -42,7 +40,10 @@ class DistTensorOpsTest(DistTensorTestBase):
 
         dist_res = torch.mm(mat1, mat2)
         local_res = torch.mm(tensor_to_shard, tensor_to_replicate)
-        self.assertEqual(dist_res.redistribute(device_mesh, replica_spec).local_tensor(), local_res)
+        self.assertEqual(
+            dist_res.redistribute(device_mesh, replica_spec).local_tensor(),
+            local_res,
+        )
 
         # backward
         grad_res = torch.ones(12, 16)
@@ -96,9 +97,10 @@ class DistTensorOpsTest(DistTensorTestBase):
 
         input_tensor = torch.randn(4, 8, requires_grad=True)
         dist_tensor = Tensor.from_local(input_tensor, device_mesh, shard_spec)
-        ones_like_dt = torch.ones_like(dist_tensor) 
+        ones_like_dt = torch.ones_like(dist_tensor)
         ones_expected = torch.ones(4, 8)
         self.assertEqual(ones_expected, ones_like_dt.local_tensor())
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     run_tests()

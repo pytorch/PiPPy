@@ -19,6 +19,7 @@ def unwrap_local_tensor(e):
 def is_shard_on_dim(placement, dim):
     return isinstance(placement, Shard) and placement.dim == dim
 
+
 # convenient wrapper to register functions
 
 

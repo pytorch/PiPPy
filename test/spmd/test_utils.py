@@ -1,4 +1,3 @@
-
 import sys
 
 import torch
@@ -11,6 +10,7 @@ from torch.testing._internal.common_distributed import (
 )
 
 TEST_GPU_NUM = 4
+
 
 class DistTensorTestBase(MultiProcessTestCase):
     @property
@@ -44,13 +44,17 @@ class DistTensorTestBase(MultiProcessTestCase):
         super().setUp()
         self._spawn_processes()
 
+
 # wrapper to initialize comms (processgroup)
 def with_comms(func=None, backend=None):
     assert func is not None
+
     @wraps(func)
     def wrapper(self, *args, **kwargs):
         # if backend not specified, and cuda available, then use nccl, else gloo
-        pg_backend = "nccl" if backend is None and torch.cuda.is_available() else "gloo"
+        pg_backend = (
+            "nccl" if backend is None and torch.cuda.is_available() else "gloo"
+        )
         if pg_backend == "nccl" and torch.cuda.device_count() < self.world_size:
             sys.exit(TEST_SKIPS[f"multi-gpu-{self.world_size}"].exit_code)
 
@@ -58,4 +62,5 @@ def with_comms(func=None, backend=None):
         self.init_pg(backend=pg_backend)
         func(self)
         self.destroy_pg()
+
     return wrapper

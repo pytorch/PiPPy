@@ -1,6 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 # from .api import Tensor
 
+
 def all_equal(xs):
     xs = list(xs)
     if not xs:
