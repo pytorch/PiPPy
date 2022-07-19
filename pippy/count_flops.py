@@ -1,10 +1,10 @@
 import re
 import sys
 from multiprocessing import cpu_count
+from pathos.multiprocessing import ProcessingPool as Pool
 from typing import Dict, Any, List, Tuple
 
 import torch
-from pathos.multiprocessing import ProcessingPool as Pool
 from torch import fx, nn
 from torch.fx.node import Target
 from torch.fx.passes.shape_prop import ShapeProp
@@ -72,14 +72,7 @@ def find_op_in_submodule(submodule):
     return None
 
 
-def trace_model(model):
-    tracer = torch.fx.Tracer()
-    graph = tracer.trace(model)
-    traced = torch.fx.GraphModule(model, graph)
-    return traced
-
-
-def get_module_shapes(fx_mod, example_input, op_filter=None):
+def get_module_shapes(fx_mod, example_inputs, op_filter=None):
     if op_filter is None:
 
         class _op_filter:
@@ -88,7 +81,9 @@ def get_module_shapes(fx_mod, example_input, op_filter=None):
 
         op_filter = _op_filter()
 
-    ShapeProp(fx_mod).propagate(example_input)
+    if isinstance(example_inputs, tuple) and len(example_inputs) == 1:
+        example_inputs = example_inputs[0]
+    ShapeProp(fx_mod).propagate(example_inputs)
     node_shapes = {}
 
     def maybe_add_shape(node):
@@ -133,7 +128,7 @@ class DropoutRemover(torch.fx.Transformer):
             return super().call_module(target, args, kwargs)
 
 
-def compile_model_op_by_op(model, example_input, tracer=None):
+def compile_model_op_by_op(model, example_inputs, tracer=None, **tracer_kwargs):
     """
     High-level this:
 
@@ -149,11 +144,12 @@ def compile_model_op_by_op(model, example_input, tracer=None):
     can then be passed to count_flop_latency_in_mlir_module to get a latency number, in terms of floating point ops.
     """
     if tracer is None:
-        tracer = trace_model
+        tracer = torch.fx.Tracer()
 
-    traced_mod = tracer(model)
+    graph = tracer.trace(model, **tracer_kwargs)
+    traced_mod = torch.fx.GraphModule(model, graph)
     traced_mod = DropoutRemover(traced_mod).transform()
-    node_shapes_dtypes = get_module_shapes(traced_mod, example_input)
+    node_shapes_dtypes = get_module_shapes(traced_mod, *example_inputs)
 
     reg = re.compile(r"size|getattr")
 

@@ -63,21 +63,6 @@ def small_test():
     pprint(latencies)
 
 
-def trace_albert(albert):
-    input_names = albert.dummy_inputs.keys()
-    sig = inspect.signature(albert.forward)
-    concrete_args = {
-        p.name: p.default for p in sig.parameters.values() if p.name not in input_names
-    }
-
-    hf_tracer = HFBertTracer()
-    graph = hf_tracer.trace(albert, concrete_args=concrete_args)
-    traced = torch.fx.GraphModule(albert, graph)
-    traced.graph.eliminate_dead_code()
-
-    return traced
-
-
 def albert_test():
     bs = 1
     seq_length = 2
@@ -88,10 +73,14 @@ def albert_test():
     albert_input = torch.zeros(bs, seq_length, dtype=torch.long).random_(
         albert.config.vocab_size
     )
-    albert(albert_input)
+    input_names = albert.dummy_inputs.keys()
+    sig = inspect.signature(albert.forward)
+    concrete_args = {
+        p.name: p.default for p in sig.parameters.values() if p.name not in input_names
+    }
 
     node_mlir_modules = compile_model_op_by_op(
-        albert, albert_input, tracer=trace_albert
+        albert, albert_input, tracer=HFBertTracer(), concrete_args=concrete_args
     )
     latencies = count_flop_latency_in_mlir_modules(node_mlir_modules)
     pprint(latencies)
