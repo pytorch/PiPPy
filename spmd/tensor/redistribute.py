@@ -98,13 +98,19 @@ class Redistribute(torch.autograd.Function):
                 placements: List[Placement]
         ):
         ctx.previous_placement = input.placements
-        return redistribute_spmd_tensor(input, device_mesh, placements)
+        ctx.previous_device_mesh = input.device_mesh
+        return redistribute_spmd_tensor(
+            input,
+            device_mesh,
+            placements
+        )
 
     @staticmethod
     def backward(ctx, grad_output: "spmd_tensor.Tensor"):
         previous_placement = ctx.previous_placement
+        previous_device_mesh = ctx.previous_device_mesh
         return redistribute_spmd_tensor(
             grad_output,
-            device_mesh,
+            previous_device_mesh,
             previous_placement
-        )
+        ), None, None
