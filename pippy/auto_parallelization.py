@@ -12,18 +12,22 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import logging
 from dataclasses import dataclass
 from typing import List, Tuple
 
 import numpy as np
 import pippy.fx
+import torch
 from enum import Enum
 
 from pippy import pipe_split
+from pippy.count_flops import compile_model_op_by_op, count_flop_latency_in_mlir_modules
 
 try:
     from numba import njit  # type: ignore
     from numba.typed import List as NumbaList  # type: ignore
+    from numba import prange
 except ImportError:
 
     def njit(*args, **kwargs):
@@ -33,6 +37,7 @@ except ImportError:
         return wrapper
 
     NumbaList = list
+    prange = range
 
 
 class SubmeshSpace(Enum):
@@ -74,21 +79,7 @@ def get_possible_submesh_shapes(
 NUMPY_RANDOM_SEED = 42
 
 
-def estimate_intra_costs(
-    n_submesh_choices, n_layers, max_n_succ_stages=4096, n_autosharding_configs=1
-):
-    np.random.seed(NUMPY_RANDOM_SEED)
-    intra_costs = np.random.rand(
-        n_layers, n_layers, n_submesh_choices, n_autosharding_configs
-    )
-    max_n_succ_stages = np.full(
-        (n_layers, n_layers, n_submesh_choices, n_autosharding_configs),
-        max_n_succ_stages,
-    )
-    return intra_costs, max_n_succ_stages
-
-
-@njit(fastmath=True)
+@njit(fastmath=True, nogil=True, cache=True)
 def get_optimal_submesh_assignments(
     best_n_stages, F_argmin, n_devices, n_ops, submesh_sizes
 ):
@@ -123,7 +114,7 @@ def get_optimal_submesh_assignments(
     return optimal_layer_submesh_assignments
 
 
-@njit(fastmath=True)
+@njit(fastmath=True, parallel=True, nogil=True, cache=True)
 def inter_op_dp_inner_loop(
     n_layers, n_devices, submesh_sizes, valid_idxs_costs, max_n_succ_stages
 ):
@@ -142,7 +133,7 @@ def inter_op_dp_inner_loop(
     )
     F[0, n_layers, 0] = 0
 
-    for d in range(1, n_devices + 1):
+    for d in prange(1, n_devices + 1):
         for (
             l,
             i,
@@ -156,7 +147,7 @@ def inter_op_dp_inner_loop(
 
             n_submesh_devices = submesh_sizes[submesh_shape_idx]
             if n_submesh_devices <= d:
-                for s in range(1, n_layers + 1):
+                for s in prange(1, n_layers + 1):
                     if (
                         s - 1
                         > max_n_succ_stages[
@@ -167,6 +158,7 @@ def inter_op_dp_inner_loop(
 
                     new_cost = F[s - 1, i + 1, d - n_submesh_devices] + stage_cost
                     if new_cost < F[s, l, d]:
+                        # print(f"DP index", s, l, d, ", new cost", new_cost)
                         F[s, l, d] = new_cost
                         F_argmin[s, l, d] = (
                             i + 1,
@@ -201,7 +193,7 @@ def inter_op_dp(
     for n, m in submesh_shapes:
         submesh_sizes.append(n * m)
 
-    for intra_cost in np.sort(np.unique(intra_compute_costs)):
+    for loop_i, intra_cost in enumerate(np.sort(np.unique(intra_compute_costs))):
         if intra_cost - prev_intra_cost < gap:
             continue
         if intra_cost * n_microbatches >= min_cost:
@@ -217,7 +209,9 @@ def inter_op_dp(
         ]
         valid_costs = intra_compute_costs[tuple(valid_cost_idxs.T)]
         valid_idxs_costs = np.hstack([valid_cost_idxs, valid_costs[:, np.newaxis]])
+        # valid_idxs_costs = valid_idxs_costs[valid_cost_idxs[:, 1].argsort()]
 
+        logging.info(f"DP outer loop {loop_i}")
         F, F_stage_max, F_argmin = inter_op_dp_inner_loop(
             n_layers,
             n_devices,
@@ -229,6 +223,7 @@ def inter_op_dp(
         best_n_stages = F[:, 0, n_devices].argmin()
         all_stages_cost = F[best_n_stages, 0, n_devices]
         slowest_stage_cost = F_stage_max[best_n_stages, 0, n_devices]
+        logging.info(f"DP {all_stages_cost=} {slowest_stage_cost=}")
         if np.isinf(all_stages_cost):
             continue
         slowest_stage_total_cost = (n_microbatches - 1) * slowest_stage_cost
@@ -236,6 +231,7 @@ def inter_op_dp(
         if all_stages_cost + slowest_stage_total_cost < min_cost:
             min_cost = all_stages_cost + slowest_stage_total_cost
             best_solution = best_n_stages, F_argmin
+            logging.info(f"DP updating best_n_stages {best_n_stages}")
         prev_intra_cost = intra_cost
 
     assert best_solution is not None
@@ -251,20 +247,87 @@ class AutoParallelConfig:
     n_compute_nodes: int
     n_devices_per_node: int
     n_microbatches: int
+    n_autosharding_configs: int = 1
     submesh_space: SubmeshSpace = SubmeshSpace.ALL
 
 
+def estimate_intra_costs(
+    model,
+    traced,
+    example_inputs,
+    submesh_shapes,
+    tracer,
+    tracer_kwargs,
+    max_n_succ_stages=4096,
+    n_autosharding_configs=1,
+):
+    n_graph_nodes = len(traced.graph.nodes)
+    n_submesh_choices = len(submesh_shapes)
+
+    # Lower op-by-op to MLIR modules (matched to op name).
+    logging.info("Compiling model through MLIR")
+    node_mlir_modules = compile_model_op_by_op(
+        model, example_inputs, tracer=tracer, **tracer_kwargs
+    )
+    # Count up all of the floating point ops and multiply by
+    # op latency (TODO: arithmetic intensity model).
+    logging.info("Counting FP latencies for torch ops")
+    known_latencies = count_flop_latency_in_mlir_modules(node_mlir_modules)
+    all_latencies = np.zeros(n_graph_nodes)
+    for i, node in enumerate(traced.graph.nodes):
+        all_latencies[i] = known_latencies.get(node.name, 0)
+
+    # intra_costs[i, j, k, l] is the total latency of [node_i, ..., node_j]
+    # for the k submesh choice and lth autosharding choice (with inclusive endpoints).
+    # Currently we only have one submesh choice (all of the devices) and one autosharding choices (none).
+    intra_costs = np.zeros(
+        (n_graph_nodes, n_graph_nodes, n_submesh_choices, n_autosharding_configs)
+    )
+    # Prefix sums such that jth prefix - ith prefix + op latency = latency from ith to jth op.
+    cum_latencies = np.cumsum(all_latencies)
+    for i in range(n_graph_nodes):
+        for j in range(i, n_graph_nodes):
+            lat = (
+                cum_latencies[j] - cum_latencies[i] + all_latencies[i]
+            )
+            for k, shape in enumerate(submesh_shapes):
+                intra_costs[i, j, k, :] = lat / np.prod(shape)
+
+    # TODO: obviously this isn't right.
+    max_n_succ_stages = np.full(
+        (n_graph_nodes, n_graph_nodes, n_submesh_choices, n_autosharding_configs),
+        max_n_succ_stages,
+    )
+
+    return intra_costs, max_n_succ_stages
+
+
 def dp_auto_parallel(config: AutoParallelConfig):
-    def _dp_auto_parallel(fx_mod: pippy.fx.GraphModule):
-        n_graph_nodes = len(fx_mod.graph.nodes)
+    def _dp_auto_parallel(
+        mod: torch.nn.Module,
+        fx_mod: pippy.fx.GraphModule,
+        example_inputs,
+        tracer,
+        tracer_kwargs,
+    ):
         submesh_shapes = get_possible_submesh_shapes(
             n_compute_nodes=config.n_compute_nodes,
             n_devices_per_node=config.n_devices_per_node,
             submesh_space=config.submesh_space,
         )
+        logging.info("Estimating intra-op latencies")
         intra_costs, max_n_succ_stages = estimate_intra_costs(
-            len(submesh_shapes), n_layers=n_graph_nodes
+            mod,
+            fx_mod,
+            example_inputs,
+            submesh_shapes,
+            tracer=tracer,
+            tracer_kwargs=tracer_kwargs,
+            n_autosharding_configs=config.n_autosharding_configs,
         )
+        _intra_costs = intra_costs.squeeze()
+        n_graph_nodes = len(fx_mod.graph.nodes)
+        logging.info("Computing optimal split using DP")
         optimal_layer_submesh_assignments = inter_op_dp(
             n_layers=n_graph_nodes,
             n_devices=config.n_compute_nodes * config.n_devices_per_node,
@@ -273,6 +336,7 @@ def dp_auto_parallel(config: AutoParallelConfig):
             intra_compute_costs=intra_costs,
             max_n_succ_stages=max_n_succ_stages,
         )
+        logging.info(f"DP optimal layer submesh assignments {optimal_layer_submesh_assignments}")
         split_points = {
             current_layer
             for (
