@@ -15,7 +15,7 @@ from pippy.PipelineDriver import (
     PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverBase, PipelineDriverInterleaved1F1B
 )
 from pippy.microbatch import TensorChunkSpec, CustomReducer
-from test_commons import tp_transports # type: ignore
+import test_commons
 
 # TODOs for implementing forward/backward/loss with schedules:
 # * ability to switch between full-batch loss vs. per-microbatch loss. shen mentioned
@@ -175,7 +175,7 @@ def run_worker(rank, world_size, args):
     # Exclude IB for metadata transport due to lack of EFA support on AWS
     options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256,
                                               rpc_timeout=1800,
-                                              _transports=tp_transports())
+                                              _transports=test_commons.tp_transports())
     if args.cuda:
         n_devs = torch.cuda.device_count()
         if n_devs > 0:

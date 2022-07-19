@@ -14,7 +14,7 @@ import transformers.utils.fx as fx
 from pippy.IR import MultiUseParameterConfig, Pipe, PipeSplitWrapper, annotate_split_points
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverBase
 from pippy.microbatch import TensorChunkSpec
-from test_commons import tp_transports # type: ignore
+import test_commons
 from transformers import GPT2Model, GPT2Config
 
 PROFILING_ENABLED = True
@@ -122,7 +122,7 @@ def run_worker(rank, world_size, args):
     # Exclude IB for metadata transport due to lack of EFA support on AWS
     options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256,
                                               rpc_timeout=1800,
-                                              _transports=tp_transports())
+                                              _transports=test_commons.tp_transports())
     if args.cuda:
         n_devs = torch.cuda.device_count()
         if n_devs > 0:

@@ -20,7 +20,7 @@ from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, Ph
 from pippy.events import Event
 from pippy.microbatch import TensorChunkSpec, CustomReducer
 from pippy.visualizer import events_to_json
-from test_commons import tp_transports # type: ignore
+import test_commons
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
@@ -277,7 +277,7 @@ def run_worker(rank, world_size, args):
     # Exclude IB for metadata transport due to lack of EFA support on AWS
     options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256,
                                               rpc_timeout=1800,
-                                              _transports=tp_transports())
+                                              _transports=test_commons.tp_transports())
     if args.cuda:
         n_devs = torch.cuda.device_count()
         if n_devs > 0:
