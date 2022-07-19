@@ -34,4 +34,4 @@ jobs:
     - name: Lint with flake8
       run: flake8 pippy
     - name: Lint with black for SPMD
-      run: black --line-length 80 spmd test/spmd
+      run: black --check --line-length 80 spmd test/spmd
