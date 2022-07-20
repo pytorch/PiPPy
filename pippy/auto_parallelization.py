@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 # Adaptation of https://github.com/alpa-projects/alpa/blob/a88992ce3b46024c0a4ee4aa8cb069a62830cec2/alpa/pipeline_parallel/stage_construction.py
 #
 # Licensed under the Apache License, Version 2.0 (the "License");

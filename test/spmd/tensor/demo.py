@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 import os
 import torch
 from spmd.tensor import Tensor, DeviceMesh, Shard, Replicate
