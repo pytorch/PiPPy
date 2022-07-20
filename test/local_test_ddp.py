@@ -5,6 +5,7 @@ import logging
 import os
 import socket
 from typing import Dict
+import unittest
 
 import torch
 import torch.distributed.rpc as rpc
@@ -210,7 +211,7 @@ def run_worker(rank, world_size, args):
     rpc.shutdown()
 
 
-if __name__ == "__main__":
+def main(args=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 12)))
     # in row-major
@@ -235,7 +236,7 @@ if __name__ == "__main__":
     parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
     parser.add_argument('--record_mem_dumps', type=int, default=0, choices=[0, 1])
     parser.add_argument('--checkpoint', type=int, default=0, choices=[0, 1])
-    args = parser.parse_args()
+    args = parser.parse_args(args)
 
     assert args.dp_group_size * args.pp_group_size == args.world_size
 
@@ -245,3 +246,16 @@ if __name__ == "__main__":
         run_worker(args.rank, args.world_size, args)
     else:
         print("I'm unused, exiting")
+
+
+if __name__ == "__main__":
+    main()
+
+
+class LocalTestDDP(unittest.TestCase):
+    def test_ddp(self):
+        import random
+        port = random.randint(29500, 30000)
+        args = ['--cuda', os.getenv('USE_CUDA', '0'),
+                '--master_port', str(port)]
+        main(args)
