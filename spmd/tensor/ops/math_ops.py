@@ -4,9 +4,6 @@ from spmd.tensor.api import Tensor
 from spmd.tensor.placement_types import (
     Replicate,
     _Partial,
-    is_partial,
-    is_replicate,
-    is_shard,
 )
 from spmd.tensor.ops.utils import register_impl
 
@@ -19,14 +16,14 @@ def dist_sum(self: Tensor) -> Tensor:
 
     local_sum = self_local.sum()
 
-    if is_shard(self_placement) or is_partial(self_placement):
+    if self_placement.is_shard() or self_placement.is_partial():
         placements = [_Partial(ReduceOp.SUM)]
         # partial reduce
         partial_sum = Tensor.from_local(local_sum, device_mesh, placements)
         # all_reduce across device
         replicate_placements = [Replicate()]
         return partial_sum.redistribute(device_mesh, replicate_placements)
-    elif is_replicate(self_placement):
+    elif self_placement.is_replicated():
         return Tensor.from_local(
             local_sum, device_mesh=device_mesh, placements=self.placements
         )
