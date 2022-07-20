@@ -1,7 +1,8 @@
 -f https://github.com/llvm/torch-mlir/releases
 --pre
-torch-mlir
+torch
 
 packaging >= 21.3
 numba==0.55.2
 pathos==0.2.9
+torchvision==0.13.0

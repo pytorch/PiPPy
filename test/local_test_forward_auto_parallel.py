@@ -10,6 +10,8 @@ import torch
 import transformers.utils.fx as fx
 import torch.distributed.rpc as rpc
 import torch.multiprocessing as mp
+from torchvision.models import ResNet, resnet101, resnet18
+from torchvision.models.resnet import _resnet, BasicBlock
 from transformers import AlbertModel, AlbertConfig
 
 from pippy.IR import MultiUseParameterConfig, Pipe
@@ -58,7 +60,6 @@ torch.fx.Tracer.proxy_buffer_attributes = True
 
 def run_master(args):
     bs = 1
-    seq_length = 2
 
     MULTI_USE_PARAM_CONFIG = (
         MultiUseParameterConfig.REPLICATE
@@ -66,49 +67,33 @@ def run_master(args):
         else MultiUseParameterConfig.TRANSMIT
     )
     print(f"REPLICATE config: {args.replicate} -> {MULTI_USE_PARAM_CONFIG}")
-
     print("Using schedule:", args.schedule)
 
-    albert = AlbertModel(
-        AlbertConfig(
-            hidden_size=128,
-            intermediate_size=128,
-            num_attention_heads=1,
-            num_hidden_groups=1,
-            num_hidden_layers=1,
-        )
-    )
-    albert.eval()
-    albert_input = torch.zeros(bs, seq_length, dtype=torch.long).random_(
-        albert.config.vocab_size
-    )
-
-    input_names = albert.dummy_inputs.keys()
-    sig = inspect.signature(albert.forward)
-    concrete_args = {
-        p.name: p.default for p in sig.parameters.values() if p.name not in input_names
-    }
+    # resnet = resnet18(weights=None)
+    resnet = _resnet(BasicBlock, [1, 1, 1, 1], weights=None, progress=False)
+    resnet.eval()
+    resnet_input = torch.randn((bs, 3, 16, 16))
+    resnet(resnet_input)
 
     auto_parallel_config = AutoParallelConfig(
-        n_compute_nodes=8, n_devices_per_node=1, n_microbatches=5
+        n_compute_nodes=4, n_devices_per_node=4, n_microbatches=5
     )
-    albert_pipe = Pipe.from_tracing(
-        albert,
+    resnet_pipe = Pipe.from_tracing(
+        resnet,
         MULTI_USE_PARAM_CONFIG,
-        example_inputs=(albert_input,),
-        tracer=HFBertTracer(),
+        example_inputs=(resnet_input,),
         auto_parallel_strategy=dp_auto_parallel(auto_parallel_config),
-        concrete_args=concrete_args,
     )
-    print(albert_pipe.split_gm)
+    print(resnet_pipe.split_gm)
 
     return
+
     args_chunk_spec = (TensorChunkSpec(0),)
     kwargs_chunk_spec: Dict = {}
     output_chunk_spec = {"out": TensorChunkSpec(0)}
 
     pipe_driver: PipelineDriverBase = schedules[args.schedule](
-        albert_pipe,
+        resnet_pipe,
         args_chunk_spec,
         kwargs_chunk_spec,
         output_chunk_spec,
@@ -120,14 +105,14 @@ def run_master(args):
 
     # # Warm up and correctness runs
     pipe_driver.chunks = 5
-    out = pipe_driver(albert_input)
-    ref_out = albert_pipe(albert_input)
+    out = pipe_driver(resnet_input)
+    ref_out = resnet_pipe(resnet_input)
 
     # run with different chunk size to exercise microbatch and scheduling components
     pipe_driver.chunks = 1
-    pipe_driver(albert_input)
+    pipe_driver(resnet_input)
     pipe_driver.chunks = 100
-    pipe_driver(albert_input)
+    pipe_driver(resnet_input)
 
     if CHECK_NUMERIC_EQUIVALENCE:
         torch.testing.assert_close(out["out"], ref_out["out"])
@@ -138,8 +123,8 @@ def run_master(args):
     # # Profiling runs
     with torch.autograd.profiler_legacy.profile(enabled=PROFILING_ENABLED) as prof:
         pipe_driver.chunks = 5
-        out = pipe_driver(albert_input)
-        ref_out = albert_pipe(albert_input)
+        out = pipe_driver(resnet_input)
+        ref_out = resnet_pipe(resnet_input)
         print(
             f'profiling run completed {torch.sum(out["out"])} ref {torch.sum(ref_out["out"])}'
         )
