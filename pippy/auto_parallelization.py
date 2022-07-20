@@ -22,7 +22,7 @@ import torch
 from enum import Enum
 
 from pippy import pipe_split
-from pippy.count_flops import compile_model_op_by_op, count_flop_latency_in_mlir_modules
+from pippy.count_flops import compile_model_op_by_op, count_flop_latency_in_mlir_modules_using_llvm
 
 try:
     from numba import njit  # type: ignore
@@ -155,7 +155,6 @@ def inter_op_dp_inner_loop(
 
                     new_cost = F[s - 1, i + 1, d - n_submesh_devices] + stage_cost
                     if new_cost < F[s, l, d]:
-                        print(f"DP index", s, l, d, ", new cost", new_cost)
                         F[s, l, d] = new_cost
                         F_argmin[s, l, d] = (
                             i + 1,
@@ -273,7 +272,7 @@ def estimate_intra_costs(
     # Count up all of the floating point ops and multiply by
     # op latency (TODO: arithmetic intensity model).
     logging.info("Counting FP latencies for torch ops")
-    known_latencies = count_flop_latency_in_mlir_modules(node_mlir_modules)
+    known_latencies = count_flop_latency_in_mlir_modules_using_llvm(node_mlir_modules)
     all_latencies = np.zeros(n_graph_nodes)
     cum_inputs = []
     nodes = []

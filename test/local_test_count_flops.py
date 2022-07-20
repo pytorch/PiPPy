@@ -6,7 +6,8 @@ import transformers.utils.fx as fx
 from torch.fx.passes.shape_prop import ShapeProp
 from transformers import AlbertModel, AlbertConfig
 
-from pippy.count_flops import compile_model_op_by_op, count_flop_latency_in_mlir_modules
+from pippy.count_flops import compile_model_op_by_op, count_flop_latency_in_mlir_modules, \
+    count_flop_latency_in_mlir_modules_using_llvm
 
 
 class ExampleCode(torch.nn.Module):
@@ -57,9 +58,10 @@ def small_test():
     bs = 4
     model = ExampleCode(d_hid, bs)
     x = torch.randn(bs, d_hid)
+    tracer = torch.fx.Tracer()
 
-    node_mlir_module_strs = compile_model_op_by_op(model, x)
-    latencies = count_flop_latency_in_mlir_modules(node_mlir_module_strs)
+    node_mlir_module_strs = compile_model_op_by_op(model, (x,), tracer)
+    latencies = count_flop_latency_in_mlir_modules_using_llvm(node_mlir_module_strs)
     pprint(latencies)
 
 
@@ -88,4 +90,4 @@ def albert_test():
 
 if __name__ == "__main__":
     small_test()
-    albert_test()
+    # albert_test()
