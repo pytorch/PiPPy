@@ -29,7 +29,7 @@ PiPPy provides the following features that make pipeline parallelism easier:
 
 For in-depth technical architecture, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-# Install
+# Install     
 
 PiPPy currently requires the PyTorch nightly release to work. To quickly install PyTorch nightly, run the following command from the same directory as this README:
 
