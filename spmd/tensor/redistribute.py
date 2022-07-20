@@ -31,7 +31,9 @@ def redistribute_spmd_tensor(
             attempted_transforms.append(target)
             continue
 
-        assert not target.is_partial(), "Cannot create partial via redistribute!"
+        assert (
+            not target.is_partial()
+        ), "Cannot create partial via redistribute!"
 
         if target.is_replicate():
             # Case 1: target is Replicate
@@ -86,7 +88,9 @@ def redistribute_spmd_tensor(
         # TODO: if not the same, we should apply all_to_all reshuffle
         raise NotImplementedError("Reshuffling tensor dims not supported yet!")
 
-    return spmd_tensor.Tensor.from_local(new_local_tensor, device_mesh, placements)
+    return spmd_tensor.Tensor.from_local(
+        new_local_tensor, device_mesh, placements
+    )
 
 
 class Redistribute(torch.autograd.Function):

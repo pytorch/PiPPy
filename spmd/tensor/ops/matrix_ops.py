@@ -16,7 +16,9 @@ from spmd.tensor.ops.utils import (
 
 
 @register_impl("aten.addmm.default")
-def dist_addmm(input: Tensor, mat1: Tensor, mat2: Tensor, beta=1, alpha=1) -> Tensor:
+def dist_addmm(
+    input: Tensor, mat1: Tensor, mat2: Tensor, beta=1, alpha=1
+) -> Tensor:
     # dist addmm:
     # input:shard(0)    mat1: shard(0),  mat2: replicate
     # input:shard(1)    mat1: replicate, mat2: shard(1)
@@ -36,18 +38,26 @@ def dist_addmm(input: Tensor, mat1: Tensor, mat2: Tensor, beta=1, alpha=1) -> Te
     # only implemented combo with no comm for now
     # TODO: implement all combinations
     if mat1_placement.is_shard(dim=0) and mat2_placement.is_replicate():
-        local_res = local_input.addmm(local_mat1, local_mat2, beta=beta, alpha=alpha)
+        local_res = local_input.addmm(
+            local_mat1, local_mat2, beta=beta, alpha=alpha
+        )
         return Tensor.from_local(local_res, device_mesh, mat1.placements)
     elif mat1_placement.is_replicate() and mat2_placement.is_shard(dim=1):
-        local_res = local_input.addmm(local_mat1, local_mat2, beta=beta, alpha=alpha)
+        local_res = local_input.addmm(
+            local_mat1, local_mat2, beta=beta, alpha=alpha
+        )
         return Tensor.from_local(local_res, device_mesh, mat2.placements)
     elif mat1_placement.is_replicate() and mat2_placement.is_replicate():
-        local_res = local_input.addmm(local_mat1, local_mat2, beta=beta, alpha=alpha)
+        local_res = local_input.addmm(
+            local_mat1, local_mat2, beta=beta, alpha=alpha
+        )
         return Tensor.from_local(
             local_res, device_mesh, mat1.placements, run_check=False
         )
     else:
-        raise RuntimeError(f"addmm operator supported for inputs: {mat1}, {mat2}")
+        raise RuntimeError(
+            f"addmm operator supported for inputs: {mat1}, {mat2}"
+        )
 
 
 @register_impl("aten.mm.default")
@@ -92,4 +102,6 @@ def dist_t(self: Tensor) -> Tensor:
     device_mesh = self.device_mesh
 
     new_shard_dim = 1 if mat_placement.is_shard(dim=0) else 0
-    return Tensor.from_local(transposed_local_mat, device_mesh, [Shard(new_shard_dim)])
+    return Tensor.from_local(
+        transposed_local_mat, device_mesh, [Shard(new_shard_dim)]
+    )
