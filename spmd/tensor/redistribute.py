@@ -5,9 +5,6 @@ import torch
 import spmd.tensor.api as spmd_tensor
 from spmd.tensor.placement_types import (
     Placement,
-    is_shard,
-    is_partial,
-    is_replicate,
 )
 from spmd.tensor.device_mesh import DeviceMesh
 
@@ -34,12 +31,14 @@ def redistribute_spmd_tensor(
             attempted_transforms.append(target)
             continue
 
-        assert not is_partial(target), "Cannot create partial via redistribute!"
+        assert (
+            not target.is_partial()
+        ), "Cannot create partial via redistribute!"
 
-        if is_replicate(target):
+        if target.is_replicate():
             # Case 1: target is Replicate
             attempted_transforms.append(target)
-            if is_partial(current):
+            if current.is_partial():
                 # all_reduce
                 new_local_tensor = device_mesh.all_reduce(
                     local_tensor, current.reduce_op
@@ -54,7 +53,7 @@ def redistribute_spmd_tensor(
                 device_mesh.all_gather_base(new_local_tensor, local_tensor)
         else:
             # Case 2: target is Shard
-            assert is_shard(target)
+            assert target.is_shard()
             shard_dim = target.dim  # type: ignore
             num_chunks = device_mesh.size()
             assert (
@@ -62,7 +61,7 @@ def redistribute_spmd_tensor(
             ), "Only support chunk sharding evenly now"
             chunk_size = input.size(shard_dim) // num_chunks
             my_rank = device_mesh.get_rank()
-            if is_partial(current):
+            if current.is_partial():
                 # reduce scatter the current tensors
                 attempted_transforms.append(target)
                 new_tensor_size = list(input.size())
@@ -75,7 +74,7 @@ def redistribute_spmd_tensor(
                 new_local_tensor = device_mesh.reduce_scatter_base(
                     new_local_tensor, local_tensor
                 )
-            elif is_replicate(current):
+            elif current.is_replicate():
                 attempted_transforms.append(target)
                 # slice/narrow the tensor to corresponding local shard then return shard tensor
                 new_local_tensor = local_tensor.narrow(
