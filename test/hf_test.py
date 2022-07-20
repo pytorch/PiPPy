@@ -383,7 +383,7 @@ def get_output_loss_value_spec_for_model(model_cls):
                      GPTNeoForSequenceClassification, GPTJForCausalLM, GPTJForSequenceClassification,
                      BlenderbotSmallForCausalLM, BlenderbotForCausalLM, BartForCausalLM, MBartForCausalLM,
                      OPTForCausalLM, MarianForCausalLM, PLBartForCausalLM, PegasusForCausalLM, Speech2Text2ForCausalLM,
-                     XGLMForCausalLM]:
+                     XGLMForCausalLM, OPTForSequenceClassification]:
         return {'loss': True, 'logits': False, 'past_key_values': False}
 
     if model_cls in [AlbertForPreTraining]:
@@ -491,7 +491,8 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
                              MegatronBertForSequenceClassification, MobileBertForSequenceClassification,
                              RobertaForSequenceClassification, MBartForSequenceClassification,
                              PLBartForSequenceClassification, DebertaForSequenceClassification,
-                             DebertaV2ForSequenceClassification, NezhaForSequenceClassification]:
+                             DebertaV2ForSequenceClassification, NezhaForSequenceClassification,
+                             OPTForSequenceClassification]:
                 model.config.problem_type = "single_label_classification"
 
             concrete_args = generate_concrete_args_for_model(model, input_dict.keys())
