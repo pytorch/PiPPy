@@ -1,7 +1,13 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 from torch.distributed.distributed_c10d import ReduceOp
 from spmd.tensor.api import Tensor
-from spmd.tensor.placement_types import Shard, Replicate, _Partial
+from spmd.tensor.placement_types import (
+    Replicate,
+    _Partial,
+    is_partial,
+    is_replicate,
+    is_shard,
+)
 from spmd.tensor.ops.utils import register_impl
 
 
@@ -13,16 +19,14 @@ def dist_sum(self: Tensor) -> Tensor:
 
     local_sum = self_local.sum()
 
-    if isinstance(self_placement, Shard) or isinstance(
-        self_placement, _Partial
-    ):
+    if is_shard(self_placement) or is_partial(self_placement):
         placements = [_Partial(ReduceOp.SUM)]
         # partial reduce
         partial_sum = Tensor.from_local(local_sum, device_mesh, placements)
         # all_reduce across device
         replicate_placements = [Replicate()]
         return partial_sum.redistribute(device_mesh, replicate_placements)
-    elif isinstance(self_placement, Replicate):
+    elif is_replicate(self_placement):
         return Tensor.from_local(
             local_sum, device_mesh=device_mesh, placements=self.placements
         )
