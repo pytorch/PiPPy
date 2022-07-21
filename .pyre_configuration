@@ -1,0 +1,14 @@
+{
+  "strict": true,
+  "site_package_search_strategy": "pep561",
+  "source_directories": [
+    {
+      "import_root": ".",
+      "source": "spmd"
+    },
+    {
+      "import_root": "test",
+      "source": "test/spmd"
+    }
+  ]
+}
