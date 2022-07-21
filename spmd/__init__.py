@@ -63,9 +63,11 @@ def distribute_tensor(
 
 # pyre-fixme[3]: Return type must be annotated.
 def distribute_module(
+    mod: nn.Module,
     # pyre-fixme[9]: device_mesh has type `DeviceMesh`; used as `None`.
+    device_mesh: DeviceMesh = None,
     # pyre-fixme[9]: spec has type `List[Placement]`; used as `None`.
-    mod: nn.Module, device_mesh: DeviceMesh = None, spec: List[Placement] = None
+    spec: List[Placement] = None,
 ):
     """
     this function coverts all module parameters

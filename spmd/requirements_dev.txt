@@ -1,7 +1,9 @@
 # Python dependencies required for development
+black
 expecttest
 flake8
+numpy
+pyre-check
 pytest
 pytest-cov
 pytest-xdist
-numpy

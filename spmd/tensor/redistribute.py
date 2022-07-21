@@ -3,9 +3,7 @@ from typing import List
 
 import torch
 import spmd.tensor.api as spmd_tensor
-from spmd.tensor.placement_types import (
-    Placement,
-)
+from spmd.tensor.placement_types import Placement
 from spmd.tensor.device_mesh import DeviceMesh
 
 

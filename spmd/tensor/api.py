@@ -116,8 +116,15 @@ class Tensor(torch.Tensor):
     @classmethod
     # pyre-fixme[3]: Return type must be annotated.
     def from_local(
+        cls,
         # pyre-fixme[2]: Parameter must be annotated.
-        cls, local_tensor, device_mesh=None, placements=None, run_check=True
+        local_tensor,
+        # pyre-fixme[2]: Parameter must be annotated.
+        device_mesh=None,
+        # pyre-fixme[2]: Parameter must be annotated.
+        placements=None,
+        # pyre-fixme[2]: Parameter must be annotated.
+        run_check=True,
     ):
         # if same shape/dtype, no need to run_check, if not, must allgather
         # the metadatas to check the size/dtype across ranks
