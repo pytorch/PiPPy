@@ -11,9 +11,12 @@ from spmd.tensor.device_mesh import (
 torch.__future__.set_overwrite_module_params_on_conversion(True)
 
 
+# pyre-fixme[3]: Return type must be annotated.
 def distribute_tensor(
     tensor: torch.Tensor,
+    # pyre-fixme[9]: device_mesh has type `DeviceMesh`; used as `None`.
     device_mesh: DeviceMesh = None,
+    # pyre-fixme[9]: placements has type `List[Placement]`; used as `None`.
     placements: List[Placement] = None,
 ):
     # get default device mesh if there's nothing specified
@@ -54,10 +57,14 @@ def distribute_tensor(
         else:
             raise RuntimeError("Not supported!")
 
+    # pyre-fixme[61]: `dist_tensor` is undefined, or not always defined.
     return dist_tensor
 
 
+# pyre-fixme[3]: Return type must be annotated.
 def distribute_module(
+    # pyre-fixme[9]: device_mesh has type `DeviceMesh`; used as `None`.
+    # pyre-fixme[9]: spec has type `List[Placement]`; used as `None`.
     mod: nn.Module, device_mesh: DeviceMesh = None, spec: List[Placement] = None
 ):
     """
@@ -68,6 +75,8 @@ def distribute_module(
     certain param to a certain spec, like a PlacementPlan
     """
 
+    # pyre-fixme[3]: Return type must be annotated.
+    # pyre-fixme[2]: Parameter must be annotated.
     def to_dist_tensor(t):
         if isinstance(t, nn.Parameter):
             return distribute_tensor(t.data, device_mesh, spec)

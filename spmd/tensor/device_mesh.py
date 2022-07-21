@@ -16,14 +16,18 @@ from torch.distributed.nn.functional import (
     scatter,
 )
 
+# pyre-fixme[5]: Global expression must be annotated.
 _global_device_mesh = None
 
 
+# pyre-fixme[3]: Return type must be annotated.
 def get_global_device_mesh():
     global _global_device_mesh
     return _global_device_mesh
 
 
+# pyre-fixme[3]: Return type must be annotated.
+# pyre-fixme[2]: Parameter must be annotated.
 def set_global_device_mesh(mesh):
     global _global_device_mesh
     _global_device_mesh = mesh
@@ -46,6 +50,8 @@ class DeviceMesh(object):
     mesh: torch.Tensor
     # _world_pg: ProcessGroup
 
+    # pyre-fixme[3]: Return type must be annotated.
+    # pyre-fixme[2]: Parameter must be annotated.
     def __init__(self, device_type, mesh):
         self.device_type = device_type
         self.mesh = torch.Tensor(mesh)
@@ -66,41 +72,57 @@ class DeviceMesh(object):
         # TODO: support multi-dimensional device mesh
         assert self.mesh.ndim == 1, "Only support 1-d device mesh for now"
 
+    # pyre-fixme[3]: Return type must be annotated.
     def __enter__(self):
         # set global device_mesh to this instance
         set_global_device_mesh(self)
         return self
 
+    # pyre-fixme[3]: Return type must be annotated.
+    # pyre-fixme[2]: Parameter must be annotated.
     def __exit__(self, exc_type, exc_value, exc_traceback):
         # unset global device mesh
         set_global_device_mesh(None)
 
+    # pyre-fixme[3]: Return type must be annotated.
     def __repr__(self):
         return f"DeviceMesh:({self.mesh})"
 
+    # pyre-fixme[3]: Return type must be annotated.
+    # pyre-fixme[2]: Parameter must be annotated.
     def size(self, dim=0):
         return self.mesh.size(dim)
 
     @property
+    # pyre-fixme[3]: Return type must be annotated.
     def ndim(self):
         return self.mesh.ndim
 
+    # pyre-fixme[3]: Return type must be annotated.
     def backend(self):
         return _get_default_group()._get_backend_name()
 
+    # pyre-fixme[3]: Return type must be annotated.
     def get_rank(self):
         return get_rank()
 
+    # pyre-fixme[2]: Parameter must be annotated.
     def scatter(self, tensors, src=0) -> torch.Tensor:
         current_rank = get_rank()
         return scatter(tensors, src=src)
 
+    # pyre-fixme[3]: Return type must be annotated.
+    # pyre-fixme[2]: Parameter must be annotated.
     def broadcast(self, tensor, src=0):
         return broadcast(tensor, src=src)
 
+    # pyre-fixme[3]: Return type must be annotated.
+    # pyre-fixme[2]: Parameter must be annotated.
     def all_gather(self, tensor):
         return all_gather(tensor)
 
+    # pyre-fixme[3]: Return type must be annotated.
+    # pyre-fixme[2]: Parameter must be annotated.
     def all_gather_base(self, output_tensor, tensor):
         # only nccl have all_gather base
         if self.backend() == "nccl":
@@ -114,9 +136,13 @@ class DeviceMesh(object):
                 output_tensor.copy_(torch.cat(gathered_chunks))
             return output_tensor
 
+    # pyre-fixme[3]: Return type must be annotated.
+    # pyre-fixme[2]: Parameter must be annotated.
     def all_reduce(self, tensor, op=ReduceOp.SUM):
         return all_reduce(tensor, op=op)
 
+    # pyre-fixme[3]: Return type must be annotated.
+    # pyre-fixme[2]: Parameter must be annotated.
     def reduce_scatter_base(self, output, input, op=ReduceOp.SUM):
         # NOTE: two caveats:
         # 1. only NCCL support reduce_scatter

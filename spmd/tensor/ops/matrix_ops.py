@@ -17,6 +17,7 @@ from spmd.tensor.ops.utils import (
 
 @register_impl("aten.addmm.default")
 def dist_addmm(
+    # pyre-fixme[2]: Parameter must be annotated.
     input: Tensor, mat1: Tensor, mat2: Tensor, beta=1, alpha=1
 ) -> Tensor:
     # dist addmm:

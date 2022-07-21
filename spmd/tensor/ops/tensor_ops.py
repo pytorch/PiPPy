@@ -5,6 +5,8 @@ from spmd.tensor.ops.utils import register_impl
 
 
 @register_impl("aten.detach.default")
+# pyre-fixme[3]: Return type must be annotated.
+# pyre-fixme[2]: Parameter must be annotated.
 def dist_detach(self):
     device_mesh = self.device_mesh
 
@@ -13,12 +15,19 @@ def dist_detach(self):
 
 
 @register_impl("aten.ones_like.default")
+# pyre-fixme[3]: Return type must be annotated.
 def dist_ones_like(
+    # pyre-fixme[2]: Parameter must be annotated.
     self,
+    # pyre-fixme[2]: Parameter must be annotated.
     dtype=None,
+    # pyre-fixme[2]: Parameter must be annotated.
     layout=None,
+    # pyre-fixme[2]: Parameter must be annotated.
     device=None,
+    # pyre-fixme[2]: Parameter must be annotated.
     pin_memory=None,
+    # pyre-fixme[2]: Parameter must be annotated.
     memory_format=None,
 ):
     device_mesh = self.device_mesh
