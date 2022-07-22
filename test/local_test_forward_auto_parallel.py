@@ -15,6 +15,7 @@ from pippy.PipelineDriver import PipelineDriverBase, PipelineDriverFillDrain, Pi
     PipelineDriverInterleaved1F1B
 from pippy.auto_parallelization import AutoParallelConfig, dp_auto_parallel
 from pippy.microbatch import TensorChunkSpec
+import pippy.fx
 from test_commons import tp_transports  # type: ignore
 
 PROFILING_ENABLED = True

@@ -14,6 +14,7 @@ from pippy.IR import MultiUseParameterConfig, Pipe, pipe_split
 from pippy.PipelineDriver import PipelineDriverBase, PipelineDriverFillDrain, PipelineDriver1F1B, \
     PipelineDriverInterleaved1F1B
 from pippy.microbatch import TensorChunkSpec
+import pippy.fx
 from test_commons import tp_transports  # type: ignore
 
 PROFILING_ENABLED = True

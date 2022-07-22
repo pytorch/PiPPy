@@ -12,6 +12,7 @@ import torch.multiprocessing as mp
 from pippy.IR import Pipe, TrivialLossWrapper, pipe_split, _null_coalesce_accumulate
 from pippy.PipelineDriver import PipelineDriverBase, PipelineDriverFillDrain, PipelineDriver1F1B
 from pippy.microbatch import TensorChunkSpec, CustomReducer
+import pippy.fx
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True

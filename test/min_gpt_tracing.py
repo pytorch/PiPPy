@@ -1,5 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 from pippy.IR import Pipe, annotate_split_points, PipeSplitWrapper
+import pippy.fx
 
 import logging
 logging.basicConfig(
