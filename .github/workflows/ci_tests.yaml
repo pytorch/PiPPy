@@ -265,7 +265,7 @@ jobs:
           pip install flake8 pytest pytest-cov numpy
           if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
       - name: Install dependencies
-        run: pip install expecttest astunparse numpy ninja pyyaml setuptools cmake cffi typing_extensions future six requests dataclasses xmlrunner
+        run: pip install expecttest astunparse numpy ninja pyyaml setuptools cmake cffi typing_extensions future six requests dataclasses unittest-xml-reporting
       - name: Install pippy
         run: "python setup.py install"
       - name: Run FX tests
