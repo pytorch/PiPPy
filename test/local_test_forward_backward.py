@@ -15,6 +15,7 @@ from pippy.IR import MultiUseParameterConfig, Pipe, TrivialLossWrapper, pipe_spl
 from pippy.PipelineDriver import PipelineDriverBase, PipelineDriverFillDrain, PipelineDriver1F1B, \
     PipelineDriverInterleaved1F1B
 from pippy.microbatch import TensorChunkSpec, CustomReducer, split_args_kwargs_into_chunks
+import pippy.fx
 from test_commons import tp_transports # type: ignore
 
 # TODOs for implementing forward/backward/loss with schedules:
@@ -58,7 +59,7 @@ def set_grad_in_executor(executor, qualname, value):
     param.grad = value
 
 
-torch.fx.Tracer.proxy_buffer_attributes = True
+pippy.fx.Tracer.proxy_buffer_attributes = True
 
 
 def run_master(args):

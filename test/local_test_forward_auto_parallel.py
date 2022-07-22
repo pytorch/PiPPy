@@ -15,6 +15,7 @@ from pippy.PipelineDriver import PipelineDriverBase, PipelineDriverFillDrain, Pi
     PipelineDriverInterleaved1F1B
 from pippy.auto_parallelization import AutoParallelConfig, dp_auto_parallel
 from pippy.microbatch import TensorChunkSpec
+import pippy.fx
 from test_commons import tp_transports  # type: ignore
 
 PROFILING_ENABLED = True
@@ -31,7 +32,7 @@ VERBOSE = bool(int(os.environ.get('VERBOSE', False)))
 if VERBOSE:
     logging.getLogger().setLevel(logging.DEBUG)
 
-torch.fx.Tracer.proxy_buffer_attributes = True
+pippy.fx.Tracer.proxy_buffer_attributes = True
 
 
 def run_master(args):

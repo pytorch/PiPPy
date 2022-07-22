@@ -14,6 +14,7 @@ import transformers.utils.fx as fx
 from pippy.IR import MultiUseParameterConfig, Pipe, PipeSplitWrapper, annotate_split_points
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverBase
 from pippy.microbatch import TensorChunkSpec
+import pippy.fx
 from test_commons import tp_transports # type: ignore
 from transformers import BertModel, BertConfig
 
@@ -30,7 +31,7 @@ VERBOSE = bool(int(os.environ.get('VERBOSE', False)))
 if VERBOSE:
     logging.getLogger().setLevel(logging.DEBUG)
 
-@torch.fx.wrap
+@pippy.fx.wrap
 def torch_ones_wrapper(*args, **kwargs):
     return torch.ones(*args, **kwargs)
 
@@ -48,7 +49,7 @@ class HFBertTracer(fx.HFTracer):
         return graph
 
 
-torch.fx.Tracer.proxy_buffer_attributes = True
+pippy.fx.Tracer.proxy_buffer_attributes = True
 
 
 def run_master(args):

@@ -21,6 +21,7 @@ from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, Ph
 from pippy.events import Event
 from pippy.microbatch import TensorChunkSpec, CustomReducer
 from pippy.visualizer import events_to_json
+import pippy.fx
 from test_commons import tp_transports # type: ignore
 
 PROFILING_ENABLED = True
@@ -37,10 +38,10 @@ VERBOSE = bool(int(os.environ.get('VERBOSE', False)))
 if VERBOSE:
     logging.getLogger().setLevel(logging.DEBUG)
 
-torch.fx.Tracer.proxy_buffer_attributes = True
+pippy.fx.Tracer.proxy_buffer_attributes = True
 
 
-@torch.fx.wrap
+@pippy.fx.wrap
 def sleep(x, t=1.0):
     time.sleep(t)
     return x
@@ -93,7 +94,7 @@ class MyLinearFunction(Function):
         return grad_input, grad_weight, grad_bias
 
 
-@torch.fx.wrap
+@pippy.fx.wrap
 def linear(input, weight, bias):
     return MyLinearFunction.apply(input, weight, bias)
 
