@@ -32,7 +32,7 @@ jobs:
         run: "python setup.py install"
       - name: Test with pytest
         run: |
-          pytest --cov=pippy --ignore=test/hf_test.py --ignore=test/spmd/ test/
+          pytest --cov=pippy --ignore=test/hf_test.py --ignore=test/spmd/ --ignore=test/test_fx.py --ignore=test/test_fx_experimental.py --ignore=/test/fx test/
 
   hf_model_tests_forward:
     runs-on: linux.12xlarge
@@ -265,7 +265,7 @@ jobs:
           pip install flake8 pytest pytest-cov numpy
           if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
       - name: Install dependencies
-        run: pip install expecttest astunparse numpy ninja pyyaml setuptools cmake cffi typing_extensions future six requests dataclasses
+        run: pip install expecttest astunparse numpy ninja pyyaml setuptools cmake cffi typing_extensions future six requests dataclasses xmlrunner
       - name: Install pippy
         run: "python setup.py install"
       - name: Run FX tests

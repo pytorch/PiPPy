@@ -30,7 +30,7 @@ jobs:
     - name: Lint with pylint
       run: pylint --disable=all --enable=unused-import $(git ls-files '*.py')
     - name: Lint with mypy
-      run: mypy $(git ls-files '*.py')
+      run: mypy $(git ls-files '*.py' | grep -v pippy/fx | grep -v test/.*fx)
     - name: Lint with flake8
       run: flake8 pippy
     - name: Lint with black for SPMD

@@ -858,9 +858,18 @@ class Pipe(torch.nn.Module):
                 # HACK to convert torch.fx.Graph to pippy.fx.Graph
                 g_new = pippy.fx.Graph()
                 val_map = {}
-                out = g_new.graph_copy(graph, val_map, True)
+                out = g_new.graph_copy(graph, val_map, False)
                 g_new.output(out)
+
+                # `pippy.fx.map_arg` doesn't work on torch.fx.Node instances;
+                # do it here
+                def remap_vals(n):
+                    return val_map[n]
+                for node in g_new.nodes:
+                    node.args = torch_fx.map_arg(node.args, remap_vals)
+                    node.kwargs = torch_fx.map_arg(node.kwargs, remap_vals)
                 graph = g_new
+
             traced = pippy.fx.GraphModule(mod, graph)
         finally:
             _pipeline_tracer = old__pipeline_tracer

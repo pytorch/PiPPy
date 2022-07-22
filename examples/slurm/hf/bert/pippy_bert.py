@@ -11,6 +11,7 @@ import torch.distributed.rpc as rpc
 import torch.multiprocessing as mp
 
 import transformers.utils.fx as fx
+import pippy.fx
 from pippy.IR import MultiUseParameterConfig, Pipe, PipeSplitWrapper, annotate_split_points
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverInterleaved1F1B, \
     PipelineDriverBase
