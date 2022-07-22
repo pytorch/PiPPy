@@ -1,4 +1,5 @@
 import torch
+import pippy.fx
 from pippy.fx.graph_module import GraphModule
 from typing import Callable, List, Dict, Any, Optional
 from pippy.fx._compatibility import compatibility

@@ -304,8 +304,8 @@ class Proxy:
         def find_tracer(a):
             if isinstance(a, cls):
                 tracers[a.tracer] = None
-        pippy.fx.node.map_aggregate(args, find_tracer)
-        pippy.fx.node.map_aggregate(kwargs, find_tracer)
+        map_aggregate(args, find_tracer)
+        map_aggregate(kwargs, find_tracer)
 
         if len(tracers) > 1:
             raise RuntimeError(f'Found multiple different tracers {list(tracers.keys())} while '

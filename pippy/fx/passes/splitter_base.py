@@ -5,6 +5,7 @@ from typing import NamedTuple, Sequence, Iterable, Any, List, Dict, Optional, Tu
 import logging
 
 import torch
+import pippy.fx
 from pippy.fx.passes.graph_manipulation import get_size_of_node
 from pippy.fx.node import map_arg
 from pippy.fx._compatibility import compatibility
