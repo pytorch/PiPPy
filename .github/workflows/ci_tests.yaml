@@ -32,7 +32,7 @@ jobs:
         run: "python setup.py install"
       - name: Test with pytest
         run: |
-          pytest --cov=pippy --ignore=test/hf_test.py --ignore=test/spmd/ --ignore=test/test_fx.py --ignore=test/test_fx_experimental.py --ignore=/test/fx test/
+          pytest --cov=pippy --ignore=test/hf_test.py --ignore=test/spmd/ --ignore=test/test_fx.py --ignore=test/test_fx_experimental.py --ignore=test/fx test/
 
   hf_model_tests_forward:
     runs-on: linux.12xlarge

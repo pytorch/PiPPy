@@ -857,7 +857,7 @@ class Pipe(torch.nn.Module):
             if isinstance(graph, torch_fx.Graph):
                 # HACK to convert torch.fx.Graph to pippy.fx.Graph
                 g_new = pippy.fx.Graph()
-                val_map = {}
+                val_map : Dict[pippy.fx.Node, pippy.fx.Node] = {}
                 out = g_new.graph_copy(graph, val_map, False)
                 g_new.output(out)
 

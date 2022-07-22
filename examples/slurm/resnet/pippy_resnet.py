@@ -13,6 +13,7 @@ from torch.nn.functional import cross_entropy
 from torchvision import datasets, transforms  # type: ignore
 from tqdm import tqdm  # type: ignore
 
+import pippy.fx
 from pippy.IR import MultiUseParameterConfig, Pipe, LossWrapper, PipeSplitWrapper, annotate_split_points
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverInterleaved1F1B, \
     PipelineDriverBase
