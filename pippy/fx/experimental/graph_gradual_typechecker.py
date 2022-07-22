@@ -1,6 +1,7 @@
 from functools import reduce
 import torch
 import operator
+import pippy.fx
 from pippy.fx.tensor_type import Dyn, is_consistent, TensorType, is_more_precise
 from typing import Callable, Dict
 from pippy.fx.node import Target, Node

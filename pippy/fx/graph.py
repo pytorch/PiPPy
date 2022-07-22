@@ -61,6 +61,7 @@ _register_custom_builtin('inf', 'from math import inf', math.inf)
 _register_custom_builtin('nan', 'from math import nan', math.nan)
 _register_custom_builtin('NoneType', 'NoneType = type(None)', type(None))
 _register_custom_builtin('torch', 'import torch', torch)
+_register_custom_builtin('pippy', 'import pippy', pippy)
 _register_custom_builtin('device', 'from torch import device', torch.device)
 _register_custom_builtin('fx_pytree', 'import pippy.fx._pytree as fx_pytree', fx_pytree)
 _register_custom_builtin('pytree', 'import torch.utils._pytree as pytree', pytree)
@@ -92,6 +93,9 @@ def _snake_case(s: str) -> str:
 def _is_from_torch(obj: Any) -> bool:
     module_name = getattr(obj, '__module__', None)
     if module_name is not None:
+        if module_name.startswith('pippy.fx'):
+            return True
+
         base_module = module_name.partition('.')[0]
         return base_module == 'torch'
 

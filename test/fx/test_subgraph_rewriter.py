@@ -4,10 +4,10 @@ import os
 import sys
 
 import torch
-from torch.fx import symbolic_trace, subgraph_rewriter
-from torch.fx.annotate import annotate
+from pippy.fx import symbolic_trace, subgraph_rewriter
+from pippy.fx.annotate import annotate
 # Make the helper files in test/ importable
-from torch.fx.experimental.rewriter import RewritingTracer
+from pippy.fx.experimental.rewriter import RewritingTracer
 
 pytorch_test_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.append(pytorch_test_dir)
@@ -455,7 +455,7 @@ class TestSubgraphRewriter(JitTestCase):
         graph = ast_rewriter.trace(M1())
 
         module = M2()
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(module)
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(module)
         for n, m in zip(symbolic_traced.graph.nodes, graph.nodes):
             if n.op == 'placeholder':
                 assert n.type == int

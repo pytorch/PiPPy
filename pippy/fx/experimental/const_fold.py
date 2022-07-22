@@ -1,6 +1,7 @@
 import re
 from typing import Callable, Dict, Optional, Set, Union
 
+import torch
 import pippy.fx
 from pippy.fx.node import map_arg
 from pippy.fx.passes.split_module import split_module

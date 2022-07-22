@@ -2,9 +2,9 @@ r'''
 **This file is EXPERIMENTAL and is mostly used for testing purposes! Do not
 rely on it for anything!**
 '''
-from torch.fx import Graph, GraphModule
-from torch.fx.graph import map_arg
-from torch.fx.proxy import Proxy
+from pippy.fx import Graph, GraphModule
+from pippy.fx.graph import map_arg
+from pippy.fx.proxy import Proxy
 import sys
 import torch
 from torch.nn.utils import fuse_conv_bn_weights

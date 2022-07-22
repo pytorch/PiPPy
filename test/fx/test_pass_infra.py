@@ -1,11 +1,12 @@
 # Owner(s): ["module: fx"]
 
 import torch
-import torch.fx as fx
+import pippy
+import pippy.fx as fx
 
 from torch.testing._internal.common_utils import TestCase
-from torch.fx.passes.infra.pass_base import PassResult
-from torch.fx.passes.infra.pass_manager import (
+from pippy.fx.passes.infra.pass_base import PassResult
+from pippy.fx.passes.infra.pass_manager import (
     PassManager,
     this_before_that_pass_constraint,
     _topological_sort_passes,
@@ -44,7 +45,7 @@ class TestPassManager(TestCase):
         """
 
         m = AddModule()
-        traced_m = torch.fx.symbolic_trace(m)
+        traced_m = pippy.fx.symbolic_trace(m)
         pm = PassManager(passes=[replace_add_with_mul_pass, replace_mul_with_div_pass], steps=5)
 
         pm.validate_constraints()

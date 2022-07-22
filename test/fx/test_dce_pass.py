@@ -2,13 +2,13 @@
 
 from typing import Set, Type
 import torch
-import torch.fx
+import pippy.fx
 
 from torch.testing._internal.common_utils import TestCase
 
 
 class TestDCE(TestCase):
-    def _has_nodes_without_users(self, m: torch.fx.GraphModule):
+    def _has_nodes_without_users(self, m: pippy.fx.GraphModule):
         for node in m.graph.nodes:
             if node.is_impure():
                 continue
@@ -16,7 +16,7 @@ class TestDCE(TestCase):
                 return True
         return False
 
-    def _get_num_placeholders(self, m: torch.fx.GraphModule) -> int:
+    def _get_num_placeholders(self, m: pippy.fx.GraphModule) -> int:
         count = 0
         for node in m.graph.nodes:
             if node.op == "placeholder":
@@ -29,13 +29,13 @@ class TestDCE(TestCase):
         expect_dce_changes: bool,
         modules_to_be_leafs: Set[Type] = None,
     ):
-        class TestTracer(torch.fx.Tracer):
+        class TestTracer(pippy.fx.Tracer):
             def is_leaf_module(self, m, qualname):
                 if modules_to_be_leafs and type(m) in modules_to_be_leafs:
                     return True
                 return super().trace(m, qualname)
 
-        traced: torch.fx.GraphModule = torch.fx.GraphModule(m, TestTracer().trace(m))
+        traced: pippy.fx.GraphModule = pippy.fx.GraphModule(m, TestTracer().trace(m))
         print(str(traced.graph))
 
         # Verify there are nodes without users (if expected).

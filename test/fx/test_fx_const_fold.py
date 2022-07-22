@@ -3,9 +3,9 @@
 import operator
 
 import torch
-import torch.fx
-from torch.fx.experimental import const_fold
-from torch.fx.passes.shape_prop import _extract_tensor_metadata, ShapeProp
+import pippy.fx
+from pippy.fx.experimental import const_fold
+from pippy.fx.passes.shape_prop import _extract_tensor_metadata, ShapeProp
 from torch.testing._internal.common_utils import TestCase
 
 
@@ -140,7 +140,7 @@ class TestConstFold(TestCase):
                 return x * 2 + y
 
         mod = ConstFoldTestModule()
-        mod = torch.fx.symbolic_trace(mod)
+        mod = pippy.fx.symbolic_trace(mod)
         yy = None
         for n in mod.graph.nodes:
             if n.op == "placeholder" and n.target == "y":
@@ -376,7 +376,7 @@ class TestConstFold(TestCase):
                 return x - a
 
         mod = ConstFoldTestModule()
-        gm = torch.fx.symbolic_trace(mod)
+        gm = pippy.fx.symbolic_trace(mod)
 
         # Add a count for each node to check after we const fold.
         for idx, node in enumerate(gm.graph.nodes):
@@ -552,7 +552,7 @@ class TestConstFold(TestCase):
                 return (x - a * x) / 2
 
         mod = ConstFoldTestModule()
-        gm = torch.fx.symbolic_trace(mod)
+        gm = pippy.fx.symbolic_trace(mod)
 
         gm_folded: const_fold.FoldedGraphModule = const_fold.split_const_subgraphs(gm)
         self._verify_const_fold_mod(gm_folded)
@@ -584,7 +584,7 @@ class TestConstFold(TestCase):
                 return x - a, x / 2
 
         mod = ConstFoldTestModule()
-        gm = torch.fx.symbolic_trace(mod)
+        gm = pippy.fx.symbolic_trace(mod)
 
         gm_folded: const_fold.FoldedGraphModule = const_fold.split_const_subgraphs(gm)
         self._verify_const_fold_mod(gm_folded)
@@ -624,9 +624,9 @@ class TestConstFold(TestCase):
 
         mod = ConstFoldTestModule()
         in_x = torch.randn(2, 4)
-        gm = torch.fx.symbolic_trace(mod)
+        gm = pippy.fx.symbolic_trace(mod)
 
-        def skip_folding_quant_dequant(node: torch.fx.Node):
+        def skip_folding_quant_dequant(node: pippy.fx.Node):
             if node.target != torch.quantize_per_tensor:
                 return False
             # If quantize_per_node -> dequantize, then skip folding.
@@ -690,7 +690,7 @@ class TestConstFold(TestCase):
                 return x * y + self.attr_2
 
         mod = ConstFoldTestModule()
-        gm = torch.fx.symbolic_trace(mod)
+        gm = pippy.fx.symbolic_trace(mod)
         in_x, in_y = torch.tensor([[-0.45]]), torch.tensor([0.9])
         ShapeProp(gm).propagate(in_x, in_y)
         mod_folded: const_fold.FoldedGraphModule = const_fold.split_const_subgraphs(

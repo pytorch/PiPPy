@@ -3,7 +3,7 @@
 from __future__ import annotations    # type: ignore[attr-defined]
 import torch
 import typing
-from torch.fx import symbolic_trace
+from pippy.fx import symbolic_trace
 
 class A:
     def __call__(self, x: torch.Tensor):

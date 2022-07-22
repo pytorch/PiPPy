@@ -2,15 +2,16 @@
 
 import unittest
 import torch
-from torch.fx import symbolic_trace
-from torch.fx.experimental.unify_refinements import infer_symbolic_types
-from torch.fx.experimental.refinement_types import Equality
-from torch.fx.tensor_type import TensorType, Dyn, is_consistent, is_more_precise
-from torch.fx.annotate import annotate
-from torch.fx.experimental.graph_gradual_typechecker import GraphTypeChecker, broadcast_types, Refine
-from torch.fx.experimental.rewriter import RewritingTracer
-from torch.fx import GraphModule
-from torch.fx.passes.shape_prop import ShapeProp
+import pippy.fx
+from pippy.fx import symbolic_trace
+from pippy.fx.experimental.unify_refinements import infer_symbolic_types
+from pippy.fx.experimental.refinement_types import Equality
+from pippy.fx.tensor_type import TensorType, Dyn, is_consistent, is_more_precise
+from pippy.fx.annotate import annotate
+from pippy.fx.experimental.graph_gradual_typechecker import GraphTypeChecker, broadcast_types, Refine
+from pippy.fx.experimental.rewriter import RewritingTracer
+from pippy.fx import GraphModule
+from pippy.fx.passes.shape_prop import ShapeProp
 from torch.testing._internal.common_utils import TestCase
 
 
@@ -48,7 +49,7 @@ class AnnotationsTest(TestCase):
                 return torch.add(x, y)
 
         module = M()
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(module)
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(module)
 
         expected_ph_types = [TensorType((1, 2, 3, Dyn)), Dyn]
         expected_iter = iter(expected_ph_types)
@@ -65,7 +66,7 @@ class AnnotationsTest(TestCase):
                 return torch.add(x, y)
 
         module = M()
-        symbolic_traced : torch.fx.GraphModule = symbolic_trace(module)
+        symbolic_traced : pippy.fx.GraphModule = symbolic_trace(module)
         for n in symbolic_traced.graph.nodes:
             if n.op == 'placeholder':
                 assert n.type == TensorType((1, 2, 3, Dyn))
@@ -120,7 +121,7 @@ class TypeCheckerTest(TestCase):
             def forward(self, x: TensorType((1, 2, 3, Dyn)), y: TensorType((2, 3, 4))):
                 return torch.add(x, y)
         module = M()
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(module)
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(module)
         tc = GraphTypeChecker({}, symbolic_traced)
         tc.type_check()
         expected_ph_types = [TensorType((1, 2, 3, Dyn)),
@@ -139,7 +140,7 @@ class TypeCheckerTest(TestCase):
             def forward(self, x: int, y: TensorType((2, 3, 4))):
                 return torch.add(x, y)
         module = M()
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(module)
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(module)
         tc = GraphTypeChecker({}, symbolic_traced)
         tc.type_check()
         expected_ph_types = [int,
@@ -156,7 +157,7 @@ class TypeCheckerTest(TestCase):
             def forward(self, x: TensorType((1, 2, 3, Dyn)), y: TensorType((1, 2, 3))):
                 return torch.add(x, y)
         module = M()
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(module)
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(module)
         tc = GraphTypeChecker({}, symbolic_traced)
         with self.assertRaises(TypeError):
             tc.type_check()
@@ -166,7 +167,7 @@ class TypeCheckerTest(TestCase):
             def forward(self, x: TensorType((1, 2, Dyn)), y: TensorType((1, 2, 3))):
                 return torch.add(x, y)
         module = M()
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(module)
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(module)
         tc = GraphTypeChecker({}, symbolic_traced)
         self.assertTrue(tc.type_check())
 
@@ -185,7 +186,7 @@ class TypeCheckerTest(TestCase):
                 return torch.reshape(x, [1, 2, 3])
 
         module = M()
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(module)
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(module)
         tc = GraphTypeChecker({}, symbolic_traced)
         self.assertTrue(tc.type_check())
 
@@ -205,7 +206,7 @@ class TypeCheckerTest(TestCase):
                 return torch.reshape(x, [1, 2, 3])
 
         module = M()
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(module)
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(module)
         tc = GraphTypeChecker({}, symbolic_traced)
         with self.assertRaises(TypeError):
             tc.type_check()
@@ -216,7 +217,7 @@ class TypeCheckerTest(TestCase):
                 return torch.reshape(x, [1, 2, -1])
 
         module = M()
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(module)
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(module)
         tc = GraphTypeChecker({}, symbolic_traced)
         with self.assertRaises(TypeError):
             tc.type_check()
@@ -227,7 +228,7 @@ class TypeCheckerTest(TestCase):
                 return torch.reshape(x, [1, 5, -1])
 
         module = M()
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(module)
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(module)
         tc = GraphTypeChecker({}, symbolic_traced)
         self.assertTrue(tc.type_check())
 
@@ -237,7 +238,7 @@ class TypeCheckerTest(TestCase):
                 return torch.reshape(x, [1, 2, -1])
 
         module = M()
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(module)
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(module)
         tc = GraphTypeChecker({}, symbolic_traced)
         with self.assertRaises(TypeError):
             tc.type_check()
@@ -248,7 +249,7 @@ class TypeCheckerTest(TestCase):
                 return torch.transpose(x, 0, 1)
 
         module = M()
-        symbolic_traced : torch.fx.GraphModule = symbolic_trace(module)
+        symbolic_traced : pippy.fx.GraphModule = symbolic_trace(module)
         tc = GraphTypeChecker({}, symbolic_traced)
         self.assertTrue(tc.type_check())
 
@@ -266,7 +267,7 @@ class TypeCheckerTest(TestCase):
                 return torch.transpose(x, 0, 10)
 
         module = M()
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(module)
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(module)
         tc = GraphTypeChecker({}, symbolic_traced)
         with self.assertRaises(TypeError):
             tc.type_check()
@@ -619,7 +620,7 @@ class TypeCheckerTest(TestCase):
                 return torch.flatten(x, 1, 2)
 
         module = M()
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(module)
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(module)
         tc = GraphTypeChecker({}, symbolic_traced)
         tc.type_check()
         for n in symbolic_traced.graph.nodes:
@@ -633,7 +634,7 @@ class TypeCheckerTest(TestCase):
                 return torch.flatten(x, 1, 2)
 
         module = M()
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(module)
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(module)
         tc = GraphTypeChecker({}, symbolic_traced)
         tc.type_check()
         for n in symbolic_traced.graph.nodes:
@@ -646,7 +647,7 @@ class TypeCheckerTest(TestCase):
                 return torch.flatten(x, start_dim=1, end_dim=3)
 
         module = M()
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(module)
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(module)
         tc = GraphTypeChecker({}, symbolic_traced)
         tc.type_check()
         for n in symbolic_traced.graph.nodes:
@@ -895,7 +896,7 @@ class TypeCheckerTest(TestCase):
             def forward(self, x: TensorType((1, 2, 3, Dyn)), y: TensorType((2, 3, 4))):
                 return torch.add(x, y)
         module = M()
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(module)
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(module)
         tc = GraphTypeChecker({}, symbolic_traced)
         tc.type_check()
         infer_symbolic_types(symbolic_traced)
@@ -924,7 +925,7 @@ class TypeCheckerTest(TestCase):
             def forward(self, x: TensorType((1, 2)), y: TensorType((Dyn, 2))):
                 return torch.add(x, y)
         module = M()
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(module)
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(module)
         tc = GraphTypeChecker({}, symbolic_traced)
         tc.type_check()
         infer_symbolic_types(symbolic_traced)

@@ -2,7 +2,7 @@
 
 import unittest
 import torch
-import torch.fx
+import pippy.fx
 
 from torch.testing._internal.common_utils import TestCase
 
@@ -92,11 +92,11 @@ class TestConstParamShapeInControlFlow(TestCase):
         """
         x = torch.randn(10, 5)
         torch.testing.assert_allclose(mm_only_mod(x), torch.mm(x, mm_only_mod.get_mul_matrix()))
-        tracer = torch.fx.Tracer(param_shapes_constant=True)
+        tracer = pippy.fx.Tracer(param_shapes_constant=True)
         traced_graph = tracer.trace(mm_only_mod)
 
         # verify the graph module calculates the same result
-        graph_mod_mm = torch.fx.GraphModule(mm_only_mod, traced_graph)
+        graph_mod_mm = pippy.fx.GraphModule(mm_only_mod, traced_graph)
         torch.testing.assert_allclose(graph_mod_mm(x), torch.mm(x, mm_only_mod.get_mul_matrix()))
 
 
@@ -105,11 +105,11 @@ class TestConstParamShapeInControlFlow(TestCase):
         x = torch.randn(10, 15)
         torch.testing.assert_allclose(relu_mod(x), torch.relu(torch.mm(x, relu_mod.get_mul_matrix())))
 
-        tracer2 = torch.fx.Tracer(param_shapes_constant=True)
+        tracer2 = pippy.fx.Tracer(param_shapes_constant=True)
         traced_graph2 = tracer2.trace(relu_mod)
 
         # verify the graph module calculates the same result
-        graph_mod_relu = torch.fx.GraphModule(relu_mod, traced_graph2)
+        graph_mod_relu = pippy.fx.GraphModule(relu_mod, traced_graph2)
         torch.testing.assert_allclose(graph_mod_relu(x), torch.relu(torch.mm(x, relu_mod.get_mul_matrix())))
 
 

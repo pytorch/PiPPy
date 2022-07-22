@@ -1,17 +1,17 @@
 # Owner(s): ["module: fx"]
 import operator
 import unittest
-from torch.fx import GraphModule, symbolic_trace
-from torch.fx.experimental.meta_tracer import symbolic_trace as meta_symbolic_trace
-from torch.fx.experimental.migrate_gradual_types.constraint import BinConstraintT, DVar, TVar, T
-from torch.fx.experimental.migrate_gradual_types.constraint_generator import ConstraintGenerator
-from torch.fx.experimental.migrate_gradual_types.constraint_transformation import transform_constraint
-from torch.fx.experimental.migrate_gradual_types.operation import op_precision, op_matching, op_consistency
-from torch.fx.experimental.migrate_gradual_types.transform_to_z3 import transform_all_constraints,\
+from pippy.fx import GraphModule, symbolic_trace
+from pippy.fx.experimental.meta_tracer import symbolic_trace as meta_symbolic_trace
+from pippy.fx.experimental.migrate_gradual_types.constraint import BinConstraintT, DVar, TVar, T
+from pippy.fx.experimental.migrate_gradual_types.constraint_generator import ConstraintGenerator
+from pippy.fx.experimental.migrate_gradual_types.constraint_transformation import transform_constraint
+from pippy.fx.experimental.migrate_gradual_types.operation import op_precision, op_matching, op_consistency
+from pippy.fx.experimental.migrate_gradual_types.transform_to_z3 import transform_all_constraints,\
     evaluate_conditional_with_constraints
-from torch.fx.experimental.migrate_gradual_types.z3_types import tensor_type, D, z3_dyn
-from torch.fx.experimental.rewriter import RewritingTracer
-from torch.fx.tensor_type import Dyn, TensorType
+from pippy.fx.experimental.migrate_gradual_types.z3_types import tensor_type, D, z3_dyn
+from pippy.fx.experimental.rewriter import RewritingTracer
+from pippy.fx.tensor_type import Dyn, TensorType
 import torch
 
 
@@ -42,7 +42,7 @@ class HFOperations(unittest.TestCase):
                 bmm = torch.bmm(x, y)
                 return bmm
 
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(BasicBlock())
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(BasicBlock())
         b = BasicBlock().forward(torch.rand(1, 2, 3), torch.rand(1, 3, 2))
         transformed = transform_all_constraints(symbolic_traced, counter=0)
 
@@ -65,7 +65,7 @@ class HFOperations(unittest.TestCase):
                 bmm = torch.bmm(x, y)
                 return bmm
 
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(BasicBlock())
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(BasicBlock())
         b = BasicBlock().forward(torch.rand(1, 2, 3), torch.rand(1, 3, 2))
         transformed = transform_all_constraints(symbolic_traced, counter=0)
 
@@ -87,7 +87,7 @@ class HFOperations(unittest.TestCase):
                 bmm = torch.bmm(x, y)
                 return bmm
 
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(BasicBlock())
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(BasicBlock())
         transformed = transform_all_constraints(symbolic_traced, counter=0)
 
         s = z3.Solver()
@@ -104,7 +104,7 @@ class HFOperations(unittest.TestCase):
                 transpose = x.transpose(0, 1)
                 return transpose
 
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(BasicBlock())
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(BasicBlock())
         b = BasicBlock().forward(torch.rand(1, 2, 3, 4))
 
         transformed = transform_all_constraints(symbolic_traced, counter=0)
@@ -138,7 +138,7 @@ class HFOperations(unittest.TestCase):
             def forward(self, x: TensorType([2050, 1024]), y: Dyn):
                 index_select = x.index_select(0, y)
                 return index_select
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(BasicBlock())
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(BasicBlock())
         # print(symbolic_traced)
         b = BasicBlock().forward(torch.rand(2050, 1024), torch.ones(8).int())
         transformed = transform_all_constraints(symbolic_traced, counter=0)
@@ -174,7 +174,7 @@ class HFOperations(unittest.TestCase):
                 to = x.to(getattr)
                 return to
 
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(BasicBlock())
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(BasicBlock())
         b = BasicBlock().forward(torch.rand(1, 2, 3))
         transformed = transform_all_constraints(symbolic_traced, counter=0)
         s = z3.Solver()
@@ -199,7 +199,7 @@ class HFOperations(unittest.TestCase):
 
         b = BasicBlock().forward(torch.rand(1, 4))
 
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(BasicBlock())
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(BasicBlock())
         transformed = transform_all_constraints(symbolic_traced, counter=0)
 
         s = z3.Solver()
@@ -235,7 +235,7 @@ class HFOperations(unittest.TestCase):
         B = BasicBlock()
         b = B.forward(torch.rand(4, 4))
 
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(B)
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(B)
         transformed = transform_all_constraints(symbolic_traced, counter=0)
 
         s = z3.Solver()
@@ -273,7 +273,7 @@ class HFOperations(unittest.TestCase):
         B = BasicBlock()
         b = B.forward(torch.rand(4, 4))
 
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(B)
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(B)
         transformed = transform_all_constraints(symbolic_traced, counter=0)
         s = z3.Solver()
         s.add(transformed)
@@ -296,7 +296,7 @@ class HFOperations(unittest.TestCase):
 
         B = BasicBlock()
         b = B.forward(torch.rand(4, 4))
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(B)
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(B)
         transformed = transform_all_constraints(symbolic_traced, counter=0)
         s = z3.Solver()
         s.add(transformed)
@@ -377,7 +377,7 @@ class HFOperations(unittest.TestCase):
                 long = type_as.long()
                 return long
 
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(BasicBlock())
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(BasicBlock())
         transformed = transform_all_constraints(symbolic_traced, counter=0)
         s = z3.Solver()
         s.add(transformed)
@@ -453,7 +453,7 @@ class HFOperations(unittest.TestCase):
                 t = torch.cumsum(x, 3)
                 return t
 
-        symbolic_traced: torch.fx.GraphModule = meta_symbolic_trace(BasicBlock(), meta_args={})
+        symbolic_traced: pippy.fx.GraphModule = meta_symbolic_trace(BasicBlock(), meta_args={})
         transformed = transform_all_constraints(symbolic_traced, counter=0)
         s = z3.Solver()
         s.add(transformed)
@@ -507,7 +507,7 @@ class HFOperations(unittest.TestCase):
                 t = torch.cumsum(x, dim=3)
                 return t
 
-        symbolic_traced: torch.fx.GraphModule = meta_symbolic_trace(BasicBlock(), meta_args={})
+        symbolic_traced: pippy.fx.GraphModule = meta_symbolic_trace(BasicBlock(), meta_args={})
         transformed = transform_all_constraints(symbolic_traced, counter=0)
         s = z3.Solver()
         s.add(transformed)
@@ -539,7 +539,7 @@ class HFOperations(unittest.TestCase):
 
         B = BasicBlock().forward(torch.rand(2, 4))
 
-        symbolic_traced: torch.fx.GraphModule = meta_symbolic_trace(BasicBlock(), meta_args={})
+        symbolic_traced: pippy.fx.GraphModule = meta_symbolic_trace(BasicBlock(), meta_args={})
         transformed = transform_all_constraints(symbolic_traced, counter=0)
         s = z3.Solver()
         s.add(transformed)
@@ -579,7 +579,7 @@ class HFOperations(unittest.TestCase):
                 add = arange + 1
                 return add
 
-        symbolic_traced: torch.fx.GraphModule = meta_symbolic_trace(BasicBlock(), meta_args={})
+        symbolic_traced: pippy.fx.GraphModule = meta_symbolic_trace(BasicBlock(), meta_args={})
         transformed = transform_all_constraints(symbolic_traced, counter=0)
         s = z3.Solver()
         s.add(transformed)
@@ -604,7 +604,7 @@ class HFOperations(unittest.TestCase):
 
         b = BasicBlock().forward(torch.rand(2, 4))
 
-        symbolic_traced: torch.fx.GraphModule = meta_symbolic_trace(BasicBlock(), meta_args={})
+        symbolic_traced: pippy.fx.GraphModule = meta_symbolic_trace(BasicBlock(), meta_args={})
         transformed = transform_all_constraints(symbolic_traced, counter=0)
         s = z3.Solver()
         s.add(transformed)
@@ -627,7 +627,7 @@ class HFOperations(unittest.TestCase):
 
         b = BasicBlock().forward(torch.rand(2, 4))
 
-        symbolic_traced: torch.fx.GraphModule = meta_symbolic_trace(BasicBlock(), meta_args={})
+        symbolic_traced: pippy.fx.GraphModule = meta_symbolic_trace(BasicBlock(), meta_args={})
         transformed = transform_all_constraints(symbolic_traced, counter=0)
         s = z3.Solver()
         s.add(transformed)
@@ -990,7 +990,7 @@ class ComposeOperationsGradualTypes(unittest.TestCase):
         B = BasicBlock().forward(torch.rand(2, 4))
         # print(B.shape)
 
-        symbolic_traced: torch.fx.GraphModule = meta_symbolic_trace(BasicBlock(), meta_args={})
+        symbolic_traced: pippy.fx.GraphModule = meta_symbolic_trace(BasicBlock(), meta_args={})
         # print(symbolic_traced)
         transformed = transform_all_constraints(symbolic_traced, counter=0)
         s = z3.Solver()
@@ -1990,7 +1990,7 @@ class TestSingleOperation(unittest.TestCase):
                 return torch.flatten(x, start_dim=1, end_dim=3)
 
         module = M()
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(module)
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(module)
         constraints = transform_all_constraints(symbolic_traced, counter=0)
         solver = z3.Solver()
         solver.add(constraints)
@@ -2006,7 +2006,7 @@ class TestSingleOperation(unittest.TestCase):
                 return torch.flatten(x, start_dim=1, end_dim=3)
 
         module = M()
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(module)
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(module)
         constraints = transform_all_constraints(symbolic_traced, counter=0)
         solver = z3.Solver()
         solver.add(constraints)
@@ -2025,7 +2025,7 @@ class TestSingleOperation(unittest.TestCase):
 
         module = M()
         # print(module.forward(torch.rand(2,3,5)).shape)
-        symbolic_traced: torch.fx.GraphModule = symbolic_trace(module)
+        symbolic_traced: pippy.fx.GraphModule = symbolic_trace(module)
         constraints = transform_all_constraints(symbolic_traced, counter=0)
         solver = z3.Solver()
         solver.add(constraints)
@@ -2176,7 +2176,7 @@ class TestAlexNet(unittest.TestCase):
     def test_alexnet1(self):
 
         alexnet = models.alexnet()
-        symbolic_traced : torch.fx.GraphModule = symbolic_trace(alexnet)
+        symbolic_traced : pippy.fx.GraphModule = symbolic_trace(alexnet)
 
         for n in symbolic_traced.graph.nodes:
             n.type = Dyn
@@ -2215,7 +2215,7 @@ class TestAlexNet(unittest.TestCase):
 
     def test_alexnet2(self):
         alexnet = models.alexnet()
-        symbolic_traced : torch.fx.GraphModule = symbolic_trace(alexnet)
+        symbolic_traced : pippy.fx.GraphModule = symbolic_trace(alexnet)
 
         for n in symbolic_traced.graph.nodes:
             if n.op == 'placeholder':
@@ -2228,7 +2228,7 @@ class TestAlexNet(unittest.TestCase):
 
     def test_alexnet3(self):
         alexnet = models.alexnet()
-        symbolic_traced : torch.fx.GraphModule = symbolic_trace(alexnet)
+        symbolic_traced : pippy.fx.GraphModule = symbolic_trace(alexnet)
 
         for n in symbolic_traced.graph.nodes:
             if n.op == 'placeholder':
@@ -2241,7 +2241,7 @@ class TestAlexNet(unittest.TestCase):
 
     def test_alexnet4(self):
         alexnet = models.alexnet()
-        symbolic_traced : torch.fx.GraphModule = symbolic_trace(alexnet)
+        symbolic_traced : pippy.fx.GraphModule = symbolic_trace(alexnet)
 
         for n in symbolic_traced.graph.nodes:
             if n.op == 'placeholder':
