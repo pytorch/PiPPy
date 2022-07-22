@@ -5,6 +5,7 @@ from enum import Enum
 from typing import Callable, cast, Dict, List, Optional, Tuple, Union
 
 import torch
+import torch.fx as torch_fx
 import pippy.fx
 from packaging import version
 from pippy.fx.passes.split_module import split_module
@@ -853,6 +854,13 @@ class Pipe(torch.nn.Module):
             if deep_copy_module:
                 mod = copy.deepcopy(mod)  # because further pipe building activities can modify mod
             graph = _pipeline_tracer.trace(mod, **kwargs)
+            if isinstance(graph, torch_fx.Graph):
+                # HACK to convert torch.fx.Graph to pippy.fx.Graph
+                g_new = pippy.fx.Graph()
+                val_map = {}
+                out = g_new.graph_copy(graph, val_map, True)
+                g_new.output(out)
+                graph = g_new
             traced = pippy.fx.GraphModule(mod, graph)
         finally:
             _pipeline_tracer = old__pipeline_tracer

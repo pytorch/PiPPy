@@ -254,10 +254,6 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.7", "3.8", "3.9"]
-        replicate: ["0", "1"]
-        schedule: ["FillDrain", "1F1B"]
-        verbose: ["0"]
-        checkpoint: [ "0", "1" ]
     container:
       image: python:${{ matrix.python-version }}
 
@@ -269,7 +265,7 @@ jobs:
           pip install flake8 pytest pytest-cov numpy
           if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
       - name: Install dependencies
-        run: pip install expecttest
+        run: pip install expecttest astunparse numpy ninja pyyaml setuptools cmake cffi typing_extensions future six requests dataclasses
       - name: Install pippy
         run: "python setup.py install"
       - name: Run FX tests
