@@ -13,18 +13,22 @@ class Tensor(torch.Tensor):
 
     # class attribute that handles ops, all handled
     # ops should appear in this table
+    # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
     _dist_tensor_dispatch_ops: Dict[str, Callable] = {}
 
     # context = contextlib.nullcontext
 
+    # pyre-fixme[4]: Attribute must be annotated.
     __torch_function__ = torch._C._disabled_torch_function_impl
 
     @staticmethod
+    # pyre-fixme[3]: Return type must be annotated.
     def __new__(
         cls,
         device_mesh: DeviceMesh,
         placements: List[Placement],
         size: torch.Size,
+        # pyre-fixme[2]: Parameter must be annotated.
         **kwargs,
     ):
         # new method instruct wrapper tensor and add placement spec
@@ -52,21 +56,31 @@ class Tensor(torch.Tensor):
         r._placements = copy.deepcopy(placements)
         return r
 
+    # pyre-fixme[14]: `__repr__` overrides method defined in `Tensor` inconsistently.
+    # pyre-fixme[3]: Return type must be annotated.
     def __repr__(self):
         # TODO: consider all_gather the local tensors for better debugging
         return f"DistributedTensor({self._local_tensor}, placements={self._placements})"
 
     @classmethod
+    # pyre-fixme[3]: Return type must be annotated.
+    # pyre-fixme[2]: Parameter must be annotated.
     def __torch_dispatch__(cls, func, types, args=(), kwargs=None):
+        # pyre-fixme[3]: Return type must be annotated.
+        # pyre-fixme[2]: Parameter must be annotated.
         def unwrap_mesh(e):
             # if this tensor is not Distributed, then return none. We will reinterpret it as replicated
             if not isinstance(e, Tensor):
                 return None
             return e.device_mesh
 
+        # pyre-fixme[3]: Return type must be annotated.
+        # pyre-fixme[2]: Parameter must be annotated.
         def unwrap(e):
             return e._local_tensor if isinstance(e, Tensor) else e
 
+        # pyre-fixme[3]: Return type must be annotated.
+        # pyre-fixme[2]: Parameter must be annotated.
         def wrap(e, mesh, placements):
             return (
                 Tensor.from_local(e, mesh, placements, run_check=False)
@@ -100,8 +114,17 @@ class Tensor(torch.Tensor):
             return rs
 
     @classmethod
+    # pyre-fixme[3]: Return type must be annotated.
     def from_local(
-        cls, local_tensor, device_mesh=None, placements=None, run_check=True
+        cls,
+        # pyre-fixme[2]: Parameter must be annotated.
+        local_tensor,
+        # pyre-fixme[2]: Parameter must be annotated.
+        device_mesh=None,
+        # pyre-fixme[2]: Parameter must be annotated.
+        placements=None,
+        # pyre-fixme[2]: Parameter must be annotated.
+        run_check=True,
     ):
         # if same shape/dtype, no need to run_check, if not, must allgather
         # the metadatas to check the size/dtype across ranks
@@ -173,12 +196,14 @@ class Tensor(torch.Tensor):
         if placements is None:
             raise RuntimeError("placements is needed for redistribute!")
 
+        # pyre-fixme[16]: `Redistribute` has no attribute `apply`.
         return Redistribute.apply(self, device_mesh, placements)
 
     def local_tensor(self) -> torch.Tensor:
         return self._local_tensor  # type: ignore
 
     @property
+    # pyre-fixme[3]: Return type must be annotated.
     def placements(self):
         # placement should be a read only propety
         # to disallow caller modification on it
@@ -187,6 +212,7 @@ class Tensor(torch.Tensor):
         return self._placements
 
     @property
+    # pyre-fixme[3]: Return type must be annotated.
     def device_mesh(self):
         # device_mesh should be a read only propety
         # to disallow caller modification on it

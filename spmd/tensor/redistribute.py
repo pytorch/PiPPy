@@ -3,12 +3,11 @@ from typing import List
 
 import torch
 import spmd.tensor.api as spmd_tensor
-from spmd.tensor.placement_types import (
-    Placement,
-)
+from spmd.tensor.placement_types import Placement
 from spmd.tensor.device_mesh import DeviceMesh
 
 
+# pyre-fixme[3]: Return type must be annotated.
 def redistribute_spmd_tensor(
     input: "spmd_tensor.Tensor",
     device_mesh: DeviceMesh,
@@ -96,6 +95,7 @@ def redistribute_spmd_tensor(
 class Redistribute(torch.autograd.Function):
     @staticmethod
     def forward(  # type: ignore
+        # pyre-fixme[2]: Parameter must be annotated.
         ctx,
         input: "spmd_tensor.Tensor",
         device_mesh: DeviceMesh,
