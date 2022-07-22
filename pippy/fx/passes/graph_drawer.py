@@ -11,7 +11,7 @@ from itertools import chain
 
 __all__ = ['FxGraphDrawer']
 try:
-    import pydot
+    import pydot  # type: ignore
     HAS_PYDOT = True
 except ImportError:
     HAS_PYDOT = False

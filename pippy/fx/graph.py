@@ -1198,7 +1198,7 @@ class Graph:
         installed.
         """
         try:
-            from tabulate import tabulate
+            from tabulate import tabulate  # type: ignore
         except ImportError:
             print("`print_tabular` relies on the library `tabulate`, "
                   "which could not be found on this machine. Run `pip "
