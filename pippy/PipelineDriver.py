@@ -1073,6 +1073,7 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
         self.cur_microbatch = cur_microbatch
         self.pc = 0
         self.node_list = list(self.module.graph.nodes)
+        logging.info(f'[root] Node list has {len(self.node_list)} nodes')
 
         # Process args/kwargs
 
@@ -1105,17 +1106,19 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
             logging.info(f'[root][{self.cur_microbatch}] Issuing {Phase.FORWARD} '
                          f'invocation for target {target} on stage {stage_id}')
             invocation_key = f'{self.cur_microbatch}_{node.name}'
-            ts = time.time()
+            start_ts = time.time()
             forward_name = event_name(Phase.FORWARD, stage_id, self.cur_microbatch)
             forward_id = event_id(Phase.FORWARD, stage_id, self.cur_microbatch, self.batch_id)
             name = f"I{forward_name}"
             id = f"I{forward_id}"
-            self.record_event(rank=0, start_ts=ts, finish_ts=ts, id=id, name=name, type='invoke',
-                              mbid=self.cur_microbatch)
-            self.record_event_dependency(from_id=name, to_id=f"R{forward_name}", type='invoke')
-            return stage_executor.rpc_sync().invoke(
+            rv = stage_executor.rpc_sync().invoke(
                 invocation_key, Phase.FORWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
                 output_refcount=len(users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
+            finish_ts = time.time()
+            self.record_event(rank=0, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name, type='invoke',
+                              mbid=self.cur_microbatch)
+            self.record_event_dependency(from_id=name, to_id=f"R{forward_name}", type='invoke')
+            return rv
         else:
             logging.info(f'[root][{self.cur_microbatch}] Running local operation {target} from driver')
             return super().call_module(target, args, kwargs)
@@ -1144,17 +1147,19 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
             if torch.is_grad_enabled():
                 logging.info(f'[root][{self.cur_microbatch}] Issuing BW invocation '
                              f'for target {node.meta["fw_stage"]} on stage {stage_id}')
-                ts = time.time()
+                start_ts = time.time()
                 backward_name = event_name(Phase.BACKWARD, stage_id, self.cur_microbatch)
                 backward_id = event_id(Phase.BACKWARD, stage_id, self.cur_microbatch, self.batch_id)
                 name = f"I{backward_name}"
                 id = f"I{backward_id}"
-                self.record_event(rank=0, start_ts=ts, finish_ts=ts, id=id, name=name, type='invoke',
-                                  mbid=self.cur_microbatch)
-                self.record_event_dependency(from_id=name, to_id=backward_name, type='invoke')
-                return stage_executor.rpc_sync().invoke(
+                rv = stage_executor.rpc_sync().invoke(
                     invocation_key, Phase.BACKWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
                     output_refcount=len(users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
+                finish_ts = time.time()
+                self.record_event(rank=0, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name, type='invoke',
+                                  mbid=self.cur_microbatch)
+                self.record_event_dependency(from_id=name, to_id=backward_name, type='invoke')
+                return rv
             else:
                 return ValueReference(stage_id, "noop")
         elif target is sync_barrier:
@@ -1178,13 +1183,16 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
             raise AssertionError(f'Unknown operator {torch.typename(target)}')
 
     def run_until(self, predicate: Callable[[torch.fx.Node], bool]) -> Optional[torch.fx.Node]:
+        run = 0
         while self.pc < len(self.node_list):
             node = self.node_list[self.pc]
 
             if predicate(node):
+                logging.info(f'[{self.cur_microbatch}] Pause at {node.format_node()}, ran {run} nodes this round')
                 return node
 
             self.run_one(node)
+            run += 1
 
         # Have run through the entire node_list, using None to mean no node left to run
         return None
@@ -1200,6 +1208,7 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
         # TODO: is it possible for there to be a blocking version of this API?
         def wait_for_confirmation(n):
             if isinstance(n, torch._C._distributed_rpc.PyRRef):
+                logging.info('Wait for confirmation')
                 while not n.confirmed_by_owner():
                     pass
 
@@ -1276,7 +1285,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 
                     # Run the node we start with including all nodes that are tuple
                     # indexing, then stop
-                    return n != start_node and n.target != operator.getitem
+                    return n != start_node and n.target != operator.getitem and n.target != _null_coalesce_accumulate
 
                 interp.run_until(run_including_indexing)
 
@@ -1298,7 +1307,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
                     if n.op == 'output':
                         return True
 
-                    return n != start_node and n.target != operator.getitem
+                    return n != start_node and n.target != operator.getitem and n.target != _null_coalesce_accumulate
 
                 interp.run_until(run_including_indexing)
 
