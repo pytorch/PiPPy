@@ -57,7 +57,7 @@ pippy.fx.node.Node.replace_all_uses_with(self, replace_with: 'Node', delete_user
 pippy.fx.node.Node.replace_input_with(self, old_input: 'Node', new_input: 'Node')
 pippy.fx.node.Node.update_arg(self, idx: int, arg: pippy.fx.node.Argument) -> None
 pippy.fx.node.Node.update_kwarg(self, key: str, arg: pippy.fx.node.Argument) -> None
-pippy.fx.node.map_aggregate(a: pippy.fx.node.Argument, fn: Callable[[pippy.fx.node.Argument], pippy.fx.node.Argument]) -> pippy.fx.node.Argument
+pippy.fx.node.map_aggregate(a: pippy.fx.node.Argument, fn: Callable[[pippy.fx.node.Argument], pippy.fx.node.Argument], should_traverse_fn: Optional[Callable[[pippy.fx.node.Argument], bool]] = None) -> pippy.fx.node.Argument
 pippy.fx.node.map_arg(a: pippy.fx.node.Argument, fn: Callable[[pippy.fx.node.Node], pippy.fx.node.Argument]) -> pippy.fx.node.Argument
 pippy.fx.passes.split_module.split_module(m: pippy.fx.graph_module.GraphModule, root_m: torch.nn.modules.module.Module, split_callback: Callable[[pippy.fx.node.Node], int], qualname_map: Optional[Dict[str, str]] = None)
 pippy.fx.proxy.Attribute.__init__(self, root: pippy.fx.proxy.Proxy, attr: str)
