@@ -1,6 +1,9 @@
 from .graph_module import GraphModule
 from .graph import Graph
-from .node import Argument, Node, Target, map_arg, map_aggregate
+from .node import Argument, Node, map_arg, map_aggregate
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .node import Target
 from .proxy import Proxy
 from ._symbolic_trace import Tracer
 from ._compatibility import compatibility

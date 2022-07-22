@@ -15,6 +15,7 @@ from typing import (
     Set,
     Tuple,
     Type,
+    TYPE_CHECKING,
     Union,
 )
 
@@ -25,7 +26,9 @@ from torch._C import ScriptObject  # type: ignore[attr-defined]
 from ._compatibility import compatibility
 from .graph import _PyTreeCodeGen, _PyTreeInfo, Graph, _ParamDescr
 from .graph_module import GraphModule
-from .node import Argument, base_types, map_aggregate
+from .node import base_types, map_aggregate
+if TYPE_CHECKING:
+    from .node import Argument
 from .proxy import ParameterProxy, Proxy, TracerBase
 
 HAS_VARSTUFF = inspect.CO_VARARGS | inspect.CO_VARKEYWORDS
