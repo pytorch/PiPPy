@@ -45,7 +45,7 @@ def get_grad_from_executor(executor, qualname):
         return mod.get_parameter(qualname).grad
 
 
-torch.fx.Tracer.proxy_buffer_attributes = True
+pippy.fx.Tracer.proxy_buffer_attributes = True
 
 dp_pg_for_reference = None
 

@@ -49,7 +49,7 @@ VERBOSE = bool(int(os.environ.get('VERBOSE', False)))
 if VERBOSE:
     logging.getLogger().setLevel(logging.DEBUG)
 
-torch.fx.Tracer.proxy_buffer_attributes = True
+pippy.fx.Tracer.proxy_buffer_attributes = True
 
 
 def get_number_of_params(model):

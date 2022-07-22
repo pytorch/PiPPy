@@ -30,7 +30,7 @@ VERBOSE = bool(int(os.environ.get('VERBOSE', False)))
 if VERBOSE:
     logging.getLogger().setLevel(logging.DEBUG)
 
-@torch.fx.wrap
+@pippy.fx.wrap
 def torch_arange_wrapper(*args, **kwargs):
     return torch.arange(*args, **kwargs)
 
@@ -48,7 +48,7 @@ class HFGPT2Tracer(fx.HFTracer):
         return graph
 
 
-torch.fx.Tracer.proxy_buffer_attributes = True
+pippy.fx.Tracer.proxy_buffer_attributes = True
 
 
 def run_master(args):

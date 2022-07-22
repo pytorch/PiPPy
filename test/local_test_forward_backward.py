@@ -58,7 +58,7 @@ def set_grad_in_executor(executor, qualname, value):
     param.grad = value
 
 
-torch.fx.Tracer.proxy_buffer_attributes = True
+pippy.fx.Tracer.proxy_buffer_attributes = True
 
 
 def run_master(args):
