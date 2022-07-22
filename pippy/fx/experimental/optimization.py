@@ -82,7 +82,7 @@ def remove_dropout(model: nn.Module) -> nn.Module:
     """
     fx_model = fx.symbolic_trace(model)
 
-    class DropoutRemover(pippy.fx.Transformer):
+    class DropoutRemover(fx.Transformer):
         def call_module(self, target : Target, args : Tuple[Argument, ...], kwargs : Dict[str, Any]) -> Any:
             if isinstance(self.submodules[target], nn.Dropout):
                 assert len(args) == 1

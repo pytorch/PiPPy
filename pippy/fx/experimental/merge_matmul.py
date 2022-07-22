@@ -1,5 +1,6 @@
 import torch
 
+import pippy.fx
 from pippy.fx.node import Node
 from pippy.fx._symbolic_trace import symbolic_trace
 from pippy.fx.passes.tools_common import legalize_graph
