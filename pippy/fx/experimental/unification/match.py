@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 from .core import unify, reify  # type: ignore[attr-defined]
 from .variable import isvar
 from .utils import _toposort, freeze

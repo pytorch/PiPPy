@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 from pippy.fx.proxy import Proxy
 from ._compatibility import compatibility
 

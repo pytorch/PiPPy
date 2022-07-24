@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 try:
     import z3  # type: ignore[import]
     HAS_Z3 = True

@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 import pippy.fx as fx
 
 def set_trace(gm: fx.GraphModule) -> fx.GraphModule:

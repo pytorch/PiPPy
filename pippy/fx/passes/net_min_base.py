@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 from typing import Any, Callable, Tuple, Dict, Optional
 import logging
 

@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 import operator
 from typing import Dict, List, Set, NamedTuple, Tuple
 

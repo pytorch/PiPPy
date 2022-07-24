@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 from torch.nn import Module
 
 from pippy.fx.graph_module import GraphModule

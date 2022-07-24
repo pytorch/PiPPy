@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 from functools import wraps
 from inspect import unwrap
 from typing import Callable, List

@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 from typing import Callable, Any, Tuple, List, Dict, Type, NamedTuple
 from torch.utils._pytree import PyTree, TreeSpec, LeafSpec
 from collections import namedtuple

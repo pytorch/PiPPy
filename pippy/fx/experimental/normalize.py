@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 import operator
 from typing import Any, Callable, Dict, Tuple, Optional
 

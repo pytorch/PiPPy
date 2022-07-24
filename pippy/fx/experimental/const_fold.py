@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 import re
 from typing import Callable, Dict, Optional, Set, Union
 

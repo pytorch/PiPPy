@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 import copy
 from queue import SimpleQueue
 from typing import List, Dict, Tuple

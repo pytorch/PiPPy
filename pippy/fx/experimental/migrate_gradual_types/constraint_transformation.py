@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 # mypy: ignore-errors
 import copy
 import itertools

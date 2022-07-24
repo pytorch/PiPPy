@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 from .utils import _toposort, groupby
 from .variadic import isvariadic
 
