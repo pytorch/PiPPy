@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 # -*- coding: utf-8 -*-
 from pippy.fx.experimental.migrate_gradual_types.operation import op_add, op_sub, op_mul, op_div, op_mod, op_gt, op_lt
 from pippy.fx.tensor_type import TensorType, Dyn

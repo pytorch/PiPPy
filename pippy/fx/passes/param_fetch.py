@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 from pippy.fx.graph_module import GraphModule
 from typing import Any, Callable, Dict, List, Tuple, Type
 import torch

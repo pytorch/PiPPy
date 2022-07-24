@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 from .graph_module import GraphModule
 from .graph import Graph
 from .node import Argument, Node, map_arg, map_aggregate

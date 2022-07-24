@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 class Equality:
     def __init__(self, lhs, rhs):
         self.lhs = lhs

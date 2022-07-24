@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 from typing import List, Tuple, Union, Dict, Any, Set, Mapping
 from dataclasses import dataclass
 

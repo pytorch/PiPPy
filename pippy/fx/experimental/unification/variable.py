@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 from contextlib import contextmanager
 from .utils import hashable
 from .dispatch import dispatch

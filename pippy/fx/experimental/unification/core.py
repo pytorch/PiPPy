@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 from collections.abc import Iterator  # type: ignore[import]
 from functools import partial
 

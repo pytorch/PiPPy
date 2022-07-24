@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 import inspect
 from queue import Queue
 from functools import wraps

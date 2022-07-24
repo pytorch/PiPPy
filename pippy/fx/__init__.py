@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 r'''
 FX is a toolkit for developers to use to transform ``nn.Module``
 instances. FX consists of three main components: a **symbolic tracer,**

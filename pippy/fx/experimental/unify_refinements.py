@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 from pippy.fx.experimental.graph_gradual_typechecker import Refine
 from pippy.fx.tensor_type import TensorType
 from pippy.fx.experimental.unification import Var, unify  # type: ignore[attr-defined]

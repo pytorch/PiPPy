@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 import argparse
 from collections import defaultdict
 from dataclasses import dataclass

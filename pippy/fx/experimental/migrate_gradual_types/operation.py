@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 # -*- coding: utf-8 -*-
 op_add = '+'
 op_sub = '-'

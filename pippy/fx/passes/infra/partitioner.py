@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 from typing import Dict, List, Set, Iterable, Optional
 
 from pippy.fx.passes.utils.fuser_utils import fuse_by_partitions

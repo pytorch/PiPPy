@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 from warnings import warn
 import inspect
 from .conflict import ordering, ambiguities, super_signature, AmbiguityWarning

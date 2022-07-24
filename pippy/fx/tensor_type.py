@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 from pippy.fx.experimental.unification import Var  # type: ignore[attr-defined]
 
 from ._compatibility import compatibility

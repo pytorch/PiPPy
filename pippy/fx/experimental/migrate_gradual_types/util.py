@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 from pippy.fx.experimental.migrate_gradual_types.constraint import TVar, DVar, BinConstraintD, \
     BVar
 from pippy.fx.experimental.migrate_gradual_types.operation import op_leq

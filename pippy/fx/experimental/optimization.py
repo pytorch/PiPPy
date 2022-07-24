@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 import pippy.fx as fx
 from pippy.fx.node import Argument, Target
 from torch.nn.utils.fusion import fuse_conv_bn_eval
