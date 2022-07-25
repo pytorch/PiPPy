@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 # Owner(s): ["module: fx"]
 
 import math
