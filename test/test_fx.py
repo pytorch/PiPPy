@@ -1672,6 +1672,18 @@ class TestFX(JitTestCase):
 
         torch.testing.assert_close(traced(x, y, l), foo(x, y, l))
 
+    def test_pytree_unpack_annotations(self):
+        def foo(x : torch.Tensor, y : torch.Tensor, l : List[torch.Tensor]):
+            return torch.cat([x, y] + l)
+
+        concrete_args = {'l': [pippy.fx._symbolic_trace.PH] * 10}
+        traced = pippy.fx.symbolic_trace(foo, concrete_args=concrete_args)
+        x = torch.randn(5, 3)
+        y = torch.randn(5, 3)
+        l = [torch.randn(5, 3)] * 10
+
+        torch.testing.assert_close(traced(x, y, l), foo(x, y, l))
+
     def test_interpreter_run_node_override(self):
         class MyModule(torch.nn.Module):
             def __init__(self):
