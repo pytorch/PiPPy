@@ -1136,9 +1136,16 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
             stage_id = args[0].stage_id
             if torch.is_grad_enabled() or args[0].unique_key != "noop":
                 stage_executor = self.stage_to_executor[stage_id]
-                return stage_executor.rpc_sync().index_value(
+                name = f"G{stage_id},{self.cur_microbatch}"
+                id = f"{name},{self.batch_id}"
+                start_ts = time.time()
+                rv = stage_executor.rpc_sync().index_value(
                     output_unique_key=invocation_key, value_ref=args[0], output_refcount=len(users),
                     idx=args[1])
+                finish_ts = time.time()
+                self.record_event(rank=0, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name, type='invoke',
+                              mbid=self.cur_microbatch)
+                return rv
             else:
                 return ValueReference(stage_id, "noop")
         elif target is stage_backward:
