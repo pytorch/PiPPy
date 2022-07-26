@@ -64,7 +64,7 @@ class clean(distutils.command.clean.clean):  # type: ignore
                         shutil.rmtree(filename, ignore_errors=True)
 
         # It's an old-style class in Python 2.7...
-        distutils.command.clean.clean.run(self)
+        distutils.command.clean.clean.run(self)  # type: ignore
 
 
 if __name__ == "__main__":
