@@ -35,7 +35,6 @@ class Tensor(torch.Tensor):
         # it does not do actual distribution, __init__ should do it instead.
         # TODO: implement __init__ for tensor constructors
         assert isinstance(placements, list)
-        assert len(placements) == 1, "Only support 1-d placement for now"
         # sizes = _flatten_tensor_size(size)
         dtype = kwargs["dtype"]
         layout = kwargs["layout"]
@@ -72,7 +71,9 @@ class Tensor(torch.Tensor):
             # if this tensor is not Distributed, then return none. We will reinterpret it as replicated
             if not isinstance(e, Tensor):
                 return None
-            return e.device_mesh
+            mesh = e.device_mesh
+            assert mesh.ndim == 1, "DistributedTensor ops not supporting multi-dim mesh yet"
+            return mesh
 
         # pyre-fixme[3]: Return type must be annotated.
         # pyre-fixme[2]: Parameter must be annotated.
@@ -114,25 +115,19 @@ class Tensor(torch.Tensor):
             return rs
 
     @classmethod
-    # pyre-fixme[3]: Return type must be annotated.
     def from_local(
         cls,
-        # pyre-fixme[2]: Parameter must be annotated.
-        local_tensor,
-        # pyre-fixme[2]: Parameter must be annotated.
-        device_mesh=None,
-        # pyre-fixme[2]: Parameter must be annotated.
-        placements=None,
-        # pyre-fixme[2]: Parameter must be annotated.
-        run_check=True,
-    ):
+        local_tensor: torch.Tensor,
+        device_mesh: DeviceMesh = None,
+        placements: List[Placement] = None,
+        run_check: bool = True,
+    ) -> "Tensor":
         # if same shape/dtype, no need to run_check, if not, must allgather
         # the metadatas to check the size/dtype across ranks
         # There should be no data communication unless there's replication
-        # strategy, where we broadcast the replication from rank 0
-        device_mesh = (
-            get_global_device_mesh() if device_mesh is None else device_mesh
-        )
+        # strategy, where we broadcast the replication from the first rank
+        # in the mesh dimension
+        device_mesh = get_global_device_mesh() if device_mesh is None else device_mesh
         # convert the local tensor to desired device base on device mesh's device_type
         local_tensor = local_tensor.to(device_mesh.device_type)
 
@@ -146,22 +141,20 @@ class Tensor(torch.Tensor):
             if isinstance(placement, Shard):
                 shard_dim = placement.dim
                 # recover tensor shape on the shard dim
-                tensor_shape[shard_dim] = tensor_shape[
-                    shard_dim
-                ] * device_mesh.size(idx)
+                tensor_shape[shard_dim] = tensor_shape[shard_dim] * device_mesh.size(
+                    idx
+                )
             elif isinstance(placement, Replicate):
-                # broadcast rank 0 tensor to all ranks
-                local_tensor = local_tensor.contiguous()
                 if run_check:
+                    # broadcast rank 0 tensor to all ranks
                     # only broadcast if run_check is True
+                    local_tensor = local_tensor.contiguous()
                     device_mesh.broadcast(local_tensor, 0)
             elif isinstance(placement, _Partial):
                 # we don't need to do anything to Partial case
                 pass
             else:
-                raise RuntimeError(
-                    f"placement type {type(placement)} not supported!"
-                )
+                raise RuntimeError(f"placement type {type(placement)} not supported!")
 
         if run_check:
             # TODO: by default check tensor metas across rank
@@ -189,9 +182,7 @@ class Tensor(torch.Tensor):
         # sharding it's a reshard behavior.
         # TODO: handle last shard uneven with padding
         # right now we assume all local shard equal size
-        device_mesh = (
-            get_global_device_mesh() if device_mesh is None else device_mesh
-        )
+        device_mesh = get_global_device_mesh() if device_mesh is None else device_mesh
         # raise error if new placements not specified
         if placements is None:
             raise RuntimeError("placements is needed for redistribute!")
@@ -203,8 +194,7 @@ class Tensor(torch.Tensor):
         return self._local_tensor  # type: ignore
 
     @property
-    # pyre-fixme[3]: Return type must be annotated.
-    def placements(self):
+    def placements(self) -> List[Placement]:
         # placement should be a read only propety
         # to disallow caller modification on it
         # caller who want a different PlacementSpec
@@ -212,8 +202,7 @@ class Tensor(torch.Tensor):
         return self._placements
 
     @property
-    # pyre-fixme[3]: Return type must be annotated.
-    def device_mesh(self):
+    def device_mesh(self) -> DeviceMesh:
         # device_mesh should be a read only propety
         # to disallow caller modification on it
         # caller who want a different device_mesh
