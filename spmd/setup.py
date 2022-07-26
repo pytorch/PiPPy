@@ -4,7 +4,7 @@ import glob
 import os
 import shutil
 import subprocess
-from typing import Dict
+from typing import Dict, Union, List
 
 from setuptools import setup, find_namespace_packages
 
@@ -14,13 +14,13 @@ from setuptools import setup, find_namespace_packages
 package_name = "spmd"
 
 # Version information
-cwd = os.path.dirname(os.path.abspath(__file__))
-version_txt = os.path.join(cwd, "version.txt")
+cwd: str = os.path.dirname(os.path.abspath(__file__))
+version_txt: str = os.path.join(cwd, "version.txt")
 with open(version_txt, "r") as f:
-    version = f.readline().strip()
+    version: str = f.readline().strip()
 
 try:
-    sha = (
+    sha: str = (
         subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=cwd)
         .decode("ascii")
         .strip()
@@ -34,7 +34,7 @@ elif sha != "Unknown":
     version += "+" + sha[:7]
 
 
-def write_version_file():
+def write_version_file() -> None:
     version_path = os.path.join(cwd, "version.py")
     with open(version_path, "w") as f:
         f.write("__version__ = '{}'\n".format(version))
@@ -48,11 +48,11 @@ requirements = [
     "torch>=1.12.0.dev",
 ]
 
-extras: Dict = {}
+extras: Dict[str, Union[str, List[str]]] = {}
 
 
 class clean(distutils.command.clean.clean):  # type: ignore
-    def run(self):
+    def run(self) -> None:
 
         with open(".gitignore", "r") as f:
             ignores = f.read()
