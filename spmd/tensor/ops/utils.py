@@ -31,3 +31,18 @@ def register_impl(func):
         return impl
 
     return wrapper
+
+
+def _register_element_wise_op(op_name, op):
+    @register_impl(op_name)
+    def _dist_element_wise(*args, **kwargs) -> Tensor:
+        self = args[0]
+        self_placement = self.placements[0]
+        if self_placement.is_partial():
+            raise RuntimeError("Not supported!")
+        else:
+            print("DDDDDDDDD")
+            args = (self.local_tensor(), *args[1:])
+            return Tensor.from_local(
+                op(*args, **kwargs), device_mesh=self.device_mesh, placements=self.placements
+            )
