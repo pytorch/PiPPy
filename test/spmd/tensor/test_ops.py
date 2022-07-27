@@ -133,13 +133,6 @@ class DistTensorOpsTest(DistTensorTestBase):
         self._run_sharded_elementwise_ops(device_mesh, [Shard(1)], (3, 14),
                                           torch.nn.functional.dropout, p=0.5, training=True)
 
-    @with_comms
-    def test_dropout_errors(self):
-        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
-        with self.assertRaisesRegex(RuntimeError, 'Not supported!'):
-            self._run_sharded_elementwise_ops(device_mesh, [_Partial(ReduceOp.SUM)], (8, 5),
-                                              torch.nn.functional.dropout)
-
 
 if __name__ == "__main__":
     run_tests()
