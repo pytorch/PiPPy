@@ -109,8 +109,8 @@ class DistTensorOpsTest(DistTensorTestBase):
         torch.manual_seed(self.rank)
         input_tensor = torch.randn(*input_size, requires_grad=True)
         dist_tensor = Tensor.from_local(input_tensor, mesh, spec)
-        dt = op(dist_tensor, **kwargs)
-        expected = op(input_tensor, **kwargs)
+        dt = op(dist_tensor)
+        expected = op(input_tensor)
         self.assertEqual(input_tensor, dist_tensor.local_tensor())
         if "training" in kwargs and kwargs["training"]:
             self.assertNotEqual(expected, dt.local_tensor())
@@ -138,7 +138,7 @@ class DistTensorOpsTest(DistTensorTestBase):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         with self.assertRaisesRegex(RuntimeError, 'Not supported!'):
             self._run_sharded_elementwise_ops(device_mesh, [_Partial(ReduceOp.SUM)], (8, 5),
-                                              torch.nn.functional.dropout, p=0.4, training=False)
+                                              torch.nn.functional.dropout)
 
 
 if __name__ == "__main__":
