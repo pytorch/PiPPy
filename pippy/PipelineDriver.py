@@ -511,13 +511,11 @@ class PipeStageExecutor(EventRecorder):
 
     def invoke(self, output_unique_key : str, phase : Phase, args, kwargs, cur_microbatch : int, debug_str : str,
                output_refcount : int, batch_id : int, num_microbatches : int):
-        ts = time.time()
-        forward_name = event_name(Phase.FORWARD, self.stage_id, cur_microbatch)
-        forward_id = event_id(Phase.FORWARD, self.stage_id, cur_microbatch, batch_id)
+        start_ts = time.time()
+        forward_name = event_name(phase, self.stage_id, cur_microbatch)
+        forward_id = event_id(phase, self.stage_id, cur_microbatch, batch_id)
         name = f"R{forward_name}"
         id = f"R{forward_id}"
-        self.record_event(rank=self.rank_worker.rank, start_ts=ts, finish_ts=ts, id=id, name=name, type='received', mbid=cur_microbatch)
-        self.record_event_dependency(from_id=name, to_id=forward_name, type='waiting')
         if self._record_mem_dumps:
             self._record_dumps_on_all_peer_executors(f'M{id}_invoke', ts)
         # TODO: do we need to serialize calls to invoke() to preserve the order in which WorkItems appear for
@@ -592,6 +590,10 @@ class PipeStageExecutor(EventRecorder):
         with self.value_store_lock:
             assert output_unique_key not in self.value_store
             self.value_store[output_unique_key] = RefcountedFuture(future, output_refcount)
+
+        finish_ts = time.time()
+        self.record_event(rank=self.rank_worker.rank, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name, type='received', mbid=cur_microbatch)
+        self.record_event_dependency(from_id=name, to_id=forward_name, type='waiting')
 
         return ValueReference(self.stage_id, output_unique_key)
 
@@ -1290,9 +1292,15 @@ class PipelineDriverFillDrain(PipelineDriverBase):
                     if n.op == 'output':
                         return True
 
+                    if ((n.target != operator.getitem and n.target != _null_coalesce_accumulate) or
+                        (run_including_indexing.seen_stages > 0 and n.target == _null_coalesce_accumulate)):
+                        run_including_indexing.seen_stages += 1
+
                     # Run the node we start with including all nodes that are tuple
                     # indexing, then stop
-                    return n != start_node and n.target != operator.getitem and n.target != _null_coalesce_accumulate
+                    return run_including_indexing.seen_stages > 1
+
+                run_including_indexing.seen_stages = 0
 
                 interp.run_until(run_including_indexing)
 
@@ -1314,7 +1322,13 @@ class PipelineDriverFillDrain(PipelineDriverBase):
                     if n.op == 'output':
                         return True
 
-                    return n != start_node and n.target != operator.getitem and n.target != _null_coalesce_accumulate
+                    if ((n.target != operator.getitem and n.target != _null_coalesce_accumulate) or
+                        (run_including_indexing.seen_stages > 0 and n.target == _null_coalesce_accumulate)):
+                        run_including_indexing.seen_stages += 1
+
+                    return run_including_indexing.seen_stages > 1
+
+                run_including_indexing.seen_stages = 0
 
                 interp.run_until(run_including_indexing)
 

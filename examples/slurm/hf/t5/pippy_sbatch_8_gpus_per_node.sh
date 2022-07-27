@@ -17,4 +17,5 @@
 
 #SBATCH --time=1:00:00
 
+#SBATCH --exclude=a100-st-p4d24xlarge-48
 srun --label pippy_wrapper.sh
