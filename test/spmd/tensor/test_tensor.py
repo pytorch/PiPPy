@@ -2,8 +2,8 @@
 import torch
 
 from torch.distributed.distributed_c10d import ReduceOp
-from torch.testing._internal.common_utils import run_tests
 
+from torch.testing._internal.common_utils import run_tests
 from ..test_utils import DistTensorTestBase, with_comms
 from spmd.tensor import DeviceMesh, Tensor, Replicate, Shard, _Partial
 
