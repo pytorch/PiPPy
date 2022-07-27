@@ -1,6 +1,8 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 from torch.testing._internal.common_utils import run_tests
+from ..test_utils import DistTensorTestBase, with_comms
+from spmd import distribute_tensor, DeviceMesh, Tensor, Shard, Replicate
 
 
 class DistTensorOpsTest(DistTensorTestBase):
