@@ -3,11 +3,7 @@
 import torch.utils._pytree as pytree
 from torch.distributed.distributed_c10d import ReduceOp
 from spmd.tensor.api import Tensor
-from spmd.tensor.placement_types import (
-    Shard,
-    Replicate,
-    _Partial,
-)
+from spmd.tensor.placement_types import Shard, Replicate, _Partial
 from spmd.tensor.ops.utils import (
     unwrap_local_tensor,
     unwrap_single_placement,

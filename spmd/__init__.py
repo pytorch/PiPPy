@@ -3,10 +3,7 @@ from typing import List
 import torch
 import torch.nn as nn
 from spmd.tensor import Tensor, Placement, Shard, Replicate, _Partial
-from spmd.tensor.device_mesh import (
-    get_global_device_mesh,
-    DeviceMesh,
-)
+from spmd.tensor.device_mesh import get_global_device_mesh, DeviceMesh
 
 torch.__future__.set_overwrite_module_params_on_conversion(True)
 

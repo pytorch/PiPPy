@@ -1,10 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 from torch.distributed.distributed_c10d import ReduceOp
 from spmd.tensor.api import Tensor
-from spmd.tensor.placement_types import (
-    Replicate,
-    _Partial,
-)
+from spmd.tensor.placement_types import Replicate, _Partial
 from spmd.tensor.ops.utils import register_impl
 
 
