@@ -7,8 +7,9 @@ from spmd.tensor.api import Tensor
 
 @register_impl("aten.native_dropout.default")
 def _dist_dropout(self: Tensor, p: float, train: bool) -> Tuple[Tensor, Tensor]:
-    print(self.placements)
     self_placement = self.placements[0]
+    # TODO: To figure out why partial tensor does not dispatch here when in CPU.
+    # and with kwargs.
     if self_placement.is_partial():
         raise RuntimeError("Not supported!")
     else:
