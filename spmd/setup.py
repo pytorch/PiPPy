@@ -45,7 +45,7 @@ def write_version_file() -> None:
 requirements = [
     # This represents a nightly version of PyTorch.
     # It can be installed as a binary or from source.
-    "torch>=1.12.0.dev",
+    "torch>=1.12.0.dev"
 ]
 
 extras: Dict[str, Union[str, List[str]]] = {}
@@ -82,7 +82,5 @@ if __name__ == "__main__":
         packages=find_namespace_packages(),
         install_requires=requirements,
         extras_require=extras,
-        cmdclass={
-            "clean": clean,
-        },
+        cmdclass={"clean": clean},
     )
