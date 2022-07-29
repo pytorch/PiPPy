@@ -20,7 +20,7 @@ def dist_sum(self: Tensor) -> Tensor:
         # all_reduce across device
         replicate_placements = [Replicate()]
         return partial_sum.redistribute(device_mesh, replicate_placements)
-    elif self_placement.is_replicated():
+    elif self_placement.is_replicate():
         return Tensor.from_local(
             local_sum, device_mesh=device_mesh, placements=self.placements
         )

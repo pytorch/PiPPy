@@ -28,7 +28,9 @@ class DistTensorTest(DistTensorTestBase):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
         local_tensor = torch.randn(3, 3)
-        sharded_tensor = Tensor.from_local(local_tensor, device_mesh, shard_spec)
+        sharded_tensor = Tensor.from_local(
+            local_tensor, device_mesh, shard_spec
+        )
         self.assertEqual(sharded_tensor.size(), torch.Size([12, 3]))
 
         replica_spec = [Replicate()]
@@ -36,7 +38,9 @@ class DistTensorTest(DistTensorTestBase):
         self.assertEqual(ddp_tensor.size(), local_tensor.size())
 
         partial_spec = [_Partial(ReduceOp.SUM)]
-        partial_tensor = Tensor.from_local(local_tensor, device_mesh, partial_spec)
+        partial_tensor = Tensor.from_local(
+            local_tensor, device_mesh, partial_spec
+        )
         self.assertEqual(partial_tensor.size(), local_tensor.size())
 
     @with_comms
@@ -44,7 +48,9 @@ class DistTensorTest(DistTensorTestBase):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
         local_tensor = torch.randn(3, 3)
-        sharded_tensor = Tensor.from_local(local_tensor, device_mesh, shard_spec)
+        sharded_tensor = Tensor.from_local(
+            local_tensor, device_mesh, shard_spec
+        )
 
         # modify shard_spec, and dist_tensor's spec should not be changed
         shard_spec[0] = Replicate()
@@ -56,7 +62,9 @@ class DistTensorTest(DistTensorTestBase):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
         local_tensor = torch.randn(3, 3)
-        sharded_tensor = Tensor.from_local(local_tensor, device_mesh, shard_spec)
+        sharded_tensor = Tensor.from_local(
+            local_tensor, device_mesh, shard_spec
+        )
         print(sharded_tensor.device)
 
 

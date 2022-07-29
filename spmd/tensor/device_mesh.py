@@ -1,5 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import List, Any
+import warnings
+from typing import List, Optional, Iterable, Sequence
 import torch
 from torch.distributed.distributed_c10d import (
     get_rank,
@@ -20,37 +21,47 @@ from torch.distributed.nn.functional import (
     scatter,
 )
 
-_global_device_mesh: "DeviceMesh" = None
+_global_device_mesh: Optional["DeviceMesh"] = None
 
 
 def get_global_device_mesh() -> "DeviceMesh":
     global _global_device_mesh
+    assert (
+        _global_device_mesh is not None
+    ), "Could not get a default device mesh!"
     return _global_device_mesh
 
 
-def set_global_device_mesh(mesh: "DeviceMesh") -> None:
+def set_global_device_mesh(mesh: Optional["DeviceMesh"]) -> None:
     global _global_device_mesh
     _global_device_mesh = mesh
 
 
 class DeviceMesh(object):
     """
-    DeviceMesh represents a mesh of devices, where layout of
-    devices could be represented as a n-d dimension array, and
-    each value of the n-d dimensional array is the global id
-    of the default process group ranks.
+    DeviceMesh represents a mesh of devices, where layout of devices could be
+    represented as a n-d dimension array, and each value of the n-d dimensional
+    array is the global id of the default process group ranks.
 
-    DeviceMesh could be used to describe the layout of devices
-    across the cluster, and serves as a proxy for communication
-    among the device lists within the cluster.
+    DeviceMesh could be used to describe the layout of devices across the cluster,
+    and serves as a proxy for communication among the device lists within the cluster.
 
-    We use the default ProcessGroup in this DeviceMesh class
-    to implement proper communications. Note that we also
-    add collective wrappers in this class. This is used to
-    decouple detailed communication backend with the underlying
+    We use the default ProcessGroup in this DeviceMesh class to implement proper
+    communications. Note that we also add collective wrappers in this class. This is
+    used to decouple detailed communication backend with the underlying
     DistributedTensor implementation.
 
     DeviceMesh can be used as a context manager.
+    Args:
+        device_type (str): device type of the mesh. Currently supports: cpu, cuda.
+        mesh (ndarray): could be a multi-dimension array or an integer tensor that
+            describes the layout of devices, the ids are global ids of the
+            default process group.
+        dim_groups (List[ProcessGroup], optional): The ProcessGroup used per mesh
+            dimension.
+
+    Returns:
+        A :class:`DeviceMesh` object
 
     Example (2 host with 4 GPUs each):
         ```
@@ -74,21 +85,27 @@ class DeviceMesh(object):
     device_type: str
     mesh: torch.Tensor
 
-    # pyre-fixme[2]: Parameter must be annotated.
     def __init__(
-        self, device_type: str, mesh, dim_groups: List[List[ProcessGroup]] = None
+        self,
+        device_type: str,
+        mesh: Iterable[Sequence[int]],
+        dim_groups: Optional[List[ProcessGroup]] = None,
     ) -> None:
         self.device_type = device_type
         self.mesh = torch.tensor(mesh, dtype=torch.int)
         default_pg = _get_default_group()
         backend_name = default_pg._get_backend_name()
-        # TODO: if user want to pass pg_options, offer a way to
+        # TODO: if user want to pass pg_options, offer a way to do it
         # check default pg backend, should support device_type
         if device_type == "cpu":
             assert (
                 backend_name == "gloo"
             ), f"ProcessGroup backend: {backend_name} not supporting CPU!"
         elif device_type == "cuda":
+            if backend_name == "gloo":
+                warnings.warn(
+                    "We recommend using nccl backend for cuda device type, gloo backend might only have partial support!"
+                )
             assert backend_name == "gloo" or backend_name == "nccl"
         else:
             raise RuntimeError(
@@ -107,49 +124,54 @@ class DeviceMesh(object):
                 f"DeviceMesh cannot have duplicate values, but found {self.mesh.tolist()}"
             )
 
+        # groups created by dimension, each dimension should have exact
+        # one valid process group per rank
+        self._dim_groups: List[ProcessGroup] = []
         if dim_groups is not None:
             # if user hand creating dimension based groups
             # we just take it and use it for communication
             # we assume user passing dim_gruops are legit
             # TODO: add more checks to check the correctness
             # of user passed in dim groups
-            self._dim_to_groups = dim_groups
+            self._dim_groups = dim_groups
             return
 
-        self._dim_to_groups: List[List[ProcessGroup]] = [
-            [] for _ in range(self.mesh.ndim)
-        ]
-        # create sub pgs base on the mesh argument
-        for dim in range(self.mesh.ndim):
-            subgroups_by_dim = self._dim_to_groups[dim]
-            # generate flattened mesh for dim, to create subgroups
-            unbinded_mesh = self.mesh.unbind(dim)
-            flattened_mesh = [submesh.flatten() for submesh in unbinded_mesh]
-            stacked_mesh = torch.stack(flattened_mesh)
+        if self.mesh.ndim == 1 and unique_mesh_values[-1] == world_size - 1:
+            # if the mesh is the same as world_pg, we just append the default
+            # pg to the first dim goups, as new_group cannot have the exact
+            # same ranks as world
+            self._dim_groups.append(default_pg)
+        else:
+            # create sub pgs base on the mesh argument specified
+            # handle multi-dim mesh, create subgroups by
+            # looping over the pg_ranks_by_dim for each dim
+            for dim in range(self.mesh.ndim):
+                # local_subgroup_by_dim = self._dim_to_groups[dim]
+                # swap the current dim to the last dim
+                # then reshape to flatten out other dims
+                pg_ranks_by_dim = self.mesh.swapdims(-1, dim).reshape(
+                    -1, self.mesh.size(dim)
+                )
 
-            if self.mesh.ndim == 1:
-                if unique_mesh_values[-1] == world_size - 1:
-                    # we just append the default pg to the first
-                    # dim goups, as new_group cannot have the
-                    # exact same ranks as world
-                    subgroups_by_dim.append(default_pg)
-                else:
-                    # smaller than world, create new group
-                    subgroups_by_dim.append(
-                        new_group(ranks=self.mesh, backend=backend_name)
-                    )
-            else:
                 # multi-dim mesh, create subgroups by
                 # looping over the transposed stacked_mesh
                 # and append the groups
-                for dim_mesh in stacked_mesh.T:
+                for dim_mesh in pg_ranks_by_dim:
                     subgroup_ranks = dim_mesh.tolist()
-                    subgroups_by_dim.append(
-                        new_group(
-                            ranks=subgroup_ranks,
-                            backend=backend_name,
-                        )
+                    # call new_group regardless of the current rank in the
+                    # pg or not, it's required that all ranks participate
+                    # in subgroup construction
+                    new_subgroup = new_group(
+                        ranks=subgroup_ranks,
+                        backend=backend_name,
                     )
+                    # only add to dim_groups if the current rank in the subgroup
+                    if self.get_rank() in subgroup_ranks:
+                        if len(self._dim_groups) > dim:
+                            raise RuntimeError(
+                                f"Each device mesh dimension should get only one process group, but got {self.get_rank} in {subgroup_ranks}!"
+                            )
+                        self._dim_groups.append(new_subgroup)
 
     def __enter__(self) -> "DeviceMesh":
         # set global device_mesh to this instance
@@ -164,15 +186,15 @@ class DeviceMesh(object):
     def __repr__(self) -> str:
         return f"DeviceMesh:({self.mesh.tolist()})"
 
-    def __eq__(self, other: Any) -> bool:
+    def __eq__(self, other: object) -> bool:
         if not isinstance(other, DeviceMesh):
             return False
         if id(self) == id(other):
             return True
         return self.mesh.equal(other.mesh)
 
-    def get_dim_groups(self) -> List[List[ProcessGroup]]:
-        return self._dim_to_groups
+    def get_dim_groups(self) -> List[ProcessGroup]:
+        return self._dim_groups
 
     # pyre-fixme[3]: Return type must be annotated.
     def size(self, dim: int = 0):
@@ -188,21 +210,23 @@ class DeviceMesh(object):
     def get_rank(self) -> int:
         return get_rank()
 
-    def scatter(self, tensors: List[torch.Tensor], src: int = 0) -> torch.Tensor:
+    def scatter(
+        self, tensors: List[torch.Tensor], src: int = 0
+    ) -> torch.Tensor:
         return scatter(tensors, src=src)
 
     # pyre-fixme[3]: Return type must be annotated.
     def broadcast(self, tensor: torch.Tensor, mesh_dim: int = 0):
-        sub_pgs = self._dim_to_groups[mesh_dim]
-        for pg in sub_pgs:
-            broadcast(tensor, src=0, group=pg)
+        return broadcast(tensor, src=0, group=self._dim_groups[mesh_dim])
 
     # pyre-fixme[3]: Return type must be annotated.
     def all_gather(self, tensor: torch.Tensor):
         return all_gather(tensor)
 
     # pyre-fixme[3]: Return type must be annotated.
-    def all_gather_base(self, output_tensor: torch.Tensor, tensor: torch.Tensor):
+    def all_gather_base(
+        self, output_tensor: torch.Tensor, tensor: torch.Tensor
+    ):
         # only nccl have all_gather base
         if self.backend() == "nccl":
             return _all_gather_base(output_tensor, tensor)
@@ -216,12 +240,15 @@ class DeviceMesh(object):
             return output_tensor
 
     # pyre-fixme[3]: Return type must be annotated.
-    def all_reduce(self, tensor: torch.Tensor, op=ReduceOp.SUM):
+    def all_reduce(self, tensor: torch.Tensor, op: ReduceOp = ReduceOp.SUM):
         return all_reduce(tensor, op=op)
 
     # pyre-fixme[3]: Return type must be annotated.
     def reduce_scatter_base(
-        self, output: torch.Tensor, input: torch.Tensor, op=ReduceOp.SUM
+        self,
+        output: torch.Tensor,
+        input: torch.Tensor,
+        op: ReduceOp = ReduceOp.SUM,
     ):
         # NOTE: two caveats:
         # 1. only NCCL support reduce_scatter

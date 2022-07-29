@@ -24,7 +24,7 @@ def distribute_tensor(
     tensor = tensor.to(device_mesh.device_type)
     # set default placements to replicated if not specified
     if placements is None:
-        placements = [Replicate() for _ in device_mesh.ndim]
+        placements = [Replicate() for _ in range(device_mesh.ndim)]
 
     # distribute the tensor according to PlacementSpec
     assert len(placements) == 1, "Only support 1-d placement now"

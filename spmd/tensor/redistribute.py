@@ -1,18 +1,17 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import List
+from typing import List, cast
 
 import torch
 import spmd.tensor.api as spmd_tensor
-from spmd.tensor.placement_types import Placement
+from spmd.tensor.placement_types import Placement, _Partial
 from spmd.tensor.device_mesh import DeviceMesh
 
 
-# pyre-fixme[3]: Return type must be annotated.
 def redistribute_spmd_tensor(
     input: "spmd_tensor.Tensor",
     device_mesh: DeviceMesh,
     placements: List[Placement],
-):
+) -> "spmd_tensor.Tensor":
     current_placements = input.placements
     local_tensor = input.local_tensor()
     if input.device_mesh != device_mesh:
@@ -38,9 +37,10 @@ def redistribute_spmd_tensor(
             # Case 1: target is Replicate
             attempted_transforms.append(target)
             if current.is_partial():
+                partial_spec = cast(_Partial, current)
                 # all_reduce
                 new_local_tensor = device_mesh.all_reduce(
-                    local_tensor, current.reduce_op
+                    local_tensor, partial_spec.reduce_op
                 )
             else:
                 # for shard, all_gather all shards and return the global tensor
@@ -86,6 +86,8 @@ def redistribute_spmd_tensor(
     if attempted_transforms != placements:
         # TODO: if not the same, we should apply all_to_all reshuffle
         raise NotImplementedError("Reshuffling tensor dims not supported yet!")
+
+    assert new_local_tensor is not None, "redistribute failed!"
 
     return spmd_tensor.Tensor.from_local(
         new_local_tensor, device_mesh, placements
