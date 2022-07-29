@@ -436,6 +436,7 @@ class PipeStageExecutor(EventRecorder):
         self.fwd_cache : Dict[int, Tuple[Any, List[torch.Tensor]]] = {}
 
         self.value_store_lock = threading.Lock()
+        self.value_store_cv = threading.Condition(self.value_store_lock)
         self.value_store : Dict[str, RefcountedFuture] = {}
 
         self.peer_executors : Dict[int, torch._C._distributed_rpc.PyRRef] = None
@@ -587,9 +588,10 @@ class PipeStageExecutor(EventRecorder):
             for fut in _futures:
                 fut.wait()
 
-        with self.value_store_lock:
+        with self.value_store_cv:
             assert output_unique_key not in self.value_store
             self.value_store[output_unique_key] = RefcountedFuture(future, output_refcount)
+            self.value_store_cv.notify_all()
 
         finish_ts = time.time()
         self.record_event(rank=self.rank_worker.rank, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name, type='received', mbid=cur_microbatch)
@@ -599,14 +601,20 @@ class PipeStageExecutor(EventRecorder):
 
     def index_value(self, output_unique_key : str, output_refcount : int, value_ref, idx):
         # For the purposes of refcounting, decrement this use
-        with self.value_store_lock:
+        with self.value_store_cv:
+            while value_ref.unique_key not in self.value_store:
+                logging.info(f'[{self.stage_id}] index_value waiting for value {value_ref}')
+                self.value_store_cv.wait()
+            logging.info(f'[{self.stage_id}] index_value found value {value_ref}')
             refcounted_future = self.value_store[value_ref.unique_key]
+
             if refcounted_future.release():
                 self.value_store.pop(value_ref.unique_key)
 
             indexed = refcounted_future.future.then(lambda f: f.value()[idx])
 
             self.value_store[output_unique_key] = RefcountedFuture(indexed, output_refcount)
+            self.value_store_cv.notify_all()
 
         return ValueReference(self.stage_id, output_unique_key)
 
@@ -616,7 +624,11 @@ class PipeStageExecutor(EventRecorder):
                      f'{value_ref_arg} initiated by stage {caller_stage} for {runlist_key}')
         assert callee_stage == self.stage_id, "Mismatch between ValueRef and stage executor"
 
-        with self.value_store_lock:
+        with self.value_store_cv:
+            while value_ref_arg.unique_key not in self.value_store:
+                logging.info(f'[{self.stage_id}] get_value waiting for value {value_ref_arg}')
+                self.value_store_cv.wait()
+            logging.info(f'[{self.stage_id}] get_value found value {value_ref_arg}')
             refcounted_future = self.value_store[value_ref_arg.unique_key]
 
         value = refcounted_future.future.wait()
@@ -1113,14 +1125,14 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
             forward_id = event_id(Phase.FORWARD, stage_id, self.cur_microbatch, self.batch_id)
             name = f"I{forward_name}"
             id = f"I{forward_id}"
-            rv = stage_executor.rpc_sync().invoke(
+            stage_executor.rpc_async().invoke(
                 invocation_key, Phase.FORWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
                 output_refcount=len(users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
             finish_ts = time.time()
             self.record_event(rank=0, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name, type='invoke',
                               mbid=self.cur_microbatch)
             self.record_event_dependency(from_id=name, to_id=f"R{forward_name}", type='invoke')
-            return rv
+            return ValueReference(stage_id, invocation_key)
         else:
             logging.info(f'[root][{self.cur_microbatch}] Running local operation {target} from driver')
             return super().call_module(target, args, kwargs)
@@ -1141,13 +1153,13 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
                 name = f"G{stage_id},{self.cur_microbatch}"
                 id = f"{name},{self.batch_id}"
                 start_ts = time.time()
-                rv = stage_executor.rpc_sync().index_value(
+                stage_executor.rpc_async().index_value(
                     output_unique_key=invocation_key, value_ref=args[0], output_refcount=len(users),
                     idx=args[1])
                 finish_ts = time.time()
                 self.record_event(rank=0, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name, type='invoke',
                               mbid=self.cur_microbatch)
-                return rv
+                return ValueReference(stage_id, invocation_key)
             else:
                 return ValueReference(stage_id, "noop")
         elif target is stage_backward:
@@ -1161,14 +1173,14 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
                 backward_id = event_id(Phase.BACKWARD, stage_id, self.cur_microbatch, self.batch_id)
                 name = f"I{backward_name}"
                 id = f"I{backward_id}"
-                rv = stage_executor.rpc_sync().invoke(
+                stage_executor.rpc_async().invoke(
                     invocation_key, Phase.BACKWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
                     output_refcount=len(users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
                 finish_ts = time.time()
                 self.record_event(rank=0, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name, type='invoke',
                                   mbid=self.cur_microbatch)
                 self.record_event_dependency(from_id=name, to_id=backward_name, type='invoke')
-                return rv
+                return ValueReference(stage_id, invocation_key)
             else:
                 return ValueReference(stage_id, "noop")
         elif target is sync_barrier:
@@ -1176,18 +1188,20 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
             stage_id, stage_executor = self.remote_stage_executor_rrefs[executor_keys[0]]
             logging.info(f'[root][{self.cur_microbatch}] Issuing sync invocation '
                          f'on stage {stage_id}')
-            return stage_executor.rpc_sync().invoke(
+            stage_executor.rpc_async().invoke(
                 invocation_key, Phase.SYNC_BARRIER, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
                 output_refcount=len(users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
+            return ValueReference(stage_id, invocation_key)
         elif target is _null_coalesce_accumulate:
             assert 'fw_stage' in node.meta
             stage_id, stage_executor = self.remote_stage_executor_rrefs[node.meta['fw_stage']]
             logging.info(f'[root][{self.cur_microbatch}] Issuing accumulate grad invocation '
                          f'for target {node.meta["fw_stage"]} on stage {stage_id}')
-            return stage_executor.rpc_sync().invoke(
+            stage_executor.rpc_async().invoke(
                 invocation_key, Phase.ACCUMULATE_GRAD, args, kwargs, self.cur_microbatch,
                 debug_str=node.format_node(),
                 output_refcount=len(users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
+            return ValueReference(stage_id, invocation_key)
         else:
             raise AssertionError(f'Unknown operator {torch.typename(target)}')
 
