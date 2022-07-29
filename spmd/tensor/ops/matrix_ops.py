@@ -16,17 +16,18 @@ def dist_addmm(
     input: Tensor,
     mat1: Tensor,
     mat2: Tensor,
-    # pyre-fixme[2]: Parameter must be annotated.
-    beta=1,
-    # pyre-fixme[2]: Parameter must be annotated.
-    alpha=1,
+    beta: float = 1,
+    alpha: float = 1,
 ) -> Tensor:
     # dist addmm:
+    # input:replicate   mat1: replicate,  mat2: replicate
     # input:shard(0)    mat1: shard(0),  mat2: replicate
     # input:shard(1)    mat1: replicate, mat2: shard(1)
-    # input:replicate   mat1: shard(0),  mat2: replicate
-    # input:replicate   mat1: replicate, mat2: shard(1)
-    # input:replicate   mat1: shard(0),  mat2: shard(1)
+    # input:partial   mat1: shard(1),  mat2: shard(0)
+
+    # only implemented combo with no comm for now
+    # TODO: implement all combinations
+
     local_input, local_mat1, local_mat2 = pytree.tree_map(
         unwrap_local_tensor, (input, mat1, mat2)
     )
@@ -35,31 +36,37 @@ def dist_addmm(
     )
     device_mesh = mat1.device_mesh
 
-    assert input_placement.is_replicate(), "only support replication now"
+    if (
+        (
+            input_placement.is_replicate()
+            and mat1_placement.is_replicate()
+            and mat2_placement.is_replicate()
+        )
+        or (
+            input_placement.is_shard(dim=0)
+            and mat1_placement.is_shard(dim=0)
+            and mat2_placement.is_replicate()
+        )
+        or (
+            input_placement.is_shard(dim=1)
+            and mat1_placement.is_replicate()
+            and mat2_placement.is_shard(dim=1)
+        )
+        or (
+            input_placement.is_partial()
+            and mat1_placement.is_shard(dim=1)
+            and mat2_placement.is_shard(dim=0)
+        )
+    ):
+        local_res = local_input.addmm(
+            local_mat1, local_mat2, beta=beta, alpha=alpha
+        )
+        return Tensor.from_local(local_res, device_mesh, input.placements)
 
-    # only implemented combo with no comm for now
-    # TODO: implement all combinations
-    if mat1_placement.is_shard(dim=0) and mat2_placement.is_replicate():
-        local_res = local_input.addmm(
-            local_mat1, local_mat2, beta=beta, alpha=alpha
-        )
-        return Tensor.from_local(local_res, device_mesh, mat1.placements)
-    elif mat1_placement.is_replicate() and mat2_placement.is_shard(dim=1):
-        local_res = local_input.addmm(
-            local_mat1, local_mat2, beta=beta, alpha=alpha
-        )
-        return Tensor.from_local(local_res, device_mesh, mat2.placements)
-    elif mat1_placement.is_replicate() and mat2_placement.is_replicate():
-        local_res = local_input.addmm(
-            local_mat1, local_mat2, beta=beta, alpha=alpha
-        )
-        return Tensor.from_local(
-            local_res, device_mesh, mat1.placements, run_check=False
-        )
-    else:
-        raise RuntimeError(
-            f"addmm operator supported for inputs: {mat1}, {mat2}"
-        )
+    raise RuntimeError(
+        "addmm operator not supported for input placements: "
+        f"{input.placements}, {mat1.placements}, {mat2.placements}"
+    )
 
 
 @register_impl("aten.mm.default")
