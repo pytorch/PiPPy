@@ -68,48 +68,5 @@ class DistTensorTest(DistTensorTestBase):
         print(sharded_tensor.device)
 
 
-class DeviceMeshTest(DistTensorTestBase):
-    @with_comms
-    def test_device_mesh_basics(self):
-        # construct a cuda device mesh
-        mesh = DeviceMesh(self.device_type, [1, 2, 3, 4])
-
-        # construct from a cpu local tensor with cuda device mesh
-        # should automatically convert the dist tensor to cuda
-        shard_spec = [Shard(0)]
-        local_tensor = torch.randn(3, 3)
-        dist_tensor = Tensor.from_local(local_tensor, mesh, shard_spec)
-        self.assertEqual(dist_tensor.device.type, self.device_type)
-        self.assertEqual(
-            dist_tensor.local_tensor().device.type, self.device_type
-        )
-
-        # only support 1d mesh as of now
-        with self.assertRaisesRegex(
-            AssertionError, "Only support 1-d device mesh for now"
-        ):
-            DeviceMesh("cuda", [[1, 2], [3, 4]])
-
-    @with_comms
-    def test_device_mesh_context_manager(self):
-        with DeviceMesh(self.device_type, list(range(self.world_size))) as mesh:
-            shard_spec = [Shard(0)]
-            local_tensor = torch.randn(3, 3)
-            sharded_tensor = Tensor.from_local(
-                local_tensor, device_mesh=mesh, placements=shard_spec
-            )
-
-        with DeviceMesh(self.device_type, list(range(self.world_size))):
-            shard_spec = [Shard(0)]
-            local_tensor = torch.randn(3, 3)
-            sharded_tensor = Tensor.from_local(
-                local_tensor, placements=shard_spec
-            )
-            replica_spec = [Replicate()]
-            replica_tensor = sharded_tensor.redistribute(
-                placements=replica_spec
-            )
-
-
 if __name__ == "__main__":
     run_tests()
