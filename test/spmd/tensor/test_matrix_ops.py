@@ -20,9 +20,7 @@ class DistMatrixOpsTest(DistTensorTestBase):
         input = distribute_tensor(input_tensor, device_mesh, replica_spec)
 
         dist_res = torch.addmm(input, mat1, mat2)
-        local_res = torch.addmm(
-            input_tensor, tensor_to_shard, tensor_to_replicate
-        )
+        local_res = torch.addmm(input_tensor, tensor_to_shard, tensor_to_replicate)
         self.assertEqual(
             dist_res.redistribute(device_mesh, replica_spec).local_tensor(),
             local_res,
@@ -50,7 +48,7 @@ class DistMatrixOpsTest(DistTensorTestBase):
         grad_res = torch.ones(12, 16)
         grad_dist_res = distribute_tensor(grad_res, device_mesh, shard_spec)
         dist_res.backward(grad_dist_res)
-        print(mat1.grad)
+        # print(mat1.grad)
         # dist_res.sum().backward()
 
     @with_comms

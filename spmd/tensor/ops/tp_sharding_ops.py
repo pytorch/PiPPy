@@ -7,11 +7,11 @@ import torch.utils._pytree as pytree
 from typing import List
 from spmd.tensor.api import Tensor
 from spmd.tensor.placement_types import Shard
-from spmd.tensor.ops.utils import (
+from spmd.tensor.utils import (
     unwrap_local_tensor,
-    unwrap_single_placement,
-    register_impl,
+    # unwrap_single_placement,
 )
+from spmd.tensor.ops.utils import register_impl
 
 """
 The ops below were quickly hacked and needed to be polished down the road.
