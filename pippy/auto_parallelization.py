@@ -14,15 +14,13 @@
 # limitations under the License.
 import logging
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import Callable, Any
 
 import numpy as np
-import pippy.fx
 import torch
 from enum import Enum
 
 from pippy import pipe_split
-from pippy.count_flops import compile_model_op_by_op, count_flop_latency_in_mlir_modules_using_llvm
 
 try:
     from numba import njit  # type: ignore
@@ -48,7 +46,7 @@ class SubmeshSpace(Enum):
 
 def get_possible_submesh_shapes(
     n_compute_nodes: int, n_devices_per_node: int, submesh_space: SubmeshSpace
-):
+) -> tuple[tuple[int, int]]:
     submeshes = []
     i = 1
     while i <= n_devices_per_node:
@@ -73,7 +71,7 @@ def get_possible_submesh_shapes(
     else:
         raise ValueError(f"Invalid submesh space: {submesh_space}")
 
-    return submeshes
+    return tuple(submeshes)
 
 
 @njit(fastmath=True, nogil=True, cache=True)
@@ -169,10 +167,9 @@ def inter_op_dp_inner_loop(
 
 
 def inter_op_dp(
-    n_layers: int,
     n_devices: int,
     n_microbatches: int,
-    submesh_shapes: List[Tuple[int, int]],
+    submesh_shapes: tuple[tuple[int, int]],
     intra_compute_costs,
     max_n_succ_stages,
 ):
@@ -184,12 +181,12 @@ def inter_op_dp(
     best_solution = None
     prev_intra_cost = 0.0
     gap = 1e-6
+    num_layers = len(intra_compute_costs)
 
     submesh_sizes: list = NumbaList()
     for n, m in submesh_shapes:
         submesh_sizes.append(n * m)
 
-    overall_max_layer = 0
     for loop_i, intra_cost in enumerate(np.sort(np.unique(intra_compute_costs))):
         if intra_cost - prev_intra_cost < gap:
             continue
@@ -204,22 +201,21 @@ def inter_op_dp(
         valid_cost_idxs = valid_cost_idxs[
             valid_cost_idxs[:, 0] <= valid_cost_idxs[:, 1]
         ]
+        if len(valid_cost_idxs) == 0:
+            continue
         valid_costs = intra_compute_costs[tuple(valid_cost_idxs.T)]
         valid_idxs_costs = np.hstack([valid_cost_idxs, valid_costs[:, np.newaxis]])
         # sort by descending layer idx because DP initializes F[0, n_layers, 0] = 0
         valid_idxs_costs = valid_idxs_costs[np.flip(valid_cost_idxs[:, 1].argsort())]
-        max_layer = int(valid_idxs_costs[:, 1][0])
-        overall_max_layer = max(overall_max_layer, max_layer)
 
         logging.info(f"DP outer loop {loop_i}")
         F, F_stage_max, F_argmin = inter_op_dp_inner_loop(
-            max_layer + 1, n_devices, submesh_sizes, valid_idxs_costs, max_n_succ_stages
+            num_layers, n_devices, submesh_sizes, valid_idxs_costs, max_n_succ_stages
         )
 
         best_n_stages = F[:, 0, n_devices].argmin()
         all_stages_cost = F[best_n_stages, 0, n_devices]
         slowest_stage_cost = F_stage_max[best_n_stages, 0, n_devices]
-        logging.info(f"DP {all_stages_cost=} {slowest_stage_cost=}")
         if np.isinf(all_stages_cost):
             continue
         slowest_stage_total_cost = (n_microbatches - 1) * slowest_stage_cost
@@ -233,7 +229,7 @@ def inter_op_dp(
     assert best_solution is not None
     best_n_stages, F_argmin = best_solution
     optimal_layer_submesh_assignments = get_optimal_submesh_assignments(
-        best_n_stages, F_argmin, n_devices, overall_max_layer + 1, submesh_sizes
+        best_n_stages, F_argmin, n_devices, num_layers, submesh_sizes
     )
     optimal_layer_submesh_assignments = [
         ((a, b), submesh_shapes[c], d)
@@ -247,107 +243,28 @@ class AutoParallelConfig:
     n_compute_nodes: int
     n_devices_per_node: int
     n_microbatches: int
+    intra_op_costs_estimator: Callable[
+        [
+            torch.nn.Module,
+            torch.fx.GraphModule,
+            # example inputs,
+            tuple[torch.Tensor, ...],
+            # submesh shapes,
+            tuple[tuple[int, int], ...],
+            torch.fx.Tracer,
+            # tracer kwargs,
+            dict[str, Any],
+        ],
+        tuple[np.ndarray, np.ndarray, tuple[tuple[str, int]]],
+    ]
     n_autosharding_configs: int = 1
     submesh_space: SubmeshSpace = SubmeshSpace.ALL
-
-
-def estimate_intra_costs(
-    model,
-    traced,
-    example_inputs,
-    submesh_shapes,
-    tracer,
-    tracer_kwargs,
-    max_n_succ_stages=4096,
-    n_autosharding_configs=1,
-):
-    n_graph_nodes = len(traced.graph.nodes)
-    n_submesh_choices = len(submesh_shapes)
-
-    # Lower op-by-op to MLIR modules (matched to op name).
-    logging.info("Compiling model through MLIR")
-    node_mlir_modules, node_shapes = compile_model_op_by_op(
-        model, example_inputs, tracer=tracer, return_shapes=True, **tracer_kwargs
-    )
-    # Count up all of the floating point ops and multiply by
-    # op latency (TODO: arithmetic intensity model).
-    logging.info("Counting FP latencies for torch ops")
-    known_latencies = count_flop_latency_in_mlir_modules_using_llvm(node_mlir_modules)
-    all_latencies = np.zeros(n_graph_nodes)
-    cum_inputs = []
-    nodes = []
-    for i, node in enumerate(traced.graph.nodes):
-        all_latencies[i] = known_latencies.get(node.name, 0)
-        node: torch.fx.Node
-        nodes.append(node)
-        if cum_inputs:
-            cum_inputs.append(
-                set((n.name, node.name) for n in node.all_input_nodes) | cum_inputs[-1]
-            )
-        else:
-            cum_inputs.append(set((n.name, node.name) for n in node.all_input_nodes))
-
-    cum_outputs = []
-    for node in reversed(traced.graph.nodes):
-        if cum_outputs:
-            cum_outputs.append(
-                set((node.name, n.name) for n in node.users) | cum_outputs[-1]
-            )
-        else:
-            cum_outputs.append(set((node.name, n.name) for n in node.users))
-
-    cum_outputs = cum_outputs[::-1]
-
-    ingress_traffic = np.zeros((n_graph_nodes, n_graph_nodes))
-    egress_traffic = np.zeros((n_graph_nodes, n_graph_nodes))
-    for i in range(n_graph_nodes):
-        for j in range(i, n_graph_nodes):
-            input_edges = (cum_inputs[j] - cum_inputs[i]) | set(
-                [(n.name, nodes[i].name) for n in nodes[i].all_input_nodes]
-            )
-            output_edges = (cum_outputs[i] - cum_outputs[j]) | set(
-                [(nodes[j].name, n.name) for n in nodes[j].users]
-            )
-            ingress_edges = input_edges - output_edges
-            egress_edges = output_edges - input_edges
-            ingress_traffic[i, j] = sum(
-                np.prod(node_shapes.get(n, [0])[0]) for n, _ in ingress_edges
-            )
-            egress_traffic[i, j] = sum(
-                np.prod(node_shapes.get(n, [0])[0]) for n, _ in egress_edges
-            )
-
-    # intra_costs[i, j, k, l] is the total latency of [node_i, ..., node_j]
-    # for the k submesh choice and lth autosharding choice (with inclusive endpoints).
-    # Currently we only have one submesh choice (all of the devices) and one autosharding choices (none).
-    intra_costs = np.zeros(
-        (n_graph_nodes, n_graph_nodes, n_submesh_choices, n_autosharding_configs)
-    )
-    # Prefix sums such that jth prefix - ith prefix + op latency = latency from ith to jth op.
-    cum_latencies = np.cumsum(all_latencies)
-    for i in range(n_graph_nodes):
-        for j in range(i, n_graph_nodes):
-            lat = cum_latencies[j] - cum_latencies[i] + all_latencies[i]
-            for k, shape in enumerate(submesh_shapes):
-                intra_costs[i, j, k, :] = (
-                    (lat / np.prod(shape))
-                    + ingress_traffic[i, j]
-                    + egress_traffic[i, j]
-                )
-
-    # TODO: obviously this isn't right.
-    max_n_succ_stages = np.full(
-        (n_graph_nodes, n_graph_nodes, n_submesh_choices, n_autosharding_configs),
-        max_n_succ_stages,
-    )
-
-    return intra_costs, max_n_succ_stages
 
 
 def dp_auto_parallel(config: AutoParallelConfig):
     def _dp_auto_parallel(
         mod: torch.nn.Module,
-        fx_mod: pippy.fx.GraphModule,
+        fx_mod: torch.fx.GraphModule,
         example_inputs,
         tracer,
         tracer_kwargs,
@@ -358,20 +275,29 @@ def dp_auto_parallel(config: AutoParallelConfig):
             submesh_space=config.submesh_space,
         )
         logging.info("Estimating intra-op latencies")
-        intra_costs, max_n_succ_stages = estimate_intra_costs(
+        (
+            intra_costs,
+            max_n_succ_stages,
+            node_name_graph_idx,
+        ) = config.intra_op_costs_estimator(
             mod,
             fx_mod,
             example_inputs,
             submesh_shapes,
-            tracer=tracer,
-            tracer_kwargs=tracer_kwargs,
-            n_autosharding_configs=config.n_autosharding_configs,
+            tracer,
+            tracer_kwargs,
         )
-        _intra_costs = intra_costs.squeeze()
-        n_graph_nodes = len(fx_mod.graph.nodes)
         logging.info("Computing optimal split using DP")
+
+        # optimal_layer_submesh_assignments is a tuple of 
+        # ([ith node, jth node), (num_hosts_i, num_devices_i), autosharding_config)
+        # where (num_hosts_i, num_devices_i) describes the ith submesh slice and
+        # such that Σi (num_hosts_i, num_devices_i) = total_num_hosts * devices_per_host
+        # (i.e., total # of devices). Note that mapping submeshes to physical devices can (and should)
+        # be specified by the user (in the alpa paper they use a greedy heuristic - devices are assigned to 
+        # larger submeshes first and then to smaller ones and ties are broken by physically clustering
+        # pipeline stages.
         optimal_layer_submesh_assignments = inter_op_dp(
-            n_layers=n_graph_nodes,
             n_devices=config.n_compute_nodes * config.n_devices_per_node,
             n_microbatches=config.n_microbatches,
             submesh_shapes=submesh_shapes,
@@ -381,16 +307,22 @@ def dp_auto_parallel(config: AutoParallelConfig):
         logging.info(
             f"DP optimal layer submesh assignments {optimal_layer_submesh_assignments}"
         )
-        split_points = {
-            current_layer
+        # node_name_graph_idx is a tuple (node_name, j) where j is in the index in the
+        # original toposort order of the fx graph. The reason for this level of indirection
+        # (i.e., ith entry in node_name_graph_idx actually maps to jth in graph is because not all
+        # nodes have valid latencies (e.g., inputholder) and thus the DP does not take those into consideration
+        split_points = [
+            node_name_graph_idx[next_start_layer][1]
             for (
-                (current_layer, _next_start_layer),
+                (_current_layer, next_start_layer),
                 _submesh_choice,
                 _autosharding_choice,
-            ) in optimal_layer_submesh_assignments
-        }
-        for i, node in reversed(list(enumerate(fx_mod.graph.nodes))):
+            ) in optimal_layer_submesh_assignments[:-1]
+        ]
+        nodes = list(enumerate(fx_mod.graph.nodes))
+        for i, node in reversed(nodes):
             if i in split_points:
+                nodes.insert(i, (i, "split"))
                 with fx_mod.graph.inserting_before(node):
                     fx_mod.graph.call_function(pipe_split, (), {})
         fx_mod.recompile()
