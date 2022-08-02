@@ -20,7 +20,7 @@ class RedistributeTest(DistTensorTestBase):
         expected_tensor = torch.randn(12, 3, requires_grad=True)
         chunked_list = expected_tensor.chunk(self.world_size, shard_dim)
         # make local tensor as the element of the corresponding chunked list
-        local_tensor = chunked_list[self.rank]
+        local_tensor = chunked_list[self.rank].detach().requires_grad_()
         sharded_tensor = Tensor.from_local(
             local_tensor, device_mesh, shard_spec
         )

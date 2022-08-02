@@ -14,6 +14,67 @@ If set to true, __DEBUG_STRICT will fail when an op doesn't have a sharding rule
 """
 _DEBUG_STRICT = False
 
+# NOTE [Autograd interaction between torch.Tensor]
+#
+# The autograd functions defined below are being used by the public
+# facing APIs (i.e. from_local, local_tensor) to ensure our Tensor
+# works together with torch.Tensor within autograd engine. This
+# allows DistributedTensor to exist on part of the module hierarchy
+# and still able to calculate gradients across the torch.Tensor and
+# DistributedTensor boundary.
+# As an example, it enables backward computation of the following:
+#   Module A (with all torch.Tensor params)
+#       -> Module B (with all DistributedTensor params)
+#           -> Module C (with all torch.Tensor params)
+class ToTorchTensor(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input: "Tensor"):  # type: ignore
+        ctx.previous_placement = input.placements
+        ctx.previous_device_mesh = input.device_mesh
+        return input._local_tensor
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor):  # type: ignore
+        previous_placement = ctx.previous_placement
+        previous_device_mesh = ctx.previous_device_mesh
+        dist_grad = Tensor.from_local(
+            grad_output, previous_device_mesh, previous_placement
+        )
+        return dist_grad
+
+
+class FromTorchTensor(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input: torch.Tensor, global_shape, device_mesh, placements):  # type: ignore
+        ctx.previous_placement = placements
+        ctx.previous_device_mesh = device_mesh
+
+        dist_tensor = Tensor(
+            device_mesh,
+            placements,
+            torch.Size(global_shape),
+            dtype=input.dtype,
+            device=input.device,
+            layout=input.layout,
+            requires_grad=input.requires_grad,
+        )
+        dist_tensor._local_tensor = input
+        return dist_tensor
+
+    @staticmethod
+    def backward(ctx, grad_output: "Tensor"):  # type: ignore
+        previous_placement = ctx.previous_placement
+        previous_device_mesh = ctx.previous_device_mesh
+
+        # reshard to the placement when creating DistributedTensor
+        # so that the gradient layout matches, and we could return
+        # local gradients directly
+        if grad_output.placements != previous_placement:
+            grad_output = grad_output.redistribute(
+                previous_device_mesh, previous_placement
+            )
+        return grad_output._local_tensor, None, None, None
+
 
 class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     _local_tensor: torch.Tensor
@@ -65,7 +126,7 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     # pyre-fixme[3]: Return type must be annotated.
     def __repr__(self):
         # TODO: consider all_gather the local tensors for better debugging
-        return f"DistributedTensor({self._local_tensor}, placements={self._placements})"
+        return f"DistributedTensor(local_tensor={self._local_tensor}, placements={self._placements})"
 
     @classmethod
     # pyre-fixme[3]: Return type must be annotated.
@@ -219,7 +280,7 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
                     # broadcast rank 0 tensor to all ranks
                     # only broadcast if run_check is True
                     local_tensor = local_tensor.contiguous()
-                    device_mesh.broadcast(local_tensor, 0)
+                    device_mesh.broadcast(local_tensor, mesh_dim=idx)
             elif isinstance(placement, _Partial):
                 # we don't need to do anything to Partial case
                 pass
@@ -232,17 +293,29 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
             # TODO: by default check tensor metas across rank
             pass
 
-        dist_tensor = cls(
-            device_mesh,
-            placements,
-            torch.Size(tensor_shape),
-            strides=local_tensor.stride(),
-            dtype=local_tensor.dtype,
-            device=local_tensor.device,
-            layout=local_tensor.layout,
-            requires_grad=local_tensor.requires_grad,
-        )
-        dist_tensor._local_tensor = local_tensor
+        if local_tensor.is_leaf:
+            # XXX: An hack on autograd between Tensor subclass and torch.Tensor
+            # If local tensor is an leaf (which means a parameter or buffer)
+            # we create dist tensor directly and make it also an leaf.
+            # TODO: figure out if there's an nicer way to do it.
+            dist_tensor = cls(
+                device_mesh,
+                placements,
+                torch.Size(tensor_shape),
+                dtype=local_tensor.dtype,
+                device=local_tensor.device,
+                layout=local_tensor.layout,
+                requires_grad=local_tensor.requires_grad,
+            )
+            dist_tensor._local_tensor = local_tensor
+        else:
+            # Otherwise, it's an activation and we should flow back the gradients
+            # to the original torch.Tensor, we call an autograd function to construct
+            # the dist tensor instead.
+            dist_tensor = FromTorchTensor.apply(
+                local_tensor, tensor_shape, device_mesh, placements
+            )
+
         return dist_tensor
 
     def redistribute(
@@ -266,7 +339,7 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         return Redistribute.apply(self, device_mesh, placements)
 
     def local_tensor(self) -> torch.Tensor:
-        return self._local_tensor  # type: ignore
+        return ToTorchTensor.apply(self)
 
     @property
     def placements(self) -> Sequence[Placement]:
