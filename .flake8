@@ -28,4 +28,5 @@ exclude =
     ./torch/include,
     ./torch/lib,
     ./venv,
+    ./pippy/fx,
     *.pyi
