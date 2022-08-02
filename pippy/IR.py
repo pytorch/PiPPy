@@ -551,7 +551,7 @@ class Pipe(torch.nn.Module):
             # Split from the right, one each time
             split_names = qualname.rsplit('.', 1)
             leaf = split_names[-1]
-            while(len(split_names) > 1):
+            while len(split_names) > 1:
                 prefix = split_names[0]
                 if prefix in self.new_to_old_qualname_mapping:
                     old_prefix = self.new_to_old_qualname_mapping[prefix]
