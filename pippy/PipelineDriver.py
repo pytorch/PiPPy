@@ -599,24 +599,31 @@ class PipeStageExecutor(EventRecorder):
 
         return ValueReference(self.stage_id, output_unique_key)
 
-    def index_value(self, output_unique_key : str, output_refcount : int, value_ref, idx):
-        # For the purposes of refcounting, decrement this use
-        with self.value_store_cv:
-            while value_ref.unique_key not in self.value_store:
-                logging.info(f'[{self.stage_id}] index_value waiting for value {value_ref}')
-                self.value_store_cv.wait()
-            logging.info(f'[{self.stage_id}] index_value found value {value_ref}')
-            refcounted_future = self.value_store[value_ref.unique_key]
+    def coalesce_index_value(self, indices : List[Tuple]):
+        for index_tuple in indices:
+            (output_unique_key, output_refcount, value_ref, idx) = index_tuple
+            logging.info(f'[{self.stage_id}] Received getitem call: {(output_unique_key, output_refcount, value_ref, idx)}')
+            # For the purposes of refcounting, decrement this use
+            with self.value_store_cv:
+                assert output_unique_key not in self.value_store
+                while value_ref.unique_key not in self.value_store:
+                    logging.info(f'[{self.stage_id}] index_value waiting for value {value_ref}')
+                    self.value_store_cv.wait()
+                logging.info(f'[{self.stage_id}] index_value found value {value_ref}')
+                refcounted_future = self.value_store[value_ref.unique_key]
 
-            if refcounted_future.release():
-                self.value_store.pop(value_ref.unique_key)
+                if refcounted_future.release():
+                    self.value_store.pop(value_ref.unique_key)
 
-            indexed = refcounted_future.future.then(lambda f: f.value()[idx])
+                def attach_index(fut, index):
+                    indexed_fut = fut.then(lambda f: f.value()[index])
+                    return indexed_fut
 
-            self.value_store[output_unique_key] = RefcountedFuture(indexed, output_refcount)
-            self.value_store_cv.notify_all()
+                indexed = attach_index(refcounted_future.future, idx)
 
-        return ValueReference(self.stage_id, output_unique_key)
+                self.value_store[output_unique_key] = RefcountedFuture(indexed, output_refcount)
+                self.value_store_cv.notify_all()
+
 
     def get_value(self, caller_stage, runlist_key, microbatch, value_ref_arg):
         callee_stage = value_ref_arg.stage_id
@@ -626,9 +633,9 @@ class PipeStageExecutor(EventRecorder):
 
         with self.value_store_cv:
             while value_ref_arg.unique_key not in self.value_store:
-                logging.info(f'[{self.stage_id}] get_value waiting for value {value_ref_arg}')
+                logging.info(f'[{self.stage_id}] get_value waiting for ValueRef {value_ref_arg}')
                 self.value_store_cv.wait()
-            logging.info(f'[{self.stage_id}] get_value found value {value_ref_arg}')
+            logging.info(f'[{self.stage_id}] get_value found ValueRef {value_ref_arg}')
             refcounted_future = self.value_store[value_ref_arg.unique_key]
 
         value = refcounted_future.future.wait()
@@ -646,9 +653,9 @@ class PipeStageExecutor(EventRecorder):
             self.stage_id, runlist_key, microbatch, value_ref_arg)
 
         def bottom_half(fut):
-            logging.info(f'[{self.stage_id}][{microbatch}] Completing transfer of value {value_ref_arg} '
-                         f'for runlist item {runlist_key}')
             value = fut.value()
+            logging.info(f'[{self.stage_id}][{microbatch}] Completing transfer of value {value_ref_arg} '
+                         f'for runlist item {runlist_key} arg_idx {arg_idx}')
             self.rank_worker.update_run_list(runlist_key, arg_idx, value)
 
         return fut.then(bottom_half)
@@ -1105,6 +1112,7 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
         self.args_iter = iter(self.args)
         self.batch_id = batch_id
         self.num_microbatches = num_microbatches
+        self.stage_indices : Dict[int, List[Tuple]] = {}
 
     def call_module(self, target, args, kwargs):
         assert isinstance(target, str)
@@ -1148,17 +1156,14 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
             node.users.keys())) if not torch.is_grad_enabled() else node.users.keys()
         if target is operator.getitem and isinstance(args[0], ValueReference):
             stage_id = args[0].stage_id
+            #stage_executor = self.stage_to_executor[stage_id]
             if torch.is_grad_enabled() or args[0].unique_key != "noop":
-                stage_executor = self.stage_to_executor[stage_id]
-                name = f"G{stage_id},{self.cur_microbatch}"
-                id = f"{name},{self.batch_id}"
-                start_ts = time.time()
-                stage_executor.rpc_async().index_value(
-                    output_unique_key=invocation_key, value_ref=args[0], output_refcount=len(users),
-                    idx=args[1])
-                finish_ts = time.time()
-                self.record_event(rank=0, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name, type='invoke',
-                              mbid=self.cur_microbatch)
+                indices = self.stage_indices.setdefault(stage_id, [])
+                index_tuple = (invocation_key, len(users), args[0], args[1])
+                logging.info(f'[root][{self.cur_microbatch}] Appending getitem tuple {index_tuple}')
+                indices.append(index_tuple)
+                #stage_executor.rpc_async().coalesce_index_value(self.stage_indices[stage_id])
+                #self.stage_indices.clear()
                 return ValueReference(stage_id, invocation_key)
             else:
                 return ValueReference(stage_id, "noop")
@@ -1205,17 +1210,36 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
         else:
             raise AssertionError(f'Unknown operator {torch.typename(target)}')
 
+
+    def coalesce_index_value(self):
+        if len(self.stage_indices) == 0:
+            return
+        assert len(self.stage_indices) == 1, "coalescing output indices of more than one stage"
+
+        stage_id = next(iter(self.stage_indices))
+        stage_executor = self.stage_to_executor[stage_id]
+        name = f"G{stage_id},{self.cur_microbatch}"
+        id = f"{name},{self.batch_id}"
+        logging.info(f'[root][{self.cur_microbatch}] Issuing getitem '
+                     f'on stage {stage_id} with {len(self.stage_indices[stage_id])} indices')
+        start_ts = time.time()
+        stage_executor.rpc_async().coalesce_index_value(self.stage_indices[stage_id])
+        finish_ts = time.time()
+        self.record_event(rank=0, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name, type='invoke',
+                        mbid=self.cur_microbatch)
+        self.stage_indices.clear()
+
+
     def run_until(self, predicate: Callable[[torch.fx.Node], bool]) -> Optional[torch.fx.Node]:
-        run = 0
         while self.pc < len(self.node_list):
             node = self.node_list[self.pc]
 
             if predicate(node):
-                logging.info(f'[{self.cur_microbatch}] Pause at {node.format_node()}, ran {run} nodes this round')
+                # Issue coalesced value indexing
+                self.coalesce_index_value()
                 return node
 
             self.run_one(node)
-            run += 1
 
         # Have run through the entire node_list, using None to mean no node left to run
         return None
