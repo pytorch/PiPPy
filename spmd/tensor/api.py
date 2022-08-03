@@ -76,9 +76,8 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         for arg in arg_list:
             if isinstance(arg, torch.Tensor) and not isinstance(arg, Tensor):
                 raise RuntimeError(
-                    f'{func}: got mixed distributed and non-distributed tensors.'
+                    f"{func}: got mixed distributed and non-distributed tensors."
                 )
-
 
         def unwrap_mesh(e: Tensor) -> DeviceMesh:
             # if this tensor is not Distributed, then return none. We will reinterpret it as replicated
@@ -125,12 +124,11 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         else:
             if _DEBUG_STRICT:
                 raise RuntimeError(
-                    f'Operator {func} does not have a DistributedTensor rule registered.'
+                    f"Operator {func} does not have a DistributedTensor rule registered."
                 )
             # default to local tensor ops, this is wrong
             # but we use it now to enable more tensor property access
             else:
-                print('bypassed debug strict')
                 rs = func(*tree_map(unwrap, args), **tree_map(unwrap, kwargs))
                 rs = wrap(rs, args_mesh[0], args[0].placements)
                 return rs
