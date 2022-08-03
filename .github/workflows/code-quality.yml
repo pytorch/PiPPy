@@ -32,7 +32,7 @@ jobs:
       run: pylint --disable=all --enable=unused-import $(git ls-files '*.py')
     - name: Lint with mypy
       if: always()
-      run: mypy $(git ls-files '*.py' | grep -v pippy/fx | grep -v test/.*fx)
+      run: mypy $(git ls-files '*.py' | grep -v pippy/fx | grep -v test/.*fx | grep -v examples/hf)
     - name: Lint with flake8
       if: always()
       run: flake8 pippy
