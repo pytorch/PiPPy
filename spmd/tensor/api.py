@@ -312,7 +312,7 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
             # Otherwise, it's an activation and we should flow back the gradients
             # to the original torch.Tensor, we call an autograd function to construct
             # the dist tensor instead.
-            dist_tensor = FromTorchTensor.apply(
+            dist_tensor = FromTorchTensor.apply(  # pyre-ignore[16]: autograd func
                 local_tensor, tensor_shape, device_mesh, placements
             )
 
@@ -339,7 +339,7 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         return Redistribute.apply(self, device_mesh, placements)
 
     def local_tensor(self) -> torch.Tensor:
-        return ToTorchTensor.apply(self)
+        return ToTorchTensor.apply(self)  # pyre-ignore[16]: autograd func
 
     @property
     def placements(self) -> Sequence[Placement]:
