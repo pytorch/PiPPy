@@ -89,7 +89,7 @@ def redistribute_spmd_tensor(
 
     assert new_local_tensor is not None, "redistribute failed!"
 
-    return spmd_tensor.Tensor.from_local(
+    return spmd_tensor.Tensor(
         new_local_tensor, device_mesh, placements
     )
 

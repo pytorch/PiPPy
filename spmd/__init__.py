@@ -46,13 +46,13 @@ def distribute_tensor(
             scatter_shape = list(tensor.size())
             scatter_shape[shard_dim] = chunk_size
             local_tensor = device_mesh.scatter(tensor_list)
-            dist_tensor = Tensor.from_local(
+            dist_tensor = Tensor(
                 local_tensor, device_mesh, placements
             )
         elif isinstance(placement, Replicate) or isinstance(
             placement, _Partial
         ):
-            dist_tensor = Tensor.from_local(tensor, device_mesh, placements)
+            dist_tensor = Tensor(tensor, device_mesh, placements)
         else:
             raise RuntimeError("Not supported!")
 

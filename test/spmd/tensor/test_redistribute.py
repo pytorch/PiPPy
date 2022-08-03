@@ -20,8 +20,9 @@ class RedistributeTest(DistTensorTestBase):
         expected_tensor = torch.randn(12, 3, requires_grad=True)
         chunked_list = expected_tensor.chunk(self.world_size, shard_dim)
         # make local tensor as the element of the corresponding chunked list
-        local_tensor = chunked_list[self.rank].detach().requires_grad_()
-        sharded_tensor = Tensor.from_local(
+        local_tensor = chunked_list[self.rank]
+        # make it a leaf
+        sharded_tensor = Tensor(
             local_tensor, device_mesh, shard_spec
         )
         global_sharded_tensor = sharded_tensor.redistribute(
@@ -45,7 +46,7 @@ class RedistributeTest(DistTensorTestBase):
         replica_spec = [Replicate()]
         local_tensor = torch.randn(12, 3, requires_grad=True)
         # 1) test replicate -> replicate forward
-        replica_tensor = Tensor.from_local(
+        replica_tensor = Tensor(
             local_tensor, device_mesh, replica_spec
         )
         global_replica_tensor = replica_tensor.redistribute(
@@ -57,7 +58,7 @@ class RedistributeTest(DistTensorTestBase):
         # 2) test replicate -> replicate backward:
         # should give gradient as replicate
         local_grad = torch.ones(12, 3)
-        grad_output = Tensor.from_local(local_grad, device_mesh, replica_spec)
+        grad_output = Tensor(local_grad, device_mesh, replica_spec)
         global_replica_tensor.backward(grad_output)
         grad_input = replica_tensor.grad
         self.assertEqual(grad_input.placements, replica_spec)
@@ -74,7 +75,7 @@ class RedistributeTest(DistTensorTestBase):
         chunked_list = local_replica.chunk(self.world_size, shard_dim)
         # make local tensor as the element of the corresponding chunked list
         local_tensor = chunked_list[self.rank]
-        replica_tensor = Tensor.from_local(
+        replica_tensor = Tensor(
             local_replica, device_mesh, replica_spec
         )
         reshard_tensor = replica_tensor.redistribute(device_mesh, shard_spec)
@@ -102,7 +103,7 @@ class RedistributeTest(DistTensorTestBase):
         partial_spec = [_Partial(ReduceOp.SUM)]
         replica_spec = [Replicate()]
         # test partial -> replicate, which trigger all_reduce
-        partial_tensor = Tensor.from_local(
+        partial_tensor = Tensor(
             partial_local, device_mesh, partial_spec
         )
         global_partial_tensor = partial_tensor.redistribute(
@@ -120,7 +121,7 @@ class RedistributeTest(DistTensorTestBase):
         shard_spec = [Shard(shard_dim)]
         partial_spec = [_Partial(ReduceOp.SUM)]
         partial_local = torch.ones(12, 3)
-        partial_tensor = Tensor.from_local(
+        partial_tensor = Tensor(
             partial_local, device_mesh, partial_spec
         )
         # test partial to shard 0, trigger reduce_scatter
@@ -141,7 +142,7 @@ class RedistributeTest(DistTensorTestBase):
         partial_spec = [_Partial(ReduceOp.SUM)]
         partial_local = torch.ones(4, 12)
         # test partial to shard 1, trigger reduce_scatter
-        partial_tensor = Tensor.from_local(
+        partial_tensor = Tensor(
             partial_local, device_mesh, partial_spec
         )
         scatter_shard_tensor = partial_tensor.redistribute(

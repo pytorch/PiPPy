@@ -45,23 +45,15 @@ class ToTorchTensor(torch.autograd.Function):
 
 class FromTorchTensor(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, input: torch.Tensor, global_shape, device_mesh, placements):  # type: ignore
+    def forward(ctx, input: torch.Tensor, device_mesh, placements):  # type: ignore
         ctx.previous_placement = placements
         ctx.previous_device_mesh = device_mesh
 
         dist_tensor = Tensor(
+            input,
             device_mesh,
             placements,
-            torch.Size(global_shape),
-            dtype=input.dtype,
-            device=input.device,
-            layout=input.layout,
-            requires_grad=input.requires_grad,
         )
-        # detach local tensor from autograd graph as we initialize the
-        # distributed tensor and autograd will be working on top of
-        # the wrapper tensor directly
-        dist_tensor._local_tensor = input.detach()
         return dist_tensor
 
     @staticmethod
@@ -76,7 +68,7 @@ class FromTorchTensor(torch.autograd.Function):
             grad_output = grad_output.redistribute(
                 previous_device_mesh, previous_placement
             )
-        return grad_output._local_tensor, None, None, None
+        return grad_output._local_tensor, None, None
 
 
 class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
@@ -93,36 +85,46 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     @staticmethod
     def __new__(
         cls,
+        local_tensor: torch.Tensor,
         device_mesh: DeviceMesh,
         placements: Sequence[Placement],
-        size: torch.Size,
         # pyre-fixme[2]: Parameter must be annotated.
         **kwargs,
     ) -> "Tensor":
-        # new method instruct wrapper tensor and add placement spec
-        # it does not do actual distribution, __init__ should do it instead.
-        # TODO: implement __init__ for tensor constructors
-        assert isinstance(placements, list)
-        # sizes = _flatten_tensor_size(size)
-        dtype = kwargs["dtype"]
-        layout = kwargs["layout"]
-        requires_grad = kwargs["requires_grad"]
-        strides = kwargs["strides"]
-        device = kwargs.get("device", "cpu")
+        tensor_shape = list(local_tensor.size())
+        # recover tensor shape in the case of sharding
+        # TODO: also recover the strides in the case of sharding
+        for idx, placement in enumerate(placements):
+            if isinstance(placement, Shard):
+                shard_dim = placement.dim
+                # recover tensor shape on the shard dim
+                tensor_shape[shard_dim] = tensor_shape[
+                    shard_dim
+                ] * device_mesh.size(idx)
+            elif not isinstance(placement, (Replicate, _Partial)):
+                raise RuntimeError(
+                    f"placement type {type(placement)} not supported!"
+                )
 
+        # new method instruct wrapper tensor from local_tensor and add
+        # placement spec, it does not do actual distribution
         r = torch.Tensor._make_wrapper_subclass(  # type: ignore[attr-defined]
             cls,
-            size,
-            strides=strides,
-            dtype=dtype,
-            device=device,
-            layout=layout,
-            requires_grad=requires_grad,
+            torch.Size(tensor_shape),
+            strides=local_tensor.stride(),
+            dtype=local_tensor.dtype,
+            device=local_tensor.device,
+            layout=local_tensor.layout,
+            requires_grad=local_tensor.requires_grad,
         )
         r._device_mesh = device_mesh
         # deepcopy and set spec, data should be handled
         # by __init__ or from_local instead.
         r._placements = copy.deepcopy(placements)
+        # detach local tensor from autograd graph as we initialize the
+        # distributed tensor and autograd will be working on top of
+        # the wrapper tensor directly instead of local torch.Tensor
+        r._local_tensor = local_tensor.detach()
         return r
 
     # pyre-fixme[14]: `__repr__` overrides method defined in `Tensor` inconsistently.
@@ -253,6 +255,9 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
 
         Returns:
             A :class:`spmd.Tensor` object
+
+        .. note:: `from_local` is differentiable, the `requires_grad` of the created
+            `spmd.Tensor` object will depend on if `local_tensor` requires_grad or not.
         """
         # if same shape/dtype, no need to run_check, if not, must allgather
         # the metadatas to check the size/dtype across ranks
@@ -269,59 +274,22 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         if placements is None:
             placements = [Replicate() for _ in range(device_mesh.ndim)]
 
-        tensor_shape = list(local_tensor.size())
-        for idx, placement in enumerate(placements):
-            # device_list = device_mesh.mesh[idx]
-            if isinstance(placement, Shard):
-                shard_dim = placement.dim
-                # recover tensor shape on the shard dim
-                tensor_shape[shard_dim] = tensor_shape[
-                    shard_dim
-                ] * device_mesh.size(idx)
-            elif isinstance(placement, Replicate):
-                if run_check:
+        if run_check:
+            # TODO: by default check tensor metas across rank, and see if we need
+            # to make the run_check inside autograd function
+            for idx, placement in enumerate(placements):
+                if placement.is_replicate():
                     # broadcast rank 0 tensor to all ranks
                     # only broadcast if run_check is True
                     local_tensor = local_tensor.contiguous()
                     device_mesh.broadcast(local_tensor, mesh_dim=idx)
-            elif isinstance(placement, _Partial):
-                # we don't need to do anything to Partial case
-                pass
-            else:
-                raise RuntimeError(
-                    f"placement type {type(placement)} not supported!"
-                )
 
-        if run_check:
-            # TODO: by default check tensor metas across rank
-            pass
-
-        if local_tensor.is_leaf:
-            # XXX: An hack on autograd between Tensor subclass and torch.Tensor
-            # If local tensor is an leaf (which means a parameter or buffer)
-            # we create dist tensor directly and make it also an leaf.
-            # TODO: figure out if there's an nicer way to do it.
-            dist_tensor = cls(
-                device_mesh,
-                placements,
-                torch.Size(tensor_shape),
-                dtype=local_tensor.dtype,
-                device=local_tensor.device,
-                layout=local_tensor.layout,
-                requires_grad=local_tensor.requires_grad,
-            )
-            dist_tensor._local_tensor = local_tensor.detach()
-        else:
-            # Otherwise, it's an activation and we should flow back the gradients
-            # to the original torch.Tensor, we call an autograd function to construct
-            # the dist tensor instead.
-            dist_tensor = (
-                FromTorchTensor.apply(  # pyre-ignore[16]: autograd func
-                    local_tensor, tensor_shape, device_mesh, placements
-                )
-            )
-
-        return dist_tensor
+        # `from_local` is differentiable, and the gradient of the dist tensor this function
+        # created should flow back the gradients to the local_tensor, so we call an autograd
+        # function to construct the dist tensor instead.
+        return FromTorchTensor.apply(  # pyre-ignore[16]: autograd func
+                local_tensor, device_mesh, placements
+        )
 
     def redistribute(
         self,
