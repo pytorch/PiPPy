@@ -1,5 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import List
+from typing import Sequence, Optional
 import torch
 import torch.nn as nn
 from spmd.tensor import Tensor, Placement, Shard, Replicate, _Partial
@@ -8,14 +8,11 @@ from spmd.tensor.device_mesh import get_global_device_mesh, DeviceMesh
 torch.__future__.set_overwrite_module_params_on_conversion(True)
 
 
-# pyre-fixme[3]: Return type must be annotated.
 def distribute_tensor(
     tensor: torch.Tensor,
-    # pyre-fixme[9]: device_mesh has type `DeviceMesh`; used as `None`.
-    device_mesh: DeviceMesh = None,
-    # pyre-fixme[9]: placements has type `List[Placement]`; used as `None`.
-    placements: List[Placement] = None,
-):
+    device_mesh: Optional[DeviceMesh] = None,
+    placements: Optional[Sequence[Placement]] = None,
+) -> Tensor:
     # get default device mesh if there's nothing specified
     device_mesh = (
         get_global_device_mesh() if device_mesh is None else device_mesh
@@ -49,9 +46,7 @@ def distribute_tensor(
             dist_tensor = Tensor(
                 local_tensor, device_mesh, placements
             )
-        elif isinstance(placement, Replicate) or isinstance(
-            placement, _Partial
-        ):
+        elif isinstance(placement, Replicate):
             dist_tensor = Tensor(tensor, device_mesh, placements)
         else:
             raise RuntimeError("Not supported!")
@@ -63,10 +58,8 @@ def distribute_tensor(
 # pyre-fixme[3]: Return type must be annotated.
 def distribute_module(
     mod: nn.Module,
-    # pyre-fixme[9]: device_mesh has type `DeviceMesh`; used as `None`.
-    device_mesh: DeviceMesh = None,
-    # pyre-fixme[9]: spec has type `List[Placement]`; used as `None`.
-    spec: List[Placement] = None,
+    device_mesh: Optional[DeviceMesh] = None,
+    spec: Optional[Sequence[Placement]] = None,
 ):
     """
     this function coverts all module parameters
