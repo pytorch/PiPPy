@@ -38,7 +38,11 @@ def distribute_tensor(
             num_chunks = device_mesh.size()
             assert (
                 tensor.size(shard_dim) % num_chunks == 0
-            ), "Only support chunk sharding evenly now"
+            ), (
+                f"Only support chunk sharding evenly now, but tensor got "
+                f"dimension {shard_dim} of size {tensor.size(shard_dim)}, "
+                f"which does not divide number of shards {num_chunks}."
+            )
             chunk_size = tensor.size(shard_dim) // num_chunks
             tensor_list = list(tensor.chunk(num_chunks, dim=shard_dim))
             scatter_shape = list(tensor.size())
