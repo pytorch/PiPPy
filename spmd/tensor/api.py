@@ -58,7 +58,10 @@ class FromTorchTensor(torch.autograd.Function):
             layout=input.layout,
             requires_grad=input.requires_grad,
         )
-        dist_tensor._local_tensor = input
+        # detach local tensor from autograd graph as we initialize the
+        # distributed tensor and autograd will be working on top of
+        # the wrapper tensor directly
+        dist_tensor._local_tensor = input.detach()
         return dist_tensor
 
     @staticmethod
@@ -307,13 +310,15 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
                 layout=local_tensor.layout,
                 requires_grad=local_tensor.requires_grad,
             )
-            dist_tensor._local_tensor = local_tensor
+            dist_tensor._local_tensor = local_tensor.detach()
         else:
             # Otherwise, it's an activation and we should flow back the gradients
             # to the original torch.Tensor, we call an autograd function to construct
             # the dist tensor instead.
-            dist_tensor = FromTorchTensor.apply(  # pyre-ignore[16]: autograd func
-                local_tensor, tensor_shape, device_mesh, placements
+            dist_tensor = (
+                FromTorchTensor.apply(  # pyre-ignore[16]: autograd func
+                    local_tensor, tensor_shape, device_mesh, placements
+                )
             )
 
         return dist_tensor
