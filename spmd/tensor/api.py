@@ -1,11 +1,16 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import copy
 import torch
-from torch.utils._pytree import tree_map
+from torch.utils._pytree import tree_map, tree_flatten
 from typing import Dict, Callable, Optional, Sequence
 from spmd.tensor.device_mesh import get_global_device_mesh, DeviceMesh
 from spmd.tensor.placement_types import Placement, Shard, Replicate, _Partial
 from spmd.tensor.redistribute import Redistribute
+
+"""
+If set to true, __DEBUG_STRICT will fail when an op doesn't have a sharding rule registered.
+"""
+_DEBUG_STRICT = False
 
 
 class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
@@ -65,6 +70,15 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     # pyre-fixme[3]: Return type must be annotated.
     # pyre-fixme[2]: Parameter must be annotated.
     def __torch_dispatch__(cls, func, types, args=(), kwargs=None):
+
+        # check that we are not getting mixed vanilla and Distributed tensors
+        arg_list, arg_spec = tree_flatten(args)
+        for arg in arg_list:
+            if isinstance(arg, torch.Tensor) and not isinstance(arg, Tensor):
+                raise RuntimeError(
+                    f"{func}: got mixed distributed and non-distributed tensors."
+                )
+
         def unwrap_mesh(e: Tensor) -> DeviceMesh:
             # if this tensor is not Distributed, then return none. We will reinterpret it as replicated
             if not isinstance(e, Tensor):
@@ -108,11 +122,16 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
             # dispatch to distributed tensor ops
             return Tensor._dist_tensor_dispatch_ops[str(func)](*args, **kwargs)
         else:
+            if _DEBUG_STRICT:
+                raise RuntimeError(
+                    f"Operator {func} does not have a DistributedTensor rule registered."
+                )
             # default to local tensor ops, this is wrong
             # but we use it now to enable more tensor property access
-            rs = func(*tree_map(unwrap, args), **tree_map(unwrap, kwargs))
-            rs = wrap(rs, args_mesh[0], args[0].placements)
-            return rs
+            else:
+                rs = func(*tree_map(unwrap, args), **tree_map(unwrap, kwargs))
+                rs = wrap(rs, args_mesh[0], args[0].placements)
+                return rs
 
     @classmethod
     def from_local(
