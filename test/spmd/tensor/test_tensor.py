@@ -72,9 +72,7 @@ class DistTensorTest(DistTensorTestBase):
         shard_spec = [Shard(0)]
         local_tensor_with_grad = torch.randn(3, 3, requires_grad=True)
 
-        sharded_tensor = Tensor(
-            local_tensor_with_grad, device_mesh, shard_spec
-        )
+        sharded_tensor = Tensor(local_tensor_with_grad, device_mesh, shard_spec)
         self.assertEqual(sharded_tensor.size(), torch.Size([12, 3]))
         self.assertEqual(sharded_tensor.local_tensor(), local_tensor_with_grad)
 
@@ -90,9 +88,7 @@ class DistTensorTest(DistTensorTestBase):
         res.sum().backward()
         self.assertIsNotNone(sharded_tensor.grad)
 
-        expected_grad = Tensor(
-            torch.ones(3, 3) * 3, device_mesh, shard_spec
-        )
+        expected_grad = Tensor(torch.ones(3, 3) * 3, device_mesh, shard_spec)
         self.assertEqual(
             sharded_tensor.grad.local_tensor(), expected_grad.local_tensor()
         )

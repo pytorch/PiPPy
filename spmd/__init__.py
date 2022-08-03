@@ -43,9 +43,7 @@ def distribute_tensor(
             scatter_shape = list(tensor.size())
             scatter_shape[shard_dim] = chunk_size
             local_tensor = device_mesh.scatter(tensor_list)
-            dist_tensor = Tensor(
-                local_tensor, device_mesh, placements
-            )
+            dist_tensor = Tensor(local_tensor, device_mesh, placements)
         elif isinstance(placement, Replicate):
             dist_tensor = Tensor(tensor, device_mesh, placements)
         else:

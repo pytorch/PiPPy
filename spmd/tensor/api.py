@@ -288,7 +288,7 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # created should flow back the gradients to the local_tensor, so we call an autograd
         # function to construct the dist tensor instead.
         return FromTorchTensor.apply(  # pyre-ignore[16]: autograd func
-                local_tensor, device_mesh, placements
+            local_tensor, device_mesh, placements
         )
 
     def redistribute(
