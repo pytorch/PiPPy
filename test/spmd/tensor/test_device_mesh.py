@@ -28,7 +28,9 @@ class DeviceMeshTest(DistTensorTestBase):
         local_tensor = torch.randn(3, 3)
         dist_tensor = Tensor.from_local(local_tensor, mesh, shard_spec)
         self.assertEqual(dist_tensor.device.type, self.device_type)
-        self.assertEqual(dist_tensor.local_tensor().device.type, self.device_type)
+        self.assertEqual(
+            dist_tensor.local_tensor().device.type, self.device_type
+        )
 
     @with_comms
     def test_device_mesh_context_manager(self):
@@ -42,9 +44,13 @@ class DeviceMeshTest(DistTensorTestBase):
         with DeviceMesh(self.device_type, list(range(self.world_size))):
             shard_spec = [Shard(0)]
             local_tensor = torch.randn(3, 3)
-            sharded_tensor = Tensor.from_local(local_tensor, placements=shard_spec)
+            sharded_tensor = Tensor.from_local(
+                local_tensor, placements=shard_spec
+            )
             replica_spec = [Replicate()]
-            replica_tensor = sharded_tensor.redistribute(placements=replica_spec)
+            replica_tensor = sharded_tensor.redistribute(
+                placements=replica_spec
+            )
             self.assertEqual(
                 replica_tensor.size(), torch.Size([3 * self.world_size, 3])
             )
@@ -80,7 +86,9 @@ class DeviceMeshTest(DistTensorTestBase):
         dist_tensor = Tensor.from_local(local_tensor, mesh, shard_spec)
         self.assertEqual(dist_tensor.size(), torch.Size([6, 6]))
         self.assertEqual(dist_tensor.device.type, self.device_type)
-        self.assertEqual(dist_tensor.local_tensor().device.type, self.device_type)
+        self.assertEqual(
+            dist_tensor.local_tensor().device.type, self.device_type
+        )
 
         # if shard on the same tensor dimension
         # we should correctly construct the global tensor size
@@ -101,7 +109,9 @@ class DeviceMeshTest(DistTensorTestBase):
                     dim_groups.append(subgroup)
 
         # construct a device mesh from the subgroups
-        mesh = DeviceMesh(self.device_type, [[0, 1], [2, 3]], dim_groups=dim_groups)
+        mesh = DeviceMesh(
+            self.device_type, [[0, 1], [2, 3]], dim_groups=dim_groups
+        )
 
         # check all dim groups
         dim_to_subgroups = mesh.get_dim_groups()
@@ -126,7 +136,9 @@ class DeviceMeshTest(DistTensorTestBase):
         dist_tensor = Tensor.from_local(local_tensor, mesh, shard_spec)
         self.assertEqual(dist_tensor.size(), torch.Size([6, 6]))
         self.assertEqual(dist_tensor.device.type, self.device_type)
-        self.assertEqual(dist_tensor.local_tensor().device.type, self.device_type)
+        self.assertEqual(
+            dist_tensor.local_tensor().device.type, self.device_type
+        )
 
     @with_comms
     def test_device_mesh_nd(self):
@@ -159,7 +171,9 @@ class DeviceMeshTest(DistTensorTestBase):
         dist_tensor = Tensor.from_local(local_tensor, mesh, shard_spec)
         self.assertEqual(dist_tensor.size(), torch.Size([6, 6, 6]))
         self.assertEqual(dist_tensor.device.type, self.device_type)
-        self.assertEqual(dist_tensor.local_tensor().device.type, self.device_type)
+        self.assertEqual(
+            dist_tensor.local_tensor().device.type, self.device_type
+        )
 
         # construct a dist tensor on 3d device mesh with some shards on same dim
         shard_spec = [Shard(0), Shard(0), Shard(2)]
@@ -167,7 +181,9 @@ class DeviceMeshTest(DistTensorTestBase):
         dist_tensor = Tensor.from_local(local_tensor, mesh, shard_spec)
         self.assertEqual(dist_tensor.size(), torch.Size([12, 3, 6]))
         self.assertEqual(dist_tensor.device.type, self.device_type)
-        self.assertEqual(dist_tensor.local_tensor().device.type, self.device_type)
+        self.assertEqual(
+            dist_tensor.local_tensor().device.type, self.device_type
+        )
 
 
 class DeviceMeshCollectiveTest(DistTensorTestBase):
@@ -193,7 +209,9 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
     @with_comms
     def test_scatter_1d(self):
         mesh = DeviceMesh(self.device_type, torch.arange(self.world_size))
-        tensor_list = [torch.ones(3, 3) * rank for rank in range(self.world_size)]
+        tensor_list = [
+            torch.ones(3, 3) * rank for rank in range(self.world_size)
+        ]
         scattered_tensor = mesh.scatter(tensor_list, mesh_dim=0)
         self.assertEqual(scattered_tensor, torch.ones(3, 3) * self.rank)
 
@@ -224,7 +242,9 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
         # each rank have its own tensor, all_gather_base give a big tensor
         local_tensor = torch.ones(3, 3)
         res_tensor = torch.empty(self.world_size * 3, 3)
-        gathered_tensor = mesh.all_gather_base(res_tensor, local_tensor, mesh_dim=0)
+        gathered_tensor = mesh.all_gather_base(
+            res_tensor, local_tensor, mesh_dim=0
+        )
         self.assertEqual(gathered_tensor, torch.ones(self.world_size * 3, 3))
 
     @with_comms
@@ -290,7 +310,9 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
                     torch.ones(3, 3) * global_rank for global_rank in ranks
                 ]
                 if self.rank in ranks:
-                    received_tensor = mesh.scatter(scattered_tensors, mesh_dim=dim)
+                    received_tensor = mesh.scatter(
+                        scattered_tensors, mesh_dim=dim
+                    )
                     break
             self.assertEqual(received_tensor, torch.ones(3, 3) * self.rank)
 
