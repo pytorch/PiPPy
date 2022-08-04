@@ -1,5 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 # implement matrix related ops for distributed tensor
+from locale import currency
 import torch.utils._pytree as pytree
 from torch.distributed.distributed_c10d import ReduceOp
 from spmd.tensor.api import Tensor
@@ -16,17 +17,18 @@ def dist_addmm(
     input: Tensor,
     mat1: Tensor,
     mat2: Tensor,
-    # pyre-fixme[2]: Parameter must be annotated.
-    beta=1,
-    # pyre-fixme[2]: Parameter must be annotated.
-    alpha=1,
+    beta: float = 1,
+    alpha: float = 1,
 ) -> Tensor:
     # dist addmm:
+    # input:replicate   mat1: replicate,  mat2: replicate
     # input:shard(0)    mat1: shard(0),  mat2: replicate
     # input:shard(1)    mat1: replicate, mat2: shard(1)
-    # input:replicate   mat1: shard(0),  mat2: replicate
-    # input:replicate   mat1: replicate, mat2: shard(1)
-    # input:replicate   mat1: shard(0),  mat2: shard(1)
+    # input:partial   mat1: shard(1),  mat2: shard(0)
+
+    # only implemented combo with no comm for now
+    # TODO: implement all combinations
+
     local_input, local_mat1, local_mat2 = pytree.tree_map(
         unwrap_local_tensor, (input, mat1, mat2)
     )
@@ -34,32 +36,29 @@ def dist_addmm(
         unwrap_single_placement, (input, mat1, mat2)
     )
     device_mesh = mat1.device_mesh
+    if (
+        input_placement.is_shard(dim=0)
+        and mat1_placement.is_replicate()
+        and mat2_placement.is_shard(dim=1)
+    ):
+        local_res = local_input.addmm(local_mat1, local_mat2, beta=beta, alpha=alpha)
+        output_placement = [mat2_placement]
+        return Tensor.from_local(local_res, device_mesh, output_placement)
+    elif (
+        input_placement.is_replicate()
+        and mat1_placement.is_shard(dim=1)
+        and mat2_placement.is_shard(dim=0)
+    ):
+        # hack: to get the correct result
+        current_rank = device_mesh.get_rank()
+        if current_rank != 0:
+            local_input.zero_()
+        local_res = local_input.addmm(local_mat1, local_mat2, beta=beta, alpha=alpha)
+        output_placement = [_Partial(ReduceOp.SUM)]
 
-    assert input_placement.is_replicate(), "only support replication now"
-
-    # only implemented combo with no comm for now
-    # TODO: implement all combinations
-    if mat1_placement.is_shard(dim=0) and mat2_placement.is_replicate():
-        local_res = local_input.addmm(
-            local_mat1, local_mat2, beta=beta, alpha=alpha
-        )
-        return Tensor.from_local(local_res, device_mesh, mat1.placements)
-    elif mat1_placement.is_replicate() and mat2_placement.is_shard(dim=1):
-        local_res = local_input.addmm(
-            local_mat1, local_mat2, beta=beta, alpha=alpha
-        )
-        return Tensor.from_local(local_res, device_mesh, mat2.placements)
-    elif mat1_placement.is_replicate() and mat2_placement.is_replicate():
-        local_res = local_input.addmm(
-            local_mat1, local_mat2, beta=beta, alpha=alpha
-        )
-        return Tensor.from_local(
-            local_res, device_mesh, mat1.placements, run_check=False
-        )
+        return Tensor.from_local(local_res, device_mesh, output_placement)
     else:
-        raise RuntimeError(
-            f"addmm operator supported for inputs: {mat1}, {mat2}"
-        )
+        raise RuntimeError("not supported!")
 
 
 @register_impl("aten.mm.default")
@@ -104,6 +103,4 @@ def dist_t(self: Tensor) -> Tensor:
     device_mesh = self.device_mesh
 
     new_shard_dim = 1 if mat_placement.is_shard(dim=0) else 0
-    return Tensor.from_local(
-        transposed_local_mat, device_mesh, [Shard(new_shard_dim)]
-    )
+    return Tensor.from_local(transposed_local_mat, device_mesh, [Shard(new_shard_dim)])
