@@ -1,7 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import os
 import torch
-from spmd.tensor import Tensor, DeviceMesh, Shard, Replicate
+from spmd.tensor import DTensor, DeviceMesh, Shard, Replicate
 
 
 def synthetic_data(w, b, num_examples):
@@ -36,7 +36,7 @@ def main():
     print(f"rank = {rank}, true_w = {true_w}, true_b = {true_b}")
 
     # model params, replicated to all ranks with `placements=[Replicate()]`
-    w = spmd.Tensor(
+    w = spmd.DTensor(
         [[100.0], [100.0]],
         requires_grad=True,
         device_mesh=mesh,
@@ -52,12 +52,12 @@ def main():
     for epoch in range(num_epochs):
         for i in range(num_iters):
             # X, y are local tensors, we need to create distributed tensor from local
-            # torch.Tensor, and use DistributedTensor as model input to implement data parallel
+            # torch.Tensor, and use DTensor as model input to implement data parallel
             X, y = synthetic_data(true_w, true_b, batch_size)
-            g_X = Tensor.from_local(
+            g_X = DTensor.from_local(
                 x, device_mesh=mesh, placements=shard_0_placement
             )
-            g_y = Tensor.from_local(
+            g_y = DTensor.from_local(
                 y, device_mesh=mesh, placements=shard_0_placement
             )
             l = loss_func(model(g_X, w, b), g_y)

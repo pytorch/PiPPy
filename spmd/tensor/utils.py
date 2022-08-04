@@ -1,5 +1,4 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-# from .api import Tensor
 
 
 # pyre-fixme[3]: Return type must be annotated.

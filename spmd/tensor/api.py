@@ -15,7 +15,7 @@ If set to true, __DEBUG_STRICT will fail when an op doesn't have a sharding rule
 _DEBUG_STRICT = False
 
 
-class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
+class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     _local_tensor: torch.Tensor
     _device_mesh: DeviceMesh
     _placements: Sequence[Placement]
@@ -34,7 +34,7 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         size: torch.Size,
         # pyre-fixme[2]: Parameter must be annotated.
         **kwargs,
-    ) -> "Tensor":
+    ) -> "DTensor":
         # new method instruct wrapper tensor and add placement spec
         # it does not do actual distribution, __init__ should do it instead.
         # TODO: implement __init__ for tensor constructors
@@ -65,7 +65,7 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     # pyre-fixme[3]: Return type must be annotated.
     def __repr__(self):
         # TODO: consider all_gather the local tensors for better debugging
-        return f"DistributedTensor({self._local_tensor}, placements={self._placements})"
+        return f"DTensor({self._local_tensor}, placements={self._placements})"
 
     @classmethod
     # pyre-fixme[3]: Return type must be annotated.
@@ -74,10 +74,10 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # if we find nn.functional name in dispatch op, dispatch to it instead,
         # this allow us to override some python level behaviors that wouldn't be
         # possible in __torch_dispatch__ level.
-        if func.__name__ in Tensor._dist_tensor_dispatch_ops:
+        if func.__name__ in DTensor._dist_tensor_dispatch_ops:
             # dispatch to the same table as the name should be different between
             # torch_function and torch_dispatch
-            return Tensor._dist_tensor_dispatch_ops[func.__name__](
+            return DTensor._dist_tensor_dispatch_ops[func.__name__](
                 *args, **kwargs
             )
         else:
@@ -92,31 +92,31 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # check that we are not getting mixed vanilla and Distributed tensors
         arg_list, arg_spec = tree_flatten(args)
         for arg in arg_list:
-            if isinstance(arg, torch.Tensor) and not isinstance(arg, Tensor):
+            if isinstance(arg, torch.Tensor) and not isinstance(arg, DTensor):
                 raise RuntimeError(
                     f"{func}: got mixed distributed and non-distributed tensors."
                 )
 
-        def unwrap_mesh(e: Tensor) -> DeviceMesh:
+        def unwrap_mesh(e: DTensor) -> DeviceMesh:
             # if this tensor is not Distributed, then return none. We will reinterpret it as replicated
-            if not isinstance(e, Tensor):
+            if not isinstance(e, DTensor):
                 return None
             mesh = e.device_mesh
             assert (
                 mesh.ndim == 1
-            ), "DistributedTensor ops not supporting multi-dim mesh yet"
+            ), "DTensor ops not supporting multi-dim mesh yet"
             return mesh
 
         # pyre-fixme[3]: Return type must be annotated.
         # pyre-fixme[2]: Parameter must be annotated.
         def unwrap(e):
-            return e._local_tensor if isinstance(e, Tensor) else e
+            return e._local_tensor if isinstance(e, DTensor) else e
 
         # pyre-fixme[3]: Return type must be annotated.
         # pyre-fixme[2]: Parameter must be annotated.
         def wrap(e, mesh, placements):
             return (
-                Tensor.from_local(e, mesh, placements, run_check=False)
+                DTensor.from_local(e, mesh, placements, run_check=False)
                 if isinstance(e, torch.Tensor)
                 else e
             )
@@ -126,7 +126,7 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         def is_replicate(tensor):
             return (
                 tensor.placements[0] == Replicate()
-                if isinstance(tensor, Tensor)
+                if isinstance(tensor, DTensor)
                 else True
             )
 
@@ -138,7 +138,7 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # take a short cut if all arguments are replicated
         all_replicated = True
         for arg in args:
-            if isinstance(arg, Tensor):
+            if isinstance(arg, DTensor):
                 all_replicated &= is_replicate(arg)
             elif type(arg) is list:
                 all_replicated &= all(tree_map(is_replicate, arg))
@@ -147,13 +147,13 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
             rs = func(*tree_map(unwrap, args), **tree_map(unwrap, kwargs))
             return wrap(rs, args_mesh[0], args[0].placements)
 
-        if str(func) in Tensor._dist_tensor_dispatch_ops:
+        if str(func) in DTensor._dist_tensor_dispatch_ops:
             # dispatch to distributed tensor ops
-            return Tensor._dist_tensor_dispatch_ops[str(func)](*args, **kwargs)
+            return DTensor._dist_tensor_dispatch_ops[str(func)](*args, **kwargs)
         else:
             if _DEBUG_STRICT:
                 raise RuntimeError(
-                    f"Operator {func} does not have a DistributedTensor rule registered."
+                    f"Operator {func} does not have a DTensor rule registered."
                 )
             # default to local tensor ops, this is wrong
             # but we use it now to enable more tensor property access
@@ -169,9 +169,9 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         device_mesh: Optional[DeviceMesh] = None,
         placements: Optional[Sequence[Placement]] = None,
         run_check: bool = True,
-    ) -> "Tensor":
+    ) -> "DTensor":
         """
-        Create a :class:`spmd.Tensor` from a local torch.Tensor on each rank
+        Create a :class:`DTensor` from a local torch.Tensor on each rank
         according to the `device_mesh` and `placements` specified.
 
         Args:
@@ -188,7 +188,7 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
                 will be broadcasted to other ranks.
 
         Returns:
-            A :class:`spmd.Tensor` object
+            A :class:`DTensor` object
         """
         # if same shape/dtype, no need to run_check, if not, must allgather
         # the metadatas to check the size/dtype across ranks
@@ -245,13 +245,16 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         dist_tensor._local_tensor = local_tensor
         return dist_tensor
 
+    def to_local(self) -> torch.Tensor:
+        return self._local_tensor  # type: ignore
+
     def redistribute(
         self,
         device_mesh: Optional[DeviceMesh] = None,
         placements: Optional[Sequence[Placement]] = None,
-    ) -> "Tensor":
+    ) -> "DTensor":
         # This API perform necessary transformations and get
-        # a new DistributedTensor with the new spec. i.e. for
+        # a new DTensor with the new spec. i.e. for
         # sharding it's a reshard behavior.
         # TODO: handle last shard uneven with padding
         # right now we assume all local shard equal size
@@ -264,9 +267,6 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
 
         # pyre-fixme[16]: `Redistribute` has no attribute `apply`.
         return Redistribute.apply(self, device_mesh, placements)
-
-    def local_tensor(self) -> torch.Tensor:
-        return self._local_tensor  # type: ignore
 
     @property
     def placements(self) -> Sequence[Placement]:
@@ -326,8 +326,8 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
                 shape[sharding_dim] // world_size,
                 *shape[sharding_dim + 1 :],
             )
-            new_local_tensor = self.local_tensor().view(*new_local_tensor_size)
+            new_local_tensor = self.to_local().view(*new_local_tensor_size)
 
-            return Tensor.from_local(
+            return DTensor.from_local(
                 new_local_tensor, device_mesh, new_sharding_placement
             )
