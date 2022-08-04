@@ -1,5 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import copy
+import math
 import torch
 from torch.utils._pytree import tree_map, tree_flatten
 from typing import Dict, Callable, Optional, Sequence
@@ -103,6 +104,13 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
                 else e
             )
 
+        def is_replicate(tensor):
+            return (
+                tensor.placements[0] == Replicate()
+                if isinstance(tensor, Tensor)
+                else True
+            )
+
         args_mesh = tree_map(unwrap_mesh, args)
         # assert all_equal(spec.device_mesh for spec in args_spec), "can't compuate across different meshes"
         # for spec in args_spec:
@@ -112,7 +120,9 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         all_replicated = True
         for arg in args:
             if isinstance(arg, Tensor):
-                all_replicated &= arg.placements[0] == Replicate()
+                all_replicated &= is_replicate(arg)
+            elif type(arg) is list:
+                all_replicated &= all(tree_map(is_replicate, arg))
 
         if all_replicated:
             rs = func(*tree_map(unwrap, args), **tree_map(unwrap, kwargs))
@@ -166,9 +176,7 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # There should be no data communication unless there's replication
         # strategy, where we broadcast the replication from the first rank
         # in the mesh dimension
-        device_mesh = (
-            get_global_device_mesh() if device_mesh is None else device_mesh
-        )
+        device_mesh = get_global_device_mesh() if device_mesh is None else device_mesh
         # convert the local tensor to desired device base on device mesh's device_type
         local_tensor = local_tensor.to(device_mesh.device_type)
 
@@ -182,9 +190,9 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
             if isinstance(placement, Shard):
                 shard_dim = placement.dim
                 # recover tensor shape on the shard dim
-                tensor_shape[shard_dim] = tensor_shape[
-                    shard_dim
-                ] * device_mesh.size(idx)
+                tensor_shape[shard_dim] = tensor_shape[shard_dim] * device_mesh.size(
+                    idx
+                )
             elif isinstance(placement, Replicate):
                 if run_check:
                     # broadcast rank 0 tensor to all ranks
@@ -195,9 +203,7 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
                 # we don't need to do anything to Partial case
                 pass
             else:
-                raise RuntimeError(
-                    f"placement type {type(placement)} not supported!"
-                )
+                raise RuntimeError(f"placement type {type(placement)} not supported!")
 
         if run_check:
             # TODO: by default check tensor metas across rank
@@ -225,9 +231,7 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # sharding it's a reshard behavior.
         # TODO: handle last shard uneven with padding
         # right now we assume all local shard equal size
-        device_mesh = (
-            get_global_device_mesh() if device_mesh is None else device_mesh
-        )
+        device_mesh = get_global_device_mesh() if device_mesh is None else device_mesh
         # raise error if new placements not specified
         if placements is None:
             raise RuntimeError("placements is needed for redistribute!")
@@ -237,6 +241,44 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
 
     def local_tensor(self) -> torch.Tensor:
         return self._local_tensor  # type: ignore
+
+    def _view_with_sharding_dim_change(self, sharding_dim, shape):
+        if self.placements[0].is_shard(dim=sharding_dim):
+            return self.view(shape)
+        else:
+            if sharding_dim < 0:
+                sharding_dim += self.dim()
+
+            device_mesh = self.device_mesh
+            world_size = device_mesh._dim_groups[0].size()
+            new_sharding_placement = [Shard(sharding_dim)]
+
+            # Fix shape
+            try:
+                infer_idx = shape.index(-1)
+            except ValueError:
+                infer_idx = None
+
+            # Infer the dim which is specified with -1.
+            if infer_idx is not None:
+                st_size = math.prod(self.size())  # type: ignore[attr-defined]
+                shape_size = -1 * math.prod(shape)  # type: ignore[attr-defined]
+                shape = (
+                    *shape[:infer_idx],
+                    st_size // shape_size,
+                    *shape[infer_idx + 1 :],
+                )
+
+            new_local_tensor_size = (
+                *shape[:sharding_dim],
+                shape[sharding_dim] // world_size,
+                *shape[sharding_dim + 1 :],
+            )
+            new_local_tensor = self.local_tensor().view(*new_local_tensor_size)
+
+            return Tensor.from_local(
+                new_local_tensor, device_mesh, new_sharding_placement
+            )
 
     @property
     def placements(self) -> Sequence[Placement]:
@@ -253,3 +295,8 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # caller who want a different device_mesh
         # should call redistribute instead.
         return self._device_mesh
+
+    def contiguous(self) -> "Tensor":
+        return Tensor.from_local(
+            self._local_tensor.contiguous(), self.device_mesh, self.placements
+        )
