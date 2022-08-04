@@ -258,6 +258,63 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
         )
         self.assertEqual(reduce_scattered_tensor, torch.ones(3, 3) * res_num)
 
+    @with_comms
+    def test_all_reduce_nd(self):
+        mesh_tensor = torch.arange(8).reshape(2, 2, 2)
+        mesh = DeviceMesh(self.device_type, mesh_tensor)
+        local_tensor = torch.ones(3, 3) * self.rank
+        expected_ranks_by_dim = [[[0, 4], [2, 6],
+                                  [1, 5], [3, 7]],
+                                 [[0, 2], [1, 3],
+                                  [4, 6], [5, 7]],
+                                 [[0, 1], [2, 3],
+                                  [4, 5], [6, 7]]]
+        for dim, dim_ranks in enumerate(expected_ranks_by_dim):
+            for ranks in dim_ranks:
+                if self.rank in ranks:
+                    reduced_tensor = mesh.all_reduce(local_tensor, mesh_dim=dim)
+                    res_num = sum(ranks)
+                    break
+            self.assertEqual(reduced_tensor, torch.ones(3, 3) * res_num)
+
+    @with_comms
+    def test_broadcast_nd(self):
+        mesh_tensor = torch.arange(8).reshape(2, 2, 2)
+        mesh = DeviceMesh(self.device_type, mesh_tensor)
+        local_tensor = torch.ones(3, 3) * self.rank
+        expected_ranks_by_dim = [[[0, 4], [2, 6],
+                                  [1, 5], [3, 7]],
+                                 [[0, 2], [1, 3],
+                                  [4, 6], [5, 7]],
+                                 [[0, 1], [2, 3],
+                                  [4, 5], [6, 7]]]
+        for dim, dim_ranks in enumerate(expected_ranks_by_dim):
+            for ranks in dim_ranks:
+                if self.rank in ranks:
+                    received_tensor = mesh.broadcast(local_tensor, mesh_dim=dim)
+                    res_num = ranks[0]
+                    break
+            self.assertEqual(received_tensor, torch.ones(3, 3) * res_num)
+
+    @with_comms
+    def test_scatter_nd(self):
+        mesh_tensor = torch.arange(8).reshape(2, 2, 2)
+        mesh = DeviceMesh(self.device_type, mesh_tensor)
+
+        expected_ranks_by_dim = [[[0, 4], [2, 6],
+                                  [1, 5], [3, 7]],
+                                 [[0, 2], [1, 3],
+                                  [4, 6], [5, 7]],
+                                 [[0, 1], [2, 3],
+                                  [4, 5], [6, 7]]]
+        for dim, dim_ranks in enumerate(expected_ranks_by_dim):
+            for ranks in dim_ranks:
+                scattered_tensors = [torch.ones(3, 3) * global_rank for global_rank in ranks]
+                if self.rank in ranks:
+                    received_tensor = mesh.scatter(scattered_tensors, mesh_dim=dim)
+                    break
+            self.assertEqual(received_tensor, torch.ones(3, 3) * self.rank)
+
 
 if __name__ == "__main__":
     run_tests()
