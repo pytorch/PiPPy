@@ -6,7 +6,10 @@ from torch.distributed.distributed_c10d import (
     get_rank,
     get_world_size,
     ReduceOp,
+    GroupMember,
+    scatter,
     _get_default_group,
+    _get_global_rank,
     _reduce_scatter_base,
     new_group,
     ProcessGroup,
@@ -18,7 +21,6 @@ from torch.distributed.nn.functional import (
     _all_gather_base,
     all_reduce,
     broadcast,
-    scatter,
 )
 
 _global_device_mesh: Optional["DeviceMesh"] = None
@@ -92,7 +94,11 @@ class DeviceMesh(object):
         dim_groups: Optional[List[ProcessGroup]] = None,
     ) -> None:
         self.device_type = device_type
-        self.mesh = torch.tensor(mesh, dtype=torch.int)
+        self.mesh = (
+            mesh.detach()
+            if isinstance(mesh, torch.Tensor)
+            else torch.tensor(mesh, dtype=torch.int)
+        )
         default_pg = _get_default_group()
         backend_name = default_pg._get_backend_name()
         # TODO: if user want to pass pg_options, offer a way to do it
@@ -211,37 +217,86 @@ class DeviceMesh(object):
         return get_rank()
 
     def scatter(
-        self, tensors: List[torch.Tensor], src: int = 0
+        self, scatter_list: List[torch.Tensor], mesh_dim: int = 0
     ) -> torch.Tensor:
-        return scatter(tensors, src=src)
+        """
+        scatter the list of tensors to a device mesh dimension. We by default
+        use the first rank of the mesh dimension as the source of truth, i.e
+        for a 2d mesh [[0, 1], [2, 3]], if we scatter on mesh_dim = 1, we will
+        scatter the tensor list on rank 0 to rank 0/1, and tensor list on rank 2
+        to rank 2/3.
+
+        Args:
+            scatter_list (List[torch.Tensor]): list of tensors to scatter.
+            mesh_dim (int, optional): indicate which mesh dimension we want
+                to scatter on, we by default choose the first rank on the
+                mesh dimension.
+
+        Returns:
+            A :class:`spmd.Tensor` object
+        """
+        to_scatter = [tensor.contiguous() for tensor in scatter_list]
+        dim_group = self._dim_groups[mesh_dim]
+        # src need to be global rank
+        src_for_dim = 0
+        if dim_group is not GroupMember.WORLD:
+            src_for_dim = _get_global_rank(dim_group, 0)
+        tensor = torch.empty_like(to_scatter[0])
+        if src_for_dim == get_rank():
+            scatter(
+                tensor,
+                scatter_list=to_scatter,
+                src=src_for_dim,
+                group=dim_group,
+            )
+        else:
+            scatter(tensor, scatter_list=None, src=src_for_dim, group=dim_group)
+        return tensor
 
     # pyre-fixme[3]: Return type must be annotated.
     def broadcast(self, tensor: torch.Tensor, mesh_dim: int = 0):
-        return broadcast(tensor, src=0, group=self._dim_groups[mesh_dim])
+        dim_group = self._dim_groups[mesh_dim]
+        # src need to be global rank
+        src_for_dim = 0
+        if dim_group is not GroupMember.WORLD:
+            src_for_dim = _get_global_rank(dim_group, 0)
+
+        return broadcast(tensor, src=src_for_dim, group=dim_group)
 
     # pyre-fixme[3]: Return type must be annotated.
-    def all_gather(self, tensor: torch.Tensor):
-        return all_gather(tensor)
+    def all_gather(self, tensor: torch.Tensor, mesh_dim: int = 0):
+        dim_group = self._dim_groups[mesh_dim]
+        return all_gather(tensor, group=dim_group)
 
     # pyre-fixme[3]: Return type must be annotated.
     def all_gather_base(
-        self, output_tensor: torch.Tensor, tensor: torch.Tensor
+        self,
+        output_tensor: torch.Tensor,
+        tensor: torch.Tensor,
+        mesh_dim: int = 0,
     ):
         # only nccl have all_gather base
         if self.backend() == "nccl":
-            return _all_gather_base(output_tensor, tensor)
+            return _all_gather_base(
+                output_tensor, tensor, group=self._dim_groups[mesh_dim]
+            )
         else:
             # if not nccl, fallback to use all_gather
-            # and reform the output tensor
-            gathered_chunks = self.all_gather(tensor)
+            # and reform the output tensor by concat
+            gathered_chunks = self.all_gather(tensor, mesh_dim=mesh_dim)
             # TODO: find more performant way
-            for chunk in gathered_chunks:
-                output_tensor.copy_(torch.cat(gathered_chunks))
+            output_tensor.copy_(torch.cat(gathered_chunks))
             return output_tensor
 
     # pyre-fixme[3]: Return type must be annotated.
-    def all_reduce(self, tensor: torch.Tensor, op: ReduceOp = ReduceOp.SUM):
-        return all_reduce(tensor, op=op)
+    def all_reduce(
+        self,
+        tensor: torch.Tensor,
+        op: ReduceOp = ReduceOp.SUM,
+        mesh_dim: int = 0,
+    ):
+        dim_group = self._dim_groups[mesh_dim]
+        return all_reduce(tensor, op=op, group=dim_group)
 
     # pyre-fixme[3]: Return type must be annotated.
     def reduce_scatter_base(
@@ -249,6 +304,7 @@ class DeviceMesh(object):
         output: torch.Tensor,
         input: torch.Tensor,
         op: ReduceOp = ReduceOp.SUM,
+        mesh_dim: int = 0,
     ):
         # NOTE: two caveats:
         # 1. only NCCL support reduce_scatter
@@ -258,12 +314,14 @@ class DeviceMesh(object):
         #    this in other case which requires autograd, we should
         #    add the autograd enabled collective in distributed/nn/functional
         if self.backend() == "nccl":
-            _reduce_scatter_base(output, input, op)
+            _reduce_scatter_base(
+                output, input, op, group=self._dim_groups[mesh_dim]
+            )
             return output
         else:
             # it's gloo, which does not have reduce_scatter
             # we have to do all_reduce + scatter
-            reduced_tensor = self.all_reduce(input)
+            reduced_tensor = self.all_reduce(input, mesh_dim=mesh_dim)
             shard_dim = 0
             num_chunks = 0
             for i in range(input.ndim):
@@ -273,4 +331,4 @@ class DeviceMesh(object):
                     break
 
             chunks = reduced_tensor.chunk(num_chunks, dim=shard_dim)
-            return self.scatter(chunks)
+            return self.scatter(chunks, mesh_dim=mesh_dim)
