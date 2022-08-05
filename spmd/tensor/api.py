@@ -8,6 +8,7 @@ from spmd.tensor.device_mesh import get_global_device_mesh, DeviceMesh
 from spmd.tensor.placement_types import Placement, Shard, Replicate, _Partial
 from spmd.tensor.redistribute import Redistribute
 
+
 """
 If set to true, __DEBUG_STRICT will fail when an op doesn't have a sharding rule registered.
 """
@@ -42,11 +43,13 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         dtype = kwargs["dtype"]
         layout = kwargs["layout"]
         requires_grad = kwargs["requires_grad"]
+        strides = kwargs["strides"]
         device = kwargs.get("device", "cpu")
 
         r = torch.Tensor._make_wrapper_subclass(  # type: ignore[attr-defined]
             cls,
             size,
+            strides=strides,
             dtype=dtype,
             device=device,
             layout=layout,
@@ -67,7 +70,7 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     @classmethod
     # pyre-fixme[3]: Return type must be annotated.
     # pyre-fixme[2]: Parameter must be annotated.
-    def __torch_function__(cls, func, types, args=(), kwargs=None):
+    def __torch_function__(cls, func, types, args=(), kwargs={}):
         # if we find nn.functional name in dispatch op, dispatch to it instead,
         # this allow us to override some python level behaviors that wouldn't be
         # possible in __torch_dispatch__ level.
@@ -225,6 +228,7 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
             device_mesh,
             placements,
             torch.Size(tensor_shape),
+            strides=local_tensor.stride(),
             dtype=local_tensor.dtype,
             device=local_tensor.device,
             layout=local_tensor.layout,
@@ -269,3 +273,41 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # caller who want a different device_mesh
         # should call redistribute instead.
         return self._device_mesh
+
+    def _view_with_sharding_dim_change(self, sharding_dim, shape):
+        if self.placements[0].is_shard(dim=sharding_dim):
+            return self.view(shape)
+        else:
+            if sharding_dim < 0:
+                sharding_dim += self.dim()
+
+            device_mesh = self.device_mesh
+            world_size = device_mesh.size(dim=0)
+            new_sharding_placement = [Shard(sharding_dim)]
+
+            # Fix shape
+            try:
+                infer_idx = shape.index(-1)
+            except ValueError:
+                infer_idx = None
+
+            # Infer the dim which is specified with -1.
+            if infer_idx is not None:
+                st_size = math.prod(self.size())  # type: ignore[attr-defined]
+                shape_size = -1 * math.prod(shape)  # type: ignore[attr-defined]
+                shape = (
+                    *shape[:infer_idx],
+                    st_size // shape_size,
+                    *shape[infer_idx + 1 :],
+                )
+
+            new_local_tensor_size = (
+                *shape[:sharding_dim],
+                shape[sharding_dim] // world_size,
+                *shape[sharding_dim + 1 :],
+            )
+            new_local_tensor = self.local_tensor().view(*new_local_tensor_size)
+
+            return Tensor.from_local(
+                new_local_tensor, device_mesh, new_sharding_placement
+            )
