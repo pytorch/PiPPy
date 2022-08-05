@@ -312,7 +312,6 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # should call redistribute instead.
         return self._device_mesh
 
-<<<<<<< HEAD
     def _view_with_sharding_dim_change(self, sharding_dim, shape):
         if self.placements[0].is_shard(dim=sharding_dim):
             return self.view(shape)
@@ -350,9 +349,3 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
             return Tensor.from_local(
                 new_local_tensor, device_mesh, new_sharding_placement
             )
-=======
-    def contiguous(self) -> "Tensor":
-        return Tensor.from_local(
-            self._local_tensor.contiguous(), self.device_mesh, self.placements
-        )
->>>>>>> 14d6dd59b420d8d5320f05e812ad42df3d3a8d48
