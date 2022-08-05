@@ -258,6 +258,58 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
         )
         self.assertEqual(reduce_scattered_tensor, torch.ones(3, 3) * res_num)
 
+    @with_comms
+    def test_all_reduce_nd(self):
+        mesh_tensor = torch.arange(8).reshape(2, 2, 2)
+        mesh = DeviceMesh(self.device_type, mesh_tensor)
+        local_tensor = torch.ones(3, 3) * self.rank
+
+        # check all dim groups
+        dim_to_subgroups = mesh.get_dim_groups()
+        for dim, dim_group in enumerate(dim_to_subgroups):
+            dim_group_size = get_world_size(dim_group)
+            global_ranks = [
+                _get_global_rank(dim_group, i) for i in range(dim_group_size)
+            ]
+            reduced_tensor = mesh.all_reduce(local_tensor, mesh_dim=dim)
+            res_num = sum(global_ranks)
+            self.assertEqual(reduced_tensor, torch.ones(3, 3) * res_num)
+
+    @with_comms
+    def test_broadcast_nd(self):
+        mesh_tensor = torch.arange(8).reshape(2, 2, 2)
+        mesh = DeviceMesh(self.device_type, mesh_tensor)
+        local_tensor = torch.ones(3, 3) * self.rank
+
+        # check all dim groups
+        dim_to_subgroups = mesh.get_dim_groups()
+        for dim, dim_group in enumerate(dim_to_subgroups):
+            dim_group_size = get_world_size(dim_group)
+            global_ranks = [
+                _get_global_rank(dim_group, i) for i in range(dim_group_size)
+            ]
+            received_tensor = mesh.broadcast(local_tensor, mesh_dim=dim)
+            res_num = global_ranks[0]
+            self.assertEqual(received_tensor, torch.ones(3, 3) * res_num)
+
+    @with_comms
+    def test_scatter_nd(self):
+        mesh_tensor = torch.arange(8).reshape(2, 2, 2)
+        mesh = DeviceMesh(self.device_type, mesh_tensor)
+
+        # check all dim groups
+        dim_to_subgroups = mesh.get_dim_groups()
+        for dim, dim_group in enumerate(dim_to_subgroups):
+            dim_group_size = get_world_size(dim_group)
+            global_ranks = [
+                _get_global_rank(dim_group, i) for i in range(dim_group_size)
+            ]
+            scattered_tensors = [
+                torch.ones(3, 3) * global_rank for global_rank in global_ranks
+            ]
+            received_tensor = mesh.scatter(scattered_tensors, mesh_dim=dim)
+            self.assertEqual(received_tensor, torch.ones(3, 3) * self.rank)
+
 
 if __name__ == "__main__":
     run_tests()
