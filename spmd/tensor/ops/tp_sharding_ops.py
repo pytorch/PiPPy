@@ -46,7 +46,7 @@ def dist_view(self: Tensor, *shape) -> Tensor:
     if sharding_dim < 0:
         sharding_dim = self.dim() + sharding_dim
 
-    world_size = self.device_mesh._dim_groups[0].size()
+    world_size = self.device_mesh.size(dim=0)
     if shape[sharding_dim] % world_size:
         raise NotImplementedError(
             f"Case when dim '({shape[sharding_dim]})' is not divisible "
@@ -135,7 +135,7 @@ def dist_split(self: Tensor, split_size_or_sections, dim=0) -> List[Tensor]:
     local_mat = pytree.tree_map(unwrap_local_tensor, self)
     mat_placement = pytree.tree_map(unwrap_single_placement, self)
     sharding_dim = mat_placement.dim
-    world_size = self.device_mesh._dim_groups[0].size()
+    world_size = self.device_mesh.size(dim=0)
     if dim < 0:
         dim = self.dim() + dim
     if sharding_dim < 0:
@@ -152,23 +152,44 @@ def dist_split(self: Tensor, split_size_or_sections, dim=0) -> List[Tensor]:
     ]
 
 
-# @register_impl("aten._reshape_alias.default")
-# def dist_reshape_alias(self: Tensor, split_size_or_sections, dim) -> List[Tensor]:
-#     local_mat = pytree.tree_map(unwrap_local_tensor, self)
-#     mat_placement = pytree.tree_map(unwrap_single_placement, self)
-#     tensor_list = local_mat.split(split_size_or_sections, dim=dim)
-#     return [
-#         Tensor.from_local(tensor, self.device_mesh, mat_placement)
-#         for tensor in tensor_list
-#     ]
+def contiguous(self) -> "Tensor":
+    return Tensor.from_local(
+        self._local_tensor.contiguous(), self.device_mesh, self.placements
+    )
 
 
-# @register_impl("aten._softmax_backward_data.default")
-# def dist_softmax_bwd(self: Tensor, split_size_or_sections, dim) -> List[Tensor]:
-#     local_mat = pytree.tree_map(unwrap_local_tensor, self)
-#     mat_placement = pytree.tree_map(unwrap_single_placement, self)
-#     tensor_list = local_mat.split(split_size_or_sections, dim=dim)
-#     return [
-#         Tensor.from_local(tensor, self.device_mesh, mat_placement)
-#         for tensor in tensor_list
-#     ]
+def _view_with_sharding_dim_change(self, sharding_dim, shape):
+    if self.placements[0].is_shard(dim=sharding_dim):
+        return self.view(shape)
+    else:
+        if sharding_dim < 0:
+            sharding_dim += self.dim()
+
+        device_mesh = self.device_mesh
+        world_size = device_mesh.size(dim=0)
+        new_sharding_placement = [Shard(sharding_dim)]
+
+        # Fix shape
+        try:
+            infer_idx = shape.index(-1)
+        except ValueError:
+            infer_idx = None
+
+        # Infer the dim which is specified with -1.
+        if infer_idx is not None:
+            st_size = math.prod(self.size())  # type: ignore[attr-defined]
+            shape_size = -1 * math.prod(shape)  # type: ignore[attr-defined]
+            shape = (
+                *shape[:infer_idx],
+                st_size // shape_size,
+                *shape[infer_idx + 1 :],
+            )
+
+        new_local_tensor_size = (
+            *shape[:sharding_dim],
+            shape[sharding_dim] // world_size,
+            *shape[sharding_dim + 1 :],
+        )
+        new_local_tensor = self.local_tensor().view(*new_local_tensor_size)
+
+        return Tensor.from_local(new_local_tensor, device_mesh, new_sharding_placement)
