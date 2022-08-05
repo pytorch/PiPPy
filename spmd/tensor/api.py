@@ -258,6 +258,44 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     def local_tensor(self) -> torch.Tensor:
         return self._local_tensor  # type: ignore
 
+    def _view_with_sharding_dim_change(self, sharding_dim, shape):
+        if self.placements[0].is_shard(dim=sharding_dim):
+            return self.view(shape)
+        else:
+            if sharding_dim < 0:
+                sharding_dim += self.dim()
+
+            device_mesh = self.device_mesh
+            world_size = device_mesh._dim_groups[0].size()
+            new_sharding_placement = [Shard(sharding_dim)]
+
+            # Fix shape
+            try:
+                infer_idx = shape.index(-1)
+            except ValueError:
+                infer_idx = None
+
+            # Infer the dim which is specified with -1.
+            if infer_idx is not None:
+                st_size = math.prod(self.size())  # type: ignore[attr-defined]
+                shape_size = -1 * math.prod(shape)  # type: ignore[attr-defined]
+                shape = (
+                    *shape[:infer_idx],
+                    st_size // shape_size,
+                    *shape[infer_idx + 1 :],
+                )
+
+            new_local_tensor_size = (
+                *shape[:sharding_dim],
+                shape[sharding_dim] // world_size,
+                *shape[sharding_dim + 1 :],
+            )
+            new_local_tensor = self.local_tensor().view(*new_local_tensor_size)
+
+            return Tensor.from_local(
+                new_local_tensor, device_mesh, new_sharding_placement
+            )
+
     @property
     def placements(self) -> Sequence[Placement]:
         # placement should be a read only propety
@@ -274,6 +312,7 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # should call redistribute instead.
         return self._device_mesh
 
+<<<<<<< HEAD
     def _view_with_sharding_dim_change(self, sharding_dim, shape):
         if self.placements[0].is_shard(dim=sharding_dim):
             return self.view(shape)
@@ -311,3 +350,9 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
             return Tensor.from_local(
                 new_local_tensor, device_mesh, new_sharding_placement
             )
+=======
+    def contiguous(self) -> "Tensor":
+        return Tensor.from_local(
+            self._local_tensor.contiguous(), self.device_mesh, self.placements
+        )
+>>>>>>> 14d6dd59b420d8d5320f05e812ad42df3d3a8d48
