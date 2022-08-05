@@ -85,17 +85,14 @@ def dist_transpose(self: Tensor, dim0: int, dim1: int) -> Tensor:
 
 
 @register_impl("aten.baddbmm.default")
+# pyre-fixme[2]: Parameter must be annotated.
 def dist_baddbmm(
-    # pyre-fixme[2]: Parameter must be annotated.
-    self: Tensor,
-    batch1: Tensor,
-    batch2: Tensor,
-    beta=1.0,
-    alpha=1.0,
+    self: Tensor, batch1: Tensor, batch2: Tensor, beta=1.0, alpha=1.0
 ) -> Tensor:
     local_input, local_batch1, local_batch2 = pytree.tree_map(
         unwrap_local_tensor, (self, batch1, batch2)
     )
+    # pyre-fixme[2]: Parameter must be annotated.
     local_tensor = torch.ops.aten.baddbmm(
         local_input, local_batch1, local_batch2, beta=beta, alpha=alpha
     )
