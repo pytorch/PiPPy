@@ -43,6 +43,20 @@ class DistTensorTest(DistTensorTestBase):
             )
 
     @with_comms
+    def test_tensor_stride(self):
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        shard_spec = [Shard(0)]
+        local_tensor = torch.randn(6, 3)
+        dist_tensor = Tensor(local_tensor, device_mesh, shard_spec)
+        self.assertEqual(dist_tensor.stride(), (self.world_size * 3, 1))
+
+        # transpose local tensor and check stride
+        transposed_tensor = local_tensor.t()
+        self.assertEqual(transposed_tensor.stride(), (1, 3))
+        dist_tensor = Tensor(transposed_tensor, device_mesh, shard_spec)
+        self.assertEqual(dist_tensor.stride(), (self.world_size, 3))
+
+    @with_comms
     def test_tensor_from_local(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]

@@ -111,14 +111,19 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     ) -> "Tensor":
         # TODO: add a docstr about tensor constructor
         # from_local, and distribute_tensor difference.
+
+        # recover tensor shape and strides in the case of sharding
         tensor_shape = list(local_tensor.size())
-        # recover tensor shape in the case of sharding
+        tensor_stride = list(local_tensor.stride())
         # TODO: also recover the strides in the case of sharding
         for idx, placement in enumerate(placements):
             if isinstance(placement, Shard):
                 shard_dim = placement.dim
                 # recover tensor shape on the shard dim
                 tensor_shape[shard_dim] = tensor_shape[
+                    shard_dim
+                ] * device_mesh.size(idx)
+                tensor_stride[shard_dim] = tensor_stride[
                     shard_dim
                 ] * device_mesh.size(idx)
             elif not isinstance(placement, (Replicate, _Partial)):
@@ -138,15 +143,14 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         r = torch.Tensor._make_wrapper_subclass(  # type: ignore[attr-defined]
             cls,
             torch.Size(tensor_shape),
-            strides=local_tensor.stride(),
+            strides=tensor_stride,
             dtype=local_tensor.dtype,
             device=local_tensor.device,
             layout=local_tensor.layout,
             requires_grad=requires_grad,
         )
         r._device_mesh = device_mesh
-        # deepcopy and set spec, data should be handled
-        # by __init__ or from_local instead.
+        # deepcopy and set spec
         r._placements = copy.deepcopy(placements)
         # detach local tensor from autograd graph as we initialize the
         # distributed tensor and autograd will be working on top of
