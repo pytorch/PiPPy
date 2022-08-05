@@ -35,8 +35,7 @@ class TPShardingOpsTest(DistTensorTestBase):
         # TODO: Investigate why after transpose dt is still contiguous.
         self.assertFalse(new_dt.local_tensor().is_contiguous())
         new_dt = new_dt.contiguous()
-        # TODO: Investigate why after contiguous dt is not contiguous.
-        # self.assertTrue(new_dt.is_contiguous())
+        self.assertTrue(new_dt.is_contiguous())
         self.assertTrue(new_dt.local_tensor().is_contiguous())
 
     @with_comms

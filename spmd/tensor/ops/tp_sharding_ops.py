@@ -27,7 +27,7 @@ def dist_view(self: Tensor, *shape) -> Tensor:
     try:
         infer_idx = shape.index(-1)
     except ValueError:
-        infer_idx = None
+        infer_idx = None  # type: ignore
 
     # Infer the dim which is specified with -1.
     if infer_idx is not None:
@@ -152,8 +152,13 @@ def dist_split(self: Tensor, split_size_or_sections, dim=0) -> List[Tensor]:
     ]
 
 
-@register_impl("<method 'contiguous' of 'torch._C._TensorBase' objects>")
-def contiguous(self) -> "Tensor":
+@register_impl("contiguous")
+def dist_contiguous(self) -> "Tensor":
     return Tensor.from_local(
         self._local_tensor.contiguous(), self.device_mesh, self.placements
     )
+
+
+@register_impl("is_contiguous")
+def dist_is_contiguous(self) -> bool:
+    return self.local_tensor().is_contiguous()

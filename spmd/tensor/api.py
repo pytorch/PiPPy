@@ -71,13 +71,14 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     # pyre-fixme[3]: Return type must be annotated.
     # pyre-fixme[2]: Parameter must be annotated.
     def __torch_function__(cls, func, types, args=(), kwargs={}):
+        print(func.__name__)
         # if we find nn.functional name in dispatch op, dispatch to it instead,
         # this allow us to override some python level behaviors that wouldn't be
         # possible in __torch_dispatch__ level.
-        if str(func) in Tensor._dist_tensor_dispatch_ops:
+        if func.__name__ in Tensor._dist_tensor_dispatch_ops:
             # dispatch to the same table as the name should be different between
             # torch_function and torch_dispatch
-            return Tensor._dist_tensor_dispatch_ops[str(func)](*args, **kwargs)
+            return Tensor._dist_tensor_dispatch_ops[func.__name__](*args, **kwargs)
         else:
             # if not, just do nothing here
             return super().__torch_function__(func, types, args, kwargs)
@@ -258,44 +259,6 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     def local_tensor(self) -> torch.Tensor:
         return self._local_tensor  # type: ignore
 
-    def _view_with_sharding_dim_change(self, sharding_dim, shape):
-        if self.placements[0].is_shard(dim=sharding_dim):
-            return self.view(shape)
-        else:
-            if sharding_dim < 0:
-                sharding_dim += self.dim()
-
-            device_mesh = self.device_mesh
-            world_size = device_mesh._dim_groups[0].size()
-            new_sharding_placement = [Shard(sharding_dim)]
-
-            # Fix shape
-            try:
-                infer_idx = shape.index(-1)
-            except ValueError:
-                infer_idx = None
-
-            # Infer the dim which is specified with -1.
-            if infer_idx is not None:
-                st_size = math.prod(self.size())  # type: ignore[attr-defined]
-                shape_size = -1 * math.prod(shape)  # type: ignore[attr-defined]
-                shape = (
-                    *shape[:infer_idx],
-                    st_size // shape_size,
-                    *shape[infer_idx + 1 :],
-                )
-
-            new_local_tensor_size = (
-                *shape[:sharding_dim],
-                shape[sharding_dim] // world_size,
-                *shape[sharding_dim + 1 :],
-            )
-            new_local_tensor = self.local_tensor().view(*new_local_tensor_size)
-
-            return Tensor.from_local(
-                new_local_tensor, device_mesh, new_sharding_placement
-            )
-
     @property
     def placements(self) -> Sequence[Placement]:
         # placement should be a read only propety
@@ -312,6 +275,8 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # should call redistribute instead.
         return self._device_mesh
 
+    # TODO: This is a temporary hack to unblock TP efforts. We need to
+    # come up with a more principle design for customized ops like this.
     def _view_with_sharding_dim_change(self, sharding_dim, shape):
         if self.placements[0].is_shard(dim=sharding_dim):
             return self.view(shape)
