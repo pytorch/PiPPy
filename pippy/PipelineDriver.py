@@ -255,6 +255,7 @@ class RankWorker(EventRecorder):
             if work_item is None:
                 continue
             logging.info(f'[{self.rank}][{work_item.microbatch_id}] Got WorkItem {work_item}')
+            logging.info(f'[{self.rank}] Wait list: {list(self.waiting_runlist.keys())}')
 
             work_item.state = SchedState.RUNNING
             args_value_refs = work_item.args
@@ -414,7 +415,9 @@ class RankWorker(EventRecorder):
                     work_item.state = SchedState.READY
                     self.ready_runlist[runlist_key] = self.waiting_runlist.pop(runlist_key)
                     self.ready_runlist_cv.notify()
-                logging.info(f'[{self.rank}][{work_item.microbatch_id}] all operands ready')
+                logging.info(f'[{self.rank}][{work_item.microbatch_id}] all operands ready: {runlist_key}')
+            else:
+                logging.info(f'[{self.rank}][{work_item.microbatch_id}] Work item {runlist_key} waiting for {work_item.blocked_args_count} args')
 
 
 class PipeStageExecutor(EventRecorder):
@@ -627,7 +630,7 @@ class PipeStageExecutor(EventRecorder):
 
     def get_value(self, caller_stage, runlist_key, microbatch, value_ref_arg):
         callee_stage = value_ref_arg.stage_id
-        logging.info(f'[{callee_stage}][{microbatch}] Executing async transfer of value '
+        logging.info(f'[{callee_stage}][{microbatch}] Executing transfer of value '
                      f'{value_ref_arg} initiated by stage {caller_stage} for {runlist_key}')
         assert callee_stage == self.stage_id, "Mismatch between ValueRef and stage executor"
 
@@ -644,10 +647,13 @@ class PipeStageExecutor(EventRecorder):
             if refcounted_future.release():
                 self.value_store.pop(value_ref_arg.unique_key)
 
+        logging.info(f'[{callee_stage}][{microbatch}] Returning transfer of value '
+                     f'{value_ref_arg} initiated by stage {caller_stage} for {runlist_key}')
         return value
 
     def async_transfer(self, microbatch, value_ref_arg, arg_idx, runlist_key):
-        logging.info(f'[{self.stage_id}][{microbatch}] Starting transfer')
+        logging.info(f'[{self.stage_id}][{microbatch}] Requesting transfer of value {value_ref_arg} '
+                     f'for runlist item {runlist_key} arg_idx {arg_idx}')
         value_ref_executor_rref = self.peer_executors[value_ref_arg.stage_id]
         fut = value_ref_executor_rref.rpc_async().get_value(
             self.stage_id, runlist_key, microbatch, value_ref_arg)
@@ -1160,7 +1166,7 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
             if torch.is_grad_enabled() or args[0].unique_key != "noop":
                 indices = self.stage_indices.setdefault(stage_id, [])
                 index_tuple = (invocation_key, len(users), args[0], args[1])
-                logging.info(f'[root][{self.cur_microbatch}] Appending getitem tuple {index_tuple}')
+                logging.info(f'[root][{self.cur_microbatch}] Appending getitem tuple to stage {stage_id}: {index_tuple}')
                 indices.append(index_tuple)
                 #stage_executor.rpc_async().coalesce_index_value(self.stage_indices[stage_id])
                 #self.stage_indices.clear()
@@ -1214,19 +1220,22 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
     def coalesce_index_value(self):
         if len(self.stage_indices) == 0:
             return
-        assert len(self.stage_indices) == 1, "coalescing output indices of more than one stage"
+        if len(self.stage_indices) != 1:
+            logging.info(f'Coalescing output indices of {len(self.stage_indices)} stages:\n'
+                                 f'{self.stage_indices}') 
 
-        stage_id = next(iter(self.stage_indices))
-        stage_executor = self.stage_to_executor[stage_id]
-        name = f"G{stage_id},{self.cur_microbatch}"
-        id = f"{name},{self.batch_id}"
-        logging.info(f'[root][{self.cur_microbatch}] Issuing getitem '
-                     f'on stage {stage_id} with {len(self.stage_indices[stage_id])} indices')
-        start_ts = time.time()
-        stage_executor.rpc_async().coalesce_index_value(self.stage_indices[stage_id])
-        finish_ts = time.time()
-        self.record_event(rank=0, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name, type='invoke',
-                        mbid=self.cur_microbatch)
+        for stage_id in self.stage_indices:
+            stage_executor = self.stage_to_executor[stage_id]
+            name = f"G{stage_id},{self.cur_microbatch}"
+            id = f"{name},{self.batch_id}"
+            logging.info(f'[root][{self.cur_microbatch}] Issuing getitem '
+                        f'on stage {stage_id} with {len(self.stage_indices[stage_id])} indices')
+            start_ts = time.time()
+            stage_executor.rpc_async().coalesce_index_value(self.stage_indices[stage_id])
+            finish_ts = time.time()
+            self.record_event(rank=0, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name, type='invoke',
+                            mbid=self.cur_microbatch)
+
         self.stage_indices.clear()
 
 

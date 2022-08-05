@@ -213,7 +213,7 @@ def run_worker(rank, world_size, args):
     os.environ['MASTER_ADDR'] = args.master_addr
     os.environ['MASTER_PORT'] = args.master_port
     # Exclude IB for metadata transport due to lack of EFA support on AWS
-    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256,
+    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=512,
                                               rpc_timeout=1800,
                                               _transports=tp_transports())
     if args.cuda:

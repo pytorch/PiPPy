@@ -62,6 +62,7 @@ def run_master(args):
             x = torch.mm(x, self.mm_param2)
             x = self.lin(x)
             pipe_split()
+            x = self.lin(x)
             x = torch.relu(x)
             return {'out': x}
 
