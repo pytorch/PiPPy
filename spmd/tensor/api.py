@@ -113,23 +113,22 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # from_local, and distribute_tensor difference.
 
         # recover tensor shape and strides in the case of sharding
-        tensor_shape = list(local_tensor.size())
-        tensor_stride = list(local_tensor.stride())
-        # TODO: also recover the strides in the case of sharding
+        # we do this by creating a temp tensor on meta and rely on
+        # meta tensor to calculate shape and stride for both contiguous
+        # and non-contiguous cases, magic by @albanD
+        meta_local = local_tensor.to("meta")
+
+        repeat_dims = [1] * local_tensor.ndim
         for idx, placement in enumerate(placements):
             if isinstance(placement, Shard):
-                shard_dim = placement.dim
-                # recover tensor shape on the shard dim
-                tensor_shape[shard_dim] = tensor_shape[
-                    shard_dim
-                ] * device_mesh.size(idx)
-                tensor_stride[shard_dim] = tensor_stride[
-                    shard_dim
-                ] * device_mesh.size(idx)
+                repeat_dims[placement.dim] = repeat_dims[placement.dim] * device_mesh.size(idx)
             elif not isinstance(placement, (Replicate, _Partial)):
                 raise RuntimeError(
                     f"placement type {type(placement)} not supported!"
                 )
+
+        # repeat dims base on the meta tensor base on placements
+        meta_local = meta_local.repeat(repeat_dims)
 
         requires_grad = kwargs.get("requires_grad", False)
         if requires_grad != local_tensor.requires_grad:
@@ -142,8 +141,8 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # placement spec, it does not do actual distribution
         r = torch.Tensor._make_wrapper_subclass(  # type: ignore[attr-defined]
             cls,
-            torch.Size(tensor_shape),
-            strides=tensor_stride,
+            meta_local.size(),
+            strides=meta_local.stride(),
             dtype=local_tensor.dtype,
             device=local_tensor.device,
             layout=local_tensor.layout,

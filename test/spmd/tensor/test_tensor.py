@@ -45,16 +45,25 @@ class DistTensorTest(DistTensorTestBase):
     @with_comms
     def test_tensor_stride(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
-        shard_spec = [Shard(0)]
-        local_tensor = torch.randn(6, 3)
-        dist_tensor = Tensor(local_tensor, device_mesh, shard_spec)
-        self.assertEqual(dist_tensor.stride(), (self.world_size * 3, 1))
+        shard0_spec = [Shard(0)]
+        local_tensor = torch.randn(4, 8)
+        dist_tensor = Tensor(local_tensor, device_mesh, shard0_spec)
+        # won't affect stride
+        self.assertEqual(dist_tensor.stride(), (8, 1))
 
-        # transpose local tensor and check stride
-        transposed_tensor = local_tensor.t()
-        self.assertEqual(transposed_tensor.stride(), (1, 3))
-        dist_tensor = Tensor(transposed_tensor, device_mesh, shard_spec)
-        self.assertEqual(dist_tensor.stride(), (self.world_size, 3))
+        shard1_spec = [Shard(1)]
+        local_tensor = torch.randn(8, 4)
+        dist_tensor = Tensor(local_tensor, device_mesh, shard1_spec)
+        # will affect stride after DT initialized
+        self.assertEqual(dist_tensor.stride(), (16, 1))
+
+        # if initialized from a transposed mat
+        local_tensor_t = local_tensor.t()
+        self.assertEqual(local_tensor_t.stride(), (1, 4))
+        dist_tensor = Tensor(local_tensor_t, device_mesh, shard1_spec)
+
+        repeated_tensor_t = local_tensor_t.repeat(1, self.world_size)
+        self.assertEqual(dist_tensor.stride(), repeated_tensor_t.stride())
 
     @with_comms
     def test_tensor_from_local(self):
