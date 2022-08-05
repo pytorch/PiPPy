@@ -33,7 +33,11 @@ def dist_view(self: Tensor, *shape) -> Tensor:
     if infer_idx is not None:
         st_size = math.prod(self.size())  # type: ignore[attr-defined]
         shape_size = -1 * math.prod(shape)  # type: ignore[attr-defined]
-        shape = (*shape[:infer_idx], st_size // shape_size, *shape[infer_idx + 1 :])
+        shape = (
+            *shape[:infer_idx],
+            st_size // shape_size,
+            *shape[infer_idx + 1 :],
+        )
     if self.size() == shape:
         return self
 
@@ -58,7 +62,9 @@ def dist_view(self: Tensor, *shape) -> Tensor:
         *shape[sharding_dim + 1 :],
     )
     new_local_tensor = local_mat.view(*new_local_tensor_size)
-    return Tensor.from_local(new_local_tensor, self.device_mesh, self.placements)
+    return Tensor.from_local(
+        new_local_tensor, self.device_mesh, self.placements
+    )
 
 
 @register_impl("aten.transpose.int")
@@ -66,7 +72,9 @@ def dist_transpose(self: Tensor, dim0: int, dim1: int) -> Tensor:
     local_mat = pytree.tree_map(unwrap_local_tensor, self)
     mat_placement = pytree.tree_map(unwrap_single_placement, self)
     device_mesh = self.device_mesh
-    new_shard_dim = dim1 if mat_placement.is_shard(dim=dim0) else mat_placement.dim
+    new_shard_dim = (
+        dim1 if mat_placement.is_shard(dim=dim0) else mat_placement.dim
+    )
     new_shard_dim = dim0 if mat_placement.is_shard(dim=dim1) else new_shard_dim
     new_sharding_placement = [Shard(new_shard_dim)]
     local_tensor = local_mat.transpose(dim0, dim1)
@@ -89,10 +97,7 @@ def dist_baddbmm(
 @register_impl("aten.bmm.default")
 def dist_bmm(self: Tensor, mat2: Tensor) -> Tensor:
     local_input, local_mat2 = pytree.tree_map(unwrap_local_tensor, (self, mat2))
-    local_tensor = torch.ops.aten.bmm(
-        local_input,
-        local_mat2,
-    )
+    local_tensor = torch.ops.aten.bmm(local_input, local_mat2)
     return Tensor.from_local(local_tensor, self.device_mesh, self.placements)
 
 
@@ -111,20 +116,16 @@ def dist_permute(self: Tensor, dims: List[int]) -> Tensor:
     sharding_dim = mat_placement.dim
     new_sharding_dim = dims.index(sharding_dim)
     new_sharding_placement = [Shard(new_sharding_dim)]
-    local_tensor = torch.ops.aten.permute(
-        local_mat,
-        dims=dims,
+    local_tensor = torch.ops.aten.permute(local_mat, dims=dims)
+    return Tensor.from_local(
+        local_tensor, self.device_mesh, new_sharding_placement
     )
-    return Tensor.from_local(local_tensor, self.device_mesh, new_sharding_placement)
 
 
 @register_impl("aten.cat.default")
 def dist_cat(tensor_list: List[Tensor], dim: int = 0) -> Tensor:
     local_inputs = pytree.tree_map(unwrap_local_tensor, tensor_list)
-    local_tensor = torch.ops.aten.concat(
-        local_inputs,
-        dim=dim,
-    )
+    local_tensor = torch.ops.aten.concat(local_inputs, dim=dim)
     return Tensor.from_local(
         local_tensor, tensor_list[0].device_mesh, tensor_list[0].placements
     )

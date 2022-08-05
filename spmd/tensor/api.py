@@ -77,7 +77,9 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         if func.__name__ in Tensor._dist_tensor_dispatch_ops:
             # dispatch to the same table as the name should be different between
             # torch_function and torch_dispatch
-            return Tensor._dist_tensor_dispatch_ops[func.__name__](*args, **kwargs)
+            return Tensor._dist_tensor_dispatch_ops[func.__name__](
+                *args, **kwargs
+            )
         else:
             # if not, just do nothing here
             return super().__torch_function__(func, types, args, kwargs)
@@ -191,7 +193,9 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # There should be no data communication unless there's replication
         # strategy, where we broadcast the replication from the first rank
         # in the mesh dimension
-        device_mesh = get_global_device_mesh() if device_mesh is None else device_mesh
+        device_mesh = (
+            get_global_device_mesh() if device_mesh is None else device_mesh
+        )
         # convert the local tensor to desired device base on device mesh's device_type
         local_tensor = local_tensor.to(device_mesh.device_type)
 
@@ -205,9 +209,9 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
             if isinstance(placement, Shard):
                 shard_dim = placement.dim
                 # recover tensor shape on the shard dim
-                tensor_shape[shard_dim] = tensor_shape[shard_dim] * device_mesh.size(
-                    idx
-                )
+                tensor_shape[shard_dim] = tensor_shape[
+                    shard_dim
+                ] * device_mesh.size(idx)
             elif isinstance(placement, Replicate):
                 if run_check:
                     # broadcast rank 0 tensor to all ranks
@@ -218,7 +222,9 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
                 # we don't need to do anything to Partial case
                 pass
             else:
-                raise RuntimeError(f"placement type {type(placement)} not supported!")
+                raise RuntimeError(
+                    f"placement type {type(placement)} not supported!"
+                )
 
         if run_check:
             # TODO: by default check tensor metas across rank
@@ -247,7 +253,9 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # sharding it's a reshard behavior.
         # TODO: handle last shard uneven with padding
         # right now we assume all local shard equal size
-        device_mesh = get_global_device_mesh() if device_mesh is None else device_mesh
+        device_mesh = (
+            get_global_device_mesh() if device_mesh is None else device_mesh
+        )
         # raise error if new placements not specified
         if placements is None:
             raise RuntimeError("placements is needed for redistribute!")
@@ -277,7 +285,11 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     # TODO: This is a temporary hack to unblock TP efforts. We need to
     # come up with a more principle design for customized ops like this.
     def _view_with_sharding_dim_change(self, sharding_dim, shape):
-        if self.placements[0].is_shard(dim=sharding_dim):
+        if (
+            self.placements[0].is_shard(dim=sharding_dim)
+            or self.placements[0].is_replicate()
+            or self.placements[0].is_partial()
+        ):
             return self.view(shape)
         else:
             if sharding_dim < 0:
