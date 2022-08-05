@@ -71,7 +71,6 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     # pyre-fixme[3]: Return type must be annotated.
     # pyre-fixme[2]: Parameter must be annotated.
     def __torch_function__(cls, func, types, args=(), kwargs={}):
-        print(func.__name__)
         # if we find nn.functional name in dispatch op, dispatch to it instead,
         # this allow us to override some python level behaviors that wouldn't be
         # possible in __torch_dispatch__ level.
