@@ -22,6 +22,7 @@ of Distributed Tensor and all corner cases for sharded distributed tensor.
 
 
 @register_impl("aten.view.default")
+# pyre-fixme[2]: Parameter must be annotated.
 def dist_view(self: Tensor, *shape) -> Tensor:
     shape = shape[0]
     try:
@@ -33,6 +34,7 @@ def dist_view(self: Tensor, *shape) -> Tensor:
     if infer_idx is not None:
         st_size = math.prod(self.size())  # type: ignore[attr-defined]
         shape_size = -1 * math.prod(shape)  # type: ignore[attr-defined]
+        # pyre-fixme[60]: Concatenation not yet support for multiple variadic
         shape = (
             *shape[:infer_idx],
             st_size // shape_size,
@@ -56,6 +58,7 @@ def dist_view(self: Tensor, *shape) -> Tensor:
             f"Case when dim '({shape[sharding_dim]})' is not divisible "
             "by world_size is not supported."
         )
+    # pyre-fixme[60]: Concatenation not yet support for multiple variadic
     new_local_tensor_size = (
         *shape[:sharding_dim],
         shape[sharding_dim] // world_size,
@@ -83,7 +86,12 @@ def dist_transpose(self: Tensor, dim0: int, dim1: int) -> Tensor:
 
 @register_impl("aten.baddbmm.default")
 def dist_baddbmm(
-    self: Tensor, batch1: Tensor, batch2: Tensor, beta=1.0, alpha=1.0
+    # pyre-fixme[2]: Parameter must be annotated.
+    self: Tensor,
+    batch1: Tensor,
+    batch2: Tensor,
+    beta=1.0,
+    alpha=1.0,
 ) -> Tensor:
     local_input, local_batch1, local_batch2 = pytree.tree_map(
         unwrap_local_tensor, (self, batch1, batch2)
@@ -132,6 +140,7 @@ def dist_cat(tensor_list: List[Tensor], dim: int = 0) -> Tensor:
 
 
 @register_impl("aten.split.Tensor")
+# pyre-fixme[2]: Parameter must be annotated.
 def dist_split(self: Tensor, split_size_or_sections, dim=0) -> List[Tensor]:
     local_mat = pytree.tree_map(unwrap_local_tensor, self)
     mat_placement = pytree.tree_map(unwrap_single_placement, self)
@@ -154,6 +163,7 @@ def dist_split(self: Tensor, split_size_or_sections, dim=0) -> List[Tensor]:
 
 
 @register_impl("contiguous")
+# pyre-fixme[2]: Parameter must be annotated.
 def dist_contiguous(self) -> "Tensor":
     return Tensor.from_local(
         self._local_tensor.contiguous(), self.device_mesh, self.placements
@@ -161,5 +171,6 @@ def dist_contiguous(self) -> "Tensor":
 
 
 @register_impl("is_contiguous")
+# pyre-fixme[2]: Parameter must be annotated.
 def dist_is_contiguous(self) -> bool:
     return self.local_tensor().is_contiguous()
