@@ -21,8 +21,10 @@ class RedistributeTest(DistTensorTestBase):
         chunked_list = expected_tensor.chunk(self.world_size, shard_dim)
         # make local tensor as the element of the corresponding chunked list
         local_tensor = chunked_list[self.rank]
-        # make it a leaf
-        sharded_tensor = Tensor(local_tensor, device_mesh, shard_spec)
+        # direct Tensor constructor should always be leaf
+        sharded_tensor = Tensor(
+            local_tensor, device_mesh, shard_spec, requires_grad=True
+        )
         global_sharded_tensor = sharded_tensor.redistribute(
             device_mesh, replica_spec
         )
@@ -44,7 +46,9 @@ class RedistributeTest(DistTensorTestBase):
         replica_spec = [Replicate()]
         local_tensor = torch.randn(12, 3, requires_grad=True)
         # 1) test replicate -> replicate forward
-        replica_tensor = Tensor(local_tensor, device_mesh, replica_spec)
+        replica_tensor = Tensor(
+            local_tensor, device_mesh, replica_spec, requires_grad=True
+        )
         global_replica_tensor = replica_tensor.redistribute(
             device_mesh, replica_spec
         )
@@ -71,7 +75,9 @@ class RedistributeTest(DistTensorTestBase):
         chunked_list = local_replica.chunk(self.world_size, shard_dim)
         # make local tensor as the element of the corresponding chunked list
         local_tensor = chunked_list[self.rank]
-        replica_tensor = Tensor(local_replica, device_mesh, replica_spec)
+        replica_tensor = Tensor(
+            local_replica, device_mesh, replica_spec, requires_grad=True
+        )
         reshard_tensor = replica_tensor.redistribute(device_mesh, shard_spec)
         self.assertEqual(reshard_tensor.size(), replica_tensor.size())
         self.assertEqual(reshard_tensor.placements, shard_spec)

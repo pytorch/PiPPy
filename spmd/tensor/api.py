@@ -1,6 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import copy
 import math
+import warnings
 import torch
 from torch.utils._pytree import tree_map, tree_flatten
 from typing import Dict, Callable, Optional, Sequence
@@ -31,7 +32,7 @@ class ToTorchTensor(torch.autograd.Function):
     def forward(ctx, input: "Tensor"):  # type: ignore
         ctx.previous_placement = input.placements
         ctx.previous_device_mesh = input.device_mesh
-        return input._local_tensor
+        return input._local_tensor.detach()
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor):  # type: ignore
@@ -45,14 +46,28 @@ class ToTorchTensor(torch.autograd.Function):
 
 class FromTorchTensor(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, input: torch.Tensor, device_mesh, placements):  # type: ignore
+    def forward(ctx, input: torch.Tensor, device_mesh, placements, run_check):  # type: ignore
         ctx.previous_placement = placements
         ctx.previous_device_mesh = device_mesh
+
+        if run_check:
+            # TODO: by default check tensor metas across rank
+            # TODO: See if we need to make this run_check logic
+            # have a corresponding backward.
+            for idx, placement in enumerate(placements):
+                if placement.is_replicate():
+                    # broadcast rank 0 tensor to all ranks
+                    # only broadcast if run_check is True
+                    input = input.contiguous()
+                    device_mesh.broadcast(input, mesh_dim=idx)
 
         dist_tensor = Tensor(
             input,
             device_mesh,
             placements,
+            # requires_grad of the dist tensor depends on if input
+            # requires_grad or not
+            requires_grad=input.requires_grad,
         )
         return dist_tensor
 
@@ -68,7 +83,10 @@ class FromTorchTensor(torch.autograd.Function):
             grad_output = grad_output.redistribute(
                 previous_device_mesh, previous_placement
             )
-        return grad_output._local_tensor, None, None
+
+        # TODO: backward is also differentiable now, add a test
+        # to test higher level gradients.
+        return grad_output.local_tensor(), None, None, None
 
 
 class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
@@ -91,6 +109,8 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # pyre-fixme[2]: Parameter must be annotated.
         **kwargs,
     ) -> "Tensor":
+        # TODO: add a docstr about tensor constructor
+        # from_local, and distribute_tensor difference.
         tensor_shape = list(local_tensor.size())
         # recover tensor shape in the case of sharding
         # TODO: also recover the strides in the case of sharding
@@ -106,6 +126,13 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
                     f"placement type {type(placement)} not supported!"
                 )
 
+        requires_grad = kwargs.get("requires_grad", False)
+        if requires_grad != local_tensor.requires_grad:
+            warnings.warn(
+                "To construct DistributedTensor from torch.Tensor, it's recommended "
+                "to use local_tensor.detach() and make requires_grad consistent."
+            )
+
         # new method instruct wrapper tensor from local_tensor and add
         # placement spec, it does not do actual distribution
         r = torch.Tensor._make_wrapper_subclass(  # type: ignore[attr-defined]
@@ -115,7 +142,7 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
             dtype=local_tensor.dtype,
             device=local_tensor.device,
             layout=local_tensor.layout,
-            requires_grad=local_tensor.requires_grad,
+            requires_grad=requires_grad,
         )
         r._device_mesh = device_mesh
         # deepcopy and set spec, data should be handled
@@ -131,7 +158,7 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     # pyre-fixme[3]: Return type must be annotated.
     def __repr__(self):
         # TODO: consider all_gather the local tensors for better debugging
-        return f"DistributedTensor(local_tensor={self._local_tensor}, placements={self._placements})"
+        return f"DistributedTensor(local_tensor={self._local_tensor}, device_mesh={self._device_mesh}, placements={self._placements})"
 
     @classmethod
     # pyre-fixme[3]: Return type must be annotated.
@@ -274,21 +301,11 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         if placements is None:
             placements = [Replicate() for _ in range(device_mesh.ndim)]
 
-        if run_check:
-            # TODO: by default check tensor metas across rank, and see if we need
-            # to make the run_check inside autograd function
-            for idx, placement in enumerate(placements):
-                if placement.is_replicate():
-                    # broadcast rank 0 tensor to all ranks
-                    # only broadcast if run_check is True
-                    local_tensor = local_tensor.contiguous()
-                    device_mesh.broadcast(local_tensor, mesh_dim=idx)
-
         # `from_local` is differentiable, and the gradient of the dist tensor this function
         # created should flow back the gradients to the local_tensor, so we call an autograd
         # function to construct the dist tensor instead.
         return FromTorchTensor.apply(  # pyre-ignore[16]: autograd func
-            local_tensor, device_mesh, placements
+            local_tensor, device_mesh, placements, run_check
         )
 
     def redistribute(

@@ -24,6 +24,25 @@ class DistTensorTest(DistTensorTestBase):
     #     dist_tensor.one_like(empty_tensor)
 
     @with_comms
+    def test_tensor_constructor(self):
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        shard_spec = [Shard(0)]
+        local_tensor = torch.randn(3, 3, requires_grad=True)
+        dist_tensor = Tensor(
+            local_tensor, device_mesh, shard_spec, requires_grad=True
+        )
+        self.assertEqual(dist_tensor.size(), torch.Size((12, 3)))
+
+        with self.assertWarnsRegex(UserWarning, "To construct"):
+            Tensor(local_tensor, device_mesh, shard_spec)
+
+        local_tensor = torch.randn(3, 3, requires_grad=False)
+        with self.assertWarnsRegex(UserWarning, "To construct"):
+            dist_tensor = Tensor(
+                local_tensor, device_mesh, shard_spec, requires_grad=True
+            )
+
+    @with_comms
     def test_tensor_from_local(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
@@ -72,7 +91,9 @@ class DistTensorTest(DistTensorTestBase):
         shard_spec = [Shard(0)]
         local_tensor_with_grad = torch.randn(3, 3, requires_grad=True)
 
-        sharded_tensor = Tensor(local_tensor_with_grad, device_mesh, shard_spec)
+        sharded_tensor = Tensor(
+            local_tensor_with_grad, device_mesh, shard_spec, requires_grad=True
+        )
         self.assertEqual(sharded_tensor.size(), torch.Size([12, 3]))
         self.assertEqual(sharded_tensor.local_tensor(), local_tensor_with_grad)
 
