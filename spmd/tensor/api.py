@@ -1,11 +1,13 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import copy
+import math
 import torch
 from torch.utils._pytree import tree_map, tree_flatten
 from typing import Dict, Callable, Optional, Sequence
 from spmd.tensor.device_mesh import get_global_device_mesh, DeviceMesh
 from spmd.tensor.placement_types import Placement, Shard, Replicate, _Partial
 from spmd.tensor.redistribute import Redistribute
+
 
 """
 If set to true, __DEBUG_STRICT will fail when an op doesn't have a sharding rule registered.
@@ -41,11 +43,13 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         dtype = kwargs["dtype"]
         layout = kwargs["layout"]
         requires_grad = kwargs["requires_grad"]
+        strides = kwargs["strides"]
         device = kwargs.get("device", "cpu")
 
         r = torch.Tensor._make_wrapper_subclass(  # type: ignore[attr-defined]
             cls,
             size,
+            strides=strides,
             dtype=dtype,
             device=device,
             layout=layout,
@@ -66,14 +70,16 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     @classmethod
     # pyre-fixme[3]: Return type must be annotated.
     # pyre-fixme[2]: Parameter must be annotated.
-    def __torch_function__(cls, func, types, args=(), kwargs=None):
+    def __torch_function__(cls, func, types, args=(), kwargs={}):
         # if we find nn.functional name in dispatch op, dispatch to it instead,
         # this allow us to override some python level behaviors that wouldn't be
         # possible in __torch_dispatch__ level.
-        if str(func) in Tensor._dist_tensor_dispatch_ops:
+        if func.__name__ in Tensor._dist_tensor_dispatch_ops:
             # dispatch to the same table as the name should be different between
             # torch_function and torch_dispatch
-            return Tensor._dist_tensor_dispatch_ops[str(func)](*args, **kwargs)
+            return Tensor._dist_tensor_dispatch_ops[func.__name__](
+                *args, **kwargs
+            )
         else:
             # if not, just do nothing here
             return super().__torch_function__(func, types, args, kwargs)
@@ -115,6 +121,15 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
                 else e
             )
 
+        # pyre-fixme[3]: Return type must be annotated.
+        # pyre-fixme[2]: Parameter must be annotated.
+        def is_replicate(tensor):
+            return (
+                tensor.placements[0] == Replicate()
+                if isinstance(tensor, Tensor)
+                else True
+            )
+
         args_mesh = tree_map(unwrap_mesh, args)
         # assert all_equal(spec.device_mesh for spec in args_spec), "can't compuate across different meshes"
         # for spec in args_spec:
@@ -124,7 +139,9 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         all_replicated = True
         for arg in args:
             if isinstance(arg, Tensor):
-                all_replicated &= arg.placements[0] == Replicate()
+                all_replicated &= is_replicate(arg)
+            elif type(arg) is list:
+                all_replicated &= all(tree_map(is_replicate, arg))
 
         if all_replicated:
             rs = func(*tree_map(unwrap, args), **tree_map(unwrap, kwargs))
@@ -219,6 +236,7 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
             device_mesh,
             placements,
             torch.Size(tensor_shape),
+            strides=local_tensor.stride(),
             dtype=local_tensor.dtype,
             device=local_tensor.device,
             layout=local_tensor.layout,
@@ -265,3 +283,51 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # caller who want a different device_mesh
         # should call redistribute instead.
         return self._device_mesh
+
+    # TODO: This is a temporary hack to unblock TP efforts. We need to
+    # come up with a more principle design for customized ops like this.
+    # pyre-fixme[3]: Return type must be annotated.
+    # pyre-fixme[2]: Parameter must be annotated.
+    def _view_with_sharding_dim_change(self, sharding_dim, shape):
+        if (
+            self.placements[0].is_shard(dim=sharding_dim)
+            or self.placements[0].is_replicate()
+            or self.placements[0].is_partial()
+        ):
+            return self.view(shape)
+        else:
+            if sharding_dim < 0:
+                sharding_dim += self.dim()
+
+            device_mesh = self.device_mesh
+            world_size = device_mesh.size(dim=0)
+            new_sharding_placement = [Shard(sharding_dim)]
+
+            # Fix shape
+            try:
+                infer_idx = shape.index(-1)
+            except ValueError:
+                infer_idx = None
+
+            # Infer the dim which is specified with -1.
+            if infer_idx is not None:
+                st_size = math.prod(self.size())  # type: ignore[attr-defined]
+                shape_size = -1 * math.prod(shape)  # type: ignore[attr-defined]
+                # pyre-fixme[60]: Concatenation not yet support for multiple variadic
+                shape = (
+                    *shape[:infer_idx],
+                    st_size // shape_size,
+                    *shape[infer_idx + 1 :],
+                )
+
+            # pyre-fixme[60]: Concatenation not yet support for multiple variadic
+            new_local_tensor_size = (
+                *shape[:sharding_dim],
+                shape[sharding_dim] // world_size,
+                *shape[sharding_dim + 1 :],
+            )
+            new_local_tensor = self.local_tensor().view(*new_local_tensor_size)
+
+            return Tensor.from_local(
+                new_local_tensor, device_mesh, new_sharding_placement
+            )
