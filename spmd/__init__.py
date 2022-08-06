@@ -13,6 +13,24 @@ def distribute_tensor(
     device_mesh: Optional[DeviceMesh] = None,
     placements: Optional[Sequence[Placement]] = None,
 ) -> Tensor:
+    """
+    Distribute a torch.Tensor to the `device_mesh` according to the `placements`
+    specified. The rank of `device_mesh` and `placements` must be the same.
+
+    Args:
+        tensor (torch.Tensor): torch.Tensor to be distributed
+        device_mesh (:class:`DeviceMesh`, optional): DeviceMesh to distribute the
+            tensor, if not specified, must be called under a DeviceMesh context
+            manager, default: None
+        placements (List[:class:`Placement`], optional): the placements that
+            describes how to place the tensor on DeviceMesh, must have the same
+            number of elements as `device_mesh.ndim`. If not specified, we will
+            by default replicate the tensor across the `device_mesh` from the
+            first rank of each dimension of the `device_mesh`.
+
+    Returns:
+        A :class:`spmd.Tensor` object
+    """
     # get default device mesh if there's nothing specified
     device_mesh = (
         get_global_device_mesh() if device_mesh is None else device_mesh
@@ -50,6 +68,7 @@ def distribute_tensor(
                 requires_grad=local_tensor.requires_grad,
             )
         elif isinstance(placement, Replicate):
+            device_mesh.broadcast(tensor, mesh_dim=idx)
             dist_tensor = Tensor(
                 tensor,
                 device_mesh,

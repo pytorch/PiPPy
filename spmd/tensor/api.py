@@ -58,7 +58,6 @@ class FromTorchTensor(torch.autograd.Function):
                 if placement.is_replicate():
                     # broadcast rank 0 tensor to all ranks
                     # only broadcast if run_check is True
-                    input = input.contiguous()
                     device_mesh.broadcast(input, mesh_dim=idx)
 
         dist_tensor = Tensor(
@@ -121,7 +120,9 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         repeat_dims = [1] * local_tensor.ndim
         for idx, placement in enumerate(placements):
             if isinstance(placement, Shard):
-                repeat_dims[placement.dim] = repeat_dims[placement.dim] * device_mesh.size(idx)
+                repeat_dims[placement.dim] = repeat_dims[
+                    placement.dim
+                ] * device_mesh.size(idx)
             elif not isinstance(placement, (Replicate, _Partial)):
                 raise RuntimeError(
                     f"placement type {type(placement)} not supported!"
@@ -277,7 +278,9 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
                 context manager, default: None
             placements (List[:class:`Placement`], optional): the placements that
                 describes how to place the local torch.Tensor on DeviceMesh, must
-                have the same number of elements as `device_mesh.ndim`.
+                have the same number of elements as `device_mesh.ndim`. If not
+                specified, we will by default replicate the tensor across the
+                `device_mesh` from the first rank of each dimension of the `device_mesh`.
             run_check (bool, optional): indicate whether to run check across ranks
                 to check meta information and data. if have :class:`Replicate` in
                 `placements`, the data on first rank of the device mesh dimension
