@@ -28,9 +28,7 @@ class DeviceMeshTest(DistTensorTestBase):
         local_tensor = torch.randn(3, 3)
         dist_tensor = DTensor.from_local(local_tensor, mesh, shard_spec)
         self.assertEqual(dist_tensor.device.type, self.device_type)
-        self.assertEqual(
-            dist_tensor.to_local().device.type, self.device_type
-        )
+        self.assertEqual(dist_tensor.to_local().device.type, self.device_type)
 
     @with_comms
     def test_device_mesh_context_manager(self):
@@ -86,15 +84,15 @@ class DeviceMeshTest(DistTensorTestBase):
         dist_tensor = DTensor.from_local(local_tensor, mesh, shard_spec)
         self.assertEqual(dist_tensor.size(), torch.Size([6, 6]))
         self.assertEqual(dist_tensor.device.type, self.device_type)
-        self.assertEqual(
-            dist_tensor.to_local().device.type, self.device_type
-        )
+        self.assertEqual(dist_tensor.to_local().device.type, self.device_type)
 
         # if shard on the same tensor dimension
         # we should correctly construct the global tensor size
         shard_same_dim_spec = [Shard(0), Shard(0)]
         local_tensor = torch.randn(3, 3)
-        dist_tensor = DTensor.from_local(local_tensor, mesh, shard_same_dim_spec)
+        dist_tensor = DTensor.from_local(
+            local_tensor, mesh, shard_same_dim_spec
+        )
         self.assertEqual(dist_tensor.size(), torch.Size([12, 3]))
 
     @with_comms
@@ -136,9 +134,7 @@ class DeviceMeshTest(DistTensorTestBase):
         dist_tensor = DTensor.from_local(local_tensor, mesh, shard_spec)
         self.assertEqual(dist_tensor.size(), torch.Size([6, 6]))
         self.assertEqual(dist_tensor.device.type, self.device_type)
-        self.assertEqual(
-            dist_tensor.to_local().device.type, self.device_type
-        )
+        self.assertEqual(dist_tensor.to_local().device.type, self.device_type)
 
     @with_comms
     def test_device_mesh_nd(self):
@@ -171,9 +167,7 @@ class DeviceMeshTest(DistTensorTestBase):
         dist_tensor = DTensor.from_local(local_tensor, mesh, shard_spec)
         self.assertEqual(dist_tensor.size(), torch.Size([6, 6, 6]))
         self.assertEqual(dist_tensor.device.type, self.device_type)
-        self.assertEqual(
-            dist_tensor.to_local().device.type, self.device_type
-        )
+        self.assertEqual(dist_tensor.to_local().device.type, self.device_type)
 
         # construct a dist tensor on 3d device mesh with some shards on same dim
         shard_spec = [Shard(0), Shard(0), Shard(2)]
@@ -181,9 +175,7 @@ class DeviceMeshTest(DistTensorTestBase):
         dist_tensor = DTensor.from_local(local_tensor, mesh, shard_spec)
         self.assertEqual(dist_tensor.size(), torch.Size([12, 3, 6]))
         self.assertEqual(dist_tensor.device.type, self.device_type)
-        self.assertEqual(
-            dist_tensor.to_local().device.type, self.device_type
-        )
+        self.assertEqual(dist_tensor.to_local().device.type, self.device_type)
 
 
 class DeviceMeshCollectiveTest(DistTensorTestBase):

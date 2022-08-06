@@ -109,9 +109,7 @@ class RedistributeTest(DistTensorTestBase):
             device_mesh, replica_spec
         )
         self.assertEqual(partial_tensor.size(), partial_local.size())
-        self.assertEqual(
-            partial_local * 4, global_partial_tensor.to_local()
-        )
+        self.assertEqual(partial_local * 4, global_partial_tensor.to_local())
 
     @with_comms
     def test_partial_to_shard_0(self):
@@ -129,9 +127,7 @@ class RedistributeTest(DistTensorTestBase):
         )
         self.assertEqual(scatter_shard_tensor.size(), partial_tensor.size())
         self.assertEqual(scatter_shard_tensor.placements, shard_spec)
-        self.assertEqual(
-            scatter_shard_tensor.to_local(), torch.ones(3, 3) * 4
-        )
+        self.assertEqual(scatter_shard_tensor.to_local(), torch.ones(3, 3) * 4)
 
     @with_comms
     def test_partial_to_shard_1(self):
@@ -149,9 +145,7 @@ class RedistributeTest(DistTensorTestBase):
         )
         self.assertEqual(scatter_shard_tensor.size(), partial_tensor.size())
         self.assertEqual(scatter_shard_tensor.placements, shard1_spec)
-        self.assertEqual(
-            scatter_shard_tensor.to_local(), torch.ones(4, 3) * 4
-        )
+        self.assertEqual(scatter_shard_tensor.to_local(), torch.ones(4, 3) * 4)
 
 
 if __name__ == "__main__":
