@@ -2,7 +2,7 @@
 from typing import Sequence, Optional
 import torch
 import torch.nn as nn
-from spmd.tensor import Tensor, Placement, Shard, Replicate, _Partial
+from spmd.tensor import DTensor, Placement, Shard, Replicate, _Partial
 from spmd.tensor.device_mesh import get_global_device_mesh, DeviceMesh
 
 torch.__future__.set_overwrite_module_params_on_conversion(True)
@@ -12,7 +12,7 @@ def distribute_tensor(
     tensor: torch.Tensor,
     device_mesh: Optional[DeviceMesh] = None,
     placements: Optional[Sequence[Placement]] = None,
-) -> Tensor:
+) -> DTensor:
     """
     Distribute a torch.Tensor to the `device_mesh` according to the `placements`
     specified. The rank of `device_mesh` and `placements` must be the same.
@@ -29,7 +29,7 @@ def distribute_tensor(
             first rank of each dimension of the `device_mesh`.
 
     Returns:
-        A :class:`spmd.Tensor` object
+        A :class:`DTensor` object
     """
     # get default device mesh if there's nothing specified
     device_mesh = (
@@ -61,7 +61,7 @@ def distribute_tensor(
             scatter_shape = list(tensor.size())
             scatter_shape[shard_dim] = chunk_size
             local_tensor = device_mesh.scatter(tensor_list)
-            dist_tensor = Tensor(
+            dist_tensor = DTensor(
                 local_tensor,
                 device_mesh,
                 placements,
@@ -69,7 +69,7 @@ def distribute_tensor(
             )
         elif isinstance(placement, Replicate):
             device_mesh.broadcast(tensor, mesh_dim=idx)
-            dist_tensor = Tensor(
+            dist_tensor = DTensor(
                 tensor,
                 device_mesh,
                 placements,

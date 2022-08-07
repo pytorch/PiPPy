@@ -18,7 +18,7 @@ _DEBUG_STRICT = False
 # NOTE [Autograd interaction between torch.Tensor]
 #
 # The autograd functions defined below are being used by the public
-# facing APIs (i.e. from_local, local_tensor) to ensure our Tensor
+# facing APIs (i.e. from_local, local_tensor) to ensure our DTensor
 # works together with torch.Tensor within autograd engine. This
 # allows DistributedTensor to exist on part of the module hierarchy
 # and still able to calculate gradients across the torch.Tensor and
@@ -29,7 +29,7 @@ _DEBUG_STRICT = False
 #           -> Module C (with all torch.Tensor params)
 class ToTorchTensor(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, input: "Tensor"):  # type: ignore
+    def forward(ctx, input: "DTensor"):  # type: ignore
         ctx.previous_placement = input.placements
         ctx.previous_device_mesh = input.device_mesh
         return input._local_tensor.detach()
@@ -38,7 +38,7 @@ class ToTorchTensor(torch.autograd.Function):
     def backward(ctx, grad_output: torch.Tensor):  # type: ignore
         previous_placement = ctx.previous_placement
         previous_device_mesh = ctx.previous_device_mesh
-        dist_grad = Tensor.from_local(
+        dist_grad = DTensor.from_local(
             grad_output, previous_device_mesh, previous_placement
         )
         return dist_grad
@@ -60,7 +60,7 @@ class FromTorchTensor(torch.autograd.Function):
                     # only broadcast if run_check is True
                     device_mesh.broadcast(input, mesh_dim=idx)
 
-        dist_tensor = Tensor(
+        dist_tensor = DTensor(
             input,
             device_mesh,
             placements,
@@ -71,7 +71,7 @@ class FromTorchTensor(torch.autograd.Function):
         return dist_tensor
 
     @staticmethod
-    def backward(ctx, grad_output: "Tensor"):  # type: ignore
+    def backward(ctx, grad_output: "DTensor"):  # type: ignore
         previous_placement = ctx.previous_placement
         previous_device_mesh = ctx.previous_device_mesh
 
@@ -85,10 +85,10 @@ class FromTorchTensor(torch.autograd.Function):
 
         # TODO: backward is also differentiable now, add a test
         # to test higher level gradients.
-        return grad_output.local_tensor(), None, None, None
+        return grad_output.to_local(), None, None, None
 
 
-class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
+class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     _local_tensor: torch.Tensor
     _device_mesh: DeviceMesh
     _placements: Sequence[Placement]
@@ -107,7 +107,7 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         placements: Sequence[Placement],
         # pyre-fixme[2]: Parameter must be annotated.
         **kwargs,
-    ) -> "Tensor":
+    ) -> "DTensor":
         # TODO: add a docstr about tensor constructor
         # from_local, and distribute_tensor difference.
 
@@ -134,8 +134,8 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         requires_grad = kwargs.get("requires_grad", False)
         if requires_grad != local_tensor.requires_grad:
             warnings.warn(
-                "To construct DistributedTensor from torch.Tensor, it's recommended "
-                "to use local_tensor.detach() and make requires_grad consistent."
+                "To construct DTensor from torch.Tensor, it's recommended to "
+                "use local_tensor.detach() and make requires_grad consistent."
             )
 
         # new method instruct wrapper tensor from local_tensor and add
@@ -158,11 +158,11 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         r._local_tensor = local_tensor.detach()
         return r
 
-    # pyre-fixme[14]: `__repr__` overrides method defined in `Tensor` inconsistently.
+    # pyre-fixme[14]: `__repr__` overrides method defined in `DTensor` inconsistently.
     # pyre-fixme[3]: Return type must be annotated.
     def __repr__(self):
         # TODO: consider all_gather the local tensors for better debugging
-        return f"DistributedTensor(local_tensor={self._local_tensor}, device_mesh={self._device_mesh}, placements={self._placements})"
+        return f"DTensor(local_tensor={self._local_tensor}, device_mesh={self._device_mesh}, placements={self._placements})"
 
     @classmethod
     # pyre-fixme[3]: Return type must be annotated.
@@ -171,10 +171,10 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # if we find nn.functional name in dispatch op, dispatch to it instead,
         # this allow us to override some python level behaviors that wouldn't be
         # possible in __torch_dispatch__ level.
-        if func.__name__ in Tensor._dist_tensor_dispatch_ops:
+        if func.__name__ in DTensor._dist_tensor_dispatch_ops:
             # dispatch to the same table as the name should be different between
             # torch_function and torch_dispatch
-            return Tensor._dist_tensor_dispatch_ops[func.__name__](
+            return DTensor._dist_tensor_dispatch_ops[func.__name__](
                 *args, **kwargs
             )
         else:
@@ -189,31 +189,31 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # check that we are not getting mixed vanilla and Distributed tensors
         arg_list, arg_spec = tree_flatten(args)
         for arg in arg_list:
-            if isinstance(arg, torch.Tensor) and not isinstance(arg, Tensor):
+            if isinstance(arg, torch.Tensor) and not isinstance(arg, DTensor):
                 raise RuntimeError(
                     f"{func}: got mixed distributed and non-distributed tensors."
                 )
 
-        def unwrap_mesh(e: Tensor) -> DeviceMesh:
+        def unwrap_mesh(e: DTensor) -> DeviceMesh:
             # if this tensor is not Distributed, then return none. We will reinterpret it as replicated
-            if not isinstance(e, Tensor):
+            if not isinstance(e, DTensor):
                 return None
             mesh = e.device_mesh
             assert (
                 mesh.ndim == 1
-            ), "DistributedTensor ops not supporting multi-dim mesh yet"
+            ), "DTensor ops not supporting multi-dim mesh yet"
             return mesh
 
         # pyre-fixme[3]: Return type must be annotated.
         # pyre-fixme[2]: Parameter must be annotated.
         def unwrap(e):
-            return e._local_tensor if isinstance(e, Tensor) else e
+            return e._local_tensor if isinstance(e, DTensor) else e
 
         # pyre-fixme[3]: Return type must be annotated.
         # pyre-fixme[2]: Parameter must be annotated.
         def wrap(e, mesh, placements):
             return (
-                Tensor.from_local(e, mesh, placements, run_check=False)
+                DTensor.from_local(e, mesh, placements, run_check=False)
                 if isinstance(e, torch.Tensor)
                 else e
             )
@@ -223,7 +223,7 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         def is_replicate(tensor):
             return (
                 tensor.placements[0] == Replicate()
-                if isinstance(tensor, Tensor)
+                if isinstance(tensor, DTensor)
                 else True
             )
 
@@ -235,7 +235,7 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # take a short cut if all arguments are replicated
         all_replicated = True
         for arg in args:
-            if isinstance(arg, Tensor):
+            if isinstance(arg, DTensor):
                 all_replicated &= is_replicate(arg)
             elif type(arg) is list:
                 all_replicated &= all(tree_map(is_replicate, arg))
@@ -244,13 +244,13 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
             rs = func(*tree_map(unwrap, args), **tree_map(unwrap, kwargs))
             return wrap(rs, args_mesh[0], args[0].placements)
 
-        if str(func) in Tensor._dist_tensor_dispatch_ops:
+        if str(func) in DTensor._dist_tensor_dispatch_ops:
             # dispatch to distributed tensor ops
-            return Tensor._dist_tensor_dispatch_ops[str(func)](*args, **kwargs)
+            return DTensor._dist_tensor_dispatch_ops[str(func)](*args, **kwargs)
         else:
             if _DEBUG_STRICT:
                 raise RuntimeError(
-                    f"Operator {func} does not have a DistributedTensor rule registered."
+                    f"Operator {func} does not have a DTensor rule registered."
                 )
             # default to local tensor ops, this is wrong
             # but we use it now to enable more tensor property access
@@ -266,9 +266,9 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         device_mesh: Optional[DeviceMesh] = None,
         placements: Optional[Sequence[Placement]] = None,
         run_check: bool = True,
-    ) -> "Tensor":
+    ) -> "DTensor":
         """
-        Create a :class:`spmd.Tensor` from a local torch.Tensor on each rank
+        Create a :class:`DTensor` from a local torch.Tensor on each rank
         according to the `device_mesh` and `placements` specified.
 
         Args:
@@ -287,10 +287,10 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
                 will be broadcasted to other ranks.
 
         Returns:
-            A :class:`spmd.Tensor` object
+            A :class:`DTensor` object
 
         .. note:: `from_local` is differentiable, the `requires_grad` of the created
-            `spmd.Tensor` object will depend on if `local_tensor` requires_grad or not.
+            `DTensor` object will depend on if `local_tensor` requires_grad or not.
         """
         # if same shape/dtype, no need to run_check, if not, must allgather
         # the metadatas to check the size/dtype across ranks
@@ -314,13 +314,16 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
             local_tensor, device_mesh, placements, run_check
         )
 
+    def to_local(self) -> torch.Tensor:
+        return ToTorchTensor.apply(self)  # pyre-ignore[16]: autograd func
+
     def redistribute(
         self,
         device_mesh: Optional[DeviceMesh] = None,
         placements: Optional[Sequence[Placement]] = None,
-    ) -> "Tensor":
+    ) -> "DTensor":
         # This API perform necessary transformations and get
-        # a new DistributedTensor with the new spec. i.e. for
+        # a new DTensor with the new spec. i.e. for
         # sharding it's a reshard behavior.
         # TODO: handle last shard uneven with padding
         # right now we assume all local shard equal size
@@ -333,9 +336,6 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
 
         # pyre-fixme[16]: `Redistribute` has no attribute `apply`.
         return Redistribute.apply(self, device_mesh, placements)
-
-    def local_tensor(self) -> torch.Tensor:
-        return ToTorchTensor.apply(self)  # pyre-ignore[16]: autograd func
 
     @property
     def placements(self) -> Sequence[Placement]:
@@ -395,8 +395,8 @@ class Tensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
                 shape[sharding_dim] // world_size,
                 *shape[sharding_dim + 1 :],
             )
-            new_local_tensor = self.local_tensor().view(*new_local_tensor_size)
+            new_local_tensor = self.to_local().view(*new_local_tensor_size)
 
-            return Tensor.from_local(
+            return DTensor.from_local(
                 new_local_tensor, device_mesh, new_sharding_placement
             )

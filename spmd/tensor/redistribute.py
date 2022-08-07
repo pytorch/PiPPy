@@ -8,12 +8,12 @@ from spmd.tensor.device_mesh import DeviceMesh
 
 
 def redistribute_spmd_tensor(
-    input: "spmd_tensor.Tensor",
+    input: "spmd_tensor.DTensor",
     device_mesh: DeviceMesh,
     placements: List[Placement],
-) -> "spmd_tensor.Tensor":
+) -> "spmd_tensor.DTensor":
     current_placements = input.placements
-    local_tensor = input.local_tensor()
+    local_tensor = input.to_local()
     if input.device_mesh != device_mesh:
         # TODO: alltoall reshuffling to change device_mesh if they are not the same
         raise NotImplementedError("Cross device mesh comm not supported yet!")
@@ -89,7 +89,7 @@ def redistribute_spmd_tensor(
 
     assert new_local_tensor is not None, "redistribute failed!"
 
-    return spmd_tensor.Tensor(new_local_tensor, device_mesh, placements)
+    return spmd_tensor.DTensor(new_local_tensor, device_mesh, placements)
 
 
 class Redistribute(torch.autograd.Function):
@@ -97,7 +97,7 @@ class Redistribute(torch.autograd.Function):
     def forward(  # type: ignore
         # pyre-fixme[2]: Parameter must be annotated.
         ctx,
-        input: "spmd_tensor.Tensor",
+        input: "spmd_tensor.DTensor",
         device_mesh: DeviceMesh,
         placements: List[Placement],
     ):
@@ -106,7 +106,7 @@ class Redistribute(torch.autograd.Function):
         return redistribute_spmd_tensor(input, device_mesh, placements)
 
     @staticmethod
-    def backward(ctx, grad_output: "spmd_tensor.Tensor"):  # type: ignore
+    def backward(ctx, grad_output: "spmd_tensor.DTensor"):  # type: ignore
         previous_placement = ctx.previous_placement
         previous_device_mesh = ctx.previous_device_mesh
         return (

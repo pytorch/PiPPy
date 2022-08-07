@@ -2,7 +2,7 @@
 import torch
 from torch.testing._internal.common_utils import run_tests
 from ..test_utils import DistTensorTestBase, with_comms
-from spmd import distribute_tensor, DeviceMesh, Tensor, Shard, Replicate
+from spmd import distribute_tensor, DeviceMesh, DTensor, Shard, Replicate
 
 
 class DistTensorOpsTest(DistTensorTestBase):
@@ -23,10 +23,10 @@ class DistTensorOpsTest(DistTensorTestBase):
         replica_spec = [Replicate()]
 
         input_tensor = torch.randn(4, 8, requires_grad=True)
-        dist_tensor = Tensor.from_local(input_tensor, device_mesh, shard_spec)
+        dist_tensor = DTensor.from_local(input_tensor, device_mesh, shard_spec)
         ones_like_dt = torch.ones_like(dist_tensor)
         ones_expected = torch.ones(4, 8)
-        self.assertEqual(ones_expected, ones_like_dt.local_tensor())
+        self.assertEqual(ones_expected, ones_like_dt.to_local())
 
 
 if __name__ == "__main__":
