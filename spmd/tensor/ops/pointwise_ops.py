@@ -1,5 +1,10 @@
 from typing import List, Optional
-from spmd.tensor.placement_types import Shard, Replicate, _Partial, PlacementSpec
+from spmd.tensor.placement_types import (
+    Shard,
+    Replicate,
+    _Partial,
+    PlacementSpec,
+)
 
 [
     "abs",

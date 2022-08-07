@@ -3,9 +3,14 @@
 import torch.utils._pytree as pytree
 from typing import List, Optional
 from torch.distributed.distributed_c10d import ReduceOp
-from spmd.tensor.api import Tensor
+from spmd.tensor.api import DTensor
 from spmd.tensor.dispatch import OpInfo
-from spmd.tensor.placement_types import Shard, Replicate, _Partial, PlacementSpec
+from spmd.tensor.placement_types import (
+    Shard,
+    Replicate,
+    _Partial,
+    PlacementSpec,
+)
 from spmd.tensor.utils import (
     unwrap_local_tensor,
 )
@@ -25,16 +30,24 @@ def mm_rules(op_info: OpInfo) -> Optional[PlacementSpec]:
     mat1_spec, mat2_spec = op_info.args_spec
     print(f"mat1 spec: {mat1_spec.dims_map}, mat2 spec: {mat2_spec.dims_map}")
     # TODO: support multi-dim device mesh op with einop propagation
-    if mat1_spec.placements[0].is_shard(dim=0) and mat2_spec.placements[0].is_replicate():
+    if (
+        mat1_spec.placements[0].is_shard(dim=0)
+        and mat2_spec.placements[0].is_replicate()
+    ):
         return mat1_spec
-    elif mat1_spec.placements[0].is_replicate() and mat2_spec.placements[0].is_shard(dim=1):
+    elif mat1_spec.placements[0].is_replicate() and mat2_spec.placements[
+        0
+    ].is_shard(dim=1):
         return mat2_spec
-    elif mat1_spec.placements[0].is_shard(dim=1) and mat2_spec.placements[0].is_shard(dim=0):
+    elif mat1_spec.placements[0].is_shard(dim=1) and mat2_spec.placements[
+        0
+    ].is_shard(dim=0):
         placements = [_Partial(ReduceOp.SUM)]
         return PlacementSpec(mat1_spec.ndim, mat1_spec.mesh, placements)
     else:
         # not local compute, need to rely on auto redistribute, return None
         return None
+
 
 @register_prop_rule("aten.t.default")
 def transpose_rule(op_info: OpInfo) -> Optional[PlacementSpec]:
@@ -49,14 +62,14 @@ def transpose_rule(op_info: OpInfo) -> Optional[PlacementSpec]:
 
 @register_impl("aten.addmm.default")
 def dist_addmm(
-    input: Tensor,
-    mat1: Tensor,
-    mat2: Tensor,
+    input: DTensor,
+    mat1: DTensor,
+    mat2: DTensor,
     # pyre-fixme[2]: Parameter must be annotated.
     beta=1,
     # pyre-fixme[2]: Parameter must be annotated.
     alpha=1,
-) -> Tensor:
+) -> DTensor:
     # dist addmm:
     # input:shard(0)    mat1: shard(0),  mat2: replicate
     # input:shard(1)    mat1: replicate, mat2: shard(1)
@@ -79,17 +92,17 @@ def dist_addmm(
         local_res = local_input.addmm(
             local_mat1, local_mat2, beta=beta, alpha=alpha
         )
-        return Tensor.from_local(local_res, device_mesh, mat1.placements)
+        return DTensor.from_local(local_res, device_mesh, mat1.placements)
     elif mat1_placement.is_replicate() and mat2_placement.is_shard(dim=1):
         local_res = local_input.addmm(
             local_mat1, local_mat2, beta=beta, alpha=alpha
         )
-        return Tensor.from_local(local_res, device_mesh, mat2.placements)
+        return DTensor.from_local(local_res, device_mesh, mat2.placements)
     elif mat1_placement.is_replicate() and mat2_placement.is_replicate():
         local_res = local_input.addmm(
             local_mat1, local_mat2, beta=beta, alpha=alpha
         )
-        return Tensor.from_local(
+        return DTensor.from_local(
             local_res, device_mesh, mat1.placements, run_check=False
         )
     else:

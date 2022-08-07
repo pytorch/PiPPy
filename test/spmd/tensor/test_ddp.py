@@ -7,7 +7,7 @@ from spmd import (
     distribute_tensor,
     distribute_module,
     DeviceMesh,
-    Tensor,
+    DTensor,
     Shard,
     Replicate,
 )
@@ -41,7 +41,7 @@ class DistTensorAPITest(DistTensorTestBase):
             tensor_to_shard, device_mesh, shard_spec
         )
         self.assertEqual(sharded_tensor.size(), torch.Size([12, 3]))
-        local_tensor = sharded_tensor.local_tensor()
+        local_tensor = sharded_tensor.to_local()
         self.assertEqual(local_tensor.size(), torch.Size([3, 3]))
 
     @with_comms
@@ -72,12 +72,12 @@ class DDPWithDistTensorAPITest(DistTensorTestBase):
 
         input = torch.randn(10, n_features, requires_grad=True)
         # mark input as replicated
-        replicated_input = Tensor.from_local(input, device_mesh, replica_spec)
+        replicated_input = DTensor.from_local(input, device_mesh, replica_spec)
 
         output = model(replicated_input)
         output.sum().backward()
         param_grad = list(model.parameters())[0].grad
-        self.assertTrue(isinstance(param_grad, Tensor))
+        self.assertTrue(isinstance(param_grad, DTensor))
         self.assertTrue(isinstance(param_grad.placements[0], Replicate))
 
     @with_comms
@@ -93,7 +93,7 @@ class DDPWithDistTensorAPITest(DistTensorTestBase):
         shard0_spec = [Shard(0)]
         input = torch.randn(10, n_features)
         # mark input as shard on dim 0
-        sharded_input = Tensor.from_local(input, device_mesh, shard0_spec)
+        sharded_input = DTensor.from_local(input, device_mesh, shard0_spec)
 
         # run DDP like a normal model
         output = replicated_model(sharded_input)

@@ -13,7 +13,6 @@ If set to true, __DEBUG_STRICT will fail when an op doesn't have a sharding rule
 _DEBUG_STRICT = False
 
 
-
 @dataclass
 class OpInfo(object):
     op_call: Callable
@@ -31,7 +30,7 @@ def dispatch_operator(
     op_key = str(op_info.op_call)
     sharding_prop_func = op_to_rules.get(op_key, None)
     if sharding_prop_func is not None:
-        # step 1. there's sharding propagation rule, run 
+        # step 1. there's sharding propagation rule, run
         # sharding propagation to get output placements
         output_placements = sharding_prop_func(op_info)
 
@@ -47,7 +46,9 @@ def dispatch_operator(
             raise NotImplementedError("auto redistribute not implemented yet!")
 
         # run local op computation
-        local_results = op_info.op_call(*op_info.args_with_local_tensor, **op_info.kwargs_with_local_tensor)
+        local_results = op_info.op_call(
+            *op_info.args_with_local_tensor, **op_info.kwargs_with_local_tensor
+        )
         print(f">>>> type: {type(local_results)}")
 
         # rewrap results back to dist tensor and return
@@ -65,7 +66,9 @@ def dispatch_operator(
         # # default to local tensor ops, this is wrong
         # # but we use it now to enable more tensor op access
         else:
-            local_results = op_info.op_call(*op_info.args_with_local_tensor, **op_info.kwargs_with_local_tensor)
+            local_results = op_info.op_call(
+                *op_info.args_with_local_tensor,
+                **op_info.kwargs_with_local_tensor,
+            )
             rs = wrap(local_results, op_info.args_spec[0])
             return rs
-

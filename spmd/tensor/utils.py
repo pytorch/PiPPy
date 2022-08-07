@@ -16,32 +16,40 @@ def all_equal(xs):
     return xs[1:] == xs[:-1]
 
 
-def unwrap_local_tensor(e: "spmd_tensor.Tensor") -> torch.Tensor:
-    return e._local_tensor if isinstance(e, spmd_tensor.Tensor) else e
+def unwrap_local_tensor(e: "spmd_tensor.DTensor") -> torch.Tensor:
+    return e._local_tensor if isinstance(e, spmd_tensor.DTensor) else e
 
 
-def unwrap_placements(e: "spmd_tensor.Tensor") -> Sequence[Placement]:
-    return e._placement_spec.placements if isinstance(e, spmd_tensor.Tensor) else e
+def unwrap_placements(e: "spmd_tensor.DTensor") -> Sequence[Placement]:
+    return (
+        e._placement_spec.placements
+        if isinstance(e, spmd_tensor.DTensor)
+        else e
+    )
 
 
-def unwrap_mesh(e: "spmd_tensor.Tensor") -> DeviceMesh:
+def unwrap_mesh(e: "spmd_tensor.DTensor") -> DeviceMesh:
     # if this tensor is not Distributed, then return none. We will reinterpret it as replicated
-    if not isinstance(e, spmd_tensor.Tensor):
+    if not isinstance(e, spmd_tensor.DTensor):
         return None
     mesh = e._placement_spec.mesh
-    assert mesh.ndim == 1, "DistributedTensor ops not supporting multi-dim mesh yet"
+    assert (
+        mesh.ndim == 1
+    ), "DistributedTensor ops not supporting multi-dim mesh yet"
     return mesh
 
-def unwrap_spec(e: "spmd_tensor.Tensor") -> PlacementSpec:
-    if not isinstance(e, spmd_tensor.Tensor):
+
+def unwrap_spec(e: "spmd_tensor.DTensor") -> PlacementSpec:
+    if not isinstance(e, spmd_tensor.DTensor):
         return None
     return e._placement_spec
 
-def wrap(
-    e: torch.Tensor, spec: PlacementSpec
-) -> "spmd_tensor.Tensor":
+
+def wrap(e: torch.Tensor, spec: PlacementSpec) -> "spmd_tensor.DTensor":
     return (
-        spmd_tensor.Tensor.from_local(e, spec.mesh, spec.placements, run_check=False)
+        spmd_tensor.DTensor.from_local(
+            e, spec.mesh, spec.placements, run_check=False
+        )
         if isinstance(e, torch.Tensor)
         else e
     )

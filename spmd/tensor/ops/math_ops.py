@@ -1,7 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 from typing import Tuple, List, Dict
 from torch.distributed.distributed_c10d import ReduceOp
-from spmd.tensor.api import Tensor
+from spmd.tensor.api import DTensor
 from spmd.tensor.placement_types import Replicate, _Partial, PlacementSpec
 from spmd.tensor.ops.utils import register_impl, register_prop_rule
 from spmd.tensor.dispatch import OpInfo
@@ -65,12 +65,13 @@ def einop_prop(equation: str, input_specs: List[PlacementSpec], linear=False):
     return PlacementSpec.from_dims_map(
         input_specs[0].mesh,
         [dim_to_sharding[dim] for dim in output_dim],
-        pending_sums)
+        pending_sums,
+    )
 
 
 @register_impl("aten.sum.default")
-def dist_sum(self: Tensor) -> Tensor:
-    self_local = self.local_tensor()
+def dist_sum(self: DTensor) -> DTensor:
+    self_local = self.to_local()
     self_placement = self.placements[0]
     device_mesh = self.device_mesh
 
@@ -79,12 +80,12 @@ def dist_sum(self: Tensor) -> Tensor:
     if self_placement.is_shard() or self_placement.is_partial():
         placements = [_Partial(ReduceOp.SUM)]
         # partial reduce
-        partial_sum = Tensor.from_local(local_sum, device_mesh, placements)
+        partial_sum = DTensor.from_local(local_sum, device_mesh, placements)
         # all_reduce across device
         replicate_placements = [Replicate()]
         return partial_sum.redistribute(device_mesh, replicate_placements)
     elif self_placement.is_replicate():
-        return Tensor.from_local(
+        return DTensor.from_local(
             local_sum, device_mesh=device_mesh, placements=self.placements
         )
     else:

@@ -2,7 +2,7 @@
 from typing import List
 import torch
 import torch.nn as nn
-from spmd.tensor import Tensor, Placement, Shard, Replicate, _Partial
+from spmd.tensor import DTensor, Placement, Shard, Replicate, _Partial
 from spmd.tensor.device_mesh import get_global_device_mesh, DeviceMesh
 
 torch.__future__.set_overwrite_module_params_on_conversion(True)
@@ -46,13 +46,13 @@ def distribute_tensor(
             scatter_shape = list(tensor.size())
             scatter_shape[shard_dim] = chunk_size
             local_tensor = device_mesh.scatter(tensor_list)
-            dist_tensor = Tensor.from_local(
+            dist_tensor = DTensor.from_local(
                 local_tensor, device_mesh, placements
             )
         elif isinstance(placement, Replicate) or isinstance(
             placement, _Partial
         ):
-            dist_tensor = Tensor.from_local(tensor, device_mesh, placements)
+            dist_tensor = DTensor.from_local(tensor, device_mesh, placements)
         else:
             raise RuntimeError("Not supported!")
 

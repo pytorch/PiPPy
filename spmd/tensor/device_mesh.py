@@ -51,7 +51,7 @@ class DeviceMesh(object):
     We use the default ProcessGroup in this DeviceMesh class to implement proper
     communications. Note that we also add collective wrappers in this class. This is
     used to decouple detailed communication backend with the underlying
-    DistributedTensor implementation.
+    DTensor implementation.
 
     DeviceMesh can be used as a context manager.
     Args:
@@ -232,7 +232,7 @@ class DeviceMesh(object):
                 mesh dimension.
 
         Returns:
-            A :class:`spmd.Tensor` object
+            A :class:`torch.Tensor` object
         """
         to_scatter = [tensor.contiguous() for tensor in scatter_list]
         dim_group = self._dim_groups[mesh_dim]
