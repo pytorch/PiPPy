@@ -16,7 +16,7 @@ class DistMathOpsTest(DistTensorTestBase):
         sumed_tensor = tensor_to_sum.sum()
         mat1 = distribute_tensor(tensor_to_sum, device_mesh, shard_spec)
         dt_sum = mat1.sum()
-        self.assertEqual(dt_sum.local_tensor(), sumed_tensor)
+        self.assertEqual(dt_sum.to_local(), sumed_tensor)
 
 
 if __name__ == "__main__":

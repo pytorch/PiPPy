@@ -5,7 +5,7 @@ from torch.distributed.distributed_c10d import ReduceOp
 
 from torch.testing._internal.common_utils import run_tests
 from ..test_utils import DistTensorTestBase, with_comms
-from spmd.tensor import DeviceMesh, Tensor, Replicate, Shard, _Partial
+from spmd.tensor import DeviceMesh, DTensor, Replicate, Shard, _Partial
 
 
 class DistTensorTest(DistTensorTestBase):
@@ -28,17 +28,17 @@ class DistTensorTest(DistTensorTestBase):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
         local_tensor = torch.randn(3, 3)
-        sharded_tensor = Tensor.from_local(
+        sharded_tensor = DTensor.from_local(
             local_tensor, device_mesh, shard_spec
         )
         self.assertEqual(sharded_tensor.size(), torch.Size([12, 3]))
 
         replica_spec = [Replicate()]
-        ddp_tensor = Tensor.from_local(local_tensor, device_mesh, replica_spec)
+        ddp_tensor = DTensor.from_local(local_tensor, device_mesh, replica_spec)
         self.assertEqual(ddp_tensor.size(), local_tensor.size())
 
         partial_spec = [_Partial(ReduceOp.SUM)]
-        partial_tensor = Tensor.from_local(
+        partial_tensor = DTensor.from_local(
             local_tensor, device_mesh, partial_spec
         )
         self.assertEqual(partial_tensor.size(), local_tensor.size())
@@ -48,7 +48,7 @@ class DistTensorTest(DistTensorTestBase):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
         local_tensor = torch.randn(3, 3)
-        sharded_tensor = Tensor.from_local(
+        sharded_tensor = DTensor.from_local(
             local_tensor, device_mesh, shard_spec
         )
 
@@ -62,7 +62,7 @@ class DistTensorTest(DistTensorTestBase):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
         local_tensor = torch.randn(3, 3)
-        sharded_tensor = Tensor.from_local(
+        sharded_tensor = DTensor.from_local(
             local_tensor, device_mesh, shard_spec
         )
         print(sharded_tensor.device)

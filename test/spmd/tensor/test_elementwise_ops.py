@@ -2,7 +2,7 @@
 import torch
 from torch.testing._internal.common_utils import run_tests
 from ..test_utils import DistTensorTestBase, with_comms, TEST_GPU_NUM
-from spmd import DeviceMesh, Tensor, Shard, Replicate, _Partial
+from spmd import DeviceMesh, DTensor, Shard, Replicate, _Partial
 from torch.distributed.distributed_c10d import ReduceOp
 from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 
@@ -16,13 +16,13 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         input_tensor = torch.randn(*input_size, requires_grad=True).cuda(
             self.rank
         )
-        dist_tensor = Tensor.from_local(input_tensor, mesh, spec)
+        dist_tensor = DTensor.from_local(input_tensor, mesh, spec)
         reset_seed() if reset_seed else None
         dt = op(dist_tensor, **kwargs)
         reset_seed() if reset_seed else None
         expected = op(input_tensor, **kwargs)
-        self.assertEqual(input_tensor, dist_tensor.local_tensor())
-        self.assertEqual(expected, dt.local_tensor())
+        self.assertEqual(input_tensor, dist_tensor.to_local())
+        self.assertEqual(expected, dt.to_local())
 
     @with_comms
     @skip_if_lt_x_gpu(TEST_GPU_NUM)
