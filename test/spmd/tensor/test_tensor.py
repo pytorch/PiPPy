@@ -58,12 +58,11 @@ class DistTensorTest(DistTensorTestBase):
         self.assertEqual(dist_tensor.stride(), (16, 1))
 
         # if initialized from a transposed mat
-        local_tensor_t = local_tensor.t()
-        self.assertEqual(local_tensor_t.stride(), (1, 4))
+        local_tensor = torch.randn(8, 4, 8)
+        local_tensor_t = local_tensor.permute(1, 2, 0)
+        self.assertEqual(local_tensor_t.stride(), (8, 1, 32))
         dist_tensor = DTensor(local_tensor_t, device_mesh, shard1_spec)
-
-        repeated_tensor_t = local_tensor_t.repeat(1, self.world_size)
-        self.assertEqual(dist_tensor.stride(), repeated_tensor_t.stride())
+        self.assertEqual(dist_tensor.stride(), (32, 1, 32))
 
     @with_comms
     def test_tensor_from_local(self):

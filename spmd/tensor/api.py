@@ -112,24 +112,29 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # from_local, and distribute_tensor difference.
 
         # recover tensor shape and strides in the case of sharding
-        # we do this by creating a temp tensor on meta and rely on
-        # meta tensor to calculate shape and stride for both contiguous
-        # and non-contiguous cases, magic by @albanD
-        meta_local = local_tensor.to("meta")
-
-        repeat_dims = [1] * local_tensor.ndim
+        tensor_shape = list(local_tensor.size())
+        tensor_stride = list(local_tensor.stride())
         for idx, placement in enumerate(placements):
             if isinstance(placement, Shard):
-                repeat_dims[placement.dim] = repeat_dims[
-                    placement.dim
-                ] * device_mesh.size(idx)
+                shard_dim = placement.dim
+                local_dim_size = tensor_shape[shard_dim]
+                # recover tensor shape on the shard dim
+                tensor_shape[shard_dim] = local_dim_size * device_mesh.size(idx)
+
+                # recover tensor stride by modifying the stride that larger than
+                # the current stride on the shard_dim
+                for i in range(len(tensor_stride)):
+                    if (
+                        i < shard_dim
+                        and tensor_stride[i] > tensor_stride[shard_dim]
+                    ):
+                        tensor_stride[i] = tensor_stride[i] * device_mesh.size(
+                            idx
+                        )
             elif not isinstance(placement, (Replicate, _Partial)):
                 raise RuntimeError(
                     f"placement type {type(placement)} not supported!"
                 )
-
-        # repeat dims base on the meta tensor base on placements
-        meta_local = meta_local.repeat(repeat_dims)
 
         requires_grad = kwargs.get("requires_grad", False)
         if requires_grad != local_tensor.requires_grad:
@@ -142,8 +147,8 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # placement spec, it does not do actual distribution
         r = torch.Tensor._make_wrapper_subclass(  # type: ignore[attr-defined]
             cls,
-            meta_local.size(),
-            strides=meta_local.stride(),
+            torch.Size(tensor_shape),
+            strides=tensor_stride,
             dtype=local_tensor.dtype,
             device=local_tensor.device,
             layout=local_tensor.layout,
