@@ -127,7 +127,6 @@ class TPShardingOpsTest(DistTensorTestBase):
         new_dt = dist_tensor.permute(1, 0, 2)
         self.assertTrue(new_dt.placements[0].is_replicate())
         self.assertEqual(new_dt.to_local(), tensor.permute(1, 0, 2))
-        self.assertEqual(new_dt.stride(), tensor.permute(1, 0, 2).stride())
 
     @with_comms
     def test_sharded_cat(self):

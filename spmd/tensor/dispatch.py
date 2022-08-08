@@ -49,7 +49,6 @@ def dispatch_operator(
         local_results = op_info.op_call(
             *op_info.args_with_local_tensor, **op_info.kwargs_with_local_tensor
         )
-        print(f">>>> type: {type(local_results)}")
 
         # rewrap results back to dist tensor and return
         return wrap(local_results, output_placements)
@@ -63,8 +62,10 @@ def dispatch_operator(
             raise RuntimeError(
                 f"Operator {op_key} does not have a DistributedTensor rule registered."
             )
-        # # default to local tensor ops, this is wrong
-        # # but we use it now to enable more tensor op access
+        # default to local tensor ops, this is wrong
+        # but we use it now to enable more tensor point-wise ops
+        # TODO: delete this and use replicate (all_gather) as
+        # the default fallback.
         else:
             local_results = op_info.op_call(
                 *op_info.args_with_local_tensor,

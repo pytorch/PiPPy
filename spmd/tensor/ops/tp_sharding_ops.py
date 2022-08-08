@@ -9,9 +9,8 @@ from spmd.tensor.api import DTensor
 from spmd.tensor.placement_types import Shard
 from spmd.tensor.utils import (
     unwrap_local_tensor,
-    # unwrap_single_placement,
 )
-from spmd.tensor.ops.utils import register_impl
+from spmd.tensor.ops.utils import unwrap_single_placement, register_impl
 
 """
 The ops below were quickly hacked and needed to be polished down the road.
@@ -24,50 +23,57 @@ of DTensor and all corner cases for sharded distributed tensor.
 @register_impl("aten.view.default")
 # pyre-fixme[2]: Parameter must be annotated.
 def dist_view(self: DTensor, *shape) -> DTensor:
-    shape = shape[0]
-    try:
-        infer_idx = shape.index(-1)
-    except ValueError:
-        infer_idx = None  # type: ignore
-
-    # Infer the dim which is specified with -1.
-    if infer_idx is not None:
-        st_size = math.prod(self.size())  # type: ignore[attr-defined]
-        shape_size = -1 * math.prod(shape)  # type: ignore[attr-defined]
-        # pyre-fixme[60]: Concatenation not yet support for multiple variadic
-        shape = (
-            *shape[:infer_idx],
-            st_size // shape_size,
-            *shape[infer_idx + 1 :],
-        )
-    if self.size() == shape:
-        return self
-
-    local_mat = pytree.tree_map(unwrap_local_tensor, self)
     mat_placement = pytree.tree_map(unwrap_single_placement, self)
-
-    sharding_dim = mat_placement.dim
-    # When the sharding dim is negative, we need to ensure the new
-    # sharded tensor is still sharded by the original dimension.
-    if sharding_dim < 0:
-        sharding_dim = self.dim() + sharding_dim
-
-    world_size = self.device_mesh.size(dim=0)
-    if shape[sharding_dim] % world_size:
-        raise NotImplementedError(
-            f"Case when dim '({shape[sharding_dim]})' is not divisible "
-            "by world_size is not supported."
+    local_mat = pytree.tree_map(unwrap_local_tensor, self)
+    if mat_placement.is_replicate():
+        return DTensor.from_local(
+            local_mat.view(*shape), self.device_mesh, [mat_placement]
         )
-    # pyre-fixme[60]: Concatenation not yet support for multiple variadic
-    new_local_tensor_size = (
-        *shape[:sharding_dim],
-        shape[sharding_dim] // world_size,
-        *shape[sharding_dim + 1 :],
-    )
-    new_local_tensor = local_mat.view(*new_local_tensor_size)
-    return DTensor.from_local(
-        new_local_tensor, self.device_mesh, self.placements
-    )
+
+    elif mat_placement.is_shard():
+        shape = shape[0]
+        try:
+            infer_idx = shape.index(-1)
+        except ValueError:
+            infer_idx = None  # type: ignore
+
+        # Infer the dim which is specified with -1.
+        if infer_idx is not None:
+            st_size = math.prod(self.size())  # type: ignore[attr-defined]
+            shape_size = -1 * math.prod(shape)  # type: ignore[attr-defined]
+            # pyre-fixme[60]: Concatenation not yet support for multiple variadic
+            shape = (
+                *shape[:infer_idx],
+                st_size // shape_size,
+                *shape[infer_idx + 1 :],
+            )
+        if self.size() == shape:
+            return self
+
+        sharding_dim = mat_placement.dim
+        # When the sharding dim is negative, we need to ensure the new
+        # sharded tensor is still sharded by the original dimension.
+        if sharding_dim < 0:
+            sharding_dim = self.dim() + sharding_dim
+
+        world_size = self.device_mesh.size(dim=0)
+        if shape[sharding_dim] % world_size:
+            raise NotImplementedError(
+                f"Case when dim '({shape[sharding_dim]})' is not divisible "
+                "by world_size is not supported."
+            )
+        # pyre-fixme[60]: Concatenation not yet support for multiple variadic
+        new_local_tensor_size = (
+            *shape[:sharding_dim],
+            shape[sharding_dim] // world_size,
+            *shape[sharding_dim + 1 :],
+        )
+        new_local_tensor = local_mat.view(*new_local_tensor_size)
+        return DTensor.from_local(
+            new_local_tensor, self.device_mesh, self.placements
+        )
+    else:
+        raise RuntimeError("not supported!")
 
 
 @register_impl("aten.transpose.int")
@@ -120,13 +126,21 @@ def dist_permute(self: DTensor, dims: List[int]) -> DTensor:
     local_mat = pytree.tree_map(unwrap_local_tensor, self)
     mat_placement = pytree.tree_map(unwrap_single_placement, self)
 
-    sharding_dim = mat_placement.dim
-    new_sharding_dim = dims.index(sharding_dim)
-    new_sharding_placement = [Shard(new_sharding_dim)]
-    local_tensor = torch.ops.aten.permute(local_mat, dims=dims)
-    return DTensor.from_local(
-        local_tensor, self.device_mesh, new_sharding_placement
-    )
+    if mat_placement.is_replicate():
+        local_tensor = torch.ops.aten.permute(local_mat, dims=dims)
+        return DTensor.from_local(
+            local_tensor, self.device_mesh, [mat_placement], run_check=False
+        )
+    elif mat_placement.is_shard():
+        sharding_dim = mat_placement.dim
+        new_sharding_dim = dims.index(sharding_dim)
+        new_sharding_placement = [Shard(new_sharding_dim)]
+        local_tensor = torch.ops.aten.permute(local_mat, dims=dims)
+        return DTensor.from_local(
+            local_tensor, self.device_mesh, new_sharding_placement
+        )
+    else:
+        raise RuntimeError("Not supported!")
 
 
 @register_impl("aten.cat.default")

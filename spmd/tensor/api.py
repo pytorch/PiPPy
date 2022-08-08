@@ -18,9 +18,7 @@ from spmd.tensor.redistribute import Redistribute
 
 from spmd.tensor.utils import (
     unwrap_local_tensor,
-    unwrap_mesh,
     unwrap_spec,
-    wrap,
 )
 from spmd.tensor.dispatch import OpInfo, dispatch_operator
 
@@ -92,9 +90,7 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         if func.__name__ in DTensor._custom_dispatch_ops:
             # dispatch to the same table as the name should be different between
             # torch_function and torch_dispatch
-            return DTensor._dist_tensor_dispatch_ops[func.__name__](
-                *args, **kwargs
-            )
+            return DTensor._custom_dispatch_ops[func.__name__](*args, **kwargs)
         else:
             # if not, just do nothing here
             return super().__torch_function__(func, types, args, kwargs)
@@ -103,7 +99,6 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     # pyre-fixme[3]: Return type must be annotated.
     # pyre-fixme[2]: Parameter must be annotated.
     def __torch_dispatch__(cls, func, types, args=(), kwargs=None):
-        print(f"?? func: {func}")
         # check that we are not getting mixed vanilla and Distributed tensors
         arg_list, arg_spec = tree_flatten(args)
         for arg in arg_list:
@@ -255,7 +250,7 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # to disallow caller modification on it
         # caller who want a different device_mesh
         # should call redistribute instead.
-        return self._placement_spec._device_mesh
+        return self._placement_spec.mesh
 
     # TODO: This is a temporary hack to unblock TP efforts. We need to
     # come up with a more principle design for customized ops like this.

@@ -51,7 +51,7 @@ class PlacementSpec(object):
     placements: Sequence[Placement]
 
     @property
-    def dims_map(self) -> List[int]:
+    def dim_map(self) -> List[int]:
         # dims mapping of dist tensor sharding
         # return size of tensor ndim, -1 represent replicate
         # and int >=0 represent shard on that device mesh dim
@@ -63,7 +63,7 @@ class PlacementSpec(object):
         return r
 
     @classmethod
-    def from_dims_map(
+    def from_dim_map(
         cls, mesh: DeviceMesh, dims_map: List[int], sums: List[int]
     ) -> "PlacementSpec":
         # by default replicate on device mesh dims

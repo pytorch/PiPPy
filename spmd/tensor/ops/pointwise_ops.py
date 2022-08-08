@@ -1,10 +1,9 @@
-from typing import List, Optional
+from typing import Optional
+from spmd.tensor.dispatch import OpInfo
 from spmd.tensor.placement_types import (
-    Shard,
-    Replicate,
-    _Partial,
     PlacementSpec,
 )
+from spmd.tensor.ops.prop_rules import pointwise_prop
 
 [
     "abs",
@@ -117,5 +116,5 @@ from spmd.tensor.placement_types import (
 ]
 
 
-def pointwise_rules(input: List[PlacementSpec]) -> Optional[PlacementSpec]:
-    pass
+def pointwise_rules(op_info: OpInfo) -> Optional[PlacementSpec]:
+    return pointwise_prop(op_info.args_spec)
