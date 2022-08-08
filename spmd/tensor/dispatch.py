@@ -1,8 +1,6 @@
 from dataclasses import dataclass
-from typing import Any, Callable, Sequence, Tuple, Dict
+from typing import Any, Callable, Dict
 
-import torch
-from spmd.tensor.placement_types import PlacementSpec, Replicate
 from spmd.tensor.utils import (
     wrap,
 )

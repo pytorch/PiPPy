@@ -1,8 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import Tuple, List, Dict
 from torch.distributed.distributed_c10d import ReduceOp
 from spmd.tensor.api import DTensor
-from spmd.tensor.placement_types import Replicate, _Partial, PlacementSpec
+from spmd.tensor.placement_types import Replicate, _Partial
 from spmd.tensor.ops.utils import register_impl
 
 

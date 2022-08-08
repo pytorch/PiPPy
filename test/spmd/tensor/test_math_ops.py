@@ -41,7 +41,6 @@ class DistMathOpsTest(DistTensorTestBase):
         output_spec = einop_prop("ijk,k->ijk", (mat1_spec, mat2_spec))
         self.assertEqual(output_spec.dim_map, [-1, 0, -1])
 
-
     @with_comms
     def test_sum(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))

@@ -1,7 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import copy
 import math
-from typing import List, cast
 
 import torch
 from torch.utils._pytree import tree_map, tree_flatten
