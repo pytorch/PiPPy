@@ -62,7 +62,7 @@ class DistTensorTest(DistTensorTestBase):
         local_tensor_t = local_tensor.permute(1, 2, 0)
         self.assertEqual(local_tensor_t.stride(), (8, 1, 32))
         dist_tensor = DTensor(local_tensor_t, device_mesh, shard1_spec)
-        self.assertEqual(dist_tensor.stride(), (32, 1, 32))
+        self.assertEqual(dist_tensor.stride(), (32, 1, 128))
 
     @with_comms
     def test_tensor_from_local(self):

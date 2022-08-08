@@ -124,10 +124,7 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
                 # recover tensor stride by modifying the stride that larger than
                 # the current stride on the shard_dim
                 for i in range(len(tensor_stride)):
-                    if (
-                        i < shard_dim
-                        and tensor_stride[i] > tensor_stride[shard_dim]
-                    ):
+                    if tensor_stride[i] > tensor_stride[shard_dim]:
                         tensor_stride[i] = tensor_stride[i] * device_mesh.size(
                             idx
                         )
