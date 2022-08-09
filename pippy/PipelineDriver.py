@@ -522,7 +522,7 @@ class PipeStageExecutor(EventRecorder):
         name = f"R{target_name}"
         id = f"R{target_id}"
         if self._record_mem_dumps:
-            self._record_dumps_on_all_peer_executors(f'M{id}_invoke', ts)
+            self._record_dumps_on_all_peer_executors(f'M{id}_invoke', start_ts)
         # TODO: do we need to serialize calls to invoke() to preserve the order in which WorkItems appear for
         # static schedules?
 
