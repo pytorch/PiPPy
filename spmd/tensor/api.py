@@ -18,15 +18,27 @@ _DEBUG_STRICT = False
 # NOTE [Autograd interaction between torch.Tensor]
 #
 # The autograd functions defined below are being used by the public
-# facing APIs (i.e. from_local, local_tensor) to ensure our DTensor
+# facing APIs (i.e. from_local, to_local) to ensure our DTensor
 # works together with torch.Tensor within autograd engine. This
 # allows DistributedTensor to exist on part of the module hierarchy
 # and still able to calculate gradients across the torch.Tensor and
 # DistributedTensor boundary.
-# As an example, it enables backward computation of the following:
-#   Module A (with all torch.Tensor params)
-#       -> Module B (with all DistributedTensor params)
-#           -> Module C (with all torch.Tensor params)
+# As an example, we have the a module that consists of submodules
+# A, B, and C, the execution flow would be like:
+#  input(torch.Tensor) -> Module A -> Module B -> Module C -> output (torch.Tensor)
+#
+# Suppose I only want to make Module B be a sharded module with
+# DistributedTensor params, we would need to make the folloing
+# flow to work:
+#
+#  input(torch.Tensor) -> Module A
+#       -> DTensor input -> Sharded Module B -> DTensor output
+#           -> output (torch.Tensor) -> Module C -> output (torch.Tensor)
+#
+# We need the conversion from Module A to DTensor input, which is
+# `from_local`, and conversion from DTensor output to output, which
+# is `to_local`, thus these two functions must be Autograd functions.
+#
 class ToTorchTensor(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input: "DTensor"):  # type: ignore

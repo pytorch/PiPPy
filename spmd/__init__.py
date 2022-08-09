@@ -60,7 +60,7 @@ def distribute_tensor(
             tensor_list = list(tensor.chunk(num_chunks, dim=shard_dim))
             scatter_shape = list(tensor.size())
             scatter_shape[shard_dim] = chunk_size
-            local_tensor = device_mesh.scatter(tensor_list)
+            local_tensor = device_mesh.scatter(tensor_list, mesh_dim=idx)
             dist_tensor = DTensor(
                 local_tensor,
                 device_mesh,

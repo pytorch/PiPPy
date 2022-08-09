@@ -111,7 +111,9 @@ class DistTensorTest(DistTensorTestBase):
     def test_local_tensor(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
-        local_tensor_with_grad = torch.randn(3, 3, requires_grad=True)
+        local_tensor_with_grad = torch.randn(
+            3, 3, device=self.device_type, requires_grad=True
+        )
 
         sharded_tensor = DTensor(
             local_tensor_with_grad, device_mesh, shard_spec, requires_grad=True
@@ -124,7 +126,9 @@ class DistTensorTest(DistTensorTestBase):
         temp_st = sharded_tensor * 3
 
         # do some operation on local tensor of the dist tensor
-        new_tensor_with_grad = torch.randn(3, 3, requires_grad=True)
+        new_tensor_with_grad = torch.randn(
+            3, 3, device=self.device_type, requires_grad=True
+        )
         res = temp_st.to_local() + new_tensor_with_grad
         # call backward directly on torch.Tensor, and see if it works by
         # propagating through dist tensor
@@ -143,7 +147,9 @@ class DistTensorTest(DistTensorTestBase):
         shard_spec = [Shard(0)]
 
         # step 1. construct from construct local tensor
-        local_tensor_with_grad = torch.randn(3, 3, requires_grad=True)
+        local_tensor_with_grad = torch.randn(
+            3, 3, device=self.device_type, requires_grad=True
+        )
         # do some operations on local tensor
         local_tensor_temp = local_tensor_with_grad + 8
         # step 2. create the dist tensor with non leaf local tensor, dist tensor
@@ -157,7 +163,9 @@ class DistTensorTest(DistTensorTestBase):
         self.assertIsInstance(output, DTensor)
 
         # step 3. do some operation on local tensor of the dist tensor
-        new_tensor_with_grad = torch.randn(3, 3, requires_grad=True)
+        new_tensor_with_grad = torch.randn(
+            3, 3, device=self.device_type, requires_grad=True
+        )
         res = output.to_local() + new_tensor_with_grad
         # call backward directly on torch.Tensor, and see if it works by
         # propagating all the way back to the original torch.Tensor
@@ -189,7 +197,7 @@ class DistTensorTest(DistTensorTestBase):
         sharded_tensor = DTensor.from_local(
             local_tensor, device_mesh, shard_spec
         )
-        self.assertEqual(str(sharded_tensor.device), self.device_type)
+        self.assertEqual(sharded_tensor.device.type, self.device_type)
 
 
 if __name__ == "__main__":
