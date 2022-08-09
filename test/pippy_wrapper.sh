@@ -8,6 +8,5 @@ export LOCAL_RANK=${SLURM_LOCALID}
 #export CUDA_VISIBLE_DEVICES=${SLURM_LOCALID}
 export WORLD_SIZE=${SLURM_NTASKS}
 export RANK=${SLURM_PROCID}
-export VERBOSE=1
 
 python -u "$@" 2>&1

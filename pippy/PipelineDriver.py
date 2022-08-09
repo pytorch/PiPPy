@@ -1104,7 +1104,7 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
         self.cur_microbatch = cur_microbatch
         self.pc = 0
         self.node_list = list(self.module.graph.nodes)
-        logging.info(f'[root] Node list has {len(self.node_list)} nodes')
+        logging.info(f'[root] RemoteInterpreter created with {len(self.node_list)} nodes')
 
         # Process args/kwargs
 
@@ -1122,6 +1122,7 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
         self.args_iter = iter(self.args)
         self.batch_id = batch_id
         self.num_microbatches = num_microbatches
+        # Dict from stage id to a list holding the coalesced getitem indices
         self.stage_indices : Dict[int, List[Tuple]] = {}
 
     def call_module(self, target, args, kwargs):
