@@ -6,14 +6,22 @@ import torch
 from torch.utils._pytree import tree_map, tree_flatten
 from typing import Dict, Callable, Optional, Sequence
 from spmd.tensor.device_mesh import get_global_device_mesh, DeviceMesh
-from spmd.tensor.placement_types import Placement, Shard, Replicate, _Partial
+from spmd.tensor.placement_types import (
+    Placement,
+    Shard,
+    Replicate,
+    _Partial,
+    PlacementSpec,
+)
 from spmd.tensor.redistribute import Redistribute
 
-
-"""
-If set to true, __DEBUG_STRICT will fail when an op doesn't have a sharding rule registered.
-"""
-_DEBUG_STRICT = False
+from spmd.tensor.utils import unwrap_local_tensor, unwrap_spec, wrap
+from spmd.tensor.dispatch import (
+    OpInfo,
+    OpSchema,
+    OutputSpecType,
+    dispatch_operator,
+)
 
 # NOTE [Autograd interaction between torch.Tensor]
 #
@@ -102,14 +110,19 @@ class FromTorchTensor(torch.autograd.Function):
 
 class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     _local_tensor: torch.Tensor
-    _device_mesh: DeviceMesh
-    _placements: Sequence[Placement]
-    __slots__ = ["_local_tensor", "_device_mesh", "_placements"]
+    _placement_spec: PlacementSpec
+    __slots__ = ["_local_tensor", "_placement_spec"]
 
-    # class attribute that handles ops, all handled
-    # ops should appear in this table
+    # class attribute that handles operator placements propagation
+    # rules, keyed by aten op name, value is propagation func
+    _op_to_rules: Dict[str, Callable[[OpSchema], OutputSpecType]] = {}
+
+    # class attribute that handles custom registered ops, all handled
+    # custom ops should appear in this table, and overriding the default
+    # operators that's been covered by _op_to_rules or fallbacks.
+    # (custom operator is the highest priority when dispatching).
     # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
-    _dist_tensor_dispatch_ops: Dict[str, Callable] = {}
+    _custom_dispatch_ops: Dict[str, Callable] = {}
 
     @staticmethod
     def __new__(
@@ -163,9 +176,11 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
             layout=local_tensor.layout,
             requires_grad=requires_grad,
         )
-        r._device_mesh = device_mesh
-        # deepcopy and set spec
-        r._placements = copy.deepcopy(placements)
+        # deepcopy and set spec, data should be handled
+        # by __init__ or from_local instead.
+        r._placement_spec = PlacementSpec(
+            r.ndim, device_mesh, copy.deepcopy(placements)
+        )
         # detach local tensor from autograd graph as we initialize the
         # distributed tensor and autograd will be working on top of
         # the wrapper tensor directly instead of local torch.Tensor
@@ -176,7 +191,7 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     # pyre-fixme[3]: Return type must be annotated.
     def __repr__(self):
         # TODO: consider all_gather the local tensors for better debugging
-        return f"DTensor(local_tensor={self._local_tensor}, device_mesh={self._device_mesh}, placements={self._placements})"
+        return f"DTensor(local_tensor={self._local_tensor}, device_mesh={self._placement_spec.mesh}, placements={self._placement_spec.placements})"
 
     @classmethod
     # pyre-fixme[3]: Return type must be annotated.
@@ -185,12 +200,10 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # if we find nn.functional name in dispatch op, dispatch to it instead,
         # this allow us to override some python level behaviors that wouldn't be
         # possible in __torch_dispatch__ level.
-        if func.__name__ in DTensor._dist_tensor_dispatch_ops:
+        if func.__name__ in DTensor._custom_dispatch_ops:
             # dispatch to the same table as the name should be different between
             # torch_function and torch_dispatch
-            return DTensor._dist_tensor_dispatch_ops[func.__name__](
-                *args, **kwargs
-            )
+            return DTensor._custom_dispatch_ops[func.__name__](*args, **kwargs)
         else:
             # if not, just do nothing here
             return super().__torch_function__(func, types, args, kwargs)
@@ -207,70 +220,38 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
                     f"{func}: got mixed distributed and non-distributed tensors."
                 )
 
-        def unwrap_mesh(e: DTensor) -> DeviceMesh:
-            # if this tensor is not Distributed, then return none. We will reinterpret it as replicated
-            if not isinstance(e, DTensor):
-                return None
-            mesh = e.device_mesh
-            assert (
-                mesh.ndim == 1
-            ), "DTensor ops not supporting multi-dim mesh yet"
-            return mesh
+        # User defined custom aten operator implementation
+        if str(func) in DTensor._custom_dispatch_ops:
+            # dispatch to user defined custom distributed tensor ops
+            return DTensor._custom_dispatch_ops[str(func)](*args, **kwargs)
 
-        # pyre-fixme[3]: Return type must be annotated.
-        # pyre-fixme[2]: Parameter must be annotated.
-        def unwrap(e):
-            return e._local_tensor if isinstance(e, DTensor) else e
+        # unwrap local tensors, and placement specs, then
+        # call into dispatch logic and get back local tensor
+        # results and output placement specs
+        arg_spec = tree_map(unwrap_spec, args)
+        args_with_local_tensors = tree_map(unwrap_local_tensor, args)
+        kwargs_spec = tree_map(unwrap_spec, kwargs)
+        kwarg_with_local_tensors = tree_map(unwrap_local_tensor, kwargs)
 
-        # pyre-fixme[3]: Return type must be annotated.
-        # pyre-fixme[2]: Parameter must be annotated.
-        def wrap(e, mesh, placements):
-            return (
-                DTensor.from_local(e, mesh, placements, run_check=False)
-                if isinstance(e, torch.Tensor)
-                else e
-            )
+        op_info = OpInfo(
+            func,
+            OpSchema(
+                args_with_local_tensors,
+                kwarg_with_local_tensors,
+                arg_spec,
+                kwargs_spec,
+            ),
+        )
 
-        # pyre-fixme[3]: Return type must be annotated.
-        # pyre-fixme[2]: Parameter must be annotated.
-        def is_replicate(tensor):
-            return (
-                tensor.placements[0] == Replicate()
-                if isinstance(tensor, DTensor)
-                else True
-            )
+        # call into dispatch logic to do sharding propagations
+        local_res, output_spec = dispatch_operator(
+            op_info, DTensor._op_to_rules
+        )
 
-        args_mesh = tree_map(unwrap_mesh, args)
-        # assert all_equal(spec.device_mesh for spec in args_spec), "can't compuate across different meshes"
-        # for spec in args_spec:
-        #     assert spec.device_mesh.mesh.ndim == 1, "Only 1-D mesh supported now"
-
-        # take a short cut if all arguments are replicated
-        all_replicated = True
-        for arg in args:
-            if isinstance(arg, DTensor):
-                all_replicated &= is_replicate(arg)
-            elif type(arg) is list:
-                all_replicated &= all(tree_map(is_replicate, arg))
-
-        if all_replicated:
-            rs = func(*tree_map(unwrap, args), **tree_map(unwrap, kwargs))
-            return wrap(rs, args_mesh[0], args[0].placements)
-
-        if str(func) in DTensor._dist_tensor_dispatch_ops:
-            # dispatch to distributed tensor ops
-            return DTensor._dist_tensor_dispatch_ops[str(func)](*args, **kwargs)
-        else:
-            if _DEBUG_STRICT:
-                raise RuntimeError(
-                    f"Operator {func} does not have a DTensor rule registered."
-                )
-            # default to local tensor ops, this is wrong
-            # but we use it now to enable more tensor property access
-            else:
-                rs = func(*tree_map(unwrap, args), **tree_map(unwrap, kwargs))
-                rs = wrap(rs, args_mesh[0], args[0].placements)
-                return rs
+        # rewrap results back to dist tensor if the output is a tensor,
+        # if the results are not tensor (i.e. int/float/bool), we simply
+        # ignore the output_placements and return directly
+        return wrap(local_res, output_spec)
 
     @classmethod
     def from_local(
@@ -356,7 +337,7 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # to disallow caller modification on it
         # caller who want a different PlacementSpec
         # should call redistribute instead.
-        return self._placements
+        return self._placement_spec.placements
 
     @property
     def device_mesh(self) -> DeviceMesh:
@@ -364,7 +345,7 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # to disallow caller modification on it
         # caller who want a different device_mesh
         # should call redistribute instead.
-        return self._device_mesh
+        return self._placement_spec.mesh
 
     # TODO: This is a temporary hack to unblock TP efforts. We need to
     # come up with a more principle design for customized ops like this.
