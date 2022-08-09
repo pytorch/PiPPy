@@ -199,7 +199,6 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     # pyre-fixme[3]: Return type must be annotated.
     # pyre-fixme[2]: Parameter must be annotated.
     def __torch_dispatch__(cls, func, types, args=(), kwargs=None):
-
         # check that we are not getting mixed vanilla and Distributed tensors
         arg_list, arg_spec = tree_flatten(args)
         for arg in arg_list:

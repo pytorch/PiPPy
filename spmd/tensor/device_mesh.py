@@ -241,7 +241,9 @@ class DeviceMesh(object):
         src_for_dim = 0
         if dim_group is not GroupMember.WORLD:
             src_for_dim = _get_global_rank(dim_group, 0)
-        tensor = torch.empty_like(to_scatter[0])
+        tensor = torch.empty_like(
+            to_scatter[0], requires_grad=to_scatter[0].requires_grad
+        )
         if src_for_dim == get_rank():
             scatter(
                 tensor,

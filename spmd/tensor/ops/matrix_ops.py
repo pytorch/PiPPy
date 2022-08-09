@@ -43,19 +43,17 @@ def dist_addmm(
         local_res = local_input.addmm(
             local_mat1, local_mat2, beta=beta, alpha=alpha
         )
-        return DTensor.from_local(local_res, device_mesh, mat1.placements)
+        return DTensor(local_res, device_mesh, mat1.placements)
     elif mat1_placement.is_replicate() and mat2_placement.is_shard(dim=1):
         local_res = local_input.addmm(
             local_mat1, local_mat2, beta=beta, alpha=alpha
         )
-        return DTensor.from_local(local_res, device_mesh, mat2.placements)
+        return DTensor(local_res, device_mesh, mat2.placements)
     elif mat1_placement.is_replicate() and mat2_placement.is_replicate():
         local_res = local_input.addmm(
             local_mat1, local_mat2, beta=beta, alpha=alpha
         )
-        return DTensor.from_local(
-            local_res, device_mesh, mat1.placements, run_check=False
-        )
+        return DTensor(local_res, device_mesh, mat1.placements, run_check=False)
     else:
         raise RuntimeError(
             f"addmm operator supported for inputs: {mat1}, {mat2}"
@@ -104,6 +102,4 @@ def dist_t(self: DTensor) -> DTensor:
     device_mesh = self.device_mesh
 
     new_shard_dim = 1 if mat_placement.is_shard(dim=0) else 0
-    return DTensor.from_local(
-        transposed_local_mat, device_mesh, [Shard(new_shard_dim)]
-    )
+    return DTensor(transposed_local_mat, device_mesh, [Shard(new_shard_dim)])
