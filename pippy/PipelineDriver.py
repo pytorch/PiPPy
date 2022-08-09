@@ -603,14 +603,14 @@ class PipeStageExecutor(EventRecorder):
 
         return ValueReference(self.stage_id, output_unique_key)
 
-    def coalesce_index_value(self, indices : List[Tuple]):
+    def coalesced_index_value(self, indices : List[Tuple[str, int, ValueReference, int]]):
         for index_tuple in indices:
             (output_unique_key, output_refcount, value_ref, idx) = index_tuple
             logging.info(f'[{self.stage_id}] Received getitem call: {(output_unique_key, output_refcount, value_ref, idx)}')
             with self.value_store_cv:
                 if output_unique_key in self.value_store:
                     # TODO: investigate why there are repeated getitem calls with 0 users
-                    assert output_refcount == 0
+                    assert output_refcount == 0, "PiPPy internal error: repeated index value call with non-zero users"
                     logging.info(f'[{self.stage_id}] Indexed value already in store: {(output_unique_key, output_refcount, value_ref, idx)}')
                     continue
 
@@ -1127,7 +1127,7 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
         self.batch_id = batch_id
         self.num_microbatches = num_microbatches
         # Dict from stage id to a list holding the coalesced getitem indices
-        self.stage_indices : Dict[int, List[Tuple]] = {}
+        self.stage_output_indices : Dict[int, List[Tuple[str, int, ValueReference, int]]] = {}
 
     def call_module(self, target, args, kwargs):
         assert isinstance(target, str)
@@ -1172,7 +1172,7 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
         if target is operator.getitem and isinstance(args[0], ValueReference):
             stage_id = args[0].stage_id
             if torch.is_grad_enabled() or args[0].unique_key != "noop":
-                indices = self.stage_indices.setdefault(stage_id, [])
+                indices = self.stage_output_indices.setdefault(stage_id, [])
                 index_tuple = (invocation_key, len(users), args[0], args[1])
                 logging.info(f'[root][{self.cur_microbatch}] Appending getitem tuple to stage {stage_id}: {index_tuple}')
                 indices.append(index_tuple)
@@ -1224,21 +1224,21 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
 
 
     def issue_coalesced_getitem_calls(self):
-        if len(self.stage_indices) == 0:
+        if len(self.stage_output_indices) == 0:
             return
-        logging.info(f'[root][{self.cur_microbatch}] Issuing getitem calls to stage: {self.stage_indices.keys()}')
+        logging.info(f'[root][{self.cur_microbatch}] Issuing getitem calls to stage: {self.stage_output_indices.keys()}')
 
-        for stage_id in self.stage_indices:
+        for stage_id in self.stage_output_indices:
             stage_executor = self.stage_to_executor[stage_id]
             name = f"G{stage_id},{self.cur_microbatch}"
             id = f"{name},{self.batch_id}"
             start_ts = time.time()
-            stage_executor.rpc_async().coalesce_index_value(self.stage_indices[stage_id])
+            stage_executor.rpc_async().coalesced_index_value(self.stage_output_indices[stage_id])
             finish_ts = time.time()
             self.record_event(rank=0, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name, type='invoke',
-                            mbid=self.cur_microbatch)
+                              mbid=self.cur_microbatch)
 
-        self.stage_indices.clear()
+        self.stage_output_indices.clear()
 
 
     def run_until(self, predicate: Callable[[pippy.fx.Node], bool]) -> Optional[pippy.fx.Node]:
@@ -1281,7 +1281,7 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
         return node
 
 
-class run_until_criteria:
+class _run_until_criteria:
     def __init__(self):
         self.seen_stages = 0
 
@@ -1358,7 +1358,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         for ramp_up_idx in range(len(self.microbatch_interpreters)):
             for i in range(ramp_up_idx + 1):
                 interp = self.microbatch_interpreters[i]
-                criteria = run_until_criteria()
+                criteria = _run_until_criteria()
                 interp.run_until(criteria.hitting_next_stage)
 
         # Steady-state. We have a full diagonal in the matrix; keep dispatching
@@ -1369,7 +1369,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
             any_valid = False
             for interp in self.microbatch_interpreters:
                 start_node = interp.node_list[min(interp.pc, len(interp.node_list) - 1)]
-                criteria = run_until_criteria()
+                criteria = _run_until_criteria()
                 interp.run_until(criteria.hitting_next_stage)
 
                 any_valid |= interp.node_list[interp.pc] != start_node
