@@ -1,10 +1,9 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import Sequence
 
 import torch
 import spmd.tensor.api as spmd_tensor
-from spmd.tensor.device_mesh import DeviceMesh
-from spmd.tensor.placement_types import Placement, PlacementSpec
+from spmd.tensor.placement_types import PlacementSpec
+from spmd.tensor.dispatch import OutputSpecType
 
 
 # pyre-fixme[3]: Return type must be annotated.
@@ -20,36 +19,31 @@ def unwrap_local_tensor(e: "spmd_tensor.DTensor") -> torch.Tensor:
     return e._local_tensor if isinstance(e, spmd_tensor.DTensor) else e
 
 
-def unwrap_placements(e: "spmd_tensor.DTensor") -> Sequence[Placement]:
-    return (
-        e._placement_spec.placements
-        if isinstance(e, spmd_tensor.DTensor)
-        else e
-    )
-
-
-def unwrap_mesh(e: "spmd_tensor.DTensor") -> DeviceMesh:
-    # if this tensor is not Distributed, then return none. We will reinterpret it as replicated
-    if not isinstance(e, spmd_tensor.DTensor):
-        return None
-    mesh = e._placement_spec.mesh
-    assert (
-        mesh.ndim == 1
-    ), "DistributedTensor ops not supporting multi-dim mesh yet"
-    return mesh
-
-
 def unwrap_spec(e: "spmd_tensor.DTensor") -> PlacementSpec:
     if not isinstance(e, spmd_tensor.DTensor):
         return None
     return e._placement_spec
 
 
-def wrap(e: torch.Tensor, spec: PlacementSpec) -> "spmd_tensor.DTensor":
-    return (
-        spmd_tensor.DTensor.from_local(
-            e, spec.mesh, spec.placements, run_check=False
+def wrap(res: object, spec: OutputSpecType) -> object:
+    if isinstance(res, torch.Tensor):
+        assert spec is not None and isinstance(spec, PlacementSpec), "output spec does not match with output!"
+        return spmd_tensor.DTensor(res, spec.mesh, spec.placements)
+    elif isinstance(res, list):
+        assert spec is not None and isinstance(spec, list), "output spec does not match with output!"
+        return list(
+            spmd_tensor.DTensor(e, s.mesh, s.placements)
+            for e, s in zip(res, spec)
         )
-        if isinstance(e, torch.Tensor)
-        else e
-    )
+    elif isinstance(res, tuple):
+        assert spec is not None and isinstance(spec, tuple), "output spec does not match with output!"
+        return tuple(
+            spmd_tensor.DTensor(e, s.mesh, s.placements)
+            for e, s in zip(res, spec)
+        )
+    else:
+        # if the res contains only non tensor values, we simply return it without rewrapping
+        return res
+
+
+

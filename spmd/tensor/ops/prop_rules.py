@@ -17,8 +17,8 @@ def _parse_einop_equation(equation: str) -> Tuple[List[str], List[str]]:
 
 
 def einop_prop(
-    equation: str, input_specs: Tuple[PlacementSpec, ...], linear=False
-):
+    equation: str, input_specs: Tuple[PlacementSpec, ...], linear: bool = False
+) -> Optional[PlacementSpec]:
     """
     Propagate the sharding of inputs to output for ops whose data
     moves according to einsum notation. This is mostly borrowed
@@ -109,6 +109,7 @@ def pointwise_prop(
         ij,j->ij - broadcasted addition
     """
     alphabet = "abcdefghijklmnopqrstuvwxyz"
+    # handle the case of broadcasting, find the max_dim first
     max_dim = max(input.ndim for input in input_specs)
     dimchars = []
     for input in input_specs:

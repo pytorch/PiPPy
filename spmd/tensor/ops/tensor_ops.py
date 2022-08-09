@@ -1,13 +1,20 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 from typing import Optional
 from spmd.tensor.api import DTensor
-from spmd.tensor.dispatch import OpInfo
+from spmd.tensor.dispatch import OpSchema
 from spmd.tensor.placement_types import PlacementSpec
 
 
-def default_prop_rule(op_info: OpInfo) -> Optional[PlacementSpec]:
+# NOTE: the default propagation rule should apply for
+# any operator that does not return a DTensor, i.e.
+# for operators that only returns int/float/bool, we by
+# default still propagate the spec, this is to ensure
+# that we only return None for the case where the sharding
+# propagation failed, and we should do auto-redistribute
+def default_prop_rule(op_schema: OpSchema) -> PlacementSpec:
     # by default prop the first arg spec
-    return op_info.args_spec[0]
+    return op_schema.args_spec[0]
+
 
 default_prop_ops = [
     "aten.is_same_size.default",

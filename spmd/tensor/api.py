@@ -18,8 +18,9 @@ from spmd.tensor.redistribute import Redistribute
 from spmd.tensor.utils import (
     unwrap_local_tensor,
     unwrap_spec,
+    wrap
 )
-from spmd.tensor.dispatch import OpInfo, dispatch_operator
+from spmd.tensor.dispatch import OpInfo, OpSchema, OutputSpecType, dispatch_operator
 
 # NOTE [Autograd interaction between torch.Tensor]
 #
@@ -113,7 +114,7 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
 
     # class attribute that handles operator placements propagation
     # rules, keyed by aten op name, value is propagation func
-    _op_to_rules: Dict[str, Callable[[OpInfo], Optional[PlacementSpec]]] = {}
+    _op_to_rules: Dict[str, Callable[[OpSchema], OutputSpecType]] = {}
 
     # class attribute that handles custom registered ops, all handled
     # custom ops should appear in this table, and overriding the default
@@ -189,7 +190,7 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     # pyre-fixme[3]: Return type must be annotated.
     def __repr__(self):
         # TODO: consider all_gather the local tensors for better debugging
-        return f"DTensor(local_tensor={self._local_tensor}, device_mesh={self._device_mesh}, placements={self._placements})"
+        return f"DTensor(local_tensor={self._local_tensor}, device_mesh={self._placement_spec.mesh}, placements={self._placement_spec.placements})"
 
     @classmethod
     # pyre-fixme[3]: Return type must be annotated.
@@ -233,13 +234,21 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
 
         op_info = OpInfo(
             func,
-            args_with_local_tensors,
-            kwarg_with_local_tensors,
-            arg_spec,
-            kwargs_spec,
+            OpSchema(
+                args_with_local_tensors,
+                kwarg_with_local_tensors,
+                arg_spec,
+                kwargs_spec,
+            )
         )
 
-        return dispatch_operator(op_info, DTensor._op_to_rules)
+        # call into dispatch logic to do sharding propagations
+        local_res, output_spec = dispatch_operator(op_info, DTensor._op_to_rules)
+
+        # rewrap results back to dist tensor if the output is a tensor,
+        # if the results are not tensor (i.e. int/float/bool), we simply
+        # ignore the output_placements and return directly
+        return wrap(local_res, output_spec)
 
     @classmethod
     def from_local(

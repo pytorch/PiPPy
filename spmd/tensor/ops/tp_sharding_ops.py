@@ -69,9 +69,7 @@ def dist_view(self: DTensor, *shape) -> DTensor:
             *shape[sharding_dim + 1 :],
         )
         new_local_tensor = local_mat.view(*new_local_tensor_size)
-        return DTensor(
-            new_local_tensor, self.device_mesh, self.placements
-        )
+        return DTensor(new_local_tensor, self.device_mesh, self.placements)
     else:
         raise RuntimeError("not supported!")
 
@@ -136,9 +134,7 @@ def dist_permute(self: DTensor, dims: List[int]) -> DTensor:
         new_sharding_dim = dims.index(sharding_dim)
         new_sharding_placement = [Shard(new_sharding_dim)]
         local_tensor = torch.ops.aten.permute(local_mat, dims=dims)
-        return DTensor(
-            local_tensor, self.device_mesh, new_sharding_placement
-        )
+        return DTensor(local_tensor, self.device_mesh, new_sharding_placement)
     else:
         raise RuntimeError("Not supported!")
 

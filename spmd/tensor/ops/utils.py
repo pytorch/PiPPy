@@ -25,6 +25,9 @@ def register_impl(func):
     return wrapper
 
 
+# convenient wrapper to register sharding propagation rules
+# pyre-fixme[3]: Return type must be annotated.
+# pyre-fixme[2]: Parameter must be annotated.
 def register_prop_rule(func):
     # pyre-fixme[53]: Captured variable `func` is not annotated.
     # pyre-fixme[3]: Return type must be annotated.
