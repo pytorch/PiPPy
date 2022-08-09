@@ -29,11 +29,12 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
 
     # class attribute that handles operator placements propagation
     # rules, keyed by aten op name, value is propagation func
-    _op_to_rules: Dict[str, Callable] = {}
+    _op_to_rules: Dict[str, Callable[[OpInfo], Optional[PlacementSpec]]] = {}
 
     # class attribute that handles custom registered ops, all handled
     # custom ops should appear in this table, and overriding the default
-    # operators
+    # operators that's been covered by _op_to_rules or fallbacks.
+    # (custom operator is the highest priority when dispatching).
     # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
     _custom_dispatch_ops: Dict[str, Callable] = {}
 
