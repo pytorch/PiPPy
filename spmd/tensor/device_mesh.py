@@ -167,8 +167,7 @@ class DeviceMesh(object):
                     # pg or not, it's required that all ranks participate
                     # in subgroup construction
                     new_subgroup = new_group(
-                        ranks=subgroup_ranks,
-                        backend=backend_name,
+                        ranks=subgroup_ranks, backend=backend_name
                     )
                     # only add to dim_groups if the current rank in the subgroup
                     if self.get_rank() in subgroup_ranks:

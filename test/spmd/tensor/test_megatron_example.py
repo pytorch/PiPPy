@@ -22,7 +22,9 @@ class SimpleModel(torch.nn.Module):
         self.net2 = torch.nn.Linear(16, 12)
 
     def forward(self, x):
-        return self.net4(self.gelu(self.net3(self.net2(self.relu(self.net1(x))))))
+        return self.net4(
+            self.gelu(self.net3(self.net2(self.relu(self.net1(x)))))
+        )
 
 
 def _aggregate_local_tensor(module: torch.nn.Module) -> torch.nn.Module:
@@ -77,7 +79,9 @@ def shard_module(m):
     )
     m = _replicate_input_tensor(m, device_mesh, replicate)
     m.net2 = _aggregate_local_tensor(m.net2)
-    m.net1.weight.register_hook(functools.partial(_gradient_hook, m.net1.weight))
+    m.net1.weight.register_hook(
+        functools.partial(_gradient_hook, m.net1.weight)
+    )
 
 
 class DistTensorMegatronTest(DistTensorTestBase):

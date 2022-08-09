@@ -17,7 +17,10 @@ class MyModel(nn.Module):
     def __init__(self, n_features, n_layers, device):
         super().__init__()
         self.seq = nn.Sequential(
-            *[nn.Linear(n_features, n_features, device=device) for _ in range(n_layers)]
+            *[
+                nn.Linear(n_features, n_features, device=device)
+                for _ in range(n_layers)
+            ]
         )
 
     def forward(self, x):
@@ -34,7 +37,9 @@ class DistTensorAPITest(DistTensorTestBase):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
         tensor_to_shard = torch.randn(12, 3)
-        sharded_tensor = distribute_tensor(tensor_to_shard, device_mesh, shard_spec)
+        sharded_tensor = distribute_tensor(
+            tensor_to_shard, device_mesh, shard_spec
+        )
         self.assertEqual(sharded_tensor.size(), torch.Size([12, 3]))
         local_tensor = sharded_tensor.to_local()
         self.assertEqual(local_tensor.size(), torch.Size([3, 3]))
@@ -44,7 +49,9 @@ class DistTensorAPITest(DistTensorTestBase):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
         tensor_to_shard = torch.randn(12, 3, requires_grad=True)
-        sharded_tensor = distribute_tensor(tensor_to_shard, device_mesh, shard_spec)
+        sharded_tensor = distribute_tensor(
+            tensor_to_shard, device_mesh, shard_spec
+        )
         self.assertTrue(sharded_tensor.requires_grad)
         self.assertTrue(sharded_tensor.is_leaf)
         self.assertEqual(sharded_tensor.size(), torch.Size([12, 3]))
@@ -54,7 +61,9 @@ class DistTensorAPITest(DistTensorTestBase):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         module_to_shard = MyModel(20, 20, device=self.device_type)
         shard_spec = [Shard(0)]
-        sharded_module = distribute_module(module_to_shard, device_mesh, shard_spec)
+        sharded_module = distribute_module(
+            module_to_shard, device_mesh, shard_spec
+        )
 
         module_to_replicate = MyModel(20, 20, device=self.device_type)
         replica_spec = [Replicate()]
