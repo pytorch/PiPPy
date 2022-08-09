@@ -65,9 +65,7 @@ def dist_view(self: DTensor, *shape) -> DTensor:
         *shape[sharding_dim + 1 :],
     )
     new_local_tensor = local_mat.view(*new_local_tensor_size)
-    return DTensor.from_local(
-        new_local_tensor, self.device_mesh, self.placements
-    )
+    return DTensor(new_local_tensor, self.device_mesh, self.placements)
 
 
 @register_impl("aten.transpose.int")
@@ -81,7 +79,7 @@ def dist_transpose(self: DTensor, dim0: int, dim1: int) -> DTensor:
     new_shard_dim = dim0 if mat_placement.is_shard(dim=dim1) else new_shard_dim
     new_sharding_placement = [Shard(new_shard_dim)]
     local_tensor = local_mat.transpose(dim0, dim1)
-    return DTensor.from_local(local_tensor, device_mesh, new_sharding_placement)
+    return DTensor(local_tensor, device_mesh, new_sharding_placement)
 
 
 @register_impl("aten.baddbmm.default")
@@ -98,21 +96,21 @@ def dist_baddbmm(
     local_tensor = torch.ops.aten.baddbmm(
         local_input, local_batch1, local_batch2, beta=beta, alpha=alpha
     )
-    return DTensor.from_local(local_tensor, self.device_mesh, self.placements)
+    return DTensor(local_tensor, self.device_mesh, self.placements)
 
 
 @register_impl("aten.bmm.default")
 def dist_bmm(self: DTensor, mat2: DTensor) -> DTensor:
     local_input, local_mat2 = pytree.tree_map(unwrap_local_tensor, (self, mat2))
     local_tensor = torch.ops.aten.bmm(local_input, local_mat2)
-    return DTensor.from_local(local_tensor, self.device_mesh, self.placements)
+    return DTensor(local_tensor, self.device_mesh, self.placements)
 
 
 @register_impl("aten._softmax.default")
 def dist_softmax(self: DTensor, dim: int, half_to_float: bool) -> DTensor:
     local_input = pytree.tree_map(unwrap_local_tensor, (self))
     local_tensor = local_input.softmax(dim=dim)
-    return DTensor.from_local(local_tensor, self.device_mesh, self.placements)
+    return DTensor(local_tensor, self.device_mesh, self.placements)
 
 
 @register_impl("aten.permute.default")
@@ -124,16 +122,14 @@ def dist_permute(self: DTensor, dims: List[int]) -> DTensor:
     new_sharding_dim = dims.index(sharding_dim)
     new_sharding_placement = [Shard(new_sharding_dim)]
     local_tensor = torch.ops.aten.permute(local_mat, dims=dims)
-    return DTensor.from_local(
-        local_tensor, self.device_mesh, new_sharding_placement
-    )
+    return DTensor(local_tensor, self.device_mesh, new_sharding_placement)
 
 
 @register_impl("aten.cat.default")
 def dist_cat(tensor_list: List[DTensor], dim: int = 0) -> DTensor:
     local_inputs = pytree.tree_map(unwrap_local_tensor, tensor_list)
     local_tensor = torch.ops.aten.concat(local_inputs, dim=dim)
-    return DTensor.from_local(
+    return DTensor(
         local_tensor, tensor_list[0].device_mesh, tensor_list[0].placements
     )
 
@@ -156,7 +152,7 @@ def dist_split(self: DTensor, split_size_or_sections, dim=0) -> List[DTensor]:
             split_size_or_sections //= world_size
     tensor_list = local_mat.split(split_size_or_sections, dim=dim)
     return [
-        DTensor.from_local(tensor, self.device_mesh, [mat_placement])
+        DTensor(tensor, self.device_mesh, [mat_placement])
         for tensor in tensor_list
     ]
 
@@ -164,7 +160,7 @@ def dist_split(self: DTensor, split_size_or_sections, dim=0) -> List[DTensor]:
 @register_impl("contiguous")
 # pyre-fixme[2]: Parameter must be annotated.
 def dist_contiguous(self) -> "DTensor":
-    return DTensor.from_local(
+    return DTensor(
         self._local_tensor.contiguous(), self.device_mesh, self.placements
     )
 
