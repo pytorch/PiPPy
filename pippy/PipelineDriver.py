@@ -255,7 +255,6 @@ class RankWorker(EventRecorder):
             if work_item is None:
                 continue
             logging.info(f'[{self.rank}][{work_item.microbatch_id}] Got WorkItem {work_item}')
-            logging.info(f'[{self.rank}] Wait list: {list(self.waiting_runlist.keys())}')
 
             work_item.state = SchedState.RUNNING
             args_value_refs = work_item.args
@@ -416,8 +415,6 @@ class RankWorker(EventRecorder):
                     self.ready_runlist[runlist_key] = self.waiting_runlist.pop(runlist_key)
                     self.ready_runlist_cv.notify()
                 logging.info(f'[{self.rank}][{work_item.microbatch_id}] all operands ready: {runlist_key}')
-            else:
-                logging.info(f'[{self.rank}][{work_item.microbatch_id}] Work item {runlist_key} waiting for {work_item.blocked_args_count} args')
 
 
 class PipeStageExecutor(EventRecorder):
@@ -516,10 +513,10 @@ class PipeStageExecutor(EventRecorder):
     def invoke(self, output_unique_key : str, phase : Phase, args, kwargs, cur_microbatch : int, debug_str : str,
                output_refcount : int, batch_id : int, num_microbatches : int):
         start_ts = time.time()
-        forward_name = event_name(phase, self.stage_id, cur_microbatch)
-        forward_id = event_id(phase, self.stage_id, cur_microbatch, batch_id)
-        name = f"R{forward_name}"
-        id = f"R{forward_id}"
+        target_name = event_name(phase, self.stage_id, cur_microbatch)
+        target_id = event_id(phase, self.stage_id, cur_microbatch, batch_id)
+        name = f"R{target_name}"
+        id = f"R{target_id}"
         if self._record_mem_dumps:
             self._record_dumps_on_all_peer_executors(f'M{id}_invoke', ts)
         # TODO: do we need to serialize calls to invoke() to preserve the order in which WorkItems appear for
@@ -598,7 +595,7 @@ class PipeStageExecutor(EventRecorder):
 
         finish_ts = time.time()
         self.record_event(rank=self.rank_worker.rank, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name, type='received', mbid=cur_microbatch)
-        self.record_event_dependency(from_id=name, to_id=forward_name, type='waiting')
+        self.record_event_dependency(from_id=name, to_id=target_name, type='waiting')
 
         return ValueReference(self.stage_id, output_unique_key)
 
@@ -606,24 +603,28 @@ class PipeStageExecutor(EventRecorder):
         for index_tuple in indices:
             (output_unique_key, output_refcount, value_ref, idx) = index_tuple
             logging.info(f'[{self.stage_id}] Received getitem call: {(output_unique_key, output_refcount, value_ref, idx)}')
-            # For the purposes of refcounting, decrement this use
             with self.value_store_cv:
                 assert output_unique_key not in self.value_store
+                # Wait for the future representing the stage output to be created
                 while value_ref.unique_key not in self.value_store:
-                    logging.info(f'[{self.stage_id}] index_value waiting for value {value_ref}')
                     self.value_store_cv.wait()
-                logging.info(f'[{self.stage_id}] index_value found value {value_ref}')
+                # Now the stage output future is created
                 refcounted_future = self.value_store[value_ref.unique_key]
 
+                # For the purposes of refcounting, decrement this use
                 if refcounted_future.release():
                     self.value_store.pop(value_ref.unique_key)
 
+                # Create an indexed future that represents a specific output arg
+                # Here we use an attach functon so that the index passed to the lambda changes in every loop
                 def attach_index(fut, index):
                     indexed_fut = fut.then(lambda f: f.value()[index])
                     return indexed_fut
 
                 indexed = attach_index(refcounted_future.future, idx)
 
+                # Enqueue the indexed future
+                # And notify places that may be waiting for it to be created, such as get_value
                 self.value_store[output_unique_key] = RefcountedFuture(indexed, output_refcount)
                 self.value_store_cv.notify_all()
 
@@ -635,10 +636,10 @@ class PipeStageExecutor(EventRecorder):
         assert callee_stage == self.stage_id, "Mismatch between ValueRef and stage executor"
 
         with self.value_store_cv:
+            # Waiting for the indexed future for this arg to be created
             while value_ref_arg.unique_key not in self.value_store:
-                logging.info(f'[{self.stage_id}] get_value waiting for ValueRef {value_ref_arg}')
                 self.value_store_cv.wait()
-            logging.info(f'[{self.stage_id}] get_value found ValueRef {value_ref_arg}')
+            # Now the indexed future is created
             refcounted_future = self.value_store[value_ref_arg.unique_key]
 
         value = refcounted_future.future.wait()
@@ -647,8 +648,6 @@ class PipeStageExecutor(EventRecorder):
             if refcounted_future.release():
                 self.value_store.pop(value_ref_arg.unique_key)
 
-        logging.info(f'[{callee_stage}][{microbatch}] Returning transfer of value '
-                     f'{value_ref_arg} initiated by stage {caller_stage} for {runlist_key}')
         return value
 
     def async_transfer(self, microbatch, value_ref_arg, arg_idx, runlist_key):
@@ -1162,14 +1161,11 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
             node.users.keys())) if not torch.is_grad_enabled() else node.users.keys()
         if target is operator.getitem and isinstance(args[0], ValueReference):
             stage_id = args[0].stage_id
-            #stage_executor = self.stage_to_executor[stage_id]
             if torch.is_grad_enabled() or args[0].unique_key != "noop":
                 indices = self.stage_indices.setdefault(stage_id, [])
                 index_tuple = (invocation_key, len(users), args[0], args[1])
                 logging.info(f'[root][{self.cur_microbatch}] Appending getitem tuple to stage {stage_id}: {index_tuple}')
                 indices.append(index_tuple)
-                #stage_executor.rpc_async().coalesce_index_value(self.stage_indices[stage_id])
-                #self.stage_indices.clear()
                 return ValueReference(stage_id, invocation_key)
             else:
                 return ValueReference(stage_id, "noop")
@@ -1217,19 +1213,15 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
             raise AssertionError(f'Unknown operator {torch.typename(target)}')
 
 
-    def coalesce_index_value(self):
+    def issue_coalesced_getitem_calls(self):
         if len(self.stage_indices) == 0:
             return
-        if len(self.stage_indices) != 1:
-            logging.info(f'Coalescing output indices of {len(self.stage_indices)} stages:\n'
-                                 f'{self.stage_indices}') 
+        logging.info(f'[root][{self.cur_microbatch}] Issuing getitem calls to stage: {self.stage_indices.keys()}')
 
         for stage_id in self.stage_indices:
             stage_executor = self.stage_to_executor[stage_id]
             name = f"G{stage_id},{self.cur_microbatch}"
             id = f"{name},{self.batch_id}"
-            logging.info(f'[root][{self.cur_microbatch}] Issuing getitem '
-                        f'on stage {stage_id} with {len(self.stage_indices[stage_id])} indices')
             start_ts = time.time()
             stage_executor.rpc_async().coalesce_index_value(self.stage_indices[stage_id])
             finish_ts = time.time()
@@ -1244,8 +1236,8 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
             node = self.node_list[self.pc]
 
             if predicate(node):
-                # Issue coalesced value indexing
-                self.coalesce_index_value()
+                # Issue coalesced getitem calls as we pause issuing stage calls
+                self.issue_coalesced_getitem_calls()
                 return node
 
             self.run_one(node)
@@ -1263,8 +1255,9 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
         #  to the callees) as an optimization
         # TODO: is it possible for there to be a blocking version of this API?
         def wait_for_confirmation(n):
+            # The following if will not be true as we are using our own ValueRef
+            # instead of RPC's RRef
             if isinstance(n, torch._C._distributed_rpc.PyRRef):
-                logging.info('Wait for confirmation')
                 while not n.confirmed_by_owner():
                     pass
 
@@ -1276,6 +1269,28 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
 
         self.pc += 1
         return node
+
+
+class run_until_criteria:
+    def __init__(self):
+        self.seen_stages = 0
+
+    # Run the node we start with including all nodes that are tuple
+    # indexing, then stop
+    def hitting_next_stage(self, node):
+        if node.op == 'output':
+            return True
+
+        if node.target != operator.getitem and node.target != _null_coalesce_accumulate:
+            self.seen_stages += 1
+
+        if self.seen_stages > 1:
+            return True
+        elif self.seen_stages == 1 and node.target == _null_coalesce_accumulate:
+            # We are hitting the accumulate call of the next (backward) stage, stop
+            return True
+        else:
+            return False
 
 
 class PipelineDriverFillDrain(PipelineDriverBase):
@@ -1333,23 +1348,8 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         for ramp_up_idx in range(len(self.microbatch_interpreters)):
             for i in range(ramp_up_idx + 1):
                 interp = self.microbatch_interpreters[i]
-                start_node = interp.node_list[min(interp.pc, len(interp.node_list) - 1)]
-
-                def run_including_indexing(n):
-                    if n.op == 'output':
-                        return True
-
-                    if ((n.target != operator.getitem and n.target != _null_coalesce_accumulate) or
-                        (run_including_indexing.seen_stages > 0 and n.target == _null_coalesce_accumulate)):
-                        run_including_indexing.seen_stages += 1
-
-                    # Run the node we start with including all nodes that are tuple
-                    # indexing, then stop
-                    return run_including_indexing.seen_stages > 1
-
-                run_including_indexing.seen_stages = 0
-
-                interp.run_until(run_including_indexing)
+                criteria = run_until_criteria()
+                interp.run_until(criteria.hitting_next_stage)
 
         # Steady-state. We have a full diagonal in the matrix; keep dispatching
         # across the diagonal
@@ -1359,25 +1359,8 @@ class PipelineDriverFillDrain(PipelineDriverBase):
             any_valid = False
             for interp in self.microbatch_interpreters:
                 start_node = interp.node_list[min(interp.pc, len(interp.node_list) - 1)]
-
-                def run_including_indexing(n):
-                    # Run the node we start with including all nodes that are
-                    # tuple indexing, but also stop at the output node. Because
-                    # we are on a diagonal, interpreters as lower microbatch IDs
-                    # will be invoked when their pc's point to the output node
-                    # multiple times.
-                    if n.op == 'output':
-                        return True
-
-                    if ((n.target != operator.getitem and n.target != _null_coalesce_accumulate) or
-                        (run_including_indexing.seen_stages > 0 and n.target == _null_coalesce_accumulate)):
-                        run_including_indexing.seen_stages += 1
-
-                    return run_including_indexing.seen_stages > 1
-
-                run_including_indexing.seen_stages = 0
-
-                interp.run_until(run_including_indexing)
+                criteria = run_until_criteria()
+                interp.run_until(criteria.hitting_next_stage)
 
                 any_valid |= interp.node_list[interp.pc] != start_node
 
