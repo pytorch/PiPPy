@@ -1,6 +1,8 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-import torch
 from typing import List
+
+import torch
+import pippy.fx
 
 def stage_backward(stage_output, output_grads, input_values, stage_info : str, outputs_with_grads_idxs : List[int]):
     """
