@@ -1,7 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 from torch.testing._internal.common_utils import run_tests
-from ..test_utils import DistTensorTestBase, with_comms
+from spmd.test._utils import DistTensorTestBase, with_comms
 from spmd import distribute_tensor, DeviceMesh, Shard, Replicate
 
 
@@ -20,9 +20,7 @@ class DistMatrixOpsTest(DistTensorTestBase):
         input = distribute_tensor(input_tensor, device_mesh, replica_spec)
 
         dist_res = torch.addmm(input, mat1, mat2)
-        local_res = torch.addmm(
-            input_tensor, tensor_to_shard, tensor_to_replicate
-        )
+        local_res = torch.addmm(input_tensor, tensor_to_shard, tensor_to_replicate)
         self.assertEqual(
             dist_res.redistribute(device_mesh, replica_spec).to_local(),
             local_res,
