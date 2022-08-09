@@ -1,5 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import List
+from typing import Sequence, Optional
 import torch
 import torch.nn as nn
 from spmd.tensor import DTensor, Placement, Shard, Replicate, _Partial
@@ -8,14 +8,29 @@ from spmd.tensor.device_mesh import get_global_device_mesh, DeviceMesh
 torch.__future__.set_overwrite_module_params_on_conversion(True)
 
 
-# pyre-fixme[3]: Return type must be annotated.
 def distribute_tensor(
     tensor: torch.Tensor,
-    # pyre-fixme[9]: device_mesh has type `DeviceMesh`; used as `None`.
-    device_mesh: DeviceMesh = None,
-    # pyre-fixme[9]: placements has type `List[Placement]`; used as `None`.
-    placements: List[Placement] = None,
-):
+    device_mesh: Optional[DeviceMesh] = None,
+    placements: Optional[Sequence[Placement]] = None,
+) -> DTensor:
+    """
+    Distribute a torch.Tensor to the `device_mesh` according to the `placements`
+    specified. The rank of `device_mesh` and `placements` must be the same.
+
+    Args:
+        tensor (torch.Tensor): torch.Tensor to be distributed
+        device_mesh (:class:`DeviceMesh`, optional): DeviceMesh to distribute the
+            tensor, if not specified, must be called under a DeviceMesh context
+            manager, default: None
+        placements (List[:class:`Placement`], optional): the placements that
+            describes how to place the tensor on DeviceMesh, must have the same
+            number of elements as `device_mesh.ndim`. If not specified, we will
+            by default replicate the tensor across the `device_mesh` from the
+            first rank of each dimension of the `device_mesh`.
+
+    Returns:
+        A :class:`DTensor` object
+    """
     # get default device mesh if there's nothing specified
     device_mesh = (
         get_global_device_mesh() if device_mesh is None else device_mesh
@@ -45,14 +60,21 @@ def distribute_tensor(
             tensor_list = list(tensor.chunk(num_chunks, dim=shard_dim))
             scatter_shape = list(tensor.size())
             scatter_shape[shard_dim] = chunk_size
-            local_tensor = device_mesh.scatter(tensor_list)
-            dist_tensor = DTensor.from_local(
-                local_tensor, device_mesh, placements
+            local_tensor = device_mesh.scatter(tensor_list, mesh_dim=idx)
+            dist_tensor = DTensor(
+                local_tensor,
+                device_mesh,
+                placements,
+                requires_grad=local_tensor.requires_grad,
             )
-        elif isinstance(placement, Replicate) or isinstance(
-            placement, _Partial
-        ):
-            dist_tensor = DTensor.from_local(tensor, device_mesh, placements)
+        elif isinstance(placement, Replicate):
+            device_mesh.broadcast(tensor, mesh_dim=idx)
+            dist_tensor = DTensor(
+                tensor,
+                device_mesh,
+                placements,
+                requires_grad=tensor.requires_grad,
+            )
         else:
             raise RuntimeError("Not supported!")
 
@@ -63,10 +85,8 @@ def distribute_tensor(
 # pyre-fixme[3]: Return type must be annotated.
 def distribute_module(
     mod: nn.Module,
-    # pyre-fixme[9]: device_mesh has type `DeviceMesh`; used as `None`.
-    device_mesh: DeviceMesh = None,
-    # pyre-fixme[9]: spec has type `List[Placement]`; used as `None`.
-    spec: List[Placement] = None,
+    device_mesh: Optional[DeviceMesh] = None,
+    spec: Optional[Sequence[Placement]] = None,
 ):
     """
     this function coverts all module parameters

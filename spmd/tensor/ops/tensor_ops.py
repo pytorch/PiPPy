@@ -33,7 +33,7 @@ def dist_ones_like(
     device_mesh = self.device_mesh
 
     new_local_tensor = torch.ones_like(self.to_local())
-    return DTensor.from_local(new_local_tensor, device_mesh, self.placements)
+    return DTensor(new_local_tensor, device_mesh, self.placements)
 
 
 # @register_impl("aten.expand.default")

@@ -19,12 +19,12 @@ def _dist_dropout(
             self.to_local(), p=p, train=train
         )
         return (
-            DTensor.from_local(
+            DTensor(
                 local_tensor,
                 device_mesh=self.device_mesh,
                 placements=self.placements,
             ),
-            DTensor.from_local(
+            DTensor(
                 mask, device_mesh=self.device_mesh, placements=self.placements
             ),
         )
