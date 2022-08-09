@@ -6,9 +6,7 @@ from spmd.tensor.api import DTensor
 
 
 @register_impl("aten.native_dropout.default")
-def _dist_dropout(
-    self: DTensor, p: float, train: bool
-) -> Tuple[DTensor, DTensor]:
+def _dist_dropout(self: DTensor, p: float, train: bool) -> Tuple[DTensor, DTensor]:
     self_placement = self.placements[0]
     # TODO: To figure out why partial tensor does not dispatch here when in CPU.
     # and with kwargs.
@@ -16,7 +14,7 @@ def _dist_dropout(
         raise RuntimeError("Not supported!")
     else:
         local_tensor, mask = torch.ops.aten.native_dropout(
-            self.to_local(), p=p, train=train
+            self._local_tensor, p=p, train=train
         )
         return (
             DTensor(
@@ -24,7 +22,5 @@ def _dist_dropout(
                 device_mesh=self.device_mesh,
                 placements=self.placements,
             ),
-            DTensor(
-                mask, device_mesh=self.device_mesh, placements=self.placements
-            ),
+            DTensor(mask, device_mesh=self.device_mesh, placements=self.placements),
         )

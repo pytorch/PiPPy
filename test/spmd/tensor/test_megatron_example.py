@@ -1,12 +1,11 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 import torch.distributed as dist
-import torch.nn as nn
+import functools
 from torch.testing._internal.common_utils import run_tests
 from spmd.test._utils import DistTensorTestBase, with_comms
 from spmd import (
     distribute_tensor,
-    distribute_module,
     DeviceMesh,
     DTensor,
     Shard,
@@ -22,14 +21,12 @@ class SimpleModel(torch.nn.Module):
         self.net2 = torch.nn.Linear(16, 12)
 
     def forward(self, x):
-        return self.net4(
-            self.gelu(self.net3(self.net2(self.relu(self.net1(x)))))
-        )
+        return self.net2(self.relu(self.net1(x)))
 
 
 def _aggregate_local_tensor(module: torch.nn.Module) -> torch.nn.Module:
     def hook_func(_module, _input, output):
-        if isinstance(output, Tensor):
+        if isinstance(output, DTensor):
             replica_placement = [Replicate()]
             return (
                 output.redistribute(output.device_mesh, replica_placement)
@@ -45,8 +42,8 @@ def _replicate_input_tensor(
     module: torch.nn.Module, device_mesh, replica_placement
 ) -> torch.nn.Module:
     def hook_func(_, input):
-        if not isinstance(input[0], Tensor):
-            return Tensor.from_local(input[0], device_mesh, replica_placement)
+        if not isinstance(input[0], DTensor):
+            return DTensor.from_local(input[0], device_mesh, replica_placement)
 
     module.register_forward_pre_hook(hook_func)
     return module
@@ -79,9 +76,7 @@ def shard_module(m):
     )
     m = _replicate_input_tensor(m, device_mesh, replicate)
     m.net2 = _aggregate_local_tensor(m.net2)
-    m.net1.weight.register_hook(
-        functools.partial(_gradient_hook, m.net1.weight)
-    )
+    m.net1.weight.register_hook(functools.partial(_gradient_hook, m.net1.weight))
 
 
 class DistTensorMegatronTest(DistTensorTestBase):

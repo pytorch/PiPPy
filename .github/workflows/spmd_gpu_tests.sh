@@ -4,7 +4,6 @@ set -x
 
 # Print test options
 echo "VERBOSE: ${VERBOSE}"
-echo "SHARD_ID: ${SHARD_ID}"
 
 nvidia-smi
 nvcc --version
@@ -28,4 +27,6 @@ if [ -f requirements.txt ]; then pip3 install -r requirements.txt --find-links h
 python3 smpd/setup.py install
 
 # Run all integration tests
-pytest --shard-id=${SHARD_ID} --num-shards=4 --cov=spmd test/spmd/
+python3 test/spmd/tensor/test_megatron_example.py
+python3 test/spmd/tensor/test_ddp.py
+python3 test/spmd/tensor/test_tp_sharding_ops.py 

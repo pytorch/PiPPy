@@ -34,13 +34,12 @@ jobs:
     runs-on: linux.16xlarge.nvidia.gpu
     strategy:
       matrix:
-        shard: ["0", "1", "2", "3"]
+        num-gpus: ["4"]
     env:
       DOCKER_IMAGE: qts8n/cuda-python:devel
       PIPPY_ROOT: /PiPPy
       VERBOSE: "0"
       OMP_NUM_THREADS: "1"
-      SHARD_ID: ${{ matrix.shard }}
 
     steps:
       - name: Clean working directory
@@ -75,7 +74,6 @@ jobs:
             --gpus all \
             -e VERBOSE \
             -e OMP_NUM_THREADS \
-            -e SHARD_ID \
             --tty \
             --detach \
             -v "$(pwd):${PIPPY_ROOT}" \
