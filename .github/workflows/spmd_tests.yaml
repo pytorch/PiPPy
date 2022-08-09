@@ -34,6 +34,7 @@ jobs:
     runs-on: linux.16xlarge.nvidia.gpu
     strategy:
       matrix:
+        num-gpus: ["4"]
     env:
       DOCKER_IMAGE: qts8n/cuda-python:devel
       PIPPY_ROOT: /PiPPy
