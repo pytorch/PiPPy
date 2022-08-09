@@ -12,7 +12,8 @@ import torch
 import torch.distributed.rpc as rpc
 import pippy.fx
 
-from pippy.IR import Pipe, stage_backward, sync_barrier, _null_coalesce_accumulate
+from pippy.IR import Pipe
+from pippy.backward import stage_backward, sync_barrier, _null_coalesce_accumulate
 from pippy.events import EventRecorder, EventsContext, Event, Allocator
 from pippy.microbatch import split_args_kwargs_into_chunks, merge_chunks
 
