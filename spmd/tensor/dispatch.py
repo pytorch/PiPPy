@@ -63,7 +63,7 @@ class OpInfo(object):
 
 def dispatch_operator(
     op_info: OpInfo,
-    op_to_rules: Dict[str, Callable[[OpSchema], Optional[PlacementSpec]]],
+    op_to_rules: Dict[str, Callable[[OpSchema], OutputSpecType]],
 ) -> Tuple[object, OutputSpecType]:
 
     op_key = str(op_info.op_call)

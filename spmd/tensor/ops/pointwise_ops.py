@@ -1,5 +1,5 @@
 from typing import Optional
-from spmd.tensor.dispatch import OpInfo
+from spmd.tensor.dispatch import OpSchema
 from spmd.tensor.placement_types import (
     PlacementSpec,
 )
@@ -120,5 +120,5 @@ from spmd.tensor.ops.prop_rules import pointwise_prop
 # ]
 
 
-def pointwise_rules(op_info: OpInfo) -> Optional[PlacementSpec]:
-    return pointwise_prop(op_info.args_spec)
+def pointwise_rules(op_schema: OpSchema) -> Optional[PlacementSpec]:
+    return pointwise_prop(op_schema.args_spec)
