@@ -15,12 +15,13 @@ from spmd.tensor.placement_types import (
 )
 from spmd.tensor.redistribute import Redistribute
 
-from spmd.tensor.utils import (
-    unwrap_local_tensor,
-    unwrap_spec,
-    wrap
+from spmd.tensor.utils import unwrap_local_tensor, unwrap_spec, wrap
+from spmd.tensor.dispatch import (
+    OpInfo,
+    OpSchema,
+    OutputSpecType,
+    dispatch_operator,
 )
-from spmd.tensor.dispatch import OpInfo, OpSchema, OutputSpecType, dispatch_operator
 
 # NOTE [Autograd interaction between torch.Tensor]
 #
@@ -239,11 +240,13 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
                 kwarg_with_local_tensors,
                 arg_spec,
                 kwargs_spec,
-            )
+            ),
         )
 
         # call into dispatch logic to do sharding propagations
-        local_res, output_spec = dispatch_operator(op_info, DTensor._op_to_rules)
+        local_res, output_spec = dispatch_operator(
+            op_info, DTensor._op_to_rules
+        )
 
         # rewrap results back to dist tensor if the output is a tensor,
         # if the results are not tensor (i.e. int/float/bool), we simply

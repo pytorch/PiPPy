@@ -11,7 +11,10 @@ _DEBUG_STRICT = False
 
 # ATen op schemas could have Tensor, Tuple[Tensor] and List[Tensor], so output type sould
 # be the same set of possiblities.
-OutputSpecType = Optional[Union[PlacementSpec, Tuple[PlacementSpec, ...], List[PlacementSpec]]]
+OutputSpecType = Optional[
+    Union[PlacementSpec, Tuple[PlacementSpec, ...], List[PlacementSpec]]
+]
+
 
 @dataclass
 class OpSchema(object):
@@ -29,26 +32,24 @@ class OpSchema(object):
     Here are some basic rules about what can be used and what can be changed.
 
     What can be used:
-        - every attribute of this class could be read to conduct sharding propagation.
+        - every "non-tensor" attribute of this class could be read to conduct
+          sharding propagation.
+        - every "tensor" attribute inside `args_with_local_tensor` and
+          `kwargs_with_local_tensor` should NOT be read! Sharding propagation could
+          only read non-tensor attributes!
     What can be changed:
         - every non-tensor args could be changed to accomodate for local tensor
           operations (i.e. for ops like view/reshape/...)
-        - outputs_spec should be updated after the sharding propagation rule, if it's
-          not updated, we treat the sharding propagation as failed, and will run the
-          fallback logic
         - Note that EVERY "Tensor" within args and kwargs must keep UNTOUCHED, you
           should NOT inplace update any tensors inside `args_with_local_tensor` and
           `kwargs_with_local_tensor`. it gonna cause a lot trouble if you do so.
     """
+
     args_with_local_tensor: Tuple[object, ...]
     kwargs_with_local_tensor: Dict[str, object]
     args_spec: Tuple[PlacementSpec, ...]
     kwargs_spec: Dict[str, PlacementSpec]
 
-    # output specs need to be set as a result of sharding propagation rules
-    # if it still be None after the sharding propagation rule, we will treat
-    # the sharding propagation as failed.
-    outputs_spec: OutputSpecType = None
 
 @dataclass
 class OpInfo(object):
@@ -57,6 +58,7 @@ class OpInfo(object):
     where the `schema` shall be used by the sharding propagation rules to propagate
     the shardings.
     """
+
     op_call: Callable[..., object]
     schema: OpSchema
 
@@ -86,7 +88,8 @@ def dispatch_operator(
 
         # run local op computation with potentially modified args/kwargs
         local_results = op_info.op_call(
-            *op_info.schema.args_with_local_tensor, **op_info.schema.kwargs_with_local_tensor
+            *op_info.schema.args_with_local_tensor,
+            **op_info.schema.kwargs_with_local_tensor,
         )
 
         return (local_results, output_placements)
