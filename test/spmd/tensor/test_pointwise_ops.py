@@ -52,7 +52,6 @@ class DistElementwiseOpsTest(DistTensorTestBase):
             [Shard(0)],
             (8, 5),
             torch.nn.functional.dropout,
-            reset_seed=_reset_random_seed,
             p=0.4,
             training=False,
         )
