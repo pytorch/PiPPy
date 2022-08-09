@@ -9,7 +9,6 @@ def default_prop_rule(op_info: OpInfo) -> Optional[PlacementSpec]:
     # by default prop the first arg spec
     return op_info.args_spec[0]
 
-
 default_prop_ops = [
     "aten.is_same_size.default",
     "aten.ones_like.default",
