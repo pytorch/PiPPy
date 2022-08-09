@@ -13,8 +13,8 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         self, mesh, spec, input_size, op, reset_seed=None, **kwargs
     ):
         torch.manual_seed(self.rank)
-        input_tensor = torch.randn(*input_size, requires_grad=True)
-        dist_tensor = DTensor.from_local(input_tensor, mesh, spec)
+        input_tensor = torch.randn(*input_size, device=self.device_type, requires_grad=True)
+        dist_tensor = DTensor(input_tensor, mesh, spec)
         reset_seed() if reset_seed else None
         dt = op(dist_tensor, **kwargs)
         reset_seed() if reset_seed else None
@@ -50,6 +50,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
             [Shard(0)],
             (8, 5),
             torch.nn.functional.dropout,
+            reset_seed=_reset_random_seed,
             p=0.4,
             training=False,
         )
