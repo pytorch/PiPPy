@@ -604,7 +604,12 @@ class PipeStageExecutor(EventRecorder):
             (output_unique_key, output_refcount, value_ref, idx) = index_tuple
             logging.info(f'[{self.stage_id}] Received getitem call: {(output_unique_key, output_refcount, value_ref, idx)}')
             with self.value_store_cv:
-                assert output_unique_key not in self.value_store
+                if output_unique_key in self.value_store:
+                    # TODO: investigate why there are repeated getitem calls with 0 users
+                    assert output_refcount == 0
+                    logging.info(f'[{self.stage_id}] Indexed value already in store: {(output_unique_key, output_refcount, value_ref, idx)}')
+                    continue
+
                 # Wait for the future representing the stage output to be created
                 while value_ref.unique_key not in self.value_store:
                     self.value_store_cv.wait()
