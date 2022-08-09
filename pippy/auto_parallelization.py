@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 # Adaptation of https://github.com/alpa-projects/alpa/blob/a88992ce3b46024c0a4ee4aa8cb069a62830cec2/alpa/pipeline_parallel/stage_construction.py
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,7 +16,7 @@ from dataclasses import dataclass
 from typing import List, Tuple
 
 import numpy as np
-import torch.fx
+import pippy.fx
 from enum import Enum
 
 from pippy import pipe_split
@@ -254,7 +255,7 @@ class AutoParallelConfig:
 
 
 def dp_auto_parallel(config: AutoParallelConfig):
-    def _dp_auto_parallel(fx_mod: torch.fx.GraphModule):
+    def _dp_auto_parallel(fx_mod: pippy.fx.GraphModule):
         n_graph_nodes = len(fx_mod.graph.nodes)
         submesh_shapes = get_possible_submesh_shapes(
             n_compute_nodes=config.n_compute_nodes,

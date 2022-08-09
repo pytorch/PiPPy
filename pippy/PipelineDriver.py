@@ -10,7 +10,7 @@ from typing import Any, Callable, Dict, List, Tuple, Optional
 
 import torch
 import torch.distributed.rpc as rpc
-import torch.fx
+import pippy.fx
 
 from pippy.IR import Pipe, stage_backward, sync_barrier, _null_coalesce_accumulate
 from pippy.events import EventRecorder, EventsContext, Event, Allocator
@@ -292,23 +292,27 @@ class RankWorker(EventRecorder):
                 else:
                     return a
 
-            args = torch.fx.node.map_aggregate(args_value_refs, retrieve_value_ref_args_by_idx)
-            kwargs = torch.fx.node.map_aggregate(kwargs_value_refs, retrieve_value_ref_args_by_idx)
+            args = pippy.fx.node.map_aggregate(args_value_refs, retrieve_value_ref_args_by_idx)
+            kwargs = pippy.fx.node.map_aggregate(kwargs_value_refs, retrieve_value_ref_args_by_idx)
 
             def forward(args, kwargs, no_grad):
-                flat_tensor_args = []
+                flat_args = []
 
                 def extract_tensor_args(a):
+                    nonlocal flat_args
                     if isinstance(a, torch.Tensor):
-                        nonlocal flat_tensor_args
                         val = a.detach().requires_grad_(a.requires_grad)
-                        flat_tensor_args.append(val)
+                        flat_args.append(val)
                         return val
                     else:
+                        flat_args.append(a)
                         return a
 
-                args = torch.fx.node.map_aggregate(args, extract_tensor_args)
-                kwargs = torch.fx.node.map_aggregate(kwargs, extract_tensor_args)
+                def dont_traverse_size(a):
+                    return type(a) != torch.Size
+
+                args = pippy.fx.node.map_aggregate(args, extract_tensor_args, dont_traverse_size)
+                kwargs = pippy.fx.node.map_aggregate(kwargs, extract_tensor_args, dont_traverse_size)
                 logging.info(f'[{self.rank}][{work_item.microbatch_id}] Running forward module')
 
                 def forward_maybe_with_ddp(args, kwargs):
@@ -327,12 +331,12 @@ class RankWorker(EventRecorder):
                 if no_grad:
                     with torch.no_grad():
                         out_val = forward_maybe_with_ddp(args, kwargs)
-                        out_val = torch.fx.node.map_aggregate(out_val, set_requires_grad)
+                        out_val = pippy.fx.node.map_aggregate(out_val, set_requires_grad, dont_traverse_size)
                 else:
                     with torch.enable_grad():
                         out_val = forward_maybe_with_ddp(args, kwargs)
 
-                return out_val, flat_tensor_args
+                return out_val, flat_args
 
             if phase == Phase.BACKWARD:
                 if self.checkpoint:
@@ -530,8 +534,8 @@ class PipeStageExecutor(EventRecorder):
         def extract_value_ref_args(arg):
             if isinstance(arg, ValueReference) and arg.unique_key != "noop":
                 value_ref_args.append(arg)
-        torch.fx.node.map_aggregate(args, extract_value_ref_args)
-        torch.fx.node.map_aggregate(kwargs, extract_value_ref_args)
+        pippy.fx.node.map_aggregate(args, extract_value_ref_args)
+        pippy.fx.node.map_aggregate(kwargs, extract_value_ref_args)
 
         logging.info(f'[{self.stage_id}][{cur_microbatch}] Invoke call found {len(value_ref_args)} ValueReference arguments')
 
@@ -1078,10 +1082,10 @@ class PipelineDriverBase(torch.nn.Module):
             else:
                 return a
 
-        output_vals = torch.fx.node.map_aggregate(output_vals, initiate_async_transfer)
+        output_vals = pippy.fx.node.map_aggregate(output_vals, initiate_async_transfer)
 
         # Then wait for futures to be ready
-        return torch.fx.node.map_aggregate(output_vals, lambda a: a.wait() if isinstance(a, torch._C.Future) else a)
+        return pippy.fx.node.map_aggregate(output_vals, lambda a: a.wait() if isinstance(a, torch._C.Future) else a)
 
     def retrieve_events(self) -> EventsContext:
         events_context = EventsContext()
@@ -1095,7 +1099,7 @@ class PipelineDriverBase(torch.nn.Module):
         return events_context
 
 
-class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
+class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
     def __init__(self, remote_stage_executor_rrefs, stage_to_executor, module, cur_microbatch : int,
                  args, kwargs, batch_id : int, num_microbatches : int, garbage_collect_values=True):
         super().__init__(module, garbage_collect_values)
@@ -1237,7 +1241,7 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
         self.stage_indices.clear()
 
 
-    def run_until(self, predicate: Callable[[torch.fx.Node], bool]) -> Optional[torch.fx.Node]:
+    def run_until(self, predicate: Callable[[pippy.fx.Node], bool]) -> Optional[pippy.fx.Node]:
         while self.pc < len(self.node_list):
             node = self.node_list[self.pc]
 
@@ -1267,7 +1271,7 @@ class RemoteInterpreter(torch.fx.Interpreter, EventRecorder):
                 while not n.confirmed_by_owner():
                     pass
 
-        torch.fx.node.map_aggregate(self.env[node], wait_for_confirmation)
+        pippy.fx.node.map_aggregate(self.env[node], wait_for_confirmation)
 
         if DEBUG and isinstance(self.env[node], torch._C._distributed_rpc.PyRRef):
             print(node, self.env[node])

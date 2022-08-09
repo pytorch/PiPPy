@@ -110,7 +110,18 @@ def transformer_splitter(model) -> int:
                 annotate_split_points(model, {f'transformer.h.{i}': PipeSplitWrapper.SplitPoint.BEGINNING})
             annotate_split_points(model, {'transformer.ln_f': PipeSplitWrapper.SplitPoint.BEGINNING})
             return model.config.num_layers + 2
-    elif isinstance(model, GPT2Model) or isinstance(model, GPTJModel):
+    elif isinstance(model, BloomPreTrainedModel):  # type: ignore
+        if isinstance(model, BloomModel):  # type: ignore
+            for i in range(model.config.num_hidden_layers):
+                annotate_split_points(model, {f'h.{i}': PipeSplitWrapper.SplitPoint.BEGINNING})
+            annotate_split_points(model, {'ln_f': PipeSplitWrapper.SplitPoint.BEGINNING})
+            return model.config.num_hidden_layers + 2
+        else:
+            for i in range(model.config.num_hidden_layers):
+                annotate_split_points(model, {f'transformer.h.{i}': PipeSplitWrapper.SplitPoint.BEGINNING})
+            annotate_split_points(model, {'transformer.ln_f': PipeSplitWrapper.SplitPoint.BEGINNING})
+            return model.config.num_hidden_layers + 2
+    elif isinstance(model, (GPT2Model, GPTJModel)):
         for i in range(model.config.n_layer):
             annotate_split_points(model, {f'h.{i}': PipeSplitWrapper.SplitPoint.BEGINNING})
         annotate_split_points(model, {'ln_f': PipeSplitWrapper.SplitPoint.BEGINNING})
@@ -171,8 +182,9 @@ def generate_hf_model(model_cls):
     assert splitter is not None
     config_cls = model_cls.config_class
     config = config_cls()
-    if model_cls in [GPT2ForSequenceClassification, GPTNeoForSequenceClassification, GPTJForSequenceClassification] or \
-            model_cls.__name__.startswith("Roberta") or model_cls.__name__.startswith("Marian"):
+    if model_cls in [GPT2ForSequenceClassification, GPTNeoForSequenceClassification, GPTJForSequenceClassification,
+                     BloomForSequenceClassification] \
+            or model_cls.__name__.startswith("Roberta") or model_cls.__name__.startswith("Marian"):
         config.pad_token_id = 0
     model = model_cls(config)
     model.eval()
@@ -383,7 +395,7 @@ def get_output_loss_value_spec_for_model(model_cls):
                      GPTNeoForSequenceClassification, GPTJForCausalLM, GPTJForSequenceClassification,
                      BlenderbotSmallForCausalLM, BlenderbotForCausalLM, BartForCausalLM, MBartForCausalLM,
                      OPTForCausalLM, MarianForCausalLM, PLBartForCausalLM, PegasusForCausalLM, Speech2Text2ForCausalLM,
-                     XGLMForCausalLM]:
+                     XGLMForCausalLM, OPTForSequenceClassification]:
         return {'loss': True, 'logits': False, 'past_key_values': False}
 
     if model_cls in [AlbertForPreTraining]:
@@ -477,7 +489,7 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
                                  BlenderbotModel, BlenderbotSmallModel, M2M100Model, MT5Model, MarianMTModel,
                                  MarianModel, PegasusModel, OPTModel, Speech2Text2Decoder, TrOCRDecoder, MBartModel,
                                  CLIPTextModel, PLBartModel, XGLMModel, ViTModel, DebertaModel, DebertaV2Model,
-                                 NezhaModel]:
+                                 NezhaModel, BloomModel]:
                     self.skipTest('Base models do not have embedded loss')
                 else:
                     raise e
@@ -491,7 +503,8 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
                              MegatronBertForSequenceClassification, MobileBertForSequenceClassification,
                              RobertaForSequenceClassification, MBartForSequenceClassification,
                              PLBartForSequenceClassification, DebertaForSequenceClassification,
-                             DebertaV2ForSequenceClassification, NezhaForSequenceClassification]:
+                             DebertaV2ForSequenceClassification, NezhaForSequenceClassification,
+                             OPTForSequenceClassification, BloomForSequenceClassification]:
                 model.config.problem_type = "single_label_classification"
 
             concrete_args = generate_concrete_args_for_model(model, input_dict.keys())

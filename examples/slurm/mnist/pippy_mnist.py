@@ -14,6 +14,7 @@ from torch.utils.data import DistributedSampler
 from torchvision import datasets, transforms  # type: ignore
 from tqdm import tqdm  # type: ignore
 
+import pippy.fx
 from pippy.IR import MultiUseParameterConfig, Pipe, PipeSplitWrapper, LossWrapper
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverInterleaved1F1B, \
     PipelineDriverBase
@@ -50,7 +51,7 @@ VERBOSE = bool(int(os.environ.get('VERBOSE', False)))
 if VERBOSE:
     logging.getLogger().setLevel(logging.DEBUG)
 
-torch.fx.Tracer.proxy_buffer_attributes = True
+pippy.fx.Tracer.proxy_buffer_attributes = True
 
 USE_TQDM = bool(int(os.getenv('USE_TQDM', '1')))
 

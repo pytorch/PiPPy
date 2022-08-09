@@ -5,6 +5,7 @@ import logging
 import os
 import socket
 from typing import Dict
+import unittest
 
 import torch
 import torch.distributed.rpc as rpc
@@ -14,6 +15,7 @@ from pippy.IR import MultiUseParameterConfig, Pipe, TrivialLossWrapper, pipe_spl
 from pippy.PipelineDriver import PipelineDriverBase, PipelineDriverFillDrain, PipelineDriver1F1B, \
     PipelineDriverInterleaved1F1B
 from pippy.microbatch import TensorChunkSpec, CustomReducer, split_args_kwargs_into_chunks
+import pippy.fx
 from test_commons import tp_transports # type: ignore
 
 # TODOs for implementing forward/backward/loss with schedules:
@@ -57,7 +59,7 @@ def set_grad_in_executor(executor, qualname, value):
     param.grad = value
 
 
-torch.fx.Tracer.proxy_buffer_attributes = True
+pippy.fx.Tracer.proxy_buffer_attributes = True
 
 
 def run_master(args):
@@ -96,15 +98,21 @@ def run_master(args):
             x = torch.mm(x, self.mm_param)
             skip_connection = x
             x = torch.relu(x)
+            size = x.size()  # for https://github.com/pytorch/PiPPy/issues/256
             pipe_split()
+            x.reshape(size[0], size[1])  # for https://github.com/pytorch/PiPPy/issues/256
             x = torch.mm(x, self.mm_param) + self.buffer[:x.shape[0]]
             x = self.lin(x)
+            size = x.size()  # for https://github.com/pytorch/PiPPy/issues/256
             pipe_split()
+            x.reshape(size[0], size[1])  # for https://github.com/pytorch/PiPPy/issues/256
             x = torch.relu(x)
             x = x + skip_connection
             x = torch.mm(x, self.mm_param2)
             x = self.lin(x)
+            size = x.size()  # for https://github.com/pytorch/PiPPy/issues/256
             pipe_split()
+            x.reshape(size[0], size[1])  # for https://github.com/pytorch/PiPPy/issues/256
             x = torch.relu(x)
             return x
 
@@ -270,7 +278,7 @@ def run_worker(rank, world_size, args):
     rpc.shutdown()
 
 
-if __name__ == "__main__":
+def main(args=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 4)))
     parser.add_argument('--rank', type=int, default=int(os.getenv("RANK", -1)))
@@ -281,7 +289,7 @@ if __name__ == "__main__":
     parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
     parser.add_argument('--record_mem_dumps', type=int, default=0, choices=[0, 1])
     parser.add_argument('--checkpoint', type=int, default=0, choices=[0, 1])
-    args = parser.parse_args()
+    args = parser.parse_args(args)
 
     # Interleaved 1F1B uses less ranks than number of stages
     if args.schedule == 'Interleaved1F1B':
@@ -293,3 +301,15 @@ if __name__ == "__main__":
         run_worker(args.rank, args.world_size, args)
     else:
         print("I'm unused, exiting")
+
+
+if __name__ == "__main__":
+    main()
+
+class LocalTestForwardAutoParallelTest(unittest.TestCase):
+    def test_forward_backward(self):
+        import random
+        port = random.randint(29500, 30000)
+        args = ['--cuda', os.getenv('USE_CUDA', '0'),
+                '--master_port', str(port)]
+        main(args)

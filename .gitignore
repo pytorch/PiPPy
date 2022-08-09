@@ -5,5 +5,12 @@ pippy.egg-info
 pippy/version.py
 dist
 .idea/
+.pyre/
+.watchmanconfig
 **/*.json
 **/slurm-*.out
+**/.DS_STORE
+
+# spmd ignores
+spmd.egg-info
+spmd/version.py

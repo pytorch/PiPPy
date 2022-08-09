@@ -9,9 +9,9 @@ from typing import NamedTuple
 from pippy.IR import Pipe, PipeSequential, TrivialLossWrapper, pipe_split, MultiUseParameterConfig, annotate_split_points, PipeSplitWrapper, _null_coalesce_accumulate
 from pippy.microbatch import TensorChunkSpec, split_args_kwargs_into_chunks, merge_chunks
 
-import torch.fx
+import pippy.fx
 
-@torch.fx.wrap
+@pippy.fx.wrap
 def arange_wrapper(*args, **kwargs):
     return torch.arange(*args, **kwargs)
 
@@ -266,7 +266,7 @@ class TestIR(unittest.TestCase):
             torch.testing.assert_allclose(v_test, v_ref)
 
     def test_custom_tracer_serialization(self):
-        class CustomTracer(torch.fx.Tracer):
+        class CustomTracer(pippy.fx.Tracer):
             def trace(self, root, concrete_args=None):
                 rv = super().trace(root, concrete_args)
                 for node in rv.nodes:

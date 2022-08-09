@@ -32,7 +32,7 @@ jobs:
         run: "python setup.py install"
       - name: Test with pytest
         run: |
-          pytest --cov=pippy --ignore=test/hf_test.py --ignore=test/spmd/ test/
+          pytest --cov=pippy --ignore=test/hf_test.py --ignore=test/spmd/ --ignore=test/test_fx.py --ignore=test/test_fx_experimental.py --ignore=test/fx test/
 
   hf_model_tests_forward:
     runs-on: linux.12xlarge
@@ -248,3 +248,27 @@ jobs:
         run: "python setup.py install"
       - name: Run PP + DDP test - Transmitted parameters
         run: python test/local_test_ddp.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
+
+  fx_test:
+    runs-on: linux.2xlarge
+    strategy:
+      matrix:
+        python-version: ["3.7", "3.8", "3.9"]
+    container:
+      image: python:${{ matrix.python-version }}
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 pytest pytest-cov numpy
+          if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
+      - name: Install dependencies
+        run: pip install expecttest astunparse numpy ninja pyyaml setuptools cmake cffi typing_extensions future six requests dataclasses unittest-xml-reporting
+      - name: Install pippy
+        run: "python setup.py install"
+      - name: Run FX tests
+        run: python test/test_fx.py
+      - name: Run FX experimental tests
+        run: python test/test_fx_experimental.py
