@@ -152,7 +152,6 @@ class DeviceMesh(object):
             # handle multi-dim mesh, create subgroups by
             # looping over the pg_ranks_by_dim for each dim
             for dim in range(self.mesh.ndim):
-                # local_subgroup_by_dim = self._dim_to_groups[dim]
                 # swap the current dim to the last dim
                 # then reshape to flatten out other dims
                 pg_ranks_by_dim = self.mesh.swapdims(-1, dim).reshape(

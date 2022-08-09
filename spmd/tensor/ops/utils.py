@@ -11,15 +11,7 @@ def unwrap_single_placement(e):
     return e.placements[0]
 
 
-# pyre-fixme[3]: Return type must be annotated.
-# pyre-fixme[2]: Parameter must be annotated.
-def unwrap_local_tensor(e):
-    if not isinstance(e, DTensor):
-        return None
-    return e.to_local()
-
-
-# convenient wrapper to register functions
+# convenient wrapper to register custom operator impls
 # pyre-fixme[3]: Return type must be annotated.
 # pyre-fixme[2]: Parameter must be annotated.
 def register_impl(func):
@@ -27,7 +19,21 @@ def register_impl(func):
     # pyre-fixme[3]: Return type must be annotated.
     # pyre-fixme[2]: Parameter must be annotated.
     def wrapper(impl):
-        DTensor._dist_tensor_dispatch_ops[func] = impl
+        DTensor._custom_dispatch_ops[func] = impl
+        return impl
+
+    return wrapper
+
+
+# convenient wrapper to register sharding propagation rules
+# pyre-fixme[3]: Return type must be annotated.
+# pyre-fixme[2]: Parameter must be annotated.
+def register_prop_rule(func):
+    # pyre-fixme[53]: Captured variable `func` is not annotated.
+    # pyre-fixme[3]: Return type must be annotated.
+    # pyre-fixme[2]: Parameter must be annotated.
+    def wrapper(impl):
+        DTensor._op_to_rules[func] = impl
         return impl
 
     return wrapper

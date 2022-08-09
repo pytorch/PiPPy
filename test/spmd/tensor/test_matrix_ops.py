@@ -48,8 +48,7 @@ class DistMatrixOpsTest(DistTensorTestBase):
         grad_res = torch.ones(12, 16)
         grad_dist_res = distribute_tensor(grad_res, device_mesh, shard_spec)
         dist_res.backward(grad_dist_res)
-        # print(mat1.grad)
-        # dist_res.sum().backward()
+        self.assertIsNotNone(mat1.grad)
 
     @with_comms
     def test_t(self):
