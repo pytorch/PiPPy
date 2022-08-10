@@ -23,21 +23,6 @@ class TPShardingOpsTest(DistTensorTestBase):
         self.assertEqual(st.placements[0], st_new.placements[0])
 
     @with_comms
-    def test_sharded_contiguous(self):
-        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
-        torch.manual_seed(self.rank)
-        tensor = torch.rand(3, 5, 6)
-        sharding = [Shard(0)]
-        dist_tensor = DTensor.from_local(tensor, device_mesh, sharding)
-        self.assertTrue(dist_tensor.is_contiguous())
-        new_dt = dist_tensor.transpose(0, 2)
-        # TODO: Investigate why after transpose dt is still contiguous.
-        self.assertFalse(new_dt.to_local().is_contiguous())
-        new_dt = new_dt.contiguous()
-        self.assertTrue(new_dt.is_contiguous())
-        self.assertTrue(new_dt.to_local().is_contiguous())
-
-    @with_comms
     def test_sharded_transpose(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         torch.manual_seed(self.rank)
