@@ -43,8 +43,7 @@ def einop_prop(
                 seen_shardings[i] = "+"
                 if i not in pending_sums:
                     pending_sums.append(i)
-                if not linear and False:
-                    print(equation)
+                if not linear:
                     raise RuntimeError(
                         "cannot do generic op on a tensor with partial sums"
                     )
