@@ -61,6 +61,10 @@ def distribute_tensor(
             scatter_shape = list(tensor.size())
             scatter_shape[shard_dim] = chunk_size
             local_tensor = device_mesh.scatter(tensor_list, mesh_dim=idx)
+            # scatter call could not return a tensor with correct requires_grad
+            # field, as ProcessGroupNCCL refuse to take a tensor with requires_grad
+            # to do inplace update! So we manually set it here
+            local_tensor.requires_grad_(tensor.requires_grad)
             dist_tensor = DTensor(
                 local_tensor,
                 device_mesh,
