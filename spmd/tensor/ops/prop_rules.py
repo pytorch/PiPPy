@@ -1,5 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 from typing import Tuple, List, Dict, Optional
+from spmd.tensor.dispatch import OutputSharding
 from spmd.tensor.placement_types import _Partial, PlacementSpec
 
 
@@ -101,7 +102,7 @@ def mm_prop(
 
 
 def pointwise_prop(
-    input_specs: Tuple[PlacementSpec, ...]
+    input_specs: Tuple[PlacementSpec, ...], linear: bool = False
 ) -> Optional[PlacementSpec]:
     """
     Propagate the sharding for pointwise operations. Examples:
@@ -118,4 +119,4 @@ def pointwise_prop(
         dimchars.append(p)
     out_dimchars = alphabet[:max_dim]
     fmt = f"{','.join(p for p in dimchars)}->{out_dimchars}"
-    return einop_prop(fmt, input_specs)
+    return einop_prop(fmt, input_specs, linear=linear)

@@ -1,6 +1,6 @@
 from typing import Optional
 from spmd.tensor.api import DTensor
-from spmd.tensor.dispatch import OpSchema
+from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.placement_types import (
     PlacementSpec,
 )
@@ -126,8 +126,8 @@ pointwise_ops = [
 ]
 
 
-def pointwise_rules(op_schema: OpSchema) -> Optional[PlacementSpec]:
-    return pointwise_prop(op_schema.args_spec)
+def pointwise_rules(op_schema: OpSchema) -> OutputSharding:
+    return OutputSharding(pointwise_prop(op_schema.args_spec))
 
 
 for op in pointwise_ops:
