@@ -19,7 +19,7 @@ class DistTensorTestBase(MultiProcessTestCase):
     def world_size(self) -> int:
         return TEST_GPU_NUM
 
-    def init_pg(self, backend: str = "nccl"):
+    def init_pg(self, backend: str = "nccl") -> None:
         if backend == "nccl" and torch.cuda.device_count() < self.world_size:
             sys.exit(TEST_SKIPS[f"multi-gpu-{self.world_size}"].exit_code)
 
@@ -28,9 +28,9 @@ class DistTensorTestBase(MultiProcessTestCase):
 
         dist.init_process_group(
             backend=backend,
-            world_size=self.world_size,
+            world_size=self.world_size,  # pyre-ignore[16]
             rank=self.rank,
-            init_method=f"file://{self.file_name}",
+            init_method=f"file://{self.file_name}",  # pyre-ignore[16]
         )
 
         # set device for nccl pg for collectives
@@ -49,8 +49,11 @@ class DistTensorTestBase(MultiProcessTestCase):
 
 # wrapper to initialize comms (processgroup)
 def with_comms(
-    func: Optional[Callable] = None, backend: Optional[str] = None
-) -> Callable:
+    func: Optional[
+        Callable
+    ] = None,  # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
+    backend: Optional[str] = None,
+) -> Optional[Callable]:
     assert func is not None
 
     @wraps(func)
