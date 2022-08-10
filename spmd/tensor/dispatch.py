@@ -6,7 +6,7 @@ from spmd.tensor.placement_types import PlacementSpec
 """
 If set to true, __DEBUG_STRICT will fail when an op doesn't have a sharding rule registered.
 """
-_DEBUG_STRICT = False
+_DEBUG_STRICT = True
 
 
 # ATen op schemas could have Tensor, Tuple[Tensor] and List[Tensor], so output type sould
