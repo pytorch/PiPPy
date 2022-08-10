@@ -36,7 +36,7 @@ jobs:
       matrix:
         num-gpus: ["4"]
     env:
-      DOCKER_IMAGE: marctorsoc/cuda-python39
+      DOCKER_IMAGE: qts8n/cuda-python:devel
       PIPPY_ROOT: /PiPPy
       VERBOSE: "0"
       OMP_NUM_THREADS: "1"
