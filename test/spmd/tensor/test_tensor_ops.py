@@ -17,43 +17,6 @@ class DistTensorOpsTest(DistTensorTestBase):
         self.assertFalse(detached_mat is mat)
 
     @with_comms
-    def test_clone(self):
-        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
-        specs = [[Replicate()], [Shard(0)]]
-        tensor_to_clone = torch.randn(12, 8, requires_grad=True)
-        for spec in specs:
-            mat = distribute_tensor(tensor_to_clone, device_mesh, spec)
-            cloned_mat = mat.clone()
-            self.assertFalse(cloned_mat is mat)
-            self.assertEqual(cloned_mat.to_local(), mat.to_local())
-
-    @with_comms
-    def test_contiguous(self):
-        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
-        tensor = torch.rand(3, 5, 6, requires_grad=True)
-        sharding = [Shard(0)]
-        dist_tensor = DTensor.from_local(tensor, device_mesh, sharding)
-        self.assertTrue(dist_tensor.is_contiguous())
-        # shard on dim 0 should not change stride (30, 6, 1)
-        self.assertEqual(dist_tensor.stride(), tensor.stride())
-
-        new_dt = dist_tensor.transpose(0, 2)
-        self.assertFalse(new_dt.is_contiguous())
-        self.assertFalse(new_dt.to_local().is_contiguous())
-        # check stride
-        self.assertEqual(new_dt.stride(), (1, 6, 30))
-
-        new_dt = new_dt.contiguous()
-        self.assertTrue(new_dt.is_contiguous())
-        self.assertTrue(new_dt.to_local().is_contiguous())
-        # check stride
-        self.assertEqual(dist_tensor.stride(), tensor.stride())
-
-        # check backward
-        new_dt.to_local().sum().backward()
-        self.assertEqual(tensor.grad, torch.ones(3, 5, 6))
-
-    @with_comms
     def test_ones_like(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]

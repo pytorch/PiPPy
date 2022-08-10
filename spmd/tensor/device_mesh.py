@@ -159,7 +159,7 @@ class DeviceMesh(object):
                 )
 
                 # multi-dim mesh, create subgroups by
-                # looping over the pg_ranks for each dim
+                # looping over the transposed stacked_mesh
                 # and append the groups
                 for dim_mesh in pg_ranks_by_dim:
                     subgroup_ranks = dim_mesh.tolist()

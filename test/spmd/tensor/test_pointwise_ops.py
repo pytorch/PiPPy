@@ -2,8 +2,7 @@
 import torch
 from torch.testing._internal.common_utils import run_tests
 from spmd.test._utils import DistTensorTestBase, with_comms, TEST_GPU_NUM
-from spmd import DeviceMesh, DTensor
-from spmd.tensor.placement_types import Shard, Replicate, _Partial
+from spmd import DeviceMesh, DTensor, Shard, Replicate, _Partial
 from torch.distributed.distributed_c10d import ReduceOp
 from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 
