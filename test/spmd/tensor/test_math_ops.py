@@ -4,7 +4,7 @@ from torch.testing._internal.common_utils import run_tests
 
 from spmd.tensor.ops.prop_rules import einop_prop
 from spmd.tensor.placement_types import PlacementSpec
-from ..test_utils import DistTensorTestBase, with_comms
+from spmd.test._utils import DistTensorTestBase, with_comms
 from spmd import distribute_tensor, DeviceMesh, Shard, Replicate
 
 

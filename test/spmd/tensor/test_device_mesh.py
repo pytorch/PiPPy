@@ -8,7 +8,7 @@ from torch.distributed.distributed_c10d import (
     _get_global_rank,
 )
 from torch.testing._internal.common_utils import run_tests
-from ..test_utils import DistTensorTestBase, with_comms
+from spmd.test._utils import DistTensorTestBase, with_comms
 from spmd.tensor import DeviceMesh, DTensor, Shard, Replicate
 
 

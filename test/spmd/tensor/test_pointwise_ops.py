@@ -1,7 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 from torch.testing._internal.common_utils import run_tests
-from ..test_utils import DistTensorTestBase, with_comms, TEST_GPU_NUM
+from spmd.test._utils import DistTensorTestBase, with_comms, TEST_GPU_NUM
 from spmd import DeviceMesh, DTensor
 from spmd.tensor.placement_types import Shard, Replicate, _Partial
 from torch.distributed.distributed_c10d import ReduceOp
