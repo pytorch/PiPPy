@@ -28,12 +28,17 @@ jobs:
         pip install git+https://github.com/pbelevich/transformers.git@compatible_with_pt_master
         pip install "black<23" pylint==v3.0.0a5 mypy==v0.902 flake8 pyre-check==0.9.15
     - name: Lint with pylint
+      if: always()
       run: pylint --disable=all --enable=unused-import $(git ls-files '*.py')
     - name: Lint with mypy
+      if: always()
       run: mypy $(git ls-files '*.py' | grep -v pippy/fx | grep -v test/.*fx)
     - name: Lint with flake8
+      if: always()
       run: flake8 pippy
     - name: Lint with black for SPMD
+      if: always()
       run: black --check --line-length 80 spmd test/spmd
     - name: Pyre check for SPMD
+      if: always()
       run: pyre check

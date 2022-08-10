@@ -41,7 +41,7 @@ def einop_prop(
         for i, a in enumerate(input.placements):
             if a.is_partial():
                 seen_shardings[i] = "+"
-                if not i in pending_sums:
+                if i not in pending_sums:
                     pending_sums.append(i)
                 if not linear and False:
                     print(equation)

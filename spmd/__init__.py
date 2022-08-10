@@ -1,8 +1,8 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import Sequence, Optional
+from typing import Sequence, Optional, cast
 import torch
 import torch.nn as nn
-from spmd.tensor import DTensor, Placement, Shard, Replicate, _Partial
+from spmd.tensor import DTensor, Placement, Shard, Replicate
 from spmd.tensor.device_mesh import get_global_device_mesh, DeviceMesh
 
 torch.__future__.set_overwrite_module_params_on_conversion(True)
@@ -44,7 +44,8 @@ def distribute_tensor(
     # distribute the tensor according to PlacementSpec
     assert len(placements) == 1, "Only support 1-d placement now"
     for idx, placement in enumerate(placements):
-        if isinstance(placement, Shard):
+        if placement.is_shard():
+            placement = cast(Shard, placement)
             shard_dim = placement.dim
             assert (
                 shard_dim <= tensor.ndim
@@ -71,7 +72,7 @@ def distribute_tensor(
                 placements,
                 requires_grad=local_tensor.requires_grad,
             )
-        elif isinstance(placement, Replicate):
+        elif placement.is_replicate():
             device_mesh.broadcast(tensor, mesh_dim=idx)
             dist_tensor = DTensor(
                 tensor,

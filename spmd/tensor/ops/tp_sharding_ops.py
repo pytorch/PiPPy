@@ -123,7 +123,7 @@ def dist_permute(self: DTensor, dims: List[int]) -> DTensor:
 
     if mat_placement.is_replicate():
         local_tensor = torch.ops.aten.permute(local_mat, dims=dims)
-        return DTensor(local_tensor, self.device_mesh, [mat_placement], run_check=False)
+        return DTensor(local_tensor, self.device_mesh, [mat_placement])
     elif mat_placement.is_shard():
         sharding_dim = mat_placement.dim
         new_sharding_dim = dims.index(sharding_dim)
@@ -161,15 +161,3 @@ def dist_split(self: DTensor, split_size_or_sections, dim=0) -> List[DTensor]:
     return [
         DTensor(tensor, self.device_mesh, [mat_placement]) for tensor in tensor_list
     ]
-
-
-@register_impl("contiguous")
-# pyre-fixme[2]: Parameter must be annotated.
-def dist_contiguous(self) -> "DTensor":
-    return DTensor(self._local_tensor.contiguous(), self.device_mesh, self.placements)
-
-
-@register_impl("is_contiguous")
-# pyre-fixme[2]: Parameter must be annotated.
-def dist_is_contiguous(self) -> bool:
-    return self.to_local().is_contiguous()
