@@ -159,7 +159,7 @@ class DeviceMesh(object):
                 )
 
                 # multi-dim mesh, create subgroups by
-                # looping over the transposed stacked_mesh
+                # looping over the pg_ranks for each dim
                 # and append the groups
                 for dim_mesh in pg_ranks_by_dim:
                     subgroup_ranks = dim_mesh.tolist()
@@ -167,7 +167,8 @@ class DeviceMesh(object):
                     # pg or not, it's required that all ranks participate
                     # in subgroup construction
                     new_subgroup = new_group(
-                        ranks=subgroup_ranks, backend=backend_name
+                        ranks=subgroup_ranks,
+                        backend=backend_name,
                     )
                     # only add to dim_groups if the current rank in the subgroup
                     if self.get_rank() in subgroup_ranks:

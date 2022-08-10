@@ -1,6 +1,9 @@
 from typing import Optional
+from spmd.tensor.api import DTensor
 from spmd.tensor.dispatch import OpSchema
-from spmd.tensor.placement_types import PlacementSpec
+from spmd.tensor.placement_types import (
+    PlacementSpec,
+)
 from spmd.tensor.ops.prop_rules import pointwise_prop
 
 # leave the pointwise_ops list here for convenience,
@@ -117,6 +120,15 @@ from spmd.tensor.ops.prop_rules import pointwise_prop
 #     "xlogy",
 # ]
 
+pointwise_ops = [
+    "aten.relu.default",
+    "aten.gelu.default",
+]
+
 
 def pointwise_rules(op_schema: OpSchema) -> Optional[PlacementSpec]:
     return pointwise_prop(op_schema.args_spec)
+
+
+for op in pointwise_ops:
+    DTensor._op_to_rules[op] = pointwise_rules
