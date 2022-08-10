@@ -24,7 +24,7 @@ pip3 install flake8 pytest pytest-cov pytest-shard numpy expecttest
 if [ -f requirements.txt ]; then pip3 install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cu102/torch_nightly.html; fi
 
 # Install pippy
-python3 smpd/setup.py install
+python3 spmd/setup.py install
 
 # Run all integration tests
 python3 test/spmd/tensor/test_megatron_example.py

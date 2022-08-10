@@ -8,11 +8,11 @@ from spmd import distribute_tensor, DeviceMesh, DTensor, Shard, Replicate
 
 
 class SimpleModel(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, device):
         super(SimpleModel, self).__init__()
-        self.net1 = torch.nn.Linear(10, 16)
+        self.net1 = torch.nn.Linear(10, 16, device=device)
         self.relu = torch.nn.ReLU()
-        self.net2 = torch.nn.Linear(16, 12)
+        self.net2 = torch.nn.Linear(16, 12, device=device)
 
     def forward(self, x):
         return self.net2(self.relu(self.net1(x)))
@@ -25,7 +25,7 @@ def _aggregate_local_tensor(module: torch.nn.Module) -> torch.nn.Module:
             return (
                 output.redistribute(output.device_mesh, replica_placement)
                 .contiguous()
-                .local_tensor()
+                .to_local()
             )
 
     module.register_forward_hook(hook_func)
@@ -37,7 +37,7 @@ def _replicate_input_tensor(
 ) -> torch.nn.Module:
     def hook_func(_, input):
         if not isinstance(input[0], DTensor):
-            return DTensor.from_local(input[0], device_mesh, replica_placement)
+            return DTensor(input[0], device_mesh, replica_placement)
 
     module.register_forward_pre_hook(hook_func)
     return module
@@ -72,9 +72,7 @@ def shard_module(m, device_type):
     )
     m = _replicate_input_tensor(m, device_mesh, replicate)
     m.net2 = _aggregate_local_tensor(m.net2)
-    m.net1.weight.register_hook(
-        functools.partial(_gradient_hook, m.net1.weight)
-    )
+    m.net1.weight.register_hook(functools.partial(_gradient_hook, m.net1.weight))
 
 
 class DistTensorMegatronTest(DistTensorTestBase):
@@ -85,9 +83,9 @@ class DistTensorMegatronTest(DistTensorTestBase):
         torch.manual_seed(0)
         inp = torch.rand(*inp_size, device=self.device_type)
         torch.manual_seed(5)
-        model = SimpleModel()
+        model = SimpleModel(self.device_type)
         torch.manual_seed(5)
-        model_tp = SimpleModel()
+        model_tp = SimpleModel(self.device_type)
         shard_module(model_tp, self.device_type)
 
         output = model(inp)

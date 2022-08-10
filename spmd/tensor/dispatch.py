@@ -74,6 +74,7 @@ def dispatch_operator(
         # step 1. there's sharding propagation rule, run
         # sharding propagation to get output placements
         output_placements = sharding_prop_func(op_info.schema)
+        print("output_placements ", op_key, output_placements)
 
         # step 2. if can't get output placement (i.e.
         # no ruls apply for input placements), we do

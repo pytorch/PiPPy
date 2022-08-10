@@ -77,9 +77,7 @@ def dist_transpose(self: DTensor, dim0: int, dim1: int) -> DTensor:
     local_mat = pytree.tree_map(unwrap_local_tensor, self)
     mat_placement = pytree.tree_map(unwrap_single_placement, self)
     device_mesh = self.device_mesh
-    new_shard_dim = (
-        dim1 if mat_placement.is_shard(dim=dim0) else mat_placement.dim
-    )
+    new_shard_dim = dim1 if mat_placement.is_shard(dim=dim0) else mat_placement.dim
     new_shard_dim = dim0 if mat_placement.is_shard(dim=dim1) else new_shard_dim
     new_sharding_placement = [Shard(new_shard_dim)]
     local_tensor = local_mat.transpose(dim0, dim1)
@@ -124,9 +122,7 @@ def dist_permute(self: DTensor, dims: List[int]) -> DTensor:
 
     if mat_placement.is_replicate():
         local_tensor = torch.ops.aten.permute(local_mat, dims=dims)
-        return DTensor(
-            local_tensor, self.device_mesh, [mat_placement], run_check=False
-        )
+        return DTensor(local_tensor, self.device_mesh, [mat_placement], run_check=False)
     elif mat_placement.is_shard():
         sharding_dim = mat_placement.dim
         new_sharding_dim = dims.index(sharding_dim)
@@ -141,9 +137,7 @@ def dist_permute(self: DTensor, dims: List[int]) -> DTensor:
 def dist_cat(tensor_list: List[DTensor], dim: int = 0) -> DTensor:
     local_inputs = pytree.tree_map(unwrap_local_tensor, tensor_list)
     local_tensor = torch.ops.aten.concat(local_inputs, dim=dim)
-    return DTensor(
-        local_tensor, tensor_list[0].device_mesh, tensor_list[0].placements
-    )
+    return DTensor(local_tensor, tensor_list[0].device_mesh, tensor_list[0].placements)
 
 
 @register_impl("aten.split.Tensor")
@@ -164,17 +158,14 @@ def dist_split(self: DTensor, split_size_or_sections, dim=0) -> List[DTensor]:
             split_size_or_sections //= world_size
     tensor_list = local_mat.split(split_size_or_sections, dim=dim)
     return [
-        DTensor(tensor, self.device_mesh, [mat_placement])
-        for tensor in tensor_list
+        DTensor(tensor, self.device_mesh, [mat_placement]) for tensor in tensor_list
     ]
 
 
 @register_impl("contiguous")
 # pyre-fixme[2]: Parameter must be annotated.
 def dist_contiguous(self) -> "DTensor":
-    return DTensor(
-        self._local_tensor.contiguous(), self.device_mesh, self.placements
-    )
+    return DTensor(self._local_tensor.contiguous(), self.device_mesh, self.placements)
 
 
 @register_impl("is_contiguous")
