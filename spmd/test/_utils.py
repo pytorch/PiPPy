@@ -1,5 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import sys
+from typing import Any, Callable, Tuple, Dict, Optional
 
 import torch
 import torch.distributed as dist
@@ -15,10 +16,10 @@ TEST_GPU_NUM = 4
 
 class DistTensorTestBase(MultiProcessTestCase):
     @property
-    def world_size(self):
+    def world_size(self) -> int:
         return TEST_GPU_NUM
 
-    def init_pg(self, backend="nccl"):
+    def init_pg(self, backend: str = "nccl"):
         if backend == "nccl" and torch.cuda.device_count() < self.world_size:
             sys.exit(TEST_SKIPS[f"multi-gpu-{self.world_size}"].exit_code)
 
@@ -36,7 +37,7 @@ class DistTensorTestBase(MultiProcessTestCase):
         if backend == "nccl":
             torch.cuda.set_device(self.rank)
 
-    def destroy_pg(self):
+    def destroy_pg(self) -> None:
         # Wait for all ranks to reach here before starting shutdown.
         dist.barrier()
         dist.destroy_process_group()
@@ -47,15 +48,15 @@ class DistTensorTestBase(MultiProcessTestCase):
 
 
 # wrapper to initialize comms (processgroup)
-def with_comms(func=None, backend=None):
+def with_comms(
+    func: Optional[Callable] = None, backend: Optional[str] = None
+) -> Callable:
     assert func is not None
 
     @wraps(func)
-    def wrapper(self, *args, **kwargs):
+    def wrapper(self, *args: Tuple[object], **kwargs: Dict[str, Any]) -> None:
         # if backend not specified, and cuda available, then use nccl, else gloo
-        pg_backend = (
-            "nccl" if backend is None and torch.cuda.is_available() else "gloo"
-        )
+        pg_backend = "nccl" if backend is None and torch.cuda.is_available() else "gloo"
         if pg_backend == "nccl" and torch.cuda.device_count() < self.world_size:
             sys.exit(TEST_SKIPS[f"multi-gpu-{self.world_size}"].exit_code)
 
