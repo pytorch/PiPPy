@@ -19,6 +19,7 @@ default_prop_ops = [
     "aten.is_same_size.default",
     "aten.ones_like.default",
     "aten.detach.default",
+    "aten.clone.default",
 ]
 for op in default_prop_ops:
     DTensor._op_to_rules[op] = default_prop_rule
