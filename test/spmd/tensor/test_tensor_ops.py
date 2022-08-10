@@ -25,7 +25,7 @@ class DistTensorOpsTest(DistTensorTestBase):
             mat = distribute_tensor(tensor_to_clone, device_mesh, spec)
             cloned_mat = mat.clone()
             self.assertFalse(cloned_mat is mat)
-            self.assertEqual(cloned_mat.to_local(),  mat.to_local())
+            self.assertEqual(cloned_mat.to_local(), mat.to_local())
 
     @with_comms
     def test_contiguous(self):

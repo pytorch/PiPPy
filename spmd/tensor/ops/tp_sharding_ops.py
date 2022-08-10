@@ -126,9 +126,7 @@ def dist_permute(self: DTensor, dims: List[int]) -> DTensor:
 
     if mat_placement.is_replicate():
         local_tensor = torch.ops.aten.permute(local_mat, dims=dims)
-        return DTensor(
-            local_tensor, self.device_mesh, [mat_placement]
-        )
+        return DTensor(local_tensor, self.device_mesh, [mat_placement])
     elif mat_placement.is_shard():
         sharding_dim = mat_placement.dim
         new_sharding_dim = dims.index(sharding_dim)
