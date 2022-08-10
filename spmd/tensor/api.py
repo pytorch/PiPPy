@@ -4,7 +4,7 @@ import math
 import warnings
 import torch
 from torch.utils._pytree import tree_map, tree_flatten
-from typing import Dict, Callable, Optional, Sequence
+from typing import Any, Dict, Callable, Optional, Sequence
 from spmd.tensor.device_mesh import get_global_device_mesh, DeviceMesh
 from spmd.tensor.placement_types import (
     Placement,
@@ -67,7 +67,7 @@ class ToTorchTensor(torch.autograd.Function):
 class FromTorchTensor(torch.autograd.Function):
     @staticmethod
     def forward(  # type: ignore
-        ctx,
+        ctx: Any,
         input: torch.Tensor,
         device_mesh: DeviceMesh,
         placements: Sequence[Placement],

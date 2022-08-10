@@ -105,7 +105,7 @@ class DistTensorMegatronTest(DistTensorTestBase):
         optim.step()
 
         torch.manual_seed(3)
-        inp = torch.rand(*inp_size).cuda(self.rank)
+        inp = torch.rand(*inp_size, device=self.device_type)
         output = model(inp)
         output_tp = model_tp(inp)
         self.assertEqual(output, output_tp)

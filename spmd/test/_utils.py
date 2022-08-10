@@ -28,8 +28,8 @@ class DistTensorTestBase(MultiProcessTestCase):
 
         dist.init_process_group(
             backend=backend,
-            world_size=self.world_size,  # pyre-ignore[16]
-            rank=self.rank,
+            world_size=self.world_size,
+            rank=self.rank,  # pyre-ignore[16]
             init_method=f"file://{self.file_name}",  # pyre-ignore[16]
         )
 
@@ -49,15 +49,19 @@ class DistTensorTestBase(MultiProcessTestCase):
 
 # wrapper to initialize comms (processgroup)
 def with_comms(
-    func: Optional[
+    func: Optional[  # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
         Callable
-    ] = None,  # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
+    ] = None,
     backend: Optional[str] = None,
-) -> Optional[Callable]:
+) -> Optional[  # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
+    Callable
+]:
     assert func is not None
 
-    @wraps(func)
-    def wrapper(self, *args: Tuple[object], **kwargs: Dict[str, Any]) -> None:
+    @wraps(func)  # pyre-ignore[6]
+    def wrapper(
+        self: Any, *args: Tuple[object], **kwargs: Dict[str, Any]
+    ) -> None:
         # if backend not specified, and cuda available, then use nccl, else gloo
         pg_backend = (
             "nccl" if backend is None and torch.cuda.is_available() else "gloo"
