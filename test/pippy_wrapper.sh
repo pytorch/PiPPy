@@ -9,4 +9,4 @@ export LOCAL_RANK=${SLURM_LOCALID}
 export WORLD_SIZE=${SLURM_NTASKS}
 export RANK=${SLURM_PROCID}
 
-exec "$@"
+python -u "$@" 2>&1
