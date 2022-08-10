@@ -34,11 +34,9 @@ jobs:
     runs-on: linux.16xlarge.nvidia.gpu
     strategy:
       matrix:
-        python-version: ["3.9"]
-    container:
-      image: python:${{ matrix.python-version }}
+        num-gpus: ["4"]
     env:
-      DOCKER_IMAGE: qts8n/cuda-python:devel
+      DOCKER_IMAGE: marctorsoc/cuda-python39
       PIPPY_ROOT: /PiPPy
       VERBOSE: "0"
       OMP_NUM_THREADS: "1"
