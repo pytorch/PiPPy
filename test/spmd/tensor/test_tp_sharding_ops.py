@@ -2,7 +2,11 @@
 from spmd.tensor.placement_types import Replicate
 import torch
 from torch.testing._internal.common_utils import run_tests
-from spmd.test._utils import DistTensorTestBase, with_comms, TEST_GPU_NUM
+from spmd.test._utils import (
+    DistTensorTestBase,
+    with_comms,
+    TEST_GPU_NUM,
+)  # type: ignore
 from spmd import DeviceMesh, DTensor, Shard, Replicate, distribute_tensor
 from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 

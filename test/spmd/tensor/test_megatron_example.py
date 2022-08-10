@@ -3,7 +3,7 @@ import torch
 import torch.distributed as dist
 import functools
 from torch.testing._internal.common_utils import run_tests
-from spmd.test._utils import DistTensorTestBase, with_comms
+from spmd.test._utils import DistTensorTestBase, with_comms  # type: ignore
 from spmd import distribute_tensor, DeviceMesh, DTensor, Shard, Replicate
 
 
@@ -111,5 +111,5 @@ class DistTensorMegatronTest(DistTensorTestBase):
         self.assertEqual(output, output_tp)
 
 
-if __name__ == "__main__":
-    run_tests()
+# if __name__ == "__main__":
+#     run_tests()

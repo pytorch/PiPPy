@@ -67,7 +67,7 @@ def with_comms(
 
         self.device_type = "cuda" if pg_backend == "nccl" else "cpu"
         self.init_pg(backend=pg_backend)
-        func(self)
+        func(self)  # type: ignore
         self.destroy_pg()
 
     return wrapper
