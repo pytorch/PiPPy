@@ -82,13 +82,13 @@ def mm_prop(
         and mat2_spec.placements[0].is_replicate()
     ):
         return mat1_spec
-    elif mat1_spec.placements[0].is_replicate() and mat2_spec.placements[0].is_shard(
-        dim=1
-    ):
+    elif mat1_spec.placements[0].is_replicate() and mat2_spec.placements[
+        0
+    ].is_shard(dim=1):
         return mat2_spec
-    elif mat1_spec.placements[0].is_shard(dim=1) and mat2_spec.placements[0].is_shard(
-        dim=0
-    ):
+    elif mat1_spec.placements[0].is_shard(dim=1) and mat2_spec.placements[
+        0
+    ].is_shard(dim=0):
         placements = [_Partial()]
         return PlacementSpec(mat1_spec.ndim, mat1_spec.mesh, placements)
     elif (
@@ -101,7 +101,9 @@ def mm_prop(
         return None
 
 
-def pointwise_prop(input_specs: Tuple[PlacementSpec, ...]) -> Optional[PlacementSpec]:
+def pointwise_prop(
+    input_specs: Tuple[PlacementSpec, ...]
+) -> Optional[PlacementSpec]:
     """
     Propagate the sharding for pointwise operations. Examples:
         ij,jj->ij - addition/mul

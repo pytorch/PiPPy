@@ -72,7 +72,9 @@ def shard_module(m, device_type):
     )
     m = _replicate_input_tensor(m, device_mesh, replicate)
     m.net2 = _aggregate_local_tensor(m.net2)
-    m.net1.weight.register_hook(functools.partial(_gradient_hook, m.net1.weight))
+    m.net1.weight.register_hook(
+        functools.partial(_gradient_hook, m.net1.weight)
+    )
 
 
 class DistTensorMegatronTest(DistTensorTestBase):

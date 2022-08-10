@@ -56,7 +56,9 @@ def with_comms(
     @wraps(func)
     def wrapper(self, *args: Tuple[object], **kwargs: Dict[str, Any]) -> None:
         # if backend not specified, and cuda available, then use nccl, else gloo
-        pg_backend = "nccl" if backend is None and torch.cuda.is_available() else "gloo"
+        pg_backend = (
+            "nccl" if backend is None and torch.cuda.is_available() else "gloo"
+        )
         if pg_backend == "nccl" and torch.cuda.device_count() < self.world_size:
             sys.exit(TEST_SKIPS[f"multi-gpu-{self.world_size}"].exit_code)
 
