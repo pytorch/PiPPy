@@ -27,7 +27,7 @@ if [ -f requirements.txt ]; then pip3 install -r requirements.txt --find-links h
 pip3 install git+https://github.com/huggingface/transformers.git@main sentencepiece
 
 # Install pippy
-python3 setup.py install
+# python3 setup.py install
 python3 spmd/setup.py install
 
 # Run all integration tests
