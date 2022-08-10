@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -x
+set -ex
 
 # Print test options
 echo "VERBOSE: ${VERBOSE}"
