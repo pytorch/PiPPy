@@ -118,6 +118,7 @@ def run_worker(rank, world_size, args):
                                               rpc_timeout=1800,
                                               _transports=tp_transports())
     if args.cuda:
+        raise NotImplementedError()
         n_devs = torch.cuda.device_count()
         if n_devs > 0:
             dev_id = rank % n_devs
