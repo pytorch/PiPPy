@@ -96,7 +96,8 @@ class DistTensorMegatronTest(DistTensorTestBase):
 
         output.sum().backward()
         output_tp.sum().backward()
-        # self.assertTrue(model_tp.net1.weight.local_tensor().grad is not None)
+        # This is for FSDP + TP integration.
+        self.assertTrue(model_tp.net1.weight._local_tensor.grad is not None)
 
         optim = torch.optim.SGD(model.parameters(), lr=LR)
         optim.step()
