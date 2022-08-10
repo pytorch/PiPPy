@@ -4,13 +4,7 @@ import torch.distributed as dist
 import functools
 from torch.testing._internal.common_utils import run_tests
 from spmd.test._utils import DistTensorTestBase, with_comms
-from spmd import (
-    distribute_tensor,
-    DeviceMesh,
-    DTensor,
-    Shard,
-    Replicate,
-)
+from spmd import distribute_tensor, DeviceMesh, DTensor, Shard, Replicate
 
 
 class SimpleModel(torch.nn.Module):
@@ -53,11 +47,13 @@ def _gradient_hook(param, grad):
     param._local_tensor.grad = grad._local_tensor
 
 
-def shard_module(m):
+def shard_module(m, device_type):
     pg = dist.distributed_c10d._get_default_group()
     start_idx = 0
     device_mesh = DeviceMesh(
-        "cuda", list(range(start_idx, start_idx + pg.size())), dim_groups=[pg]
+        device_type,
+        list(range(start_idx, start_idx + pg.size())),
+        dim_groups=[pg],
     )
     col_wise_sharding = [Shard(0)]
     row_wise_sharding = [Shard(1)]
@@ -76,7 +72,9 @@ def shard_module(m):
     )
     m = _replicate_input_tensor(m, device_mesh, replicate)
     m.net2 = _aggregate_local_tensor(m.net2)
-    m.net1.weight.register_hook(functools.partial(_gradient_hook, m.net1.weight))
+    m.net1.weight.register_hook(
+        functools.partial(_gradient_hook, m.net1.weight)
+    )
 
 
 class DistTensorMegatronTest(DistTensorTestBase):
@@ -85,12 +83,12 @@ class DistTensorMegatronTest(DistTensorTestBase):
         LR = 0.5
         inp_size = [5, 10]
         torch.manual_seed(0)
-        inp = torch.rand(*inp_size).cuda(self.rank)
+        inp = torch.rand(*inp_size, device=self.device_type)
         torch.manual_seed(5)
-        model = SimpleModel().cuda(self.rank)
+        model = SimpleModel()
         torch.manual_seed(5)
-        model_tp = SimpleModel().cuda(self.rank)
-        shard_module(model_tp)
+        model_tp = SimpleModel()
+        shard_module(model_tp, self.device_type)
 
         output = model(inp)
         output_tp = model_tp(inp)

@@ -32,7 +32,9 @@ def distribute_tensor(
         A :class:`DTensor` object
     """
     # get default device mesh if there's nothing specified
-    device_mesh = get_global_device_mesh() if device_mesh is None else device_mesh
+    device_mesh = (
+        get_global_device_mesh() if device_mesh is None else device_mesh
+    )
     # convert tensor to the correponding device type if it's not in that device type
     tensor = tensor.to(device_mesh.device_type)
     # set default placements to replicated if not specified
