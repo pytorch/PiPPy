@@ -60,7 +60,7 @@ def with_comms(
 
     @wraps(func)  # pyre-ignore[6]
     def wrapper(
-        self: Any, *args: Tuple[object], **kwargs: Dict[str, Any]
+        self, *args: Tuple[object], **kwargs: Dict[str, Any]  # type: ignore
     ) -> None:
         # if backend not specified, and cuda available, then use nccl, else gloo
         pg_backend = (
