@@ -27,6 +27,6 @@ if [ -f requirements.txt ]; then pip3 install -r requirements.txt --find-links h
 python3 spmd/setup.py install
 
 # Run all integration tests
-python3 test/spmd/tensor/test_megatron_example.py
-python3 test/spmd/tensor/test_ddp.py
+# python3 test/spmd/tensor/test_megatron_example.py
+# python3 test/spmd/tensor/test_ddp.py
 python3 test/spmd/tensor/test_tp_sharding_ops.py 
