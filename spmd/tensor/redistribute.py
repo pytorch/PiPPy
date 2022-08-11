@@ -112,7 +112,10 @@ def redistribute_spmd_tensor(
     assert new_local_tensor is not None, "redistribute failed!"
 
     return spmd_tensor.DTensor(
-        new_local_tensor, device_mesh, attempted_transforms
+        new_local_tensor,
+        device_mesh,
+        attempted_transforms,
+        requires_grad=new_local_tensor.requires_grad,
     )
 
 

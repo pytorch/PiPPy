@@ -37,14 +37,16 @@ class DistMatrixOpsTest(DistTensorTestBase):
         shard1_spec = [Shard(1)]
         replica_spec = [Replicate()]
 
-        tensor_to_shard1 = torch.randn(12, 8)
+        tensor_to_shard1 = torch.randn(12, 8, requires_grad=True)
         mat1 = distribute_tensor(tensor_to_shard1, device_mesh, shard1_spec)
         tensor_to_shard0 = torch.randn(8, 4, requires_grad=True)
         mat2 = distribute_tensor(tensor_to_shard0, device_mesh, shard0_spec)
-        input_tensor = torch.randn(4)
+        input_tensor = torch.randn(4, requires_grad=True)
         input = distribute_tensor(input_tensor, device_mesh, replica_spec)
 
-        local_res = torch.addmm(input_tensor, tensor_to_shard1, tensor_to_shard0)
+        local_res = torch.addmm(
+            input_tensor, tensor_to_shard1, tensor_to_shard0
+        )
         dist_res = torch.addmm(input, mat1, mat2)
 
         # test if addmm output is a partial
@@ -62,7 +64,6 @@ class DistMatrixOpsTest(DistTensorTestBase):
         self.assertIsNotNone(mat2.grad)
         mat2_grad = mat2.grad.redistribute(device_mesh, replica_spec)
         self.assertEqual(mat2_grad.to_local(), tensor_to_shard0.grad)
-
 
     @with_comms
     def test_mm(self):
@@ -92,7 +93,6 @@ class DistMatrixOpsTest(DistTensorTestBase):
     def test_t(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
-        replica_spec = [Replicate()]
 
         tensor_to_transpose = torch.randn(12, 8, requires_grad=True)
         mat = distribute_tensor(tensor_to_transpose, device_mesh, shard_spec)

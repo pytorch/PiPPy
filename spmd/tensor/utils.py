@@ -2,11 +2,12 @@
 
 import torch
 from typing import Union, Dict, Tuple
-from torch.utils._pytree import tree_map, tree_flatten, tree_unflatten
+from torch.utils._pytree import tree_flatten, tree_unflatten
 
 import spmd.tensor.api as spmd_tensor
 import spmd.tensor.dispatch as dispatch
 from spmd.tensor.placement_types import PlacementSpec
+from spmd.tensor.redistribute import redistribute_spmd_tensor
 
 ArgKwargsType = Union[Tuple[object, ...], Dict[str, object]]
 
@@ -66,7 +67,9 @@ def pack_args_kwargs_with_local_tensor(
         if isinstance(arg, spmd_tensor.DTensor):
             if redistribute_with_schema:
                 target_spec = flatten_args_schema[i]
-                arg = arg.redistribute(target_spec.mesh, target_spec.placements)
+                arg = redistribute_spmd_tensor(
+                    arg, target_spec.mesh, target_spec.placements
+                )
 
             # reuse the schema list and update it with local tensor
             flatten_args_schema[i] = arg._local_tensor
