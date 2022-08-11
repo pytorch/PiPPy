@@ -309,7 +309,7 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         for placement in placements:
             if placement.is_partial():
                 raise RuntimeError(
-                    "Cann't redistribute to _Partial! _Partial is for internal use only."
+                    "Can not redistribute to _Partial, _Partial is for internal use only!"
                 )
 
         # pyre-fixme[16]: `Redistribute` has no attribute `apply`.

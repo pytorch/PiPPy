@@ -1,4 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+from functools import partial
 import torch
 
 from torch.distributed.distributed_c10d import ReduceOp
@@ -111,7 +112,9 @@ class RedistributeTest(DistTensorTestBase):
         partial_spec = [_Partial(ReduceOp.SUM)]
         replica_spec = [Replicate()]
         # test partial -> replicate, which trigger all_reduce
-        partial_tensor = DTensor(partial_local, device_mesh, partial_spec, requires_grad=True)
+        partial_tensor = DTensor(
+            partial_local, device_mesh, partial_spec, requires_grad=True
+        )
         global_partial_tensor = partial_tensor.redistribute(
             device_mesh, replica_spec
         )
@@ -122,19 +125,34 @@ class RedistributeTest(DistTensorTestBase):
         global_partial_tensor.to_local().sum().backward()
         self.assertIsNotNone(partial_tensor.grad)
         self.assertTrue(partial_tensor.grad.placements[0].is_replicate())
-        self.assertEqual(partial_tensor.grad.to_local(), torch.ones_like(partial_local))
+        self.assertEqual(
+            partial_tensor.grad.to_local(), torch.ones_like(partial_local)
+        )
 
     @with_comms
     def test_replicate_to_partial(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
-        local_tensor = torch.randn(12, 3, device=self.device_type)
+        local_tensor = torch.randn(
+            12, 3, device=self.device_type, requires_grad=True
+        )
         partial_spec = [_Partial(ReduceOp.SUM)]
         replica_spec = [Replicate()]
         # 1) test replicate -> partial forward
         replica_tensor = DTensor(
             local_tensor, device_mesh, replica_spec, requires_grad=True
         )
-        partial_tensor = replica_tensor.redistribute(device_mesh, partial_spec)
+        with self.assertRaisesRegex(
+            RuntimeError, "Can not redistribute to _Partial"
+        ):
+            partial_tensor = replica_tensor.redistribute(
+                device_mesh, partial_spec
+            )
+
+        from spmd.tensor.redistribute import Redistribute
+
+        partial_tensor = Redistribute.apply(
+            replica_tensor, device_mesh, partial_spec
+        )
         self.assertEqual(partial_tensor.size(), local_tensor.size())
         # test it successfully zero out the gradients
         if self.rank == 0:
