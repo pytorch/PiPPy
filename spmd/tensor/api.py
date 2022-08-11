@@ -66,7 +66,13 @@ class ToTorchTensor(torch.autograd.Function):
 
 class FromTorchTensor(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, input: torch.Tensor, device_mesh, placements, run_check):  # type: ignore
+    def forward(  # type: ignore
+        ctx,  # type: ignore
+        input: torch.Tensor,
+        device_mesh: DeviceMesh,
+        placements: Sequence[Placement],
+        run_check: bool,
+    ):  # type: ignore
         ctx.previous_placement = placements
         ctx.previous_device_mesh = device_mesh
 

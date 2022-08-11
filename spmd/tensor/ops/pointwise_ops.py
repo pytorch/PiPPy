@@ -1,9 +1,7 @@
 from typing import Optional
 from spmd.tensor.api import DTensor
 from spmd.tensor.dispatch import OpSchema
-from spmd.tensor.placement_types import (
-    PlacementSpec,
-)
+from spmd.tensor.placement_types import PlacementSpec
 from spmd.tensor.ops.prop_rules import pointwise_prop
 
 # leave the pointwise_ops list here for convenience,
