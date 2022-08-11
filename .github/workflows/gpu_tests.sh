@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -ex
+set -x
 
 # Print test options
 echo "VERBOSE: ${VERBOSE}"
@@ -29,6 +29,8 @@ pip3 install git+https://github.com/huggingface/transformers.git@main sentencepi
 
 # Install pippy
 python3 setup.py install
+
+set -ex
 
 # Run all integration tests
 python3 test/local_test_forward.py --replicate ${REPLICATE} -s ${SCHEDULE}
