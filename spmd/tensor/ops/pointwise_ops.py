@@ -118,7 +118,11 @@ from spmd.tensor.ops.prop_rules import pointwise_prop
 #     "xlogy",
 # ]
 
-pointwise_ops = ["aten.relu.default", "aten.gelu.default"]
+pointwise_ops = [
+    "aten.relu.default",
+    "aten.gelu.default",
+    "aten.sigmoid.default",
+]
 
 
 def pointwise_rules(op_schema: OpSchema) -> Optional[PlacementSpec]:
