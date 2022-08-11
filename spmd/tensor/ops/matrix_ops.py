@@ -2,13 +2,9 @@
 # implement matrix related ops for distributed tensor
 from typing import Optional
 from spmd.tensor.dispatch import OpSchema
-from spmd.tensor.placement_types import (
-    PlacementSpec,
-)
+from spmd.tensor.placement_types import PlacementSpec
 from spmd.tensor.ops.prop_rules import einop_prop, mm_prop, pointwise_prop
-from spmd.tensor.ops.utils import (
-    register_prop_rule,
-)
+from spmd.tensor.ops.utils import register_prop_rule
 
 
 @register_prop_rule("aten.mm.default")

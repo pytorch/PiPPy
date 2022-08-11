@@ -2,7 +2,7 @@
 import torch
 import torch.nn as nn
 from torch.testing._internal.common_utils import run_tests
-from ..test_utils import DistTensorTestBase, with_comms
+from spmd.test._utils import DistTensorTestBase, with_comms  # type: ignore
 from spmd import (
     distribute_tensor,
     distribute_module,
