@@ -30,6 +30,7 @@ from itertools import chain
 from typing import Optional
 
 import datasets
+import torch
 from datasets import load_dataset
 
 import evaluate
@@ -42,7 +43,6 @@ from transformers import (
     AutoTokenizer,
     HfArgumentParser,
     Trainer,
-    TrainingArguments,
     default_data_collator,
     is_torch_tpu_available,
     set_seed,
@@ -52,6 +52,8 @@ from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
+from pippy.hf import PiPPyTrainingArguments, run_pippy, wrap
+from pippy.microbatch import TensorChunkSpec, CustomReducer
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.22.0.dev0")
@@ -207,7 +209,9 @@ def main():
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
 
-    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
+    # =============================================== PiPPy change start ===============================================
+    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, PiPPyTrainingArguments))
+    # ================================================ PiPPy change end ================================================
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         # If we pass only one argument to the script and it's the path to a json file,
         # let's parse it to get our arguments.
@@ -215,6 +219,12 @@ def main():
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
+    # =============================================== PiPPy change start ===============================================
+    run_pippy(model_args, data_args, training_args, run_master)
+
+
+def run_master(model_args, data_args, training_args, pp_ranks):
+    # ================================================ PiPPy change end ================================================
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
     # information sent is the one passed as arguments along with your Python/PyTorch versions.
     send_example_telemetry("run_clm", model_args, data_args)
@@ -389,6 +399,17 @@ def main():
 
     model.resize_token_embeddings(len(tokenizer))
 
+    # =============================================== PiPPy change start ===============================================
+    args_chunk_spec = ()
+    kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'labels': TensorChunkSpec(0),
+                         'attention_mask': TensorChunkSpec(0)}
+    output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b), 'logits': TensorChunkSpec(0),
+                         'past_key_values': [[TensorChunkSpec(0) for _ in range(2)] for _ in
+                                             range(model.config.n_layer)]}
+    model = wrap(model, training_args, pp_ranks, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec)
+    training_args.label_names = ['labels']  # https://github.com/huggingface/transformers/blob/c8b6ae858d61e5bc10e388d095aa74f7690d1021/src/transformers/trainer.py#L629-L630
+    # ================================================ PiPPy change end ================================================
+
     # Preprocessing the datasets.
     # First we tokenize all the texts.
     if training_args.do_train:
@@ -503,6 +524,16 @@ def main():
             preds = preds[:, :-1].reshape(-1)
             return metric.compute(predictions=preds, references=labels)
 
+    # =============================================== PiPPy change start ===============================================
+    optimizer_cls, optimizer_kwargs = Trainer.get_optimizer_cls_and_kwargs(training_args)
+    optimizer = model.instantiate_optimizer(optimizer_cls, **optimizer_kwargs)
+    lr_scheduler = model.instantiate_lr_scheduler(
+        transformers.optimization.TYPE_TO_SCHEDULER_FUNCTION[training_args.lr_scheduler_type],
+        num_warmup_steps=training_args.get_warmup_steps(training_args.max_steps),
+        num_training_steps=training_args.max_steps
+    )
+    # ================================================ PiPPy change end ================================================
+
     # Initialize our Trainer
     trainer = Trainer(
         model=model,
@@ -516,7 +547,13 @@ def main():
         preprocess_logits_for_metrics=preprocess_logits_for_metrics
         if training_args.do_eval and not is_torch_tpu_available()
         else None,
+        # ============================================= PiPPy change start =============================================
+        optimizers=(optimizer, lr_scheduler),
+        # ============================================== PiPPy change end ==============================================
     )
+    # =============================================== PiPPy change start ===============================================
+    trainer._signature_columns = list(kwargs_chunk_spec.keys())
+    # ================================================ PiPPy change end ================================================
 
     # Training
     if training_args.do_train:
