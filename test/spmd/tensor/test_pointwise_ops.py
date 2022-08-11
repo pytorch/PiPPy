@@ -40,6 +40,12 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         self._run_sharded_elementwise_ops(
             device_mesh, [Replicate()], (8, 5), torch.nn.functional.relu
         )
+        self._run_sharded_elementwise_ops(
+            device_mesh, [Shard(0)], (8, 5), torch.sigmoid
+        )
+        self._run_sharded_elementwise_ops(
+            device_mesh, [Replicate()], (8, 5), torch.sigmoid
+        )
 
     @with_comms
     @skip_if_lt_x_gpu(TEST_GPU_NUM)

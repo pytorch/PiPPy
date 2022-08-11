@@ -123,6 +123,7 @@ from spmd.tensor.ops.prop_rules import pointwise_prop
 pointwise_ops = [
     "aten.relu.default",
     "aten.gelu.default",
+    "aten.sigmoid.default",
 ]
 
 
