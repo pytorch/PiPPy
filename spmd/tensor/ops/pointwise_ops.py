@@ -1,9 +1,6 @@
-from typing import Optional
+# Copyright (c) Meta Platforms, Inc. and affiliates
 from spmd.tensor.api import DTensor
 from spmd.tensor.dispatch import OpSchema, OutputSharding
-from spmd.tensor.placement_types import (
-    PlacementSpec,
-)
 from spmd.tensor.ops.prop_rules import pointwise_prop
 
 # leave the pointwise_ops list here for convenience,
@@ -123,6 +120,7 @@ from spmd.tensor.ops.prop_rules import pointwise_prop
 pointwise_ops = [
     "aten.relu.default",
     "aten.gelu.default",
+    "aten.sigmoid.default",
 ]
 
 

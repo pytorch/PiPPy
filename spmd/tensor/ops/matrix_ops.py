@@ -3,9 +3,7 @@
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.ops.prop_rules import einop_prop, mm_prop, pointwise_prop
 from spmd.tensor.placement_types import _Partial, PlacementSpec, Shard
-from spmd.tensor.ops.utils import (
-    register_prop_rule,
-)
+from spmd.tensor.ops.utils import register_prop_rule
 
 
 @register_prop_rule("aten.mm.default")

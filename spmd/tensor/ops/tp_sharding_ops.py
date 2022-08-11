@@ -7,9 +7,7 @@ import torch.utils._pytree as pytree
 from typing import List
 from spmd.tensor.api import DTensor
 from spmd.tensor.placement_types import Shard
-from spmd.tensor.utils import (
-    unwrap_local_tensor,
-)
+from spmd.tensor.utils import unwrap_local_tensor
 from spmd.tensor.ops.utils import unwrap_single_placement, register_impl
 
 """

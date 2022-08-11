@@ -1,9 +1,8 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 from torch.testing._internal.common_utils import run_tests
-
 from spmd.tensor.api import DTensor
-from ..test_utils import DistTensorTestBase, with_comms
+from spmd.test._utils import DistTensorTestBase, with_comms  # type: ignore
 from spmd import distribute_tensor, DeviceMesh
 from spmd.tensor.placement_types import Shard, Replicate, _Partial
 
@@ -57,14 +56,12 @@ class DistMatrixOpsTest(DistTensorTestBase):
         dist_local_res = replica_res.to_local()
         self.assertEqual(local_res, dist_local_res)
 
-        # backward
+        # backward checks
         dist_local_res.sum().backward()
         local_res.sum().backward()
         self.assertIsNotNone(mat2.grad)
-        print(tensor_to_shard1.grad)
-        # mat2_grad = mat2.grad.redistribute(device_mesh, replica_spec)
-        # self.assertEqual(mat2_grad.to_local(), tensor_to_shard1.grad)
-
+        mat2_grad = mat2.grad.redistribute(device_mesh, replica_spec)
+        self.assertEqual(mat2_grad.to_local(), tensor_to_shard0.grad)
 
 
     @with_comms
