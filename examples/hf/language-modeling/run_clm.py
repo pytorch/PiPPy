@@ -30,6 +30,7 @@ from itertools import chain
 from typing import Optional
 
 import datasets
+import torch
 from datasets import load_dataset
 
 import evaluate
@@ -54,6 +55,9 @@ from transformers.utils.versions import require_version
 
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
+from pippy.hf import PiPPyTrainingArguments, run_pippy
+from pippy.hf.gpt2 import wrap
+
 check_min_version("4.22.0.dev0")
 
 require_version("datasets>=1.8.0", "To fix: pip install -r examples/pytorch/language-modeling/requirements.txt")
@@ -207,7 +211,7 @@ def main():
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
 
-    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
+    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, PiPPyTrainingArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         # If we pass only one argument to the script and it's the path to a json file,
         # let's parse it to get our arguments.
@@ -215,6 +219,23 @@ def main():
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
+    run_pippy(model_args, data_args, training_args, run_master)
+
+
+num_training_steps = -1
+num_warmup_steps = 1000
+
+
+# Copied from https://github.com/huggingface/transformers/blob/05d3a43c59dadf815fe46df8fed8cc8e816c8588/src/transformers/optimization.py#L94-L99
+def lr_lambda(current_step: int):
+    if current_step < num_warmup_steps:
+        return float(current_step) / float(max(1, num_warmup_steps))
+    return max(
+        0.0, float(num_training_steps - current_step) / float(max(1, num_training_steps - num_warmup_steps))
+    )
+
+
+def run_master(model_args, data_args, training_args, pp_ranks):
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
     # information sent is the one passed as arguments along with your Python/PyTorch versions.
     send_example_telemetry("run_clm", model_args, data_args)
@@ -389,6 +410,9 @@ def main():
 
     model.resize_token_embeddings(len(tokenizer))
 
+    model = wrap(model, training_args, pp_ranks)
+    training_args.label_names = ['labels']  # https://github.com/huggingface/transformers/blob/c8b6ae858d61e5bc10e388d095aa74f7690d1021/src/transformers/trainer.py#L629-L630
+
     # Preprocessing the datasets.
     # First we tokenize all the texts.
     if training_args.do_train:
@@ -503,6 +527,9 @@ def main():
             preds = preds[:, :-1].reshape(-1)
             return metric.compute(predictions=preds, references=labels)
 
+    optimizer = model.instantiate_optimizer(torch.optim.AdamW, lr=0.0002, betas=(0.9, 0.999), eps=1e-08)
+    lr_scheduler = model.instantiate_lr_scheduler(torch.optim.lr_scheduler.LambdaLR, lr_lambda)
+
     # Initialize our Trainer
     trainer = Trainer(
         model=model,
@@ -516,7 +543,9 @@ def main():
         preprocess_logits_for_metrics=preprocess_logits_for_metrics
         if training_args.do_eval and not is_torch_tpu_available()
         else None,
+        optimizers=(optimizer, lr_scheduler),
     )
+    trainer._signature_columns = ['input_ids', 'attention_mask', 'labels']
 
     # Training
     if training_args.do_train:
