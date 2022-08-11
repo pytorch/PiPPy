@@ -1,5 +1,4 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from functools import partial
 import torch
 
 from torch.distributed.distributed_c10d import ReduceOp

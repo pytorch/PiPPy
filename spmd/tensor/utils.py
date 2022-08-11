@@ -5,8 +5,7 @@ from typing import Union, Dict, Tuple
 from torch.utils._pytree import tree_flatten, tree_unflatten
 
 import spmd.tensor.api as spmd_tensor
-import spmd.tensor.dispatch as dispatch
-from spmd.tensor.placement_types import PlacementSpec
+from spmd.tensor.placement_types import PlacementSpec, OutputSpecType
 from spmd.tensor.redistribute import redistribute_spmd_tensor
 
 ArgKwargsType = Union[Tuple[object, ...], Dict[str, object]]
@@ -28,7 +27,7 @@ def unwrap_schema(e: object) -> object:
     return e._placement_spec if isinstance(e, spmd_tensor.DTensor) else e
 
 
-def wrap(res: object, spec: "dispatch.OutputSpecType") -> object:
+def wrap(res: object, spec: OutputSpecType) -> object:
     if isinstance(res, torch.Tensor):
         assert spec is not None and isinstance(
             spec, PlacementSpec

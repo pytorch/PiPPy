@@ -2,7 +2,7 @@
 import torch.distributed.distributed_c10d as c10d
 
 from dataclasses import dataclass
-from typing import Optional, List, Sequence, cast
+from typing import Optional, List, Sequence, Union, Tuple, cast
 from spmd.tensor.device_mesh import DeviceMesh
 
 
@@ -114,3 +114,10 @@ class PlacementSpec(object):
 
         spec = cls(len(dim_map), mesh, placements)
         return spec
+
+
+# ATen op schemas could have Tensor, Tuple[Tensor] and List[Tensor], so output type sould
+# be the same set of possiblities.
+OutputSpecType = Optional[
+    Union[PlacementSpec, Tuple[PlacementSpec, ...], List[PlacementSpec]]
+]

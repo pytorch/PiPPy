@@ -29,8 +29,8 @@ class DistTensorTestBase(MultiProcessTestCase):
         dist.init_process_group(
             backend=backend,
             world_size=self.world_size,
-            rank=self.rank,  # pyre-ignore[16]
-            init_method=f"file://{self.file_name}",  # pyre-ignore[16]
+            rank=self.rank,
+            init_method=f"file://{self.file_name}",
         )
 
         # set device for nccl pg for collectives

@@ -1,9 +1,9 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 from dataclasses import dataclass
-from typing import List, Callable, Dict, Tuple, Optional, Union, cast
+from typing import List, Callable, Dict, Tuple, Optional, cast
 from torch.utils._pytree import tree_map
 
-from spmd.tensor.placement_types import PlacementSpec
+from spmd.tensor.placement_types import PlacementSpec, OutputSpecType
 from spmd.tensor.utils import (
     unwrap_local_tensor,
     wrap,
@@ -15,13 +15,6 @@ from spmd.tensor.utils import (
 If set to true, __DEBUG_STRICT will fail when an op doesn't have a sharding rule registered.
 """
 _DEBUG_STRICT = False
-
-
-# ATen op schemas could have Tensor, Tuple[Tensor] and List[Tensor], so output type sould
-# be the same set of possiblities.
-OutputSpecType = Optional[
-    Union[PlacementSpec, Tuple[PlacementSpec, ...], List[PlacementSpec]]
-]
 
 
 @dataclass

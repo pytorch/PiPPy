@@ -1,6 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 from typing import Tuple, List, Dict, Optional
-from spmd.tensor.dispatch import OutputSharding
 from spmd.tensor.placement_types import _Partial, PlacementSpec
 
 
@@ -106,7 +105,7 @@ def pointwise_prop(
 ) -> Optional[PlacementSpec]:
     """
     Propagate the sharding for pointwise operations. Examples:
-        ij,jj->ij - addition/mul
+        ij,ij->ij - addition/mul
         ij,j->ij - broadcasted addition
     """
     alphabet = "abcdefghijklmnopqrstuvwxyz"

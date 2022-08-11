@@ -14,18 +14,21 @@ class DistMathOpsTest(DistTensorTestBase):
         # plain einsum, mm
         mesh = DeviceMesh(self.device_type, torch.arange(self.world_size))
 
+        # propagate col-wise sharding
         mat1, mat2 = [-1, -1], [-1, 0]
         mat1_spec = PlacementSpec.from_dim_map(mesh, mat1, [])
         mat2_spec = PlacementSpec.from_dim_map(mesh, mat2, [])
         output_spec = einop_prop("mk,kn->mn", (mat1_spec, mat2_spec))
         self.assertEqual(output_spec.dim_map, [-1, 0])
 
+        # propagate row-wise sharding
         mat1, mat2 = [0, -1], [-1, -1]
         mat1_spec = PlacementSpec.from_dim_map(mesh, mat1, [])
         mat2_spec = PlacementSpec.from_dim_map(mesh, mat2, [])
         output_spec = einop_prop("mk,kn->mn", (mat1_spec, mat2_spec))
         self.assertEqual(output_spec.dim_map, [0, -1])
 
+        # generate partial
         mat1, mat2 = [-1, 0], [0, -1]
         mat1_spec = PlacementSpec.from_dim_map(mesh, mat1, [])
         mat2_spec = PlacementSpec.from_dim_map(mesh, mat2, [])
@@ -40,6 +43,17 @@ class DistMathOpsTest(DistTensorTestBase):
         mat2_spec = PlacementSpec.from_dim_map(mesh, [-1], [])
         output_spec = einop_prop("ijk,k->ijk", (mat1_spec, mat2_spec))
         self.assertEqual(output_spec.dim_map, [-1, 0, -1])
+
+        # 2d mesh einop merge sharding
+        mesh_shape = torch.arange(self.world_size).reshape(
+            self.world_size / 2, self.world_size / 2
+        )
+        mesh = DeviceMesh(self.device_type, mesh_shape)
+        mat1, mat2 = [0, -1], [-1, 1]
+        mat1_spec = PlacementSpec.from_dim_map(mesh, mat1, [])
+        mat2_spec = PlacementSpec.from_dim_map(mesh, mat2, [])
+        output_spec = einop_prop("mk,kn->mn", (mat1_spec, mat2_spec))
+        self.assertEqual(output_spec.dim_map, [0, 1])
 
     @with_comms
     def test_sum(self):
