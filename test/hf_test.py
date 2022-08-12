@@ -354,6 +354,10 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
                              DebertaForSequenceClassification]:
                 self.skipTest('Need to support Deberta models')
 
+            # TODO: support Donut SWIN models https://github.com/pytorch/PiPPy/issues/361
+            if model_cls in [DonutSwinModel]:
+                self.skipTest('Need to support Donut SWIN models')
+
             model, splitter = generate_hf_model(model_cls)
 
             submodules_cnt = splitter(model)
@@ -474,6 +478,10 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
                              DebertaV2ForMultipleChoice, DebertaV2Model, DebertaForMaskedLM,
                              DebertaForSequenceClassification]:
                 self.skipTest('Need to support Deberta models')
+
+            # TODO: support Donut SWIN models https://github.com/pytorch/PiPPy/issues/361
+            if model_cls in [DonutSwinModel]:
+                self.skipTest('Need to support Donut SWIN models')
 
             model, splitter = generate_hf_model(model_cls)
             model.eval()  # Disable nondeterminism for testing
