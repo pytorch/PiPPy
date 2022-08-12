@@ -12,11 +12,6 @@ import functools
 
 
 class RedistributeTest(DistTensorTestBase):
-    @property
-    def world_size(self) -> int:
-        return 6
-
-
     @with_comms
     def test_shard_to_replicate_forward_backward(self):
         # 1) test shard -> replicate forward
@@ -156,6 +151,12 @@ class RedistributeTest(DistTensorTestBase):
         self.assertEqual(scatter_shard_tensor.size(), partial_tensor.size())
         self.assertEqual(scatter_shard_tensor.placements, shard1_spec)
         self.assertEqual(scatter_shard_tensor.to_local(), torch.ones(4, 3) * 4)
+
+
+class MultiDimRedistributeTest(DistTensorTestBase):
+    @property
+    def world_size(self) -> int:
+        return 6
 
     @with_comms
     def test_multi_dim_mesh(self):
