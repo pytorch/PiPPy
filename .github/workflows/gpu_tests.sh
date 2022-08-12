@@ -33,7 +33,7 @@ python3 setup.py install
 # Run all integration tests
 python3 test/local_test_forward.py --replicate ${REPLICATE} -s ${SCHEDULE}
 python3 test/local_test_forward_backward.py --replicate ${REPLICATE} -s ${SCHEDULE}
-python3 examples/slurm/hf/gpt2/pippy_gpt2.py --replicate ${REPLICATE} -s ${SCHEDULE}
+python3 examples/hf/gpt2/pippy_gpt2.py --replicate ${REPLICATE} -s ${SCHEDULE}
 
 # Run flaky integration tests
 python3 test/local_test_forward_hf_gpt2.py --replicate ${REPLICATE} -s ${SCHEDULE} || true
