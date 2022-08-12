@@ -1,8 +1,6 @@
 pymax = max
 pyrange = range
 
-from re import L
-from sympy import O
 import torch
 from torch import *
 from tags import *
@@ -472,7 +470,7 @@ ops = {
     atleast_3d: Op(inputwise=True, dim_map=lambda x: dim_atleast_3d(len(x.shape))),
     # broadcast_shapes: None,  # need to figre out whether shapes themselves need to be sharded? probably not.
     broadcast_tensors: Op(dim_map=lambda *tensors: dimmap_broadcast_tensors(t.shape for t in tensors)),
-    broadcast_to: Op(dim_map=lambda input, shape: expand(input.shape, shape)),
+    broadcast_to: Op(dim_map=lambda input, shape: expand(input.shape, shape), shape_argnum=1),
     cat: Op(elwise=AllDBut(kw='dim', default=0)),
     chunk: Op(elwise=AllDBut(kw='dim', default=0)),  # variant of slice
     column_stack: Op(
@@ -484,8 +482,8 @@ ops = {
         preproc=lambda tensors: tuple(dim_atleast_3d(len(t.shape)) for t in tensors),
         elwise=AllDBut(fixed=2),
     ),
-    'Tensor.expand': Op(dim_map=lambda self, *sizes: expand(self.shape, normalize_sizes(*sizes))),
-    'Tensor.expand_as': Op(dim_map=lambda self, other: expand(self.shape, other.shape)),
+    'Tensor.expand': Op(dim_map=lambda self, *sizes: expand(self.shape, normalize_sizes(*sizes)), shape_argnum='*'),
+#    'Tensor.expand_as': Op(dim_map=lambda self, other: expand(self.shape, other.shape), shape_argnum=1, skip=True),
     flatten: Op(dim_map=lambda tensor: dim_flatten(tensor.shape)),
     flip: Op(elwise=AllDBut(kw='dims', newsize=SAME)),
     fliplr: Op(elwise=AllDBut(fixed=1, newsize=SAME)),
@@ -503,8 +501,8 @@ ops = {
     'Tensor.repeat': Op(dim_map=lambda self, *sizes: dim_repeat(self.shape, sizes)),
     'repeat_interleave.self_Tensor': Op(elwise=AllDBut(kw='dim', default=FLATTEN)),
     'repeat_interleave.Tensor': Op(elwise=AllDBut(fixed=0)),
-    reshape: Op(dim_map=lambda input, shape: view_groups(input.shape, shape)[1]),
-    'Tensor.reshape_as': Op(dim_map=lambda self, other: view_groups(self.shape, other.shape)[1]),
+    reshape: Op(dim_map=lambda input, shape: view_groups(input.shape, shape)[1], shape_argnum=1),
+#    'Tensor.reshape_as': Op(dim_map=lambda self, other: view_groups(self.shape, other.shape)[1], shape_argnum=1, skip=True),
     'Tensor.resize_': Op(),  # cant' do much here
     'Tensor.resize_as_': Op(),
     roll: Op(elwise=AllDBut(kw='dims', default=ALL)),
@@ -523,8 +521,8 @@ ops = {
 #    'unflatten': None,  # couldn't find it.
     'Tensor.unfold': Op(),  # TODO: this seems related to convolution
     unsqueeze: Op(dim_map=lambda input, dim: dim_unsqueeze(input.shape, dim)),
-    'Tensor.view': Op(dim_map=lambda input, *shape: view_groups(input.shape, shape)[1]),
-    'Tensor.view_as': Op(dim_map=lambda self, other: view_groups(self.shape, other.shape)[1]),
+    'Tensor.view': Op(dim_map=lambda input, *shape: view_groups(input.shape, shape)[1], shape_argnum='*'),
+#    'Tensor.view_as': Op(dim_map=lambda self, other: view_groups(self.shape, other.shape)[1], shape_argnum=1, skip=True),
     vsplit: Op(elwise=AllDBut(fixed=0)),
     vstack: Op(elwise=AllDBut(fixed=0)),
 }
@@ -549,6 +547,8 @@ def decorate_dim_map(op):
     op.dim_map = _record_dim_map_test_call
 
 
+
+# patch dim_map to record calls
 for op in ops.values():
     if op.dim_map:
         decorate_dim_map(op)
@@ -613,10 +613,10 @@ assert_eq(
     (BROADCAST(SINGLETON, 3), 0, BROADCAST(1, 4), 2, BROADCAST(3, 2))
 )
 
-assert_eq(
-    ops['Tensor.expand_as'].dim_map(randn(2,1,3,1), randn(3,2,4,3,2)),
-    (BROADCAST(SINGLETON, 3), 0, BROADCAST(1, 4), 2, BROADCAST(3, 2))
-)
+#assert_eq(
+#    ops['Tensor.expand_as'].dim_map(randn(2,1,3,1), randn(3,2,4,3,2)),
+#    (BROADCAST(SINGLETON, 3), 0, BROADCAST(1, 4), 2, BROADCAST(3, 2))
+#)
 
 assert_eq(ops[flatten].dim_map(randn(2,3)), (FLATTEN((0, 1)), ))
 assert_eq(ops[flatten].dim_map(randn(4)), (0, ))
@@ -653,23 +653,25 @@ assert_eq(
     (FLATTEN((0, 1)), 2),
 )
 
-assert_eq(
-    ops['Tensor.reshape_as'].dim_map(randn(2,4,8), randn(8, 8)),
-    (FLATTEN((0, 1)), 2),
-)
+if False:
+    assert_eq(
+        ops['Tensor.reshape_as'].dim_map(randn(2,4,8), randn(8, 8)),
+        (FLATTEN((0, 1)), 2),
+    )
 
-assert_eq(ops[squeeze].dim_map(randn(2,1,4,1)), (0,2))
-assert_eq(ops[squeeze].dim_map(randn(2,1,4,1), dim=0), (0,1,2,3))
-assert_eq(ops[squeeze].dim_map(randn(2,1,4,1), dim=1), (0,2,3))
-assert_eq(ops[squeeze].dim_map(randn(()), dim=0), ())
-assert_eq(ops[squeeze].dim_map(randn(1), dim=0), ())
-assert_eq(ops[squeeze].dim_map(randn(2), dim=0), (0, ))
+if False:
+    assert_eq(ops[squeeze].dim_map(randn(2,1,4,1)), (0,2))
+    assert_eq(ops[squeeze].dim_map(randn(2,1,4,1), dim=0), (0,1,2,3))
+    assert_eq(ops[squeeze].dim_map(randn(2,1,4,1), dim=1), (0,2,3))
+    assert_eq(ops[squeeze].dim_map(randn(()), dim=0), ())
+    assert_eq(ops[squeeze].dim_map(randn(1), dim=0), ())
+    assert_eq(ops[squeeze].dim_map(randn(2), dim=0), (0, ))
 
+if False:
+    assert_eq(ops[stack].dim_map((randn(2,4), randn(2,4), randn(2,4))), (NEWDIM(3), 0, 1))
+    assert_eq(ops[stack].dim_map((randn(3), randn(3)), dim=1), (0, NEWDIM(2)))
 
-assert_eq(ops[stack].dim_map((randn(2,4), randn(2,4), randn(2,4))), (NEWDIM(3), 0, 1))
-assert_eq(ops[stack].dim_map((randn(3), randn(3)), dim=1), (0, NEWDIM(2)))
-
-assert_eq(ops[swapaxes].dim_map(randn(2,5,4,5), 2, 0), (2,1,0,3))
+    assert_eq(ops[swapaxes].dim_map(randn(2,5,4,5), 2, 0), (2,1,0,3))
 
 assert_eq(
     ops[tile].dim_map(randn(2,3), (1, 2, 1, 1, 2)),
@@ -682,9 +684,10 @@ assert_eq(
 
 assert_eq(ops[transpose].dim_map(randn(2,5,4,5), 2, 0), (2,1,0,3))
 
-# TODO: figure out multiple outputs
-assert_eq(ops[unbind].dim_map(randn(4,2,3)), (1, 2))
-assert_eq(ops[unbind].dim_map(randn(4,2,3), dim=1), (0, 2))
+if False:
+    # TODO: figure out multiple outputs
+    assert_eq(ops[unbind].dim_map(randn(4,2,3)), (1, 2))
+    assert_eq(ops[unbind].dim_map(randn(4,2,3), dim=1), (0, 2))
 
 assert_eq(ops[unsqueeze].dim_map(randn(4,2,3), 1), (0, SINGLETON, 1, 2))
 
@@ -693,10 +696,10 @@ assert_eq(
     (FLATTEN((0, 1)), 2),
 )
 
-assert_eq(
-    ops['Tensor.view_as'].dim_map(randn(2,4,8), randn(8, 8)),
-    (FLATTEN((0, 1)), 2),
-)
+#assert_eq(
+#    ops['Tensor.view_as'].dim_map(randn(2,4,8), randn(8, 8)),
+#    (FLATTEN((0, 1)), 2),
+#)
 
 assert_eq(
     ops['Tensor.view'].dim_map(randn(1, 1, 4), -1),
@@ -712,6 +715,13 @@ assert_eq(
     ops['Tensor.view'].dim_map(randn(1, 1, 4, 1, 2, 1), -1),
     (FLATTEN((2, 4)), ),
 )
+
+
+# unpatch dim_map
+for op in ops.values():
+    if op.dim_map:
+        op.dim_map = op._orig_dim_map
+        del op._orig_dim_map
 
 
 
@@ -749,6 +759,8 @@ def expected_shape(in_shape, rule):
     return out_shape
 
 
+
+
 class _Partial:
     def __repr__(self):
         return '+'
@@ -771,28 +783,41 @@ from collections import defaultdict
 from copy import copy
 
 
-def propagate_sharding(in_shard, in_shape, rule, mesh_sizes):
+def propagate_shape_and_sharding(in_shard, local_in_shape, rule, mesh_sizes):
+    """
+    Takes as input the shape of the _local_ tensor, and the input sharding,
+    and produce corresponding output sharding and shape of the _local_ output tensor.
+    """
     assert len(in_shard) == len(mesh_sizes)
-    out_shard = copy(in_shard) # will change
+    # print('local_output_shape:', in_shard, local_in_shape, rule, mesh_sizes)
 
     sharded_in_dims = set(s.dim for s in in_shard if isinstance(s, Shard))
 
-    def get_input_dim(cmd):
+    def get_dim_size(cmd):
         if isinstance(cmd, int):
-            return cmd if cmd in sharded_in_dims else None
+            return (
+                local_in_shape[cmd],
+                cmd if cmd in sharded_in_dims else None
+            )
+
         elif cmd[0] == 'flatten':
             for in_dim in cmd[1][1:]:
                 assert not in_dim in sharded_in_dims, 'Only the first member of a FLATTEN group can be sharded'
-            return cmd[1][0] if cmd[1][0] in sharded_in_dims else None
+            return (
+                prod(get_dim_size(a)[0] for a in cmd[1]),
+                cmd[1][0] if cmd[1][0] in sharded_in_dims else None
+            )
         elif cmd[0] == 'comp':
             if cmd[2] > 0:
                 # we will shard only on the first dimension of the group
-                return None
+                # so the shape should be the nominal shape of the component
+                return cmd[1][cmd[2]], None
             else:
-                in_dim = get_input_dim(cmd[1])
+                dim_size, in_dim = get_dim_size(cmd[1])
                 if in_dim is None:
-                    # in case input dim is not sharded
-                    return None
+                    # in case input dim is not sharded; our size will be
+                    # the size of the corresponding input
+                    return dim_size, None
                 # we need to check that the input dimension is divisble
                 # by the size of the submesh we're sharding it on
                 submesh_size = 1
@@ -800,101 +825,284 @@ def propagate_sharding(in_shard, in_shape, rule, mesh_sizes):
                     if isinstance(shard, Shard) and shard.dim == in_dim:
                         submesh_size *= size
                 out_size = cmd[1][0]
-                assert out_size % submesh_size, 'Resulting dimension size inot divisible by its mesh dimension.'
-                return in_dim
-        elif cmd[0] in ('singleton', 'broadcast', 'newdim'):
-            # no-op for sharding (those dimensions will be replicated by default)
-            return None
+                assert out_size % submesh_size, 'Resulting dimension size is not divisible by its mesh dimension.'
+                return out_size // submesh_size, in_dim
+        elif cmd[0] == 'singleton':
+            return 1, None
+        elif cmd[0] == 'broadcast':
+            return cmd[2], None
+        elif cmd[0] == 'newdim':
+            return cmd[1], None
         elif cmd[0] == 'repeat':
             assert not cmd[1] in sharded_in_dims, 'Cannot tile sharded dimension.'
-            return None
+            return local_in_shape[cmd[1]], None
         else:
             raise RuntimeError(f'cmd not found: {cmd}, in rule: {rule}')
  
     dim_map = {}
+    out_shape = []
     for dim, cmd in enumerate(rule):
-        in_dim = get_input_dim(cmd)
+        out_size, in_dim = get_dim_size(cmd)
+        out_shape.append(out_size)
         if in_dim is not None:
             dim_map[in_dim] = dim
 
-    return [Shard(dim_map[s.dim]) if isinstance(s, Shard) else s for s in in_shard]
+    return (
+        out_shape,
+        [Shard(dim_map[s.dim]) if isinstance(s, Shard) else s for s in in_shard]
+    )
 
 
-for op, spec in ops.items():
-    if spec.dim_map:
-        print(op)
-        if isinstance(op, str):
-            splat = op.split('.')
-            if len(splat) == 2:
-                cls, meth = splat
-                assert cls == 'Tensor'
-                op = getattr(Tensor, meth)
+import numpy as np
+
+
+class TiledTensor:
+    def __init__(self, mesh, spec, tiles):
+        self.mesh = mesh
+        self.spec = spec
+        self.tiles = tiles
+
+    def remove_last(self):
+        """ return TiledTensor with one less mesh dimension """
+        new_mesh = self.mesh[:-1]
+        new_spec = self.spec[:-1]
+        new_tiles = np.empty(new_mesh, dtype=object)
+        if isinstance(self.spec[-1], Shard):
+
+            def scat(a, dim):
+                x = np.empty((), dtype=object)
+                x.itemset(torch.cat(tuple(a), dim=dim))
+                return x
+
+            new_tiles = np.apply_along_axis(
+                lambda x: scat(x, dim=self.spec[-1].dim),
+                -1, self.tiles)
+        elif isinstance(self.spec[-1], _Partial):
+            from functools import reduce
+            new_tiles = np.apply_along_axis(lambda x: reduce(torch.add, x), -1, self.tiles)
+        elif isinstance(self.spec[-1], Replicate):
+            new_tiles = self.tiles[..., 0]
+            for i in pyrange(self.tiles.shape[-1]):
+                for a, b in zip(self.tiles[..., i].flatten(), new_tiles.flatten()):
+                    assert(torch.allclose(a,b))
+        else:
+            raise RuntimeError('Unknown shard type.')
+        t = TiledTensor(new_mesh, new_spec, new_tiles)
+        return t
+
+    def add_dim(self, spec, size):
+        new_mesh = self.mesh + [size]
+        new_spec = self.spec + [spec]
+        if isinstance(spec, Shard):
+            flat_tiles = self.tiles.reshape(-1)
+            new_tiles = np.empty(new_mesh, dtype=object)
+            new_flat_tiles = new_tiles.reshape(-1, new_tiles.shape[-1])
+            for i in pyrange(flat_tiles.shape[0]):
+                chunks = torch.chunk(flat_tiles[i], size, dim=spec.dim)
+                if len(chunks) < size:
+                    # special case when chunk returns less than the requested size.
+                    # e.g. if we are sharding a tensor of shape [1] on 3 shards, we'll end up with 2 empty shards
+                    # the code below guarantees that we actually get that.
+                    t = chunks[0]
+                    empty_shape = t.shape[:spec.dim] + (0, ) + t.shape[spec.dim + 1:]
+                    chunks += (size - len(chunks)) * (torch.empty(empty_shape, dtype=t.dtype), )
+                new_flat_tiles[i, :] = chunks
+        elif isinstance(spec, Replicate):
+            new_tiles = np.expand_dims(self.tiles, -1).repeat(size, -1)
+        else:
+            raise RuntimeError('Unknown shard type.')
+        return TiledTensor(new_mesh, new_spec, new_tiles)
+
+    def __repr__(self):
+        return f'mesh={repr(self.mesh)}, spec={repr(self.spec)}, tiles={repr(self.tiles)}'
+
+    def to_full(self):
+        if len(self.mesh) == 0:
+            return self.tiles.item()
+        else:
+            return self.remove_last().to_full()
+
+
+def to_tiled(mesh_sizes, spec, full):
+    tile = np.empty((), dtype=object)
+    tile.itemset(full)
+    tiled = TiledTensor([], [], tile)
+    for dim_size, dim_spec in zip(mesh_sizes, spec):
+        tiled = tiled.add_dim(dim_spec, dim_size)
+    return tiled
+
+
+
+
+def test_tiling(full, mesh_dims=None):
+    print(f'----- test tiling for ----')
+    print(full)
+    print(f'---- to tiled ---')
+
+    import itertools
+
+
+    if mesh_dims == None:
+        mesh_dims = [2, 2]
+
+    shard_options = [Replicate()] + [Shard(i) for i in pyrange(len(full.shape))]
+    possibilities = list(itertools.product(*(len(mesh_dims) * [shard_options])))
+    print('pos', possibilities)
+
+    for spec in possibilities:
+        print('----------- spec', spec)
+        tiled = to_tiled(mesh_dims, spec, full)
+        print(f'--- tiled ---')
+        print(tiled)
+        print(f'-- to full ----')
+        rfull = tiled.to_full()
+        print(rfull)
+        assert(torch.allclose(full, rfull))
+        assert(full.shape == rfull.shape)
+
+
+test_tiling(torch.rand(1), [3])
+
+test_tiling(torch.rand(3), [2])
+
+test_tiling(torch.rand((4, 3)))
+
+test_tiling(torch.rand((8,8)))
+
+test_tiling(torch.rand((3,1)))
+
+test_tiling(torch.rand(1,1))
+
+
+def run_shard():
+    pass
+
+
+def run_tiled(in_tiled: TiledTensor, full_shape, op, spec, args, rules):
+    in_shard = in_tiled.spec
+    mesh_sizes = in_tiled.mesh
+    _, out_shard = propagate_shape_and_sharding(in_shard, full_shape, rules, mesh_sizes)
+
+    out_tiles_flat = np.empty(in_tiled.tiles.size, dtype=object)
+    for i, in_tile in enumerate(in_tiled.tiles.flatten()):
+        if spec.shape_argnum is not None:
+            local_out_shape, _ = propagate_shape_and_sharding(in_shard, in_tile.shape, rules, mesh_sizes)
+            if spec.shape_argnum == '*':
+                # HACK ,assume first input is tensor, others shape (view)
+                args = [args[0]] + list(local_out_shape)
+            elif isinstance(spec.shape_argnum, int):
+                args = list(args)
+                args[spec.shape_argnum] = tuple(local_out_shape)
             else:
-                assert len(splat) == 1
-                op = getattr(Tensor, splat[0])
+                raise RuntimeError('Invalid shape_argnum.')
 
+        # HACK, assume first inpt is tensor, others not.
+        out_tile = op(in_tile, *args[1:], **kwargs)
+        out_tiles_flat.itemset(i, out_tile)
 
-        # pick some random mesh size
-        mesh_sizes = [2, 4]
-        import random
+    out_tiles = out_tiles_flat.reshape(in_tiled.tiles.shape)
 
-        for (args, kwargs), did_throw in zip(spec._dim_map_test_calls, spec._dim_map_test_calls_did_throw):
-            try:
-                rules = spec._orig_dim_map(*args, **kwargs)
-                outputs = op(*args, **kwargs)
-                assert not did_throw
-                print('--------')
-                print(rules)
+    return TiledTensor(mesh_sizes, out_shard, out_tiles)
 
 
 
-                flat_args, _ = tree_flatten(args)
-                output_shapes = [a.shape for a in outputs] if isinstance(outputs, tuple) else outputs.shape
-
-                if isinstance(rules, list):
-                    assert len(flat_args) == len(rules)
-                    expected = [expected_shape(arg.shape, rule) for arg, rule in zip(flat_args, rules)]
-                else:
-                    in_shape = flat_args[0].shape
-                    expected = expected_shape(in_shape, rules)
-
-                    no_shard_dims = set()
-                    for rule in rules:
-                        if isinstance(rule, tuple):
-                            if rule[0] == 'repeat':
-                                no_shard_dims.add(rule[1])
-                            if rule[0] == 'flatten':
-                                no_shard_dims |= set(rule[1][1:])
-                            if rule[0] == 'comp':
-                                if isinstance(rule[1], tuple) and rule[1][0] == 'flatten':
-                                    no_shard_dims |= set(rule[1][1][1:])
-
-                    def pick_sharding(in_shape, mesh_dim_size):
-                        # - do not shard on singleton dimensions (this wouldn't happen assuming DT is well constructed)
-                        # - only shard on first dim of flattened groups
+import random
 
 
-                        return random.choice([Replicate(), _Partial()] + [
-                            Shard(i) for i, s in enumerate(in_shape) if s > 1 and i not in no_shard_dims]
-                        )
+def get_op_func(op_name):
+    if isinstance(op_name, str):
+        splat = op_name.split('.')
+        if len(splat) == 2:
+            cls, meth = splat
+            assert cls == 'Tensor'
+            return getattr(Tensor, meth)
+        else:
+            assert len(splat) == 1
+            return getattr(Tensor, splat[0])
+    else:
+        return op_name
 
-                    # some random in_shard
-                    in_shard = [pick_sharding(in_shape, d) for d in mesh_sizes]
-                    print(f'in_shard: {in_shard}')
-                    print(f'in_shape: {in_shape}')
-                    print(f'rules: {rules}')
 
-                    out_shard = propagate_sharding(in_shard, in_shape, rules, mesh_sizes)
-                    print(f'out_shard: {out_shard}')
+def test_call(op_name, args, kwargs, should_throw):
+    spec = ops[op_name]
+    op = get_op_func(op_name)
 
-                print(len(flat_args), [arg.shape if isinstance(arg, Tensor) else None for arg in flat_args], output_shapes, expected)
+    try:
+        rules = spec.dim_map(*args, **kwargs)
+        outputs = op(*args, **kwargs)
+        assert not should_throw
 
-                
-            except Exception as e:
-                if not did_throw:
-                    print('------- expected call not to throw but got error -------')
-                    print(op)
-                    print(args)
-                    print(kwargs)
-                    raise e
+        flat_args, _ = tree_flatten(args)
+        output_shapes = [a.shape for a in outputs] if isinstance(outputs, tuple) else outputs.shape
+
+        if isinstance(rules, list):
+            print('not testing this one: ', op)
+            assert len(flat_args) == len(rules)
+            # expected = [expected_shape(arg.shape, rule) for arg, rule in zip(flat_args, rules)]
+        else:
+            print('-------- ', op)
+            # print(rules)
+            in_shape = flat_args[0].shape
+
+            no_shard_dims = set()
+            for rule in rules:
+                if isinstance(rule, tuple):
+                    if rule[0] == 'repeat':
+                        no_shard_dims.add(rule[1])
+                    if rule[0] == 'flatten':
+                        no_shard_dims |= set(rule[1][1:])
+                    if rule[0] == 'comp':
+                        if isinstance(rule[1], tuple) and rule[1][0] == 'flatten':
+                            no_shard_dims |= set(rule[1][1][1:])
+            
+            if op == unbind:
+                no_shard_dims.add(kwargs.get('dim', 0))
+
+            # pick some random mesh size
+            # total size of mesh shouldn't be larger than size of the input tensor
+            input = args[0]
+            if input.numel() >= 8:
+                mesh_sizes = [2, 4]
+            elif input.numel() >= 4:
+                mesh_sizes = [2, 2]
+            elif input.numel() >= 2:
+                mesh_sizes = [2]
+            else:
+                mesh_sizes = [1]
+
+            # print('mesh sizes based on input shape: ', mesh_sizes)
+
+            def pick_sharding(in_shape, mesh_dim_size):
+                # - do not shard on singleton dimensions (this wouldn't happen assuming DT is well constructed)
+                # - only shard on first dim of flattened groups
+                # leaving partial out for now.
+                return random.choice([Replicate()] + [
+                    Shard(i) for i, s in enumerate(in_shape) if s > 1 and i not in no_shard_dims]
+                )
+
+            # some random in_shard
+            in_shard = [pick_sharding(in_shape, d) for d in mesh_sizes]
+            in_tiled = to_tiled(mesh_sizes, in_shard, args[0])
+            out_tiled = run_tiled(in_tiled, in_shape, op, spec, args, rules) 
+            full_out = out_tiled.to_full()
+
+            assert(outputs.shape == full_out.shape)
+            assert(torch.allclose(outputs, full_out))
+
+
+                # print(len(flat_args), [arg.shape if isinstance(arg, Tensor) else None for arg in flat_args], output_shapes, expected)
+
+    except Exception as e:
+        if not should_throw:
+            print('------- expected call not to throw but got error -------')
+            print(op)
+            print(args)
+            print(kwargs)
+            raise e
         #print(spec._dim_map_test_calls)
+
+
+for op_name, spec in ops.items():
+    if spec.dim_map:
+        for (args, kwargs), did_throw in zip(spec._dim_map_test_calls, spec._dim_map_test_calls_did_throw):
+            test_call(op_name, args, kwargs, did_throw)

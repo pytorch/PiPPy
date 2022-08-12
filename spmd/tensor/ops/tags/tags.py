@@ -64,6 +64,8 @@ class Op:
     # -1 means that the dimension is new
     dim_map: Optional[List[int]] = None
 
+    shape_argnum: Optional[Union[int, str]] = None
+
     def __post_init__(self):
         # inputwise means no broadcasting
         if self.elwise == AllDims() and self.inputwise:
