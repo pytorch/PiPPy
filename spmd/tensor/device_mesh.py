@@ -133,9 +133,9 @@ class DeviceMesh(object):
         # coordinates of this rank on the mesh
         rank_coords = (self.mesh == get_rank()).nonzero()
         assert rank_coords.size(0) in (0, 1)
-        self._rank_for_dim: Optional[List[int]] = rank_coords[
-            0
-        ].tolist() if rank_coords.size(0) > 0 else None
+        self._rank_for_dim: Optional[List[int]] = (
+            rank_coords[0].tolist() if rank_coords.size(0) > 0 else None
+        )
 
         # groups created by dimension, each dimension should have exact
         # one valid process group per rank
