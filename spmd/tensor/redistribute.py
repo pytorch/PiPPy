@@ -71,6 +71,7 @@ def redistribute_spmd_tensor(
             ), "Only support chunk sharding evenly now"
             chunk_size = local_tensor.size(shard_dim) // num_chunks  # this may already be sharded on a differernt mesh dimension
             my_rank = device_mesh.get_rank_for_dim(dim=i)
+            assert my_rank is not None, 'Rank is not part of the mesh'   # TODO: figure out behavior here
             if current.is_partial():
                 # reduce scatter the current tensors
                 attempted_transforms.append(target)
