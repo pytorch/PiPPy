@@ -169,7 +169,7 @@ class MultiDimRedistributeTest(DistTensorTestBase):
             full_tensor = torch.randn(*tensor_shape)
         else:
             # these should be entirely ignored
-            # because re-distribute is expected to override shards in ranks != 0
+            # because distribute_tensor is expected to override shards in ranks != 0
             full_tensor = torch.ones(*tensor_shape)
 
 

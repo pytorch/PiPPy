@@ -8,8 +8,6 @@ from spmd.tensor.device_mesh import get_global_device_mesh, DeviceMesh
 torch.__future__.set_overwrite_module_params_on_conversion(True)
 
 
-
-
 def distribute_tensor(
     tensor: torch.Tensor,
     device_mesh: Optional[DeviceMesh] = None,
@@ -44,7 +42,6 @@ def distribute_tensor(
         placements = [Replicate() for _ in range(device_mesh.ndim)]
 
     # distribute the tensor according to PlacementSpec
-    # assert len(placements) == 1, "Only support 1-d placement now"
     for idx, placement in enumerate(placements):
         if placement.is_shard():
             placement = cast(Shard, placement)
