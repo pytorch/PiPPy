@@ -30,6 +30,8 @@ pip3 install git+https://github.com/huggingface/transformers.git@main sentencepi
 # Install pippy
 python3 setup.py install
 
+set -ex
+
 # Run all integration tests
 python3 test/local_test_forward.py --replicate ${REPLICATE} -s ${SCHEDULE}
 python3 test/local_test_forward_backward.py --replicate ${REPLICATE} -s ${SCHEDULE}
