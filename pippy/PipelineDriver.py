@@ -1173,12 +1173,15 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
         elif target is _null_coalesce_accumulate:
             assert 'fw_stage' in node.meta
             stage_id, stage_executor = self.remote_stage_executor_rrefs[node.meta['fw_stage']]
-            logging.info(f'[root][{self.cur_microbatch}] Issuing accumulate grad invocation '
-                         f'for target {node.meta["fw_stage"]} on stage {stage_id}')
-            return stage_executor.rpc_sync().invoke(
-                invocation_key, Phase.ACCUMULATE_GRAD, args, kwargs, self.cur_microbatch,
-                debug_str=node.format_node(),
-                output_refcount=len(users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
+            if torch.is_grad_enabled():
+                logging.info(f'[root][{self.cur_microbatch}] Issuing accumulate grad invocation '
+                             f'for target {node.meta["fw_stage"]} on stage {stage_id}')
+                return stage_executor.rpc_sync().invoke(
+                    invocation_key, Phase.ACCUMULATE_GRAD, args, kwargs, self.cur_microbatch,
+                    debug_str=node.format_node(),
+                    output_refcount=len(users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
+            else:
+                return ValueReference(stage_id, "noop")
         else:
             raise AssertionError(f'Unknown operator {torch.typename(target)}')
 
