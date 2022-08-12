@@ -130,8 +130,10 @@ class DeviceMesh(object):
                 f"DeviceMesh cannot have duplicate values, but found {self.mesh.tolist()}"
             )
 
-        self._rank_for_dim = (self.mesh == get_rank()).nonzero()[0].tolist()
-        print(f'===========rank for dim =============== {self._rank_for_dim}')
+        # coordinates of this rank on the mesh
+        rank_coords = (self.mesh == get_rank()).nonzero()
+        assert rank_coords.size(0) in (0, 1)
+        self._rank_for_dim: Optional[List[int]] = rank_coords[0].tolist() if rank_coords.size(0) > 0 else None
 
         # groups created by dimension, each dimension should have exact
         # one valid process group per rank
@@ -217,7 +219,7 @@ class DeviceMesh(object):
     def get_rank(self) -> int:
         return get_rank()
 
-    def get_rank_for_dim(self, dim) -> Optional[int]:
+    def get_rank_for_dim(self, dim: int) -> Optional[int]:
         """
         Return the relative index of this rank relative to a given
         dimension of the mesh. If this rank is not part of the mesh, return None.
