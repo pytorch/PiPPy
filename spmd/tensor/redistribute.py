@@ -9,7 +9,9 @@ from spmd.tensor.device_mesh import DeviceMesh
 
 
 def redistribute_spmd_tensor(
-    input: "spmd_tensor.DTensor", device_mesh: DeviceMesh, placements: List[Placement],
+    input: "spmd_tensor.DTensor",
+    device_mesh: DeviceMesh,
+    placements: List[Placement],
 ) -> "spmd_tensor.DTensor":
     current_placements = input.placements
     local_tensor = input.to_local()
@@ -33,7 +35,9 @@ def redistribute_spmd_tensor(
             attempted_transforms.append(target)
             continue
 
-        assert not target.is_partial(), "Cannot create partial via redistribute!"
+        assert (
+            not target.is_partial()
+        ), "Cannot create partial via redistribute!"
 
         if target.is_replicate():
             # Case 1: target is Replicate
@@ -85,7 +89,9 @@ def redistribute_spmd_tensor(
                 new_tensor_size = list(local_tensor.size())
                 new_tensor_size[shard_dim] = chunk_size
                 new_local_tensor = torch.empty(
-                    new_tensor_size, device=local_tensor.device, dtype=input.dtype,
+                    new_tensor_size,
+                    device=local_tensor.device,
+                    dtype=input.dtype,
                 )
                 new_local_tensor = device_mesh.reduce_scatter_base(
                     new_local_tensor, local_tensor, mesh_dim=i
