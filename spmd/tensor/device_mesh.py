@@ -28,7 +28,9 @@ _global_device_mesh: Optional["DeviceMesh"] = None
 
 def get_global_device_mesh() -> "DeviceMesh":
     global _global_device_mesh
-    assert _global_device_mesh is not None, "Could not get a default device mesh!"
+    assert (
+        _global_device_mesh is not None
+    ), "Could not get a default device mesh!"
     return _global_device_mesh
 
 
@@ -171,7 +173,9 @@ class DeviceMesh(object):
                     # call new_group regardless of the current rank in the
                     # pg or not, it's required that all ranks participate
                     # in subgroup construction
-                    new_subgroup = new_group(ranks=subgroup_ranks, backend=backend_name)
+                    new_subgroup = new_group(
+                        ranks=subgroup_ranks, backend=backend_name
+                    )
                     # only add to dim_groups if the current rank in the subgroup
                     if self.get_rank() in subgroup_ranks:
                         if len(self._dim_groups) > dim:
@@ -252,7 +256,10 @@ class DeviceMesh(object):
         tensor = torch.empty_like(to_scatter[0])
         if src_for_dim == get_rank():
             scatter(
-                tensor, scatter_list=to_scatter, src=src_for_dim, group=dim_group,
+                tensor,
+                scatter_list=to_scatter,
+                src=src_for_dim,
+                group=dim_group,
             )
         else:
             scatter(tensor, scatter_list=None, src=src_for_dim, group=dim_group)
@@ -269,7 +276,9 @@ class DeviceMesh(object):
         return broadcast(tensor.contiguous(), src=src_for_dim, group=dim_group)
 
     # pyre-fixme[3]: Return type must be annotated.
-    def all_gather(self, tensor: torch.Tensor, mesh_dim: int = 0, tensor_dim: int = 0):
+    def all_gather(
+        self, tensor: torch.Tensor, mesh_dim: int = 0, tensor_dim: int = 0
+    ):
         dim_group = self._dim_groups[mesh_dim]
         if tensor_dim != 0:
             tensor = tensor.movedim(tensor_dim, 0)
@@ -309,7 +318,10 @@ class DeviceMesh(object):
 
     # pyre-fixme[3]: Return type must be annotated.
     def all_reduce(
-        self, tensor: torch.Tensor, op: ReduceOp = ReduceOp.SUM, mesh_dim: int = 0,
+        self,
+        tensor: torch.Tensor,
+        op: ReduceOp = ReduceOp.SUM,
+        mesh_dim: int = 0,
     ):
         dim_group = self._dim_groups[mesh_dim]
         return all_reduce(tensor, op=op, group=dim_group)
@@ -330,7 +342,9 @@ class DeviceMesh(object):
         #    this in other case which requires autograd, we should
         #    add the autograd enabled collective in distributed/nn/functional
         if self.backend() == "nccl":
-            _reduce_scatter_base(output, input, op, group=self._dim_groups[mesh_dim])
+            _reduce_scatter_base(
+                output, input, op, group=self._dim_groups[mesh_dim]
+            )
             return output
         else:
             # it's gloo, which does not have reduce_scatter
