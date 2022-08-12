@@ -1,5 +1,4 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from re import M
 from typing import List, cast
 
 import torch
@@ -132,6 +131,7 @@ def redistribute_spmd_tensor(
                 )
                 attempted_transforms.append(target)
 
+        assert new_local_tensor is not None
         local_tensor = new_local_tensor
 
     attempted_transforms.reverse()

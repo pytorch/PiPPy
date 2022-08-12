@@ -1,4 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+import itertools
 import torch
 
 from torch.distributed.distributed_c10d import ReduceOp
@@ -8,7 +9,6 @@ from torch.testing._internal.common_utils import run_tests
 from spmd.test._utils import DistTensorTestBase, with_comms  # type: ignore
 from spmd.tensor import DeviceMesh, DTensor, Replicate, Shard, _Partial
 from spmd import distribute_tensor
-import functools
 
 
 class RedistributeTest(DistTensorTestBase):
@@ -174,9 +174,6 @@ class MultiDimRedistributeTest(DistTensorTestBase):
         possibilities = [Replicate()] + [
             Shard(i) for i in range(full_tensor.ndim)
         ]
-
-        import itertools
-
         all_outputs = list(
             itertools.product(*(mesh_shape.ndim * [possibilities]))
         )
