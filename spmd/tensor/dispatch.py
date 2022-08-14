@@ -143,7 +143,9 @@ def operator_dispatch(
 
             else:
                 raise RuntimeError(
-                    f"Sharding propagation failed on op {op_key}, with input schema: {op_schema}!"
+                    f"Sharding propagation failed on op {op_key}!"
+                    f"Input schema: {op_schema}."
+                    f"Failed reason: {output_sharding.failed_reason}"
                 )
         else:
             local_tensor_args = pack_args_kwargs_with_local_tensor(

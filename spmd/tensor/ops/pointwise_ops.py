@@ -1,7 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 from spmd.tensor.api import DTensor
 from spmd.tensor.dispatch import OpSchema, OutputSharding
-from spmd.tensor.ops.prop_rules import pointwise_prop
+from spmd.tensor.ops.math_ops import einop_rule
 
 # leave the pointwise_ops list here for convenience,
 # it might not be a complete list.
@@ -124,8 +124,26 @@ pointwise_ops = [
 ]
 
 
-def pointwise_rules(op_schema: OpSchema) -> OutputSharding:
-    return OutputSharding(pointwise_prop(op_schema.args_spec))
+def pointwise_rules(
+    op_schema: OpSchema, linearity: bool = False
+) -> OutputSharding:
+    """
+    Propagate the sharding for pointwise operations. Examples:
+        ij,ij->ij - addition/mul
+        ij,j->ij - broadcasted addition
+    """
+    alphabet = "abcdefghijklmnopqrstuvwxyz"
+    # handle the case of broadcasting, find the max_dim first
+    input_specs = op_schema.args_spec
+    max_dim = max(input.ndim for input in input_specs)
+    dimchars = []
+    for input in input_specs:
+        start_dim = max_dim - input.ndim
+        p = alphabet[start_dim:max_dim]
+        dimchars.append(p)
+    out_dimchars = alphabet[:max_dim]
+    fmt = f"{','.join(p for p in dimchars)}->{out_dimchars}"
+    return einop_rule(fmt, op_schema, linearity=linearity)
 
 
 for op in pointwise_ops:

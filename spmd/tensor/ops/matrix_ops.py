@@ -1,9 +1,44 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 # implement matrix related ops for distributed tensor
+from typing import Optional
 from spmd.tensor.dispatch import OpSchema, OutputSharding
-from spmd.tensor.ops.prop_rules import einop_prop, mm_prop, pointwise_prop
-from spmd.tensor.placement_types import _Partial, PlacementSpec, Shard
+from spmd.tensor.ops.math_ops import einop_rule
+from spmd.tensor.ops.pointwise_ops import pointwise_rules
+from spmd.tensor.placement_types import _Partial, PlacementSpec
 from spmd.tensor.ops.utils import register_prop_rule
+
+
+def mm_prop(
+    mat1_spec: PlacementSpec, mat2_spec: PlacementSpec
+) -> Optional[PlacementSpec]:
+    # mm propagation rule:
+    # mat1: shard(0),  mat2: replicate
+    # mat1: replicate, mat2: shard(1)
+    # mat1: shard(1),  mat2: shard(0)
+    # propagation rules only propagates the combs without communication
+    # TODO: support multi-dim device mesh op with einop propagation
+    if (
+        mat1_spec.placements[0].is_shard(dim=0)
+        and mat2_spec.placements[0].is_replicate()
+    ):
+        return mat1_spec
+    elif mat1_spec.placements[0].is_replicate() and mat2_spec.placements[
+        0
+    ].is_shard(dim=1):
+        return mat2_spec
+    elif mat1_spec.placements[0].is_shard(dim=1) and mat2_spec.placements[
+        0
+    ].is_shard(dim=0):
+        placements = [_Partial()]
+        return PlacementSpec(mat1_spec.ndim, mat1_spec.mesh, placements)
+    elif (
+        mat1_spec.placements[0].is_replicate()
+        and mat2_spec.placements[0].is_replicate()
+    ):
+        return mat1_spec
+    else:
+        # not local compute, need to rely on auto redistribute, return None
+        return None
 
 
 @register_prop_rule("aten.mm.default")
@@ -21,40 +56,30 @@ def addmm_rules(op_schema: OpSchema) -> OutputSharding:
         # TODO: add suggested input specs for resharding
         return OutputSharding(None)
     # TODO: add multi dim support for addmm
+
+    # run point wise rule on input + (mm_out) with linearity
+    output_sharding = pointwise_rules(
+        OpSchema((input_spec, mm_out_spec), {}), linearity=True
+    )
+    # if propagation failed, edit the schema suggestion from pointwise rules
+    # to return addmm suggestion instead as it's a chained suggestion.
     if (
-        mm_out_spec.placements[0].is_partial()
-        and input_spec.placements[0].is_replicate()
+        output_sharding.output_spec is None
+        and output_sharding.schema_suggestions is not None
     ):
-        # for the case where mm out is partial and input is replicate
-        # we should suggest the input be a partial instead of replicate
-        suggested_input_spec = PlacementSpec(
-            input_spec.ndim, input_spec.mesh, [_Partial()]
-        )
-        suggested_mat1_spec = PlacementSpec(
-            mat1_spec.ndim, mat1_spec.mesh, [Shard(1)]
-        )
-        suggested_mat2_spec = PlacementSpec(
-            mat2_spec.ndim, mat2_spec.mesh, [Shard(0)]
-        )
-        return OutputSharding(
-            None,
-            schema_suggestions=[
-                OpSchema(
-                    (
-                        suggested_input_spec,
-                        suggested_mat1_spec,
-                        suggested_mat2_spec,
-                    ),
-                    op_schema.kwargs_schema,
-                )
-            ],
+        pointwise_suggestion = output_sharding.schema_suggestions[0]
+        output_sharding.schema_suggestions[0] = OpSchema(
+            args_schema=(
+                pointwise_suggestion.args_schema[0],
+                mat1_spec,
+                mat2_spec,
+            ),
+            kwargs_schema=op_schema.kwargs_schema,
         )
 
-    return OutputSharding(
-        pointwise_prop((input_spec, mm_out_spec), linearity=True)
-    )
+    return output_sharding
 
 
 @register_prop_rule("aten.t.default")
 def transpose_rule(op_schema: OpSchema) -> OutputSharding:
-    return OutputSharding(einop_prop("ij->ji", op_schema.args_spec))
+    return einop_rule("ij->ji", op_schema)
