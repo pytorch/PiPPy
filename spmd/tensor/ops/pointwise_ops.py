@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 from typing import Optional
 from spmd.tensor.api import DTensor
 from spmd.tensor.dispatch import OpSchema
