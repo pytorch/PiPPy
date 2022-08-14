@@ -75,6 +75,7 @@ jobs:
             --gpus all \
             -e VERBOSE \
             -e OMP_NUM_THREADS \
+            -e SHARD \
             --tty \
             --detach \
             -v "$(pwd):${PIPPY_ROOT}" \
