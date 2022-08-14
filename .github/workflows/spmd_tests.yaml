@@ -9,6 +9,11 @@ on:
       - 'docs/**'
       - '**.md'
 
+concurrency:
+  # Cancel CI on previous commit when a new commit is pushed to the same branch
+  group: ${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
 
   pytest_tests:
@@ -81,7 +86,7 @@ jobs:
             "${DOCKER_IMAGE}"
           )
           # Run GPU tests and return error signal from docker
-          docker exec -t -w "${PIPPY_ROOT}" "${container_name}" bash -c "bash .github/workflows/spmd_gpu_tests.sh; exit $?"
+          docker exec -t -w "${PIPPY_ROOT}" "${container_name}" bash -c "bash .github/workflows/spmd_gpu_tests.sh; exit \$?"
       - name: Chown workspace
         if: always()
         run: |
