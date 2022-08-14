@@ -9,11 +9,6 @@ on:
       - 'docs/**'
       - '**.md'
 
-concurrency:
-  # Cancel CI on previous commit when a new commit is pushed to the same branch
-  group: ${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
 
   pytest_tests:
@@ -39,12 +34,13 @@ jobs:
     runs-on: linux.16xlarge.nvidia.gpu
     strategy:
       matrix:
-        num-gpus: ["4"]
+        shard: ["0", "1", "2", "3"]
     env:
       DOCKER_IMAGE: qts8n/cuda-python:devel
       PIPPY_ROOT: /PiPPy
       VERBOSE: "0"
       OMP_NUM_THREADS: "1"
+      SHARD: ${{ matrix.shard }}
 
     steps:
       - name: Clean working directory
