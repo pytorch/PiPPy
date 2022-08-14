@@ -51,7 +51,7 @@ def addmm_rules(op_schema: OpSchema) -> OutputSharding:
         )
 
     return OutputSharding(
-        pointwise_prop((input_spec, mm_out_spec), linear=True)
+        pointwise_prop((input_spec, mm_out_spec), linearity=True)
     )
 
 

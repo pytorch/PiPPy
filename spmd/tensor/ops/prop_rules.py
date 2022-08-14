@@ -3,21 +3,8 @@ from typing import Tuple, List, Dict, Optional
 from spmd.tensor.placement_types import _Partial, PlacementSpec
 
 
-def _parse_einop_equation(equation: str) -> Tuple[List[str], List[str]]:
-    inputs, outputs = equation.split("->")
-    input_dims = []
-    output_dims = []
-    for input_dim in inputs.split(","):
-        input_dims.append(input_dim)
-
-    for output_dim in outputs.split(","):
-        output_dims.append(output_dim)
-
-    return input_dims, output_dims
-
-
 def einop_prop(
-    equation: str, input_specs: Tuple[PlacementSpec, ...], linear: bool = False
+    equation: str, input_specs: Tuple[PlacementSpec, ...], linearity: bool = False
 ) -> Optional[PlacementSpec]:
     """
     Propagate the sharding of inputs to output for ops whose data
@@ -29,7 +16,9 @@ def einop_prop(
         ij->i - reduction
     Other ops could use this propagation algorithm when applied.
     """
-    input_dims, output_dims = _parse_einop_equation(equation)
+    # parse einop equation
+    inputs, outputs = equation.split("->")
+    input_dims, output_dims = inputs.split(","), outputs.split(",")
     # NOTE: only support single output unless needed in future
     output_dim = output_dims[0]
     dim_to_sharding: Dict[str, int] = {}
@@ -43,7 +32,7 @@ def einop_prop(
                 seen_shardings[i] = "+"
                 if i not in pending_sums:
                     pending_sums.append(i)
-                if not linear:
+                if not linearity:
                     raise RuntimeError(
                         "cannot do generic op on a tensor with partial sums"
                     )
@@ -101,7 +90,7 @@ def mm_prop(
 
 
 def pointwise_prop(
-    input_specs: Tuple[PlacementSpec, ...], linear: bool = False
+    input_specs: Tuple[PlacementSpec, ...], linearity: bool = False
 ) -> Optional[PlacementSpec]:
     """
     Propagate the sharding for pointwise operations. Examples:
@@ -118,4 +107,4 @@ def pointwise_prop(
         dimchars.append(p)
     out_dimchars = alphabet[:max_dim]
     fmt = f"{','.join(p for p in dimchars)}->{out_dimchars}"
-    return einop_prop(fmt, input_specs, linear=linear)
+    return einop_prop(fmt, input_specs, linearity=linearity)

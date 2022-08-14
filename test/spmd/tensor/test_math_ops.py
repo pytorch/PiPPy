@@ -46,7 +46,7 @@ class DistMathOpsTest(DistTensorTestBase):
 
         # 2d mesh einop merge sharding
         mesh_shape = torch.arange(self.world_size).reshape(
-            self.world_size / 2, self.world_size / 2
+            self.world_size // 2, self.world_size // 2
         )
         mesh = DeviceMesh(self.device_type, mesh_shape)
         mat1, mat2 = [0, -1], [-1, 1]

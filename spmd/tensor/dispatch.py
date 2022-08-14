@@ -82,6 +82,7 @@ class OutputSharding:
 
     output_spec: OutputSpecType
     schema_suggestions: Optional[List[OpSchema]] = None
+    failed_reason: Optional[str] = None
 
 
 def operator_dispatch(
