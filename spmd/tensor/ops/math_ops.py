@@ -8,7 +8,7 @@ from spmd.tensor.ops.utils import register_impl
 
 def _gen_placement_spec_with_pending_sum(
     spec: PlacementSpec, pending_sum: List[int]
-):
+) -> PlacementSpec:
     new_placements = [
         placement if i not in pending_sum else _Partial()
         for i, placement in enumerate(spec.placements)

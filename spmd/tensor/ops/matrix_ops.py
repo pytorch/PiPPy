@@ -68,6 +68,7 @@ def addmm_rules(op_schema: OpSchema) -> OutputSharding:
         and output_sharding.schema_suggestions is not None
     ):
         pointwise_suggestion = output_sharding.schema_suggestions[0]
+        assert output_sharding.schema_suggestions is not None
         output_sharding.schema_suggestions[0] = OpSchema(
             args_schema=(
                 pointwise_suggestion.args_schema[0],
