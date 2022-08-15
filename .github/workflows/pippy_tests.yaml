@@ -5,9 +5,13 @@ on:
     branches:
     - main
   pull_request:
-    paths-ignore:
-      - 'docs/**'
-      - '**.md'
+    paths:
+      - '.github/**'
+      - 'pippy/**'
+      - 'test/**'
+      - '!test/spmd/**'
+      - '!docs/**'
+      - '!**.md'
 
 concurrency:
   # Cancel CI on previous commit when a new commit is pushed to the same branch
