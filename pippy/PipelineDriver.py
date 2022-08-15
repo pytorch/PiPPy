@@ -550,8 +550,8 @@ class PipeStageExecutor(EventRecorder):
         # HACK: we assume the module has at least one parameter
         param = next(self.mod.parameters(), None)
         if param is None:
-            warnings.warn(f"Module of stage {self.stage_id} has 0 parameters, "
-                          f"cannot figure out device. Setting it to cpu")
+            logging.warning(f"Module of stage {self.stage_id} has 0 parameters, "
+                            f"cannot figure out device. Setting it to cpu")
         else:
             device = param.device
 
@@ -609,10 +609,8 @@ class PipeStageExecutor(EventRecorder):
             logging.info(f'[{self.stage_id}] Received getitem call: {(output_unique_key, output_refcount, value_ref, idx)}')
             with self.value_store_cv:
                 if output_unique_key in self.value_store:
-                    # TODO: investigate why there are repeated getitem calls with 0 users
-                    assert output_refcount == 0, "PiPPy internal error: repeated index value call with non-zero users"
-                    logging.info(f'[{self.stage_id}] Indexed value already in store: {(output_unique_key, output_refcount, value_ref, idx)}')
-                    continue
+                    logging.warning(f'[{self.stage_id}] Indexed value already in store: {(output_unique_key, output_refcount, value_ref, idx)}')
+                    #raise RuntimeError(f'Repeated index value call detected, potentially due to getitem calls not consumed in previous batch')
 
                 # Wait for the future representing the stage output to be created
                 while value_ref.unique_key not in self.value_store:
@@ -708,6 +706,12 @@ class PipeStageExecutor(EventRecorder):
 
         logging.info(f"[{self.stage_id}] Creating learning rate scheduler")
         return lr_sched_class(self.optimizer, *args, **kwargs)
+
+    def _check_cleanup(self) -> bool:
+        if len(self.value_store):
+            logging.warning(f"[{self.stage_id}] Unclean value store: {self.value_store}")
+            return False
+        return True
 
     def _record_dump(self, dump_id, ts):
         first_param = next(self.mod.parameters(), None)
@@ -1098,6 +1102,12 @@ class PipelineDriverBase(torch.nn.Module):
         events_context.events.sort(key=lambda e: e.start_ts)
         return events_context
 
+    def _check_stages_cleanup(self) -> bool:
+        clean = True
+        for executor in self.stage_to_executor.values():
+            clean &= executor.rpc_sync()._check_cleanup()
+        return clean
+
 
 class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
     def __init__(self, remote_stage_executor_rrefs, stage_to_executor, module, cur_microbatch : int,
@@ -1171,14 +1181,18 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
             node.users.keys())) if not torch.is_grad_enabled() else node.users.keys()
         if target is operator.getitem and isinstance(args[0], ValueReference):
             stage_id = args[0].stage_id
-            if torch.is_grad_enabled() or args[0].unique_key != "noop":
+            num_users = len(users)
+            if (not torch.is_grad_enabled() or
+                args[0].unique_key == "noop" or
+                num_users == 0):
+                # TODO: investigate why there are getitem calls with 0 users
+                return ValueReference(stage_id, "noop")
+            else:
                 indices = self.stage_output_indices.setdefault(stage_id, [])
-                index_tuple = (invocation_key, len(users), args[0], args[1])
+                index_tuple = (invocation_key, num_users, args[0], args[1])
                 logging.info(f'[root][{self.cur_microbatch}] Appending getitem tuple to stage {stage_id}: {index_tuple}')
                 indices.append(index_tuple)
                 return ValueReference(stage_id, invocation_key)
-            else:
-                return ValueReference(stage_id, "noop")
         elif target is stage_backward:
             assert 'fw_stage' in node.meta
             stage_id, stage_executor = self.remote_stage_executor_rrefs[node.meta['fw_stage']]
@@ -1385,6 +1399,9 @@ class PipelineDriverFillDrain(PipelineDriverBase):
             # At this point, all of the gradient jobs should have been run
             # (by way of the synchronization dependency earlier)
             self._sync_replicated_params()
+
+        if DEBUG:
+            self._check_stages_cleanup()
 
         return merge_chunks(local_results, self.output_chunk_spec, self._debug_mask_minibatches)
 
