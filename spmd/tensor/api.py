@@ -114,6 +114,16 @@ class FromTorchTensor(torch.autograd.Function):
         return grad_output.to_local(), None, None, None
 
 
+def _reshape_alias(x, shape, strides):
+    return torch.ops.aten.view(x, shape)
+
+from torch._decomp import decomposition_table
+
+CURRENT_DECOMPOSITION_TABLE: Dict[torch._ops.OpOverload, Callable] = {
+    torch.ops.aten._reshape_alias.default: _reshape_alias,
+}
+
+
 class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     _local_tensor: torch.Tensor
     _placement_spec: PlacementSpec
@@ -218,6 +228,15 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     # pyre-fixme[3]: Return type must be annotated.
     # pyre-fixme[2]: Parameter must be annotated.
     def __torch_dispatch__(cls, func, types, args=(), kwargs=None):
+
+        # first we need to lift some private aten aliases to public calls
+        if kwargs is None:
+            kwargs = {}
+        if func in CURRENT_DECOMPOSITION_TABLE:
+            with torch.overrides.enable_reentrant_dispatch():
+                return CURRENT_DECOMPOSITION_TABLE[func](*args, **kwargs)
+
+
         # check that we are not getting mixed vanilla and Distributed tensors
         arg_list, arg_spec = tree_flatten(args)
         for arg in arg_list:
@@ -246,6 +265,8 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
                 kwarg_with_local_tensors,
                 arg_spec,
                 kwargs_spec,
+                args,
+                kwargs
             ),
         )
 

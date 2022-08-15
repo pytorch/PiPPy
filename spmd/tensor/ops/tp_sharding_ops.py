@@ -18,7 +18,7 @@ of DTensor and all corner cases for sharded distributed tensor.
 """
 
 
-@register_impl("aten.view.default")
+# @register_impl("aten.view.default")
 # pyre-fixme[2]: Parameter must be annotated.
 def dist_view(self: DTensor, *shape) -> DTensor:
     mat_placement = pytree.tree_map(unwrap_single_placement, self)
@@ -72,7 +72,7 @@ def dist_view(self: DTensor, *shape) -> DTensor:
         raise RuntimeError("not supported!")
 
 
-@register_impl("aten.transpose.int")
+# @register_impl("aten.transpose.int")
 def dist_transpose(self: DTensor, dim0: int, dim1: int) -> DTensor:
     local_mat = pytree.tree_map(unwrap_local_tensor, self)
     mat_placement = pytree.tree_map(unwrap_single_placement, self)
@@ -117,7 +117,7 @@ def dist_softmax(self: DTensor, dim: int, half_to_float: bool) -> DTensor:
     return DTensor(local_tensor, self.device_mesh, self.placements)
 
 
-@register_impl("aten.permute.default")
+# @register_impl("aten.permute.default")
 def dist_permute(self: DTensor, dims: List[int]) -> DTensor:
     local_mat = pytree.tree_map(unwrap_local_tensor, self)
     mat_placement = pytree.tree_map(unwrap_single_placement, self)

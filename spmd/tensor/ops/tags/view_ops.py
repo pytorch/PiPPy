@@ -2,6 +2,16 @@ from argparse import ArgumentError
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
 
+from sympy import O
+
+from spmd.tensor.placement_types import PlacementSpec
+import itertools
+import functools
+import operator
+from spmd.tensor.api import _Partial, Replicate, Shard
+
+prod = lambda xs: functools.reduce(operator.mul, xs, 1)
+
 
 # output is new singleton dimension
 SINGLETON = ('singleton', )
@@ -155,15 +165,10 @@ def dim_movedim(shape_len, input, destination):
     return tuple(dest)
 
 
-import functools
-import operator
-
-
-prod = lambda xs: functools.reduce(operator.mul, xs, 1)
-
 
 def dim_repeat(shape, sizes):
-    assert len(sizes) >= len(shape), 'Number of dimensions of repeat dims can not be smaller than number of dimensions of tensor'
+    sizes = normalize_sizes(*sizes)
+    assert len(sizes) >= len(shape), f'Number of dimensions of repeat dims {sizes} can not be smaller than number of dimensions of tensor {shape}.'
     pad = len(sizes) - len(shape)
     return (
         tuple(REPEAT(SINGLETON, s) for s in sizes[:pad]) +
@@ -194,7 +199,7 @@ def view_groups(from_size, to_size):
     view_groups([3, 4, 5], [12, 5]) -> [([3, 4], [12]), ([5], [5])]
     """
     from_nelem = prod(from_size)
-    to_size = infer_size(from_nelem, to_size)
+    to_size = infer_size(from_nelem, normalize_sizes(*to_size))
 
     assert from_nelem == prod(to_size), 'Total view shape does not add up'
 
@@ -296,6 +301,8 @@ def dim_transpose(shape, dim1, dim2):
 
 def dim_unsqueeze(shape, dim):
     dims = tuple(range(len(shape)))
+    if dim == -1:
+        dim = len(dims)
     return dims[:dim] + (SINGLETON, ) + dims[dim:]
 
 
@@ -307,14 +314,13 @@ class Op:
                               # lambdas will be called per-input
  
 
-
 import torch
 ops = {
     torch.atleast_1d: Op(inputwise=True, dim_map=lambda x: dim_pad_left(x.shape, 1)),
     torch.atleast_2d: Op(inputwise=True, dim_map=lambda x: dim_pad_left(x.shape, 2)),
     torch.atleast_3d: Op(inputwise=True, dim_map=lambda x: dim_atleast_3d(len(x.shape))),
     torch.broadcast_to: Op(dim_map=lambda input, shape: expand(input.shape, shape), shape_argnum=1),
-    'Tensor.expand': Op(dim_map=lambda self, *sizes: expand(self.shape, normalize_sizes(*sizes)), shape_argnum='*'),
+    'Tensor.expand': Op(dim_map=lambda self, *sizes: expand(self.shape, normalize_sizes(*sizes)), shape_argnum=1),
     torch.flatten: Op(dim_map=lambda tensor: dim_flatten(tensor.shape)),
     torch.movedim: Op(dim_map=lambda input, source, destination: dim_movedim(len(input.shape), source, destination)),
     torch.permute: Op(dim_map=lambda input, dims: dims),
@@ -324,30 +330,10 @@ ops = {
     torch.tile: Op(dim_map=lambda input, dims: dim_tile(input.shape, dims)),
     torch.transpose: Op(dim_map=lambda input, dim0, dim1: dim_transpose(input.shape, dim0, dim1)),
     torch.unsqueeze: Op(dim_map=lambda input, dim: dim_unsqueeze(input.shape, dim)),
-    'Tensor.view': Op(dim_map=lambda input, *shape: view_groups(input.shape, shape)[1], shape_argnum='*'),
+    'Tensor.view': Op(dim_map=lambda input, *shape: view_groups(input.shape, shape)[1], shape_argnum=1),
 }
 
 
-
-print('------------------ Sharding rules -------------------')
-
-
-class _Partial:
-    def __repr__(self):
-        return '+'
-
-
-class Replicate:
-    def __repr__(self):
-        return 'r'
-
-
-class Shard:
-    def __init__(self, dim):
-        self.dim = dim
-
-    def __repr__(self):
-        return f's({self.dim})'
 
 
 print('------------------ Sharding and shape propagation -------------')
@@ -423,143 +409,6 @@ def propagate_shape_and_sharding(in_shard, local_in_shape, rule, mesh_sizes):
     )
 
 
-print('-----------------  TiledTensor ----------------------')
-
-
-import numpy as np
-
-
-class TiledTensor:
-    def __init__(self, mesh, spec, tiles):
-        self.mesh = mesh
-        self.spec = spec
-        self.tiles = tiles
-
-    def remove_last(self):
-        """ return TiledTensor with one less mesh dimension """
-        new_mesh = self.mesh[:-1]
-        new_spec = self.spec[:-1]
-        new_tiles = np.empty(new_mesh, dtype=object)
-        if isinstance(self.spec[-1], Shard):
-
-            def scat(a, dim):
-                x = np.empty((), dtype=object)
-                x.itemset(torch.cat(tuple(a), dim=dim))
-                return x
-
-            new_tiles = np.apply_along_axis(
-                lambda x: scat(x, dim=self.spec[-1].dim),
-                -1, self.tiles)
-        elif isinstance(self.spec[-1], _Partial):
-            from functools import reduce
-            new_tiles = np.apply_along_axis(lambda x: reduce(torch.add, x), -1, self.tiles)
-        elif isinstance(self.spec[-1], Replicate):
-            new_tiles = self.tiles[..., 0]
-            for i in range(self.tiles.shape[-1]):
-                for a, b in zip(self.tiles[..., i].flatten(), new_tiles.flatten()):
-                    assert(torch.allclose(a,b))
-        else:
-            raise RuntimeError('Unknown shard type.')
-        t = TiledTensor(new_mesh, new_spec, new_tiles)
-        return t
-
-    def add_dim(self, spec, size):
-        new_mesh = self.mesh + [size]
-        new_spec = self.spec + [spec]
-        if isinstance(spec, Shard):
-            flat_tiles = self.tiles.reshape(-1)
-            new_tiles = np.empty(new_mesh, dtype=object)
-            new_flat_tiles = new_tiles.reshape(-1, new_tiles.shape[-1])
-            for i in range(flat_tiles.shape[0]):
-                chunks = torch.chunk(flat_tiles[i], size, dim=spec.dim)
-                if len(chunks) < size:
-                    # special case when chunk returns less than the requested size.
-                    # e.g. if we are sharding a tensor of shape [1] on 3 shards, we'll end up with 2 empty shards
-                    # the code below guarantees that we actually get that.
-                    t = chunks[0]
-                    empty_shape = t.shape[:spec.dim] + (0, ) + t.shape[spec.dim + 1:]
-                    chunks += (size - len(chunks)) * (torch.empty(empty_shape, dtype=t.dtype), )
-                new_flat_tiles[i, :] = chunks
-        elif isinstance(spec, Replicate):
-            new_tiles = np.expand_dims(self.tiles, -1).repeat(size, -1)
-        else:
-            raise RuntimeError('Unknown shard type.')
-        return TiledTensor(new_mesh, new_spec, new_tiles)
-
-    def __repr__(self):
-        return f'mesh={repr(self.mesh)}, spec={repr(self.spec)}, tiles={repr(self.tiles)}'
-
-    def to_full(self):
-        if len(self.mesh) == 0:
-            return self.tiles.item()
-        else:
-            return self.remove_last().to_full()
-
-
-def to_tiled(mesh_sizes, spec, full):
-    tile = np.empty((), dtype=object)
-    tile.itemset(full)
-    tiled = TiledTensor([], [], tile)
-    for dim_size, dim_spec in zip(mesh_sizes, spec):
-        tiled = tiled.add_dim(dim_spec, dim_size)
-    return tiled
-
-
-import itertools
-
-
-def test_tiling(full, mesh_dims=None):
-    if mesh_dims == None:
-        mesh_dims = [2, 2]
-
-    shard_options = [Replicate()] + [Shard(i) for i in range(len(full.shape))]
-    possibilities = list(itertools.product(*(len(mesh_dims) * [shard_options])))
-
-    for spec in possibilities:
-        tiled = to_tiled(mesh_dims, spec, full)
-        rfull = tiled.to_full()
-        assert(full.shape == rfull.shape)
-        assert(torch.allclose(full, rfull))
-
-
-test_tiling(torch.rand(1), [3])
-test_tiling(torch.rand(3), [2])
-test_tiling(torch.rand((4, 3)))
-test_tiling(torch.rand((8,8)))
-test_tiling(torch.rand((3,1)))
-test_tiling(torch.rand(1,1))
-
-
-print('------------- Run tiled ops for test purposes -------------')
-
-
-def run_tiled(in_tiled: TiledTensor, full_shape, op, spec, args, kwargs, rules):
-    in_shard = in_tiled.spec
-    mesh_sizes = in_tiled.mesh
-    _, out_shard = propagate_shape_and_sharding(in_shard, full_shape, rules, mesh_sizes)
-
-    out_tiles_flat = np.empty(in_tiled.tiles.size, dtype=object)
-    for i, in_tile in enumerate(in_tiled.tiles.flatten()):
-        if spec.shape_argnum is not None:
-            local_out_shape, _ = propagate_shape_and_sharding(in_shard, in_tile.shape, rules, mesh_sizes)
-            if spec.shape_argnum == '*':
-                # HACK ,assume first input is tensor, others shape (view)
-                args = [args[0]] + list(local_out_shape)
-            elif isinstance(spec.shape_argnum, int):
-                args = list(args)
-                args[spec.shape_argnum] = tuple(local_out_shape)
-            else:
-                raise RuntimeError('Invalid shape_argnum.')
-
-        # HACK, assume first inpt is tensor, others not.
-        out_tile = op(in_tile, *args[1:], **kwargs)
-        out_tiles_flat.itemset(i, out_tile)
-
-    out_tiles = out_tiles_flat.reshape(in_tiled.tiles.shape)
-
-    return TiledTensor(mesh_sizes, out_shard, out_tiles)
-
-
 from torch.utils._pytree import tree_flatten
 import random
 
@@ -577,9 +426,50 @@ def get_op_func(op_name):
     else:
         return op_name
 
+import torch.distributed as dist
+from spmd import DTensor, DeviceMesh, Shard, Replicate, distribute_tensor
+
+import spmd
+from spmd.tensor.dispatch import OpSchema
+
+from spmd.tensor.ops.utils import register_prop_rule
 
 
-def test_call(op_name, args, kwargs, should_throw):
+
+def register_prop_rule_map(aten_op_name, local_op_name):
+
+    @register_prop_rule(aten_op_name)
+    def reshape_prop(op_schema: OpSchema):
+        spec = ops[local_op_name]
+
+        # note we are passing _global_ tensors
+        rules = spec.dim_map(*op_schema.args, **op_schema.kwargs)
+
+        # note we are passing _local_ tensor shapes
+        local_out_shape, shard_out = propagate_shape_and_sharding(
+            op_schema.args_spec[0].placements,
+            op_schema.args_with_local_tensor[0].shape,
+            rules,
+            op_schema.args_spec[0].mesh.mesh.shape,
+        )
+
+        args  = op_schema.args_with_local_tensor
+        if spec.shape_argnum is not None:
+            op_schema.args_with_local_tensor = args[:spec.shape_argnum] + (tuple(local_out_shape), ) + args[spec.shape_argnum + 1:]
+
+        return PlacementSpec(ndim=len(local_out_shape), mesh=op_schema.args_spec[0].mesh, placements=shard_out)
+
+
+register_prop_rule_map('aten.view.default', 'Tensor.view')
+register_prop_rule_map('aten.unsqueeze.default', torch.unsqueeze)
+register_prop_rule_map('aten.expand.default', 'Tensor.expand')
+register_prop_rule_map('aten.permute.default', torch.permute)
+register_prop_rule_map('aten.repeat.default', 'Tensor.repeat')
+register_prop_rule_map('aten.transpose.int', torch.transpose)
+
+
+def test_call_dt(op_name, args, kwargs, should_throw: bool, device_mesh: DeviceMesh):
+    spmd.tensor.dispatch._DEBUG_STRICT = True
     spec = ops[op_name]
     op = get_op_func(op_name)
 
@@ -596,7 +486,8 @@ def test_call(op_name, args, kwargs, should_throw):
             assert len(flat_args) == len(rules)
             # expected = [expected_shape(arg.shape, rule) for arg, rule in zip(flat_args, rules)]
         else:
-            print('-------- ', op)
+            if dist.get_rank() == 0:
+                print('-------- ', op)
             # print(rules)
             in_shape = flat_args[0].shape
 
@@ -614,36 +505,26 @@ def test_call(op_name, args, kwargs, should_throw):
             if op == torch.unbind:
                 no_shard_dims.add(kwargs.get('dim', 0))
 
-            # pick some random mesh size
-            # total size of mesh shouldn't be larger than size of the input tensor
-            input = args[0]
-            if input.numel() >= 8:
-                mesh_sizes = [2, 4]
-            elif input.numel() >= 4:
-                mesh_sizes = [2, 2]
-            elif input.numel() >= 2:
-                mesh_sizes = [2]
-            else:
-                mesh_sizes = [1]
-
-            # print('mesh sizes based on input shape: ', mesh_sizes)
-
-            def pick_sharding(in_shape, mesh_dim_size):
-                # - do not shard on singleton dimensions (this wouldn't happen assuming DT is well constructed)
-                # - only shard on first dim of flattened groups
-                # leaving partial out for now.
-                return random.choice([Replicate()] + [
+            sharding_choices = [Replicate()] + [
                     Shard(i) for i, s in enumerate(in_shape) if s > 1 and i not in no_shard_dims]
-                )
+
+            all_sharding_choices = itertools.product(*(device_mesh.ndim * [sharding_choices]))
+
+            # pick random shardings and broadcast them to all ranks
+            # choice_idxs = torch.tensor([random.randrange(len(sharding_choices)) for _ in range(device_mesh.ndim)])
+            # dist.broadcast(choice_idxs, src=0)
 
             # some random in_shard
-            in_shard = [pick_sharding(in_shape, d) for d in mesh_sizes]
-            in_tiled = to_tiled(mesh_sizes, in_shard, args[0])
-            out_tiled = run_tiled(in_tiled, in_shape, op, spec, args, kwargs, rules) 
-            full_out = out_tiled.to_full()
+            #in_shard = [sharding_choices[idx] for idx in choice_idxs]
+            for in_shard in all_sharding_choices:
+                in_dt = distribute_tensor(args[0], device_mesh, in_shard)
+                out_dt = op(in_dt, *args[1:], **kwargs)
 
-            assert(outputs.shape == full_out.shape)
-            assert(torch.allclose(outputs, full_out))
+                full_out = out_dt.redistribute(device_mesh, device_mesh.ndim * [Replicate()]).to_local()
+
+                if dist.get_rank() == 0:
+                    assert outputs.shape == full_out.shape, f'Expected shape {outputs.shape}, got {full_out.shape}'
+                    assert torch.allclose(outputs, full_out)
 
     except Exception as e:
         if not should_throw:
@@ -654,9 +535,6 @@ def test_call(op_name, args, kwargs, should_throw):
             raise e
 
 
-print('------------ unit testing ------------')
-
-
 def assert_throw(fn):
     try:
         fn()
@@ -665,114 +543,122 @@ def assert_throw(fn):
     assert False, 'didnt throw'
 
 
-
 from torch import rand, randn
 
 
+DEVICE_MESH = None
+
 def test_dimmap(op, args, expected_rule_output):
     assert(ops[op].dim_map(*args) == expected_rule_output)
-    test_call(op, args, {}, False)
+    # test_call(op, args, {}, False)
+    test_call_dt(op, args, {}, False, DEVICE_MESH)
  
 
+def dimmap_tests():
+    test_dimmap(torch.atleast_1d, (randn(()), ), (SINGLETON, ))
+    test_dimmap(torch.atleast_1d, (randn(24), ), (0, ))
+    test_dimmap(torch.atleast_1d, (randn(24, 36), ), (0, 1))
 
-test_dimmap(torch.atleast_1d, (randn(()), ), (SINGLETON, ))
-test_dimmap(torch.atleast_1d, (randn(2), ), (0, ))
-test_dimmap(torch.atleast_1d, (randn(2, 3), ), (0, 1))
+    test_dimmap(torch.atleast_2d, (randn(()), ), (SINGLETON, SINGLETON))
+    test_dimmap(torch.atleast_2d, (randn(24), ), (SINGLETON, 0))
+    test_dimmap(torch.atleast_2d, (randn(24, 36), ), (0, 1))
+    test_dimmap(torch.atleast_2d, (randn(24, 36, 48), ), (0, 1, 2))
 
-test_dimmap(torch.atleast_2d, (randn(()), ), (SINGLETON, SINGLETON))
-test_dimmap(torch.atleast_2d, (randn(2), ), (SINGLETON, 0))
-test_dimmap(torch.atleast_2d, (randn(2, 3), ), (0, 1))
-test_dimmap(torch.atleast_2d, (randn(2, 3, 4), ), (0, 1, 2))
+    test_dimmap(torch.atleast_3d, (randn(()), ), (SINGLETON, SINGLETON, SINGLETON))
+    test_dimmap(torch.atleast_3d, (randn(24), ), (SINGLETON, 0, SINGLETON))
+    test_dimmap(torch.atleast_3d, (randn(24, 36), ), (0, 1, SINGLETON))
+    test_dimmap(torch.atleast_3d, (randn(24, 36, 42), ), (0, 1, 2))
+    test_dimmap(torch.atleast_3d, (randn(24, 36, 42, 24), ), (0, 1, 2, 3))
 
-test_dimmap(torch.atleast_3d, (randn(()), ), (SINGLETON, SINGLETON, SINGLETON))
-test_dimmap(torch.atleast_3d, (randn(2), ), (SINGLETON, 0, SINGLETON))
-test_dimmap(torch.atleast_3d, (randn(2, 3), ), (0, 1, SINGLETON))
-test_dimmap(torch.atleast_3d, (randn(2, 3, 4), ), (0, 1, 2))
-test_dimmap(torch.atleast_3d, (randn(2, 3, 4, 2), ), (0, 1, 2, 3))
+    assert_throw(lambda: ops[torch.broadcast_to].dim_map(randn(24, 36), (1,2,4)))
 
-assert_throw(lambda: ops[torch.broadcast_to].dim_map(randn(2,3), (1,2,4)))
-
-test_dimmap(torch.broadcast_to, (rand(2,3), (1,2,3)), (SINGLETON, 0, 1))
-test_dimmap(torch.broadcast_to, (rand(2,3), (4,2,3)), (BROADCAST(SINGLETON, 4), 0, 1))
-test_dimmap(torch.broadcast_to, (rand(2,1,3), (2,2,2,3)), (BROADCAST(SINGLETON, 2), 0, BROADCAST(1, 2), 2))
-test_dimmap(torch.broadcast_to, (rand(2,3), (-1,3)), (0, 1))
-test_dimmap(torch.broadcast_to, (rand(2,1,3), (-1,1,3)), (0, 1, 2))
-
-
-test_dimmap(
-    torch.broadcast_to, (randn(3,1,2), (2,3,4,2)),
-    (BROADCAST(SINGLETON, 2), 0, BROADCAST(1, 4), 2)
-)
-
-test_dimmap(
-    'Tensor.expand', (randn(2,1,3,1), 3,2,4,-1,2),
-    (BROADCAST(SINGLETON, 3), 0, BROADCAST(1, 4), 2, BROADCAST(3, 2))
-)
-
-test_dimmap(
-    'Tensor.expand', (randn(2,1,3,1), (3,2,4,-1,2)),
-    (BROADCAST(SINGLETON, 3), 0, BROADCAST(1, 4), 2, BROADCAST(3, 2))
-)
-
-test_dimmap(torch.flatten, (randn(2,3), ), (FLATTEN((0, 1)), ))
-test_dimmap(torch.flatten, (randn(4), ), (0, ))
-test_dimmap(torch.flatten, (randn(()), ), (SINGLETON, ))
+    test_dimmap(torch.broadcast_to, (rand(24, 36), (1, 24, 36)), (SINGLETON, 0, 1))
+    test_dimmap(torch.broadcast_to, (rand(24, 36), (42, 24, 36)), (BROADCAST(SINGLETON, 42), 0, 1))
+    test_dimmap(torch.broadcast_to, (rand(24, 1, 36), (12, 24, 24, 36)), (BROADCAST(SINGLETON, 12), 0, BROADCAST(1, 24), 2))
+    test_dimmap(torch.broadcast_to, (rand(24, 36), (-1, 36)), (0, 1))
+    test_dimmap(torch.broadcast_to, (rand(24, 1, 36), (-1, 1, 36)), (0, 1, 2))
 
 
-test_dimmap(torch.movedim, (randn(4, 8, 16, 32), 1, 2), (0, 2, 1, 3))
-test_dimmap(torch.movedim, (randn(2, 4, 8), 1, 0), (1, 0, 2))
-test_dimmap(torch.movedim, (randn(8, 4, 2), (1, 2), (0, 1)), (1, 2, 0))
-test_dimmap(torch.movedim, (randn(8, 2, 4), (0, 2, 1), (2, 1, 0)), (1, 2, 0))
-test_dimmap(torch.movedim, (randn(8, 4), (1, 0), (0, 1)), (1, 0))
+    test_dimmap(
+        torch.broadcast_to, (randn(36, 1, 24), (12, 36, 42, 24)),
+        (BROADCAST(SINGLETON, 12), 0, BROADCAST(1, 42), 2)
+    )
+
+    test_dimmap(
+        'Tensor.expand', (randn(24, 1, 36, 1), 36, 24, 42, -1, 24),
+        (BROADCAST(SINGLETON, 36), 0, BROADCAST(1, 42), 2, BROADCAST(3, 24))
+    )
+
+    test_dimmap(
+        'Tensor.expand', (randn(24, 1, 36, 1), (36, 24, 42, -1, 24)),
+        (BROADCAST(SINGLETON, 36), 0, BROADCAST(1, 42), 2, BROADCAST(3, 24))
+    )
+
+    test_dimmap(torch.flatten, (randn(24, 36), ), (FLATTEN((0, 1)), ))
+    test_dimmap(torch.flatten, (randn(42), ), (0, ))
+    test_dimmap(torch.flatten, (randn(()), ), (SINGLETON, ))
 
 
-test_dimmap(torch.movedim, (randn(3,2,1), (1, 2), (0, 1)), (1, 2, 0))
+    test_dimmap(torch.movedim, (randn(12, 24, 48, 96), 1, 2), (0, 2, 1, 3))
+    test_dimmap(torch.movedim, (randn(6, 12, 24), 1, 0), (1, 0, 2))
+    test_dimmap(torch.movedim, (randn(24, 12, 6), (1, 2), (0, 1)), (1, 2, 0))
+    test_dimmap(torch.movedim, (randn(24, 6, 12), (0, 2, 1), (2, 1, 0)), (1, 2, 0))
+    test_dimmap(torch.movedim, (randn(24, 12), (1, 0), (0, 1)), (1, 0))
 
-test_dimmap(torch.permute, (randn(2,3,4), (2, 0, 1)), (2, 0, 1))
 
-test_dimmap(torch.ravel, (randn(2,3), ), (FLATTEN((0, 1)), ))
-test_dimmap(torch.ravel, (randn(4), ), (0, ))
-test_dimmap(torch.ravel, (randn(()), ), (SINGLETON, ))
+    test_dimmap(torch.movedim, (randn(36, 24, 12), (1, 2), (0, 1)), (1, 2, 0))
 
-test_dimmap(
-    'Tensor.repeat', (randn(2,3), 1, 2, 1, 1, 2),
-    (SINGLETON, BROADCAST(SINGLETON, 2), SINGLETON, 0, REPEAT(1, 2))
-)
+    test_dimmap(torch.permute, (randn(24, 36, 42), (2, 0, 1)), (2, 0, 1))
 
-test_dimmap(
-    torch.reshape, (randn(2,4,8), (8, 8)),
-    (FLATTEN((0, 1)), 2),
-)
+    test_dimmap(torch.ravel, (randn(24, 36), ), (FLATTEN((0, 1)), ))
+    test_dimmap(torch.ravel, (randn(42), ), (0, ))
+    test_dimmap(torch.ravel, (randn(()), ), (SINGLETON, ))
 
-test_dimmap(
-    torch.tile, (randn(2,3), (1, 2, 1, 1, 2)),
-    (SINGLETON, BROADCAST(SINGLETON, 2), SINGLETON, 0, REPEAT(1, 2))
-)
-test_dimmap(
-    torch.tile, (randn(4, 2,3), (1, 3, )),
-    (0, 1, REPEAT(2, 3)),
-)
+    test_dimmap(
+        'Tensor.repeat', (randn(24, 36), 1, 2, 1, 1, 2),
+        (SINGLETON, BROADCAST(SINGLETON, 2), SINGLETON, 0, REPEAT(1, 2))
+    )
 
-test_dimmap(torch.transpose, (randn(2,5,4,5), 2, 0), (2,1,0,3))
+    test_dimmap(
+        torch.reshape, (randn(6, 12, 24), (72, 24)),
+        (FLATTEN((0, 1)), 2),
+    )
 
-test_dimmap(torch.unsqueeze, (randn(4,2,3), 1), (0, SINGLETON, 1, 2))
+    test_dimmap(
+        torch.tile, (randn(24, 36), (1, 2, 1, 1, 2)),
+        (SINGLETON, BROADCAST(SINGLETON, 2), SINGLETON, 0, REPEAT(1, 2))
+    )
+    test_dimmap(
+        torch.tile, (randn(42, 24, 36), (1, 3, )),
+        (0, 1, REPEAT(2, 3)),
+    )
 
-test_dimmap(
-    'Tensor.view', (randn(2,4,8), 8, 8),
-    (FLATTEN((0, 1)), 2),
-)
+    test_dimmap(torch.transpose, (randn(24, 60, 42, 60), 2, 0), (2, 1, 0, 3))
 
-test_dimmap(
-    'Tensor.view', (randn(1, 1, 4), -1),
-    (2, ),
-)
+    test_dimmap(torch.unsqueeze, (randn(42, 24, 36), 1), (0, SINGLETON, 1, 2))
 
-test_dimmap(
-    'Tensor.view', (randn(1, 1, 4, 2), -1),
-    (FLATTEN((2, 3)), ),
-)
+    test_dimmap(
+        'Tensor.view', (randn(6, 12, 24), 72, 24),
+        (FLATTEN((0, 1)), 2),
+    )
 
-test_dimmap(
-    'Tensor.view', (randn(1, 1, 4, 1, 2, 1), -1),
-    (FLATTEN((2, 4)), ),
-)
+    test_dimmap(
+        'Tensor.view', (randn(1, 1, 12), -1),
+        (2, ),
+    )
+
+    test_dimmap(
+        'Tensor.view', (randn(1, 1, 42, 24), -1),
+        (FLATTEN((2, 3)), ),
+    )
+
+    test_dimmap(
+        'Tensor.view', (randn(1, 1, 42, 1, 24, 1), -1),
+        (FLATTEN((2, 4)), ),
+    )
+
+
+if __name__ == '__main__':
+    dist.init_process_group('gloo')
+    DEVICE_MESH = DeviceMesh('cpu', torch.arange(dist.get_world_size()).view(-1, 2))
+    dimmap_tests()

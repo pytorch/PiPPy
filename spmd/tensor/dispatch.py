@@ -51,6 +51,9 @@ class OpSchema(object):
     args_spec: Tuple[PlacementSpec, ...]
     kwargs_spec: Dict[str, PlacementSpec]
 
+    args: Tuple[object, ...]
+    kwargs: Dict[str, object]
+
 
 @dataclass
 class OpInfo(object):
