@@ -11,7 +11,6 @@ def redistribute_spmd_tensor(
     input: "spmd_tensor.DTensor",
     device_mesh: DeviceMesh,
     placements: List[Placement],
-    is_backward: bool = False,
 ) -> "spmd_tensor.DTensor":
     current_placements = input.placements
     local_tensor = input.to_local()
@@ -83,29 +82,20 @@ def redistribute_spmd_tensor(
                 attempted_transforms.append(current)
         elif target.is_partial():
             if current.is_replicate():
-                if is_backward:
-                    # If this call is only calling from backward pass, we do special
-                    # treatment here, this is because we don't want to convert the
-                    # replicated gradients back to partial, although that's logically
-                    # conform with the same layout, converting the gradients back to
-                    # partial is acutally useless as you would have to do reduce later
-                    # which would be more expensive than keeping it replicate! For this
-                    # reason, we keep the replicate grad here.
-                    # TODO: see if this make sense for all cases.
-                    new_local_tensor = local_tensor
-                    # need to make the position as replicate instead of partial
-                    attempted_transforms.append(current)
+                # For replicate -> partial, we zero out all other ranks of the current mesh dim
+                # and leave only 1 rank have the data, to perform a "zero cost" reshard.
+                attempted_transforms.append(target)
+                my_rank = device_mesh.get_rank()
+                if my_rank != 0:
+                    new_local_tensor = local_tensor.zero_()
                 else:
-                    # if it's forward, we zero out all other ranks of the current mesh dim
-                    # and leave only 1 rank have the data, to make replicate -> partial
-                    attempted_transforms.append(target)
-                    my_rank = device_mesh.get_rank()
-                    if my_rank != 0:
-                        new_local_tensor = local_tensor.zero_()
-                    else:
-                        new_local_tensor = local_tensor
+                    new_local_tensor = local_tensor
+            else:
+                raise RuntimeError(
+                    f"redistribute from {current_placements} to {placements} not supported yet"
+                )
 
-    if is_backward is False and attempted_transforms != placements:
+    if attempted_transforms != placements:
         # TODO: if not the same, we should apply all_to_all reshuffle
         raise NotImplementedError("Reshuffling tensor dims not supported yet!")
 
@@ -136,12 +126,30 @@ class Redistribute(torch.autograd.Function):
     def backward(ctx, grad_output: "spmd_tensor.DTensor"):  # type: ignore
         previous_placement = ctx.previous_placement
         previous_device_mesh = ctx.previous_device_mesh
+        # When we run backward pass of redistribute (i.e. manual redistribute from
+        # user code instead of torch_dispatch), we scan first and see if we need
+        # to change the target placement for one special case:
+        #   replicate -> partial.
+        # In this case we keep the grad as replicate, this is because we don't
+        # want to convert the replicated gradients back to partial, although
+        # that's logically conform with the same layout, converting the gradients
+        # back to partial is acutally useless as you would have to do reduce later
+        # which would be more expensive than keeping it replicate! For this reason,
+        # we keep the replicate grad here.
+        # TODO: see if this make sense for all cases.
+        target_placements: List[Placement] = []
+        for current, target in zip(grad_output.placements, previous_placement):
+            if current.is_replicate() and target.is_partial():
+                # keep target placement to replicate instead of partial in this case
+                target_placements.append(current)
+            else:
+                target_placements.append(target)
+
         return (
             redistribute_spmd_tensor(
                 grad_output,
                 previous_device_mesh,
-                previous_placement,
-                is_backward=True,
+                target_placements,
             ),
             None,
             None,
