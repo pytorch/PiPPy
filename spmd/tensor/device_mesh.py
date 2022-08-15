@@ -133,7 +133,7 @@ class DeviceMesh(object):
         # coordinates of this rank on the mesh
         rank_coords = (self.mesh == get_rank()).nonzero()
         assert rank_coords.size(0) in (0, 1)
-        self._rank_for_dim: Optional[List[int]] = (
+        self._coordinate_on_dim: Optional[List[int]] = (
             rank_coords[0].tolist() if rank_coords.size(0) > 0 else None
         )
 
@@ -221,12 +221,12 @@ class DeviceMesh(object):
     def get_rank(self) -> int:
         return get_rank()
 
-    def get_rank_for_dim(self, dim: int) -> Optional[int]:
+    def get_coordinate_on_dim(self, dim: int) -> Optional[int]:
         """
         Return the relative index of this rank relative to a given
         dimension of the mesh. If this rank is not part of the mesh, return None.
         """
-        return self._rank_for_dim[dim] if self._rank_for_dim else None
+        return self._coordinate_on_dim[dim] if self._coordinate_on_dim else None
 
     def scatter(
         self, scatter_list: List[torch.Tensor], mesh_dim: int = 0
@@ -276,16 +276,9 @@ class DeviceMesh(object):
         return broadcast(tensor.contiguous(), src=src_for_dim, group=dim_group)
 
     # pyre-fixme[3]: Return type must be annotated.
-    def all_gather(
-        self, tensor: torch.Tensor, mesh_dim: int = 0, tensor_dim: int = 0
-    ):
+    def all_gather(self, tensor: torch.Tensor, mesh_dim: int = 0):
         dim_group = self._dim_groups[mesh_dim]
-        if tensor_dim != 0:
-            tensor = tensor.movedim(tensor_dim, 0)
-        output = all_gather(tensor, group=dim_group)
-        if tensor_dim != 0:
-            output = tuple(o.movedim(0, tensor_dim) for o in output)
-        return output
+        return all_gather(tensor, group=dim_group)
 
     # pyre-fixme[3]: Return type must be annotated.
     def all_gather_base(
@@ -298,20 +291,18 @@ class DeviceMesh(object):
         # only nccl have all_gather base
         if self.backend() == "nccl":
             if tensor_dim != 0:
-                tensor = tensor.movedim(tensor_dim, 0)
+                tensor = tensor.transpose(tensor_dim, 0)
             # TODO needs contiguous?
             output = _all_gather_base(
                 output_tensor, tensor, group=self._dim_groups[mesh_dim]
             )
             if tensor_dim != 0:
-                output = output.movedim(tensor_dim, 0)
+                output = output.transpose(tensor_dim, 0)
             return output
         else:
             # if not nccl, fallback to use all_gather
             # and reform the output tensor by concat
-            gathered_chunks = self.all_gather(
-                tensor, mesh_dim=mesh_dim, tensor_dim=tensor_dim
-            )
+            gathered_chunks = self.all_gather(tensor, mesh_dim=mesh_dim)
             # TODO: find more performant way
             output_tensor.copy_(torch.cat(gathered_chunks, dim=tensor_dim))
             return output_tensor
