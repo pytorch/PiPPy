@@ -21,11 +21,13 @@ Fine-tuning the library models for sequence to sequence.
 import logging
 import os
 import sys
+import types
 from dataclasses import dataclass, field
 from typing import Optional
 
 import datasets
 import numpy as np
+import torch
 from datasets import load_dataset
 
 import evaluate
@@ -42,7 +44,6 @@ from transformers import (
     MBartTokenizer,
     MBartTokenizerFast,
     Seq2SeqTrainer,
-    Seq2SeqTrainingArguments,
     default_data_collator,
     set_seed,
 )
@@ -50,6 +51,8 @@ from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
+from pippy.hf import PiPPySeq2SeqTrainingArguments, run_pippy, wrap
+from pippy.microbatch import TensorChunkSpec, CustomReducer
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.22.0.dev0")
@@ -253,7 +256,9 @@ def main():
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
 
-    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, Seq2SeqTrainingArguments))
+    # =============================================== PiPPy change start ===============================================
+    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, PiPPySeq2SeqTrainingArguments))
+    # ================================================ PiPPy change end ================================================
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         # If we pass only one argument to the script and it's the path to a json file,
         # let's parse it to get our arguments.
@@ -261,6 +266,12 @@ def main():
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
+    # =============================================== PiPPy change start ===============================================
+    run_pippy(model_args, data_args, training_args, run_master)
+
+
+def run_master(model_args, data_args, training_args, pp_ranks):
+    # ================================================ PiPPy change end ================================================
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
     # information sent is the one passed as arguments along with your Python/PyTorch versions.
     send_example_telemetry("run_translation", model_args, data_args)
@@ -382,6 +393,24 @@ def main():
 
     model.resize_token_embeddings(len(tokenizer))
 
+    # =============================================== PiPPy change start ===============================================
+    args_chunk_spec = ()
+    kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'decoder_input_ids': TensorChunkSpec(0),
+                         'labels': TensorChunkSpec(0), 'attention_mask': TensorChunkSpec(0)}
+    if model.__class__.__name__ == 'T5ForConditionalGeneration':
+        output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b),
+                             'logits': TensorChunkSpec(0),
+                             'encoder_last_hidden_state': TensorChunkSpec(0),
+                             'past_key_values': [
+                                 [TensorChunkSpec(0) for _ in range(model.config.num_decoder_layers)] for _ in range(4)
+                             ]}
+    else:
+        output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b),
+                             'logits': TensorChunkSpec(0),
+                             'encoder_last_hidden_state': TensorChunkSpec(0)}
+    model = wrap(model, training_args, pp_ranks, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec)
+    # ================================================ PiPPy change end ================================================
+
     # Set decoder_start_token_id
     if model.config.decoder_start_token_id is None and isinstance(tokenizer, (MBartTokenizer, MBartTokenizerFast)):
         if isinstance(tokenizer, MBartTokenizer):
@@ -431,6 +460,35 @@ def main():
     # Temporarily set max_target_length for training.
     max_target_length = data_args.max_target_length
     padding = "max_length" if data_args.pad_to_max_length else False
+
+    # =============================================== PiPPy change start ===============================================
+    def prepare_decoder_input_ids_from_labels(self, labels: torch.Tensor):
+        return self._shift_right(labels)
+
+    def _shift_right(self, input_ids):
+        decoder_start_token_id = self.config.decoder_start_token_id
+        pad_token_id = self.config.pad_token_id
+
+        assert (
+                decoder_start_token_id is not None
+        ), "self.model.config.decoder_start_token_id has to be defined. In T5 it is usually set to the pad_token_id. See T5 docs for more information"
+
+        # shift inputs to the right
+        shifted_input_ids = input_ids.new_zeros(input_ids.shape)
+        shifted_input_ids[..., 1:] = input_ids[..., :-1].clone()
+        shifted_input_ids[..., 0] = decoder_start_token_id
+
+        assert pad_token_id is not None, "self.model.config.pad_token_id has to be defined."
+        # replace possible -100 values in labels by `pad_token_id`
+        shifted_input_ids.masked_fill_(shifted_input_ids == -100, pad_token_id)
+
+        assert torch.all(shifted_input_ids >= 0).item(), "Verify that `shifted_input_ids` has only positive values"
+
+        return shifted_input_ids
+
+    model.prepare_decoder_input_ids_from_labels = types.MethodType(prepare_decoder_input_ids_from_labels, model)
+    model._shift_right = types.MethodType(_shift_right, model)
+    # ================================================ PiPPy change end ================================================
 
     if training_args.label_smoothing_factor > 0 and not hasattr(model, "prepare_decoder_input_ids_from_labels"):
         logger.warning(
@@ -552,6 +610,16 @@ def main():
         result = {k: round(v, 4) for k, v in result.items()}
         return result
 
+    # =============================================== PiPPy change start ===============================================
+    optimizer_cls, optimizer_kwargs = Seq2SeqTrainer.get_optimizer_cls_and_kwargs(training_args)
+    optimizer = model.instantiate_optimizer(optimizer_cls, **optimizer_kwargs)
+    lr_scheduler = model.instantiate_lr_scheduler(
+        transformers.optimization.TYPE_TO_SCHEDULER_FUNCTION[training_args.lr_scheduler_type],
+        num_warmup_steps=training_args.get_warmup_steps(training_args.max_steps),
+        num_training_steps=training_args.max_steps
+    )
+    # ================================================ PiPPy change end ================================================
+
     # Initialize our Trainer
     trainer = Seq2SeqTrainer(
         model=model,
@@ -561,7 +629,13 @@ def main():
         tokenizer=tokenizer,
         data_collator=data_collator,
         compute_metrics=compute_metrics if training_args.predict_with_generate else None,
+        # ============================================= PiPPy change start =============================================
+        optimizers=(optimizer, lr_scheduler),
+        # ============================================== PiPPy change end ==============================================
     )
+    # =============================================== PiPPy change start ===============================================
+    trainer._signature_columns = list(kwargs_chunk_spec.keys())
+    # ================================================ PiPPy change end ================================================
 
     # Training
     if training_args.do_train:
