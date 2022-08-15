@@ -21,7 +21,7 @@ def redistribute_spmd_tensor(
     attempted_transforms = []
     new_local_tensor = None
 
-    # we need to go backwards in the case of to respect the scatter order established in
+    # we need to go backwards in order to respect the scatter order established in
     # distribute_tensor(), for the cases where we're sharding multiple times on the same
     # tensor dimension (e.g. [Shard(0), Shard(0)])
     reverted_placements = list(enumerate(zip(current_placements, placements)))
@@ -78,7 +78,7 @@ def redistribute_spmd_tensor(
             chunk_size = (
                 local_tensor.size(shard_dim) // num_chunks
             )  # this may already be sharded on a differernt mesh dimension
-            my_rank = device_mesh.get_rank_for_dim(dim=i)
+            my_rank = device_mesh.get_coordinate_on_dim(dim=i)
             assert (
                 my_rank is not None
             ), "Rank is not part of the mesh"  # TODO: figure out behavior here
