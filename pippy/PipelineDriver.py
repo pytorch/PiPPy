@@ -594,7 +594,8 @@ class PipeStageExecutor(EventRecorder):
                 fut.wait()
 
         with self.value_store_cv:
-            assert output_unique_key not in self.value_store
+            assert output_unique_key not in self.value_store, (f"[{self.stage_id}] Output key {output_unique_key} "
+                                                               f"already exists or is not consumed from previous batch")
             self.value_store[output_unique_key] = RefcountedFuture(future, output_refcount)
             self.value_store_cv.notify_all()
 
