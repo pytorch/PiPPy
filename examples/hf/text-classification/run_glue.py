@@ -38,7 +38,6 @@ from transformers import (
     EvalPrediction,
     HfArgumentParser,
     PretrainedConfig,
-    Trainer,
     default_data_collator,
     set_seed,
 )
@@ -46,7 +45,7 @@ from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
-from pippy.hf import PiPPyTrainingArguments, run_pippy, wrap
+from pippy.hf import PiPPyTrainingArguments, PiPPyTrainer, run_pippy, wrap
 from pippy.microbatch import TensorChunkSpec, CustomReducer
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
@@ -531,18 +530,10 @@ def run_master(model_args, data_args, training_args, pp_ranks):
     else:
         data_collator = None
 
-    # =============================================== PiPPy change start ===============================================
-    optimizer_cls, optimizer_kwargs = Trainer.get_optimizer_cls_and_kwargs(training_args)
-    optimizer = model.instantiate_optimizer(optimizer_cls, **optimizer_kwargs)
-    lr_scheduler = model.instantiate_lr_scheduler(
-        transformers.optimization.TYPE_TO_SCHEDULER_FUNCTION[training_args.lr_scheduler_type],
-        num_warmup_steps=training_args.get_warmup_steps(training_args.max_steps),
-        num_training_steps=training_args.max_steps
-    )
-    # ================================================ PiPPy change end ================================================
-
     # Initialize our Trainer
-    trainer = Trainer(
+    # =============================================== PiPPy change start ===============================================
+    trainer = PiPPyTrainer(
+    # ================================================ PiPPy change end ================================================
         model=model,
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,
@@ -550,9 +541,6 @@ def run_master(model_args, data_args, training_args, pp_ranks):
         compute_metrics=compute_metrics,
         tokenizer=tokenizer,
         data_collator=data_collator,
-        # ============================================= PiPPy change start =============================================
-        optimizers=(optimizer, lr_scheduler),
-        # ============================================== PiPPy change end ==============================================
     )
     # =============================================== PiPPy change start ===============================================
     trainer._signature_columns = list(kwargs_chunk_spec.keys())

@@ -4,15 +4,17 @@ import inspect
 import logging
 import os
 import socket
+import types
 from dataclasses import dataclass, field
 from typing import Optional
 
 import torch
 import torch.distributed.rpc as rpc
 import torch.multiprocessing as mp
+import transformers
 import transformers.utils.fx as fx
 from transformers import (
-    TrainingArguments, Seq2SeqTrainingArguments
+    TrainingArguments, Seq2SeqTrainingArguments, Trainer, Seq2SeqTrainer
 )
 from transformers.modeling_utils import ModuleUtilsMixin
 from transformers.utils import (
@@ -151,6 +153,42 @@ class PiPPyTrainingArguments(TrainingArguments):
 
 @dataclass
 class PiPPySeq2SeqTrainingArguments(PiPPyTrainingArguments, Seq2SeqTrainingArguments):
+    pass
+
+
+def _backward(self, gradient=None, retain_graph=None, create_graph=False, inputs=None):
+    # No-op backward for pipe mode, because otherwise HF Trainer will call loss.backward second time and will crash
+    pass
+
+
+class PiPPyTrainer(Trainer):
+
+    def create_optimizer(self):
+        optimizer_cls, optimizer_kwargs = Trainer.get_optimizer_cls_and_kwargs(self.args)
+        self.optimizer = self.model.instantiate_optimizer(optimizer_cls, **optimizer_kwargs)
+        return self.optimizer
+
+    def create_scheduler(self, num_training_steps: int, optimizer: torch.optim.Optimizer = None):
+        if self.lr_scheduler is None:
+            self.lr_scheduler = self.model.instantiate_lr_scheduler(
+                transformers.optimization.TYPE_TO_SCHEDULER_FUNCTION[self.args.lr_scheduler_type],
+                num_warmup_steps=self.args.get_warmup_steps(self.args.max_steps),
+                num_training_steps=self.args.max_steps
+            )
+        return self.lr_scheduler
+
+    def compute_loss(self, model, inputs, return_outputs=False):
+        if return_outputs:
+            loss, outputs = Trainer.compute_loss(self, model, inputs, return_outputs)
+            loss.backward = types.MethodType(_backward, loss)
+            return loss, outputs
+        else:
+            loss = Trainer.compute_loss(self, model, inputs, return_outputs)
+            loss.backward = types.MethodType(_backward, loss)
+            return loss
+
+
+class PiPPySeq2SeqTrainer(PiPPyTrainer, Seq2SeqTrainer):
     pass
 
 

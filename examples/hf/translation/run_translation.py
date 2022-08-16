@@ -43,7 +43,6 @@ from transformers import (
     MBart50TokenizerFast,
     MBartTokenizer,
     MBartTokenizerFast,
-    Seq2SeqTrainer,
     default_data_collator,
     set_seed,
 )
@@ -51,7 +50,7 @@ from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
-from pippy.hf import PiPPySeq2SeqTrainingArguments, run_pippy, wrap
+from pippy.hf import PiPPySeq2SeqTrainingArguments, PiPPySeq2SeqTrainer, run_pippy, wrap
 from pippy.microbatch import TensorChunkSpec, CustomReducer
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
@@ -610,18 +609,10 @@ def run_master(model_args, data_args, training_args, pp_ranks):
         result = {k: round(v, 4) for k, v in result.items()}
         return result
 
-    # =============================================== PiPPy change start ===============================================
-    optimizer_cls, optimizer_kwargs = Seq2SeqTrainer.get_optimizer_cls_and_kwargs(training_args)
-    optimizer = model.instantiate_optimizer(optimizer_cls, **optimizer_kwargs)
-    lr_scheduler = model.instantiate_lr_scheduler(
-        transformers.optimization.TYPE_TO_SCHEDULER_FUNCTION[training_args.lr_scheduler_type],
-        num_warmup_steps=training_args.get_warmup_steps(training_args.max_steps),
-        num_training_steps=training_args.max_steps
-    )
-    # ================================================ PiPPy change end ================================================
-
     # Initialize our Trainer
-    trainer = Seq2SeqTrainer(
+    # =============================================== PiPPy change start ===============================================
+    trainer = PiPPySeq2SeqTrainer(
+    # ================================================ PiPPy change end ================================================
         model=model,
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,
@@ -629,9 +620,6 @@ def run_master(model_args, data_args, training_args, pp_ranks):
         tokenizer=tokenizer,
         data_collator=data_collator,
         compute_metrics=compute_metrics if training_args.predict_with_generate else None,
-        # ============================================= PiPPy change start =============================================
-        optimizers=(optimizer, lr_scheduler),
-        # ============================================== PiPPy change end ==============================================
     )
     # =============================================== PiPPy change start ===============================================
     trainer._signature_columns = list(kwargs_chunk_spec.keys())
