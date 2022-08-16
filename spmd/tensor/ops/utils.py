@@ -1,4 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+from typing import List, Union
 from spmd.tensor.api import DTensor
 
 
@@ -37,3 +38,10 @@ def register_prop_rule(func):
         return impl
 
     return wrapper
+
+
+def as_list(x: Union[List[object], object]) -> List[object]:
+    if type(x) is list:
+        return x
+    else:
+        return [x]

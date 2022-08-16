@@ -3,6 +3,7 @@ from typing import List, Dict, cast
 from spmd.tensor.api import DTensor
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.placement_types import _Partial, PlacementSpec
+from spmd.tensor.ops.utils import as_list
 
 
 def _gen_placement_spec_with_pending_sum(
@@ -134,13 +135,9 @@ def reduction_rule(op_schema: OpSchema) -> OutputSharding:
         # need to specialize them as needed.
         # TODO: add support for things like `torch.unique` where it
         # does not follow the reduction op convention.
-        dim_list = (
-            [op_schema.args_schema[1]]
-            if isinstance(op_schema.args_schema[1], int)
-            else op_schema.args_schema[1]
-        )
+        dim_list = as_list(op_schema.args_schema[1])
         out_dimchars = input_chars.translate(
-            {ord(alphabet[dim]): None for dim in dim_list}
+            {ord(alphabet[cast(int, dim)]): None for dim in dim_list}
         )
     else:
         # reducing to a single scalar tensor, we just mark output as empty
