@@ -194,15 +194,11 @@ class MultiDimRedistributeTest(DistTensorTestBase):
                     # create a new DTensor reinterpreting some of the replicated entires as "Partial"
                     dt = DTensor(dt.to_local(), device_mesh, inputs)
 
-                # if torch.distributed.get_rank() == 0:
-                #     print(inputs)
-
                 for outputs in all_outputs:
-                    # if torch.distributed.get_rank() == 0:
-                    #     print("  ", outputs)
-
+                    # redistribute on target outputs
                     dt2 = dt.redistribute(device_mesh, outputs)
 
+                    # replicate and then get first shard
                     local_full = dt2.redistribute(
                         device_mesh, device_mesh.ndim * [Replicate()]
                     ).to_local()
@@ -214,9 +210,7 @@ class MultiDimRedistributeTest(DistTensorTestBase):
                         for idx, input in enumerate(inputs):
                             if input.is_partial():
                                 num_sums *= mesh_shape.size(idx)
-                        expected = (
-                            num_sums * full_tensor
-                        )  # + torch.ones(*tensor_shape)
+                        expected = num_sums * full_tensor
                         self.assertEqual(local_full, expected)
 
 
