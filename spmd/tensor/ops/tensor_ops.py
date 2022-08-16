@@ -1,7 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 from spmd.tensor.api import DTensor
-from spmd.tensor.dispatch import OpSchema
-from spmd.tensor.placement_types import PlacementSpec
+from spmd.tensor.dispatch import OpSchema, OutputSharding
 
 
 # NOTE: the default propagation rule should apply for
@@ -10,9 +9,9 @@ from spmd.tensor.placement_types import PlacementSpec
 # default still propagate the spec, this is to ensure
 # that we only return None for the case where the sharding
 # propagation failed, and we should do auto-redistribute
-def default_prop_rule(op_schema: OpSchema) -> PlacementSpec:
+def default_prop_rule(op_schema: OpSchema) -> OutputSharding:
     # by default prop the first arg spec
-    return op_schema.args_spec[0]
+    return OutputSharding(op_schema.args_spec[0])
 
 
 default_prop_ops = [

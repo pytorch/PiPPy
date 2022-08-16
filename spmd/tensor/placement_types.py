@@ -2,7 +2,7 @@
 import torch.distributed.distributed_c10d as c10d
 
 from dataclasses import dataclass
-from typing import Optional, List, Sequence, cast
+from typing import Optional, List, Sequence, Union, Tuple, cast
 from spmd.tensor.device_mesh import DeviceMesh
 
 
@@ -101,16 +101,29 @@ class PlacementSpec(object):
         # by default replicate on device mesh dims
         placements: List[Placement] = [Replicate() for _ in range(mesh.ndim)]
 
-        for i, m in enumerate(dim_map):
-            if m >= 0:
-                if not placements[m].is_replicate():
-                    raise RuntimeError(
-                        "DeviceMesh cann't be mapped to two dimension of the same tensor"
-                    )
-                placements[m] = Shard(i)
-
+        # find all mesh dims that need pending reductions
         for s in sums:
             placements[s] = _Partial()
 
-        spec = cls(len(dim_map), mesh, placements)
-        return spec
+        for i, m in enumerate(dim_map):
+            if m >= 0:
+                placement = placements[m]
+                if placement.is_shard():
+                    placement = cast(Shard, placement)
+                    raise RuntimeError(
+                        f"DeviceMesh dimension cann't be mapped to two dimension of the same tensor: {i} and {placement.dim}"
+                    )
+                elif placement.is_partial():
+                    raise RuntimeError(
+                        f"DeviceMesh dimension {m} cannot be both shard and partial!"
+                    )
+                placements[m] = Shard(i)
+
+        return cls(len(dim_map), mesh, placements)
+
+
+# ATen op schemas could have Tensor, Tuple[Tensor] and List[Tensor], so output type sould
+# be the same set of possiblities.
+OutputSpecType = Optional[
+    Union[PlacementSpec, Tuple[PlacementSpec, ...], List[PlacementSpec]]
+]

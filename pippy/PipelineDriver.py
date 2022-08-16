@@ -419,7 +419,7 @@ class RankWorker(EventRecorder):
                     work_item.state = SchedState.READY
                     self.ready_runlist[runlist_key] = self.waiting_runlist.pop(runlist_key)
                     self.ready_runlist_cv.notify()
-                logging.info(f'[{self.rank}][{work_item.microbatch_id}] all operands ready: {runlist_key}')
+                logging.info(f'[{self.rank}][{work_item.microbatch_id}] all operands ready')
 
 
 class PipeStageExecutor(EventRecorder):
@@ -441,7 +441,6 @@ class PipeStageExecutor(EventRecorder):
         self.fwd_cache : Dict[int, Tuple[Any, List[torch.Tensor]]] = {}
 
         self.value_store_lock = threading.Lock()
-        self.value_store_cv = threading.Condition(self.value_store_lock)
         self.value_store : Dict[str, RefcountedFuture] = {}
 
         self.peer_executors : Dict[int, torch._C._distributed_rpc.PyRRef] = None
@@ -517,13 +516,15 @@ class PipeStageExecutor(EventRecorder):
 
     def invoke(self, output_unique_key : str, phase : Phase, args, kwargs, cur_microbatch : int, debug_str : str,
                output_refcount : int, batch_id : int, num_microbatches : int):
-        start_ts = time.time()
-        target_name = event_name(phase, self.stage_id, cur_microbatch)
-        target_id = event_id(phase, self.stage_id, cur_microbatch, batch_id)
-        name = f"R{target_name}"
-        id = f"R{target_id}"
+        ts = time.time()
+        forward_name = event_name(Phase.FORWARD, self.stage_id, cur_microbatch)
+        forward_id = event_id(Phase.FORWARD, self.stage_id, cur_microbatch, batch_id)
+        name = f"R{forward_name}"
+        id = f"R{forward_id}"
+        self.record_event(rank=self.rank_worker.rank, start_ts=ts, finish_ts=ts, id=id, name=name, type='received', mbid=cur_microbatch)
+        self.record_event_dependency(from_id=name, to_id=forward_name, type='waiting')
         if self._record_mem_dumps:
-            self._record_dumps_on_all_peer_executors(f'M{id}_invoke', start_ts)
+            self._record_dumps_on_all_peer_executors(f'M{id}_invoke', ts)
         # TODO: do we need to serialize calls to invoke() to preserve the order in which WorkItems appear for
         # static schedules?
 
@@ -593,63 +594,32 @@ class PipeStageExecutor(EventRecorder):
             for fut in _futures:
                 fut.wait()
 
-        with self.value_store_cv:
-            assert output_unique_key not in self.value_store
+        with self.value_store_lock:
+            assert output_unique_key not in self.value_store, f"output_unique_key = {output_unique_key}"
             self.value_store[output_unique_key] = RefcountedFuture(future, output_refcount)
-            self.value_store_cv.notify_all()
-
-        finish_ts = time.time()
-        self.record_event(rank=self.rank_worker.rank, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name, type='received', mbid=cur_microbatch)
-        self.record_event_dependency(from_id=name, to_id=target_name, type='waiting')
 
         return ValueReference(self.stage_id, output_unique_key)
 
-    def coalesced_index_value(self, indices : List[Tuple[str, int, ValueReference, int]]):
-        for index_tuple in indices:
-            (output_unique_key, output_refcount, value_ref, idx) = index_tuple
-            logging.info(f'[{self.stage_id}] Received getitem call: {(output_unique_key, output_refcount, value_ref, idx)}')
-            with self.value_store_cv:
-                if output_unique_key in self.value_store:
-                    # TODO: investigate why there are repeated getitem calls with 0 users
-                    assert output_refcount == 0, "PiPPy internal error: repeated index value call with non-zero users"
-                    logging.info(f'[{self.stage_id}] Indexed value already in store: {(output_unique_key, output_refcount, value_ref, idx)}')
-                    continue
+    def index_value(self, output_unique_key : str, output_refcount : int, value_ref, idx):
+        # For the purposes of refcounting, decrement this use
+        with self.value_store_lock:
+            refcounted_future = self.value_store[value_ref.unique_key]
+            if refcounted_future.release():
+                self.value_store.pop(value_ref.unique_key)
 
-                # Wait for the future representing the stage output to be created
-                while value_ref.unique_key not in self.value_store:
-                    self.value_store_cv.wait()
-                # Now the stage output future is created
-                refcounted_future = self.value_store[value_ref.unique_key]
+            indexed = refcounted_future.future.then(lambda f: f.value()[idx])
 
-                # For the purposes of refcounting, decrement this use
-                if refcounted_future.release():
-                    self.value_store.pop(value_ref.unique_key)
+            self.value_store[output_unique_key] = RefcountedFuture(indexed, output_refcount)
 
-                # Create an indexed future that represents a specific output arg
-                # Here we use an attach functon so that the index passed to the lambda changes in every loop
-                def attach_index(fut, index):
-                    indexed_fut = fut.then(lambda f: f.value()[index])
-                    return indexed_fut
-
-                indexed = attach_index(refcounted_future.future, idx)
-
-                # Enqueue the indexed future
-                # And notify places that may be waiting for it to be created, such as get_value
-                self.value_store[output_unique_key] = RefcountedFuture(indexed, output_refcount)
-                self.value_store_cv.notify_all()
-
+        return ValueReference(self.stage_id, output_unique_key)
 
     def get_value(self, caller_stage, runlist_key, microbatch, value_ref_arg):
         callee_stage = value_ref_arg.stage_id
-        logging.info(f'[{callee_stage}][{microbatch}] Executing transfer of value '
+        logging.info(f'[{callee_stage}][{microbatch}] Executing async transfer of value '
                      f'{value_ref_arg} initiated by stage {caller_stage} for {runlist_key}')
         assert callee_stage == self.stage_id, "Mismatch between ValueRef and stage executor"
 
-        with self.value_store_cv:
-            # Waiting for the indexed future for this arg to be created
-            while value_ref_arg.unique_key not in self.value_store:
-                self.value_store_cv.wait()
-            # Now the indexed future is created
+        with self.value_store_lock:
             refcounted_future = self.value_store[value_ref_arg.unique_key]
 
         value = refcounted_future.future.wait()
@@ -661,16 +631,15 @@ class PipeStageExecutor(EventRecorder):
         return value
 
     def async_transfer(self, microbatch, value_ref_arg, arg_idx, runlist_key):
-        logging.info(f'[{self.stage_id}][{microbatch}] Requesting transfer of value {value_ref_arg} '
-                     f'for runlist item {runlist_key} arg_idx {arg_idx}')
+        logging.info(f'[{self.stage_id}][{microbatch}] Starting transfer')
         value_ref_executor_rref = self.peer_executors[value_ref_arg.stage_id]
         fut = value_ref_executor_rref.rpc_async().get_value(
             self.stage_id, runlist_key, microbatch, value_ref_arg)
 
         def bottom_half(fut):
-            value = fut.value()
             logging.info(f'[{self.stage_id}][{microbatch}] Completing transfer of value {value_ref_arg} '
-                         f'for runlist item {runlist_key} arg_idx {arg_idx}')
+                         f'for runlist item {runlist_key}')
+            value = fut.value()
             self.rank_worker.update_run_list(runlist_key, arg_idx, value)
 
         return fut.then(bottom_half)
@@ -1109,7 +1078,6 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
         self.cur_microbatch = cur_microbatch
         self.pc = 0
         self.node_list = list(self.module.graph.nodes)
-        logging.info(f'[root] RemoteInterpreter created with {len(self.node_list)} nodes')
 
         # Process args/kwargs
 
@@ -1127,8 +1095,6 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
         self.args_iter = iter(self.args)
         self.batch_id = batch_id
         self.num_microbatches = num_microbatches
-        # Dict from stage id to a list holding the coalesced getitem indices
-        self.stage_output_indices : Dict[int, List[Tuple[str, int, ValueReference, int]]] = {}
 
     def call_module(self, target, args, kwargs):
         assert isinstance(target, str)
@@ -1144,19 +1110,17 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
             logging.info(f'[root][{self.cur_microbatch}] Issuing {Phase.FORWARD} '
                          f'invocation for target {target} on stage {stage_id}')
             invocation_key = f'{self.cur_microbatch}_{node.name}'
-            start_ts = time.time()
+            ts = time.time()
             forward_name = event_name(Phase.FORWARD, stage_id, self.cur_microbatch)
             forward_id = event_id(Phase.FORWARD, stage_id, self.cur_microbatch, self.batch_id)
             name = f"I{forward_name}"
             id = f"I{forward_id}"
-            stage_executor.rpc_async().invoke(
-                invocation_key, Phase.FORWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
-                output_refcount=len(users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
-            finish_ts = time.time()
-            self.record_event(rank=0, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name, type='invoke',
+            self.record_event(rank=0, start_ts=ts, finish_ts=ts, id=id, name=name, type='invoke',
                               mbid=self.cur_microbatch)
             self.record_event_dependency(from_id=name, to_id=f"R{forward_name}", type='invoke')
-            return ValueReference(stage_id, invocation_key)
+            return stage_executor.rpc_sync().invoke(
+                invocation_key, Phase.FORWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
+                output_refcount=len(users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
         else:
             logging.info(f'[root][{self.cur_microbatch}] Running local operation {target} from driver')
             return super().call_module(target, args, kwargs)
@@ -1173,11 +1137,10 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
         if target is operator.getitem and isinstance(args[0], ValueReference):
             stage_id = args[0].stage_id
             if torch.is_grad_enabled() or args[0].unique_key != "noop":
-                indices = self.stage_output_indices.setdefault(stage_id, [])
-                index_tuple = (invocation_key, len(users), args[0], args[1])
-                logging.info(f'[root][{self.cur_microbatch}] Appending getitem tuple to stage {stage_id}: {index_tuple}')
-                indices.append(index_tuple)
-                return ValueReference(stage_id, invocation_key)
+                stage_executor = self.stage_to_executor[stage_id]
+                return stage_executor.rpc_sync().index_value(
+                    output_unique_key=invocation_key, value_ref=args[0], output_refcount=len(users),
+                    idx=args[1])
             else:
                 return ValueReference(stage_id, "noop")
         elif target is stage_backward:
@@ -1186,19 +1149,17 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
             if torch.is_grad_enabled():
                 logging.info(f'[root][{self.cur_microbatch}] Issuing BW invocation '
                              f'for target {node.meta["fw_stage"]} on stage {stage_id}')
-                start_ts = time.time()
+                ts = time.time()
                 backward_name = event_name(Phase.BACKWARD, stage_id, self.cur_microbatch)
                 backward_id = event_id(Phase.BACKWARD, stage_id, self.cur_microbatch, self.batch_id)
                 name = f"I{backward_name}"
                 id = f"I{backward_id}"
-                stage_executor.rpc_async().invoke(
-                    invocation_key, Phase.BACKWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
-                    output_refcount=len(users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
-                finish_ts = time.time()
-                self.record_event(rank=0, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name, type='invoke',
+                self.record_event(rank=0, start_ts=ts, finish_ts=ts, id=id, name=name, type='invoke',
                                   mbid=self.cur_microbatch)
                 self.record_event_dependency(from_id=name, to_id=backward_name, type='invoke')
-                return ValueReference(stage_id, invocation_key)
+                return stage_executor.rpc_sync().invoke(
+                    invocation_key, Phase.BACKWARD, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
+                    output_refcount=len(users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
             else:
                 return ValueReference(stage_id, "noop")
         elif target is sync_barrier:
@@ -1206,49 +1167,29 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
             stage_id, stage_executor = self.remote_stage_executor_rrefs[executor_keys[0]]
             logging.info(f'[root][{self.cur_microbatch}] Issuing sync invocation '
                          f'on stage {stage_id}')
-            stage_executor.rpc_async().invoke(
+            return stage_executor.rpc_sync().invoke(
                 invocation_key, Phase.SYNC_BARRIER, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
                 output_refcount=len(users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
-            return ValueReference(stage_id, invocation_key)
         elif target is _null_coalesce_accumulate:
             assert 'fw_stage' in node.meta
             stage_id, stage_executor = self.remote_stage_executor_rrefs[node.meta['fw_stage']]
-            logging.info(f'[root][{self.cur_microbatch}] Issuing accumulate grad invocation '
-                         f'for target {node.meta["fw_stage"]} on stage {stage_id}')
-            stage_executor.rpc_async().invoke(
-                invocation_key, Phase.ACCUMULATE_GRAD, args, kwargs, self.cur_microbatch,
-                debug_str=node.format_node(),
-                output_refcount=len(users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
-            return ValueReference(stage_id, invocation_key)
+            if torch.is_grad_enabled():
+                logging.info(f'[root][{self.cur_microbatch}] Issuing accumulate grad invocation '
+                             f'for target {node.meta["fw_stage"]} on stage {stage_id}')
+                return stage_executor.rpc_sync().invoke(
+                    invocation_key, Phase.ACCUMULATE_GRAD, args, kwargs, self.cur_microbatch,
+                    debug_str=node.format_node(),
+                    output_refcount=len(users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
+            else:
+                return ValueReference(stage_id, "noop")
         else:
             raise AssertionError(f'Unknown operator {torch.typename(target)}')
-
-
-    def issue_coalesced_getitem_calls(self):
-        if len(self.stage_output_indices) == 0:
-            return
-        logging.info(f'[root][{self.cur_microbatch}] Issuing getitem calls to stage: {self.stage_output_indices.keys()}')
-
-        for stage_id in self.stage_output_indices:
-            stage_executor = self.stage_to_executor[stage_id]
-            name = f"G{stage_id},{self.cur_microbatch}"
-            id = f"{name},{self.batch_id}"
-            start_ts = time.time()
-            stage_executor.rpc_async().coalesced_index_value(self.stage_output_indices[stage_id])
-            finish_ts = time.time()
-            self.record_event(rank=0, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name, type='invoke',
-                              mbid=self.cur_microbatch)
-
-        self.stage_output_indices.clear()
-
 
     def run_until(self, predicate: Callable[[pippy.fx.Node], bool]) -> Optional[pippy.fx.Node]:
         while self.pc < len(self.node_list):
             node = self.node_list[self.pc]
 
             if predicate(node):
-                # Issue coalesced getitem calls as we pause issuing stage calls
-                self.issue_coalesced_getitem_calls()
                 return node
 
             self.run_one(node)
@@ -1266,8 +1207,6 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
         #  to the callees) as an optimization
         # TODO: is it possible for there to be a blocking version of this API?
         def wait_for_confirmation(n):
-            # The following if will not be true as we are using our own ValueRef
-            # instead of RPC's RRef
             if isinstance(n, torch._C._distributed_rpc.PyRRef):
                 while not n.confirmed_by_owner():
                     pass
@@ -1280,28 +1219,6 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
 
         self.pc += 1
         return node
-
-
-class _run_until_criteria:
-    def __init__(self):
-        self.seen_stages = 0
-
-    # Run the node we start with including all nodes that are tuple
-    # indexing, then stop
-    def hitting_next_stage(self, node):
-        if node.op == 'output':
-            return True
-
-        if node.target != operator.getitem and node.target != _null_coalesce_accumulate:
-            self.seen_stages += 1
-
-        if self.seen_stages > 1:
-            return True
-        elif self.seen_stages == 1 and node.target == _null_coalesce_accumulate:
-            # We are hitting the accumulate call of the next (backward) stage, stop
-            return True
-        else:
-            return False
 
 
 class PipelineDriverFillDrain(PipelineDriverBase):
@@ -1359,8 +1276,17 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         for ramp_up_idx in range(len(self.microbatch_interpreters)):
             for i in range(ramp_up_idx + 1):
                 interp = self.microbatch_interpreters[i]
-                criteria = _run_until_criteria()
-                interp.run_until(criteria.hitting_next_stage)
+                start_node = interp.node_list[min(interp.pc, len(interp.node_list) - 1)]
+
+                def run_including_indexing(n):
+                    if n.op == 'output':
+                        return True
+
+                    # Run the node we start with including all nodes that are tuple
+                    # indexing, then stop
+                    return n != start_node and n.target != operator.getitem
+
+                interp.run_until(run_including_indexing)
 
         # Steady-state. We have a full diagonal in the matrix; keep dispatching
         # across the diagonal
@@ -1370,8 +1296,19 @@ class PipelineDriverFillDrain(PipelineDriverBase):
             any_valid = False
             for interp in self.microbatch_interpreters:
                 start_node = interp.node_list[min(interp.pc, len(interp.node_list) - 1)]
-                criteria = _run_until_criteria()
-                interp.run_until(criteria.hitting_next_stage)
+
+                def run_including_indexing(n):
+                    # Run the node we start with including all nodes that are
+                    # tuple indexing, but also stop at the output node. Because
+                    # we are on a diagonal, interpreters as lower microbatch IDs
+                    # will be invoked when their pc's point to the output node
+                    # multiple times.
+                    if n.op == 'output':
+                        return True
+
+                    return n != start_node and n.target != operator.getitem
+
+                interp.run_until(run_including_indexing)
 
                 any_valid |= interp.node_list[interp.pc] != start_node
 
