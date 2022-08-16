@@ -16,12 +16,12 @@ def dist_sum(self: DTensor) -> DTensor:
     if self_placement.is_shard() or self_placement.is_partial():
         placements = [_Partial(ReduceOp.SUM)]
         # partial reduce
-        partial_sum = DTensor.from_local(local_sum, device_mesh, placements)
+        partial_sum = DTensor(local_sum, device_mesh, placements)
         # all_reduce across device
         replicate_placements = [Replicate()]
         return partial_sum.redistribute(device_mesh, replicate_placements)
     elif self_placement.is_replicate():
-        return DTensor.from_local(
+        return DTensor(
             local_sum, device_mesh=device_mesh, placements=self.placements
         )
     else:

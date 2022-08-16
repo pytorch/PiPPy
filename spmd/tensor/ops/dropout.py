@@ -16,15 +16,15 @@ def _dist_dropout(
         raise RuntimeError("Not supported!")
     else:
         local_tensor, mask = torch.ops.aten.native_dropout(
-            self.to_local(), p=p, train=train
+            self._local_tensor, p=p, train=train
         )
         return (
-            DTensor.from_local(
+            DTensor(
                 local_tensor,
                 device_mesh=self.device_mesh,
                 placements=self.placements,
             ),
-            DTensor.from_local(
+            DTensor(
                 mask, device_mesh=self.device_mesh, placements=self.placements
             ),
         )

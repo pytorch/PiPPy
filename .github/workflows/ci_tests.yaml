@@ -9,6 +9,11 @@ on:
       - 'docs/**'
       - '**.md'
 
+concurrency:
+  # Cancel CI on previous commit when a new commit is pushed to the same branch
+  group: ${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
 
   pytest_tests:
@@ -143,12 +148,12 @@ jobs:
         run: python test/local_test_forward_hf_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
       - name: Run HF GPT2 forward-only integration test
         run: python test/local_test_forward_hf_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
-      - name: Run GPT2 slurm example without slurm
-        run: python examples/slurm/hf/gpt2/pippy_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
-      - name: Run BERT slurm example without slurm
-        run: python examples/slurm/hf/bert/pippy_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
-      - name: Run T5 slurm example without slurm
-        run: python examples/slurm/hf/t5/pippy_t5.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
+      - name: Run GPT2 example
+        run: python examples/hf/gpt2/pippy_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+      - name: Run BERT example
+        run: python examples/hf/bert/pippy_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+      - name: Run T5 example
+        run: python examples/hf/t5/pippy_t5.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
       - name: Run visualizer test
         run: python test/local_test_visualizer.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
 
@@ -208,7 +213,7 @@ jobs:
             "${DOCKER_IMAGE}"
           )
           # Run GPU tests and return error signal from docker
-          docker exec -t -w "${PIPPY_ROOT}" "${container_name}" bash -c "bash .github/workflows/gpu_tests.sh; exit $?"
+          docker exec -t -w "${PIPPY_ROOT}" "${container_name}" bash -c "bash .github/workflows/gpu_tests.sh; exit \$?"
       - name: Chown workspace
         if: always()
         run: |

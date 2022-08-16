@@ -1,109 +1,27 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 # implement matrix related ops for distributed tensor
-import torch.utils._pytree as pytree
-from torch.distributed.distributed_c10d import ReduceOp
-from spmd.tensor.api import DTensor
-from spmd.tensor.placement_types import Shard, Replicate, _Partial
-from spmd.tensor.ops.utils import (
-    unwrap_local_tensor,
-    unwrap_single_placement,
-    register_impl,
-)
+from typing import Optional
+from spmd.tensor.dispatch import OpSchema
+from spmd.tensor.placement_types import PlacementSpec
+from spmd.tensor.ops.prop_rules import einop_prop, mm_prop, pointwise_prop
+from spmd.tensor.ops.utils import register_prop_rule
 
 
-@register_impl("aten.addmm.default")
-def dist_addmm(
-    input: DTensor,
-    mat1: DTensor,
-    mat2: DTensor,
-    # pyre-fixme[2]: Parameter must be annotated.
-    beta=1,
-    # pyre-fixme[2]: Parameter must be annotated.
-    alpha=1,
-) -> DTensor:
-    # dist addmm:
-    # input:shard(0)    mat1: shard(0),  mat2: replicate
-    # input:shard(1)    mat1: replicate, mat2: shard(1)
-    # input:replicate   mat1: shard(0),  mat2: replicate
-    # input:replicate   mat1: replicate, mat2: shard(1)
-    # input:replicate   mat1: shard(0),  mat2: shard(1)
-    local_input, local_mat1, local_mat2 = pytree.tree_map(
-        unwrap_local_tensor, (input, mat1, mat2)
-    )
-    input_placement, mat1_placement, mat2_placement = pytree.tree_map(
-        unwrap_single_placement, (input, mat1, mat2)
-    )
-    device_mesh = mat1.device_mesh
-
-    assert input_placement.is_replicate(), "only support replication now"
-
-    # only implemented combo with no comm for now
-    # TODO: implement all combinations
-    if mat1_placement.is_shard(dim=0) and mat2_placement.is_replicate():
-        local_res = local_input.addmm(
-            local_mat1, local_mat2, beta=beta, alpha=alpha
-        )
-        return DTensor.from_local(local_res, device_mesh, mat1.placements)
-    elif mat1_placement.is_replicate() and mat2_placement.is_shard(dim=1):
-        local_res = local_input.addmm(
-            local_mat1, local_mat2, beta=beta, alpha=alpha
-        )
-        return DTensor.from_local(local_res, device_mesh, mat2.placements)
-    elif mat1_placement.is_replicate() and mat2_placement.is_replicate():
-        local_res = local_input.addmm(
-            local_mat1, local_mat2, beta=beta, alpha=alpha
-        )
-        return DTensor.from_local(
-            local_res, device_mesh, mat1.placements, run_check=False
-        )
-    else:
-        raise RuntimeError(
-            f"addmm operator supported for inputs: {mat1}, {mat2}"
-        )
+@register_prop_rule("aten.mm.default")
+def mm_rules(op_schema: OpSchema) -> Optional[PlacementSpec]:
+    mat1_spec, mat2_spec = op_schema.args_spec
+    return mm_prop(mat1_spec, mat2_spec)
 
 
-@register_impl("aten.mm.default")
-def dist_mm(mat1: DTensor, mat2: DTensor) -> DTensor:
-    # dist mm:
-    # mat1: shard(0),  mat2: replicate
-    # mat1: replicate, mat2: shard(1)
-    # mat1: shard(1),  mat2: shard(0)
-    # mat1: shard(0),  mat2: shard(1)
-    local_mat1, local_mat2 = pytree.tree_map(unwrap_local_tensor, (mat1, mat2))
-    mat1_placement, mat2_placement = pytree.tree_map(
-        unwrap_single_placement, (mat1, mat2)
-    )
-    device_mesh = mat1.device_mesh
-
-    # only implemented the first 3
-    # TODO: implement all combinations
-    if mat1_placement.is_shard(dim=0) and mat2_placement.is_replicate():
-        local_res = local_mat1.mm(local_mat2)
-        return DTensor.from_local(local_res, device_mesh, mat1.placements)
-    elif mat1_placement.is_replicate() and mat2_placement.is_shard(dim=1):
-        local_res = local_mat1.mm(local_mat2)
-        return DTensor.from_local(local_res, device_mesh, mat2.placements)
-    elif mat1_placement.is_shard(dim=1) and mat2_placement.is_shard(dim=0):
-        local_res = local_mat1.mm(local_mat2)
-        placements = [_Partial(ReduceOp.SUM)]
-        partial_sum = DTensor.from_local(local_res, device_mesh, placements)
-        # all reduce across ranks
-        replicate_placements = [Replicate()]
-        return partial_sum.redistribute(device_mesh, replicate_placements)
-    else:
-        raise RuntimeError(f"mm operator supported for inputs: {mat1}, {mat2}")
+@register_prop_rule("aten.addmm.default")
+def addmm_rules(op_schema: OpSchema) -> Optional[PlacementSpec]:
+    input_spec, mat1_spec, mat2_spec = op_schema.args_spec
+    mm_out_spec = mm_prop(mat1_spec, mat2_spec)
+    if mm_out_spec is None:
+        return None
+    return pointwise_prop((input_spec, mm_out_spec))
 
 
-@register_impl("aten.t.default")
-def dist_t(self: DTensor) -> DTensor:
-    # transpose with sharding
-    local_mat = pytree.tree_map(unwrap_local_tensor, self)
-    assert local_mat.ndim == 2
-    mat_placement = pytree.tree_map(unwrap_single_placement, self)
-    transposed_local_mat = local_mat.t()
-    device_mesh = self.device_mesh
-
-    new_shard_dim = 1 if mat_placement.is_shard(dim=0) else 0
-    return DTensor.from_local(
-        transposed_local_mat, device_mesh, [Shard(new_shard_dim)]
-    )
+@register_prop_rule("aten.t.default")
+def transpose_rule(op_schema: OpSchema) -> Optional[PlacementSpec]:
+    return einop_prop("ij->ji", op_schema.args_spec)

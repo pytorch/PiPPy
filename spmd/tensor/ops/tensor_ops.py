@@ -1,40 +1,28 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-import torch
 from spmd.tensor.api import DTensor
-from spmd.tensor.ops.utils import register_impl
+from spmd.tensor.dispatch import OpSchema
+from spmd.tensor.placement_types import PlacementSpec
 
 
-@register_impl("aten.detach.default")
-# pyre-fixme[3]: Return type must be annotated.
-# pyre-fixme[2]: Parameter must be annotated.
-def dist_detach(self):
-    device_mesh = self.device_mesh
+# NOTE: the default propagation rule should apply for
+# any operator that does not return a DTensor, i.e.
+# for operators that only returns int/float/bool, we by
+# default still propagate the spec, this is to ensure
+# that we only return None for the case where the sharding
+# propagation failed, and we should do auto-redistribute
+def default_prop_rule(op_schema: OpSchema) -> PlacementSpec:
+    # by default prop the first arg spec
+    return op_schema.args_spec[0]
 
-    detached_tensor = self.to_local().detach()
-    return DTensor.from_local(detached_tensor, device_mesh, self.placements)
 
-
-@register_impl("aten.ones_like.default")
-# pyre-fixme[3]: Return type must be annotated.
-def dist_ones_like(
-    # pyre-fixme[2]: Parameter must be annotated.
-    self,
-    # pyre-fixme[2]: Parameter must be annotated.
-    dtype=None,
-    # pyre-fixme[2]: Parameter must be annotated.
-    layout=None,
-    # pyre-fixme[2]: Parameter must be annotated.
-    device=None,
-    # pyre-fixme[2]: Parameter must be annotated.
-    pin_memory=None,
-    # pyre-fixme[2]: Parameter must be annotated.
-    memory_format=None,
-):
-    device_mesh = self.device_mesh
-
-    new_local_tensor = torch.ones_like(self.to_local())
-    return DTensor.from_local(new_local_tensor, device_mesh, self.placements)
-
+default_prop_ops = [
+    "aten.is_same_size.default",
+    "aten.ones_like.default",
+    "aten.detach.default",
+    "aten.clone.default",
+]
+for op in default_prop_ops:
+    DTensor._op_to_rules[op] = default_prop_rule
 
 # @register_impl("aten.expand.default")
 # def dist_expand(types, args=(), kwargs=None):

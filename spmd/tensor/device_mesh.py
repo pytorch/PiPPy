@@ -152,7 +152,6 @@ class DeviceMesh(object):
             # handle multi-dim mesh, create subgroups by
             # looping over the pg_ranks_by_dim for each dim
             for dim in range(self.mesh.ndim):
-                # local_subgroup_by_dim = self._dim_to_groups[dim]
                 # swap the current dim to the last dim
                 # then reshape to flatten out other dims
                 pg_ranks_by_dim = self.mesh.swapdims(-1, dim).reshape(
@@ -160,7 +159,7 @@ class DeviceMesh(object):
                 )
 
                 # multi-dim mesh, create subgroups by
-                # looping over the transposed stacked_mesh
+                # looping over the pg_ranks for each dim
                 # and append the groups
                 for dim_mesh in pg_ranks_by_dim:
                     subgroup_ranks = dim_mesh.tolist()
@@ -168,8 +167,7 @@ class DeviceMesh(object):
                     # pg or not, it's required that all ranks participate
                     # in subgroup construction
                     new_subgroup = new_group(
-                        ranks=subgroup_ranks,
-                        backend=backend_name,
+                        ranks=subgroup_ranks, backend=backend_name
                     )
                     # only add to dim_groups if the current rank in the subgroup
                     if self.get_rank() in subgroup_ranks:
@@ -261,7 +259,7 @@ class DeviceMesh(object):
         if dim_group is not GroupMember.WORLD:
             src_for_dim = _get_global_rank(dim_group, 0)
 
-        return broadcast(tensor, src=src_for_dim, group=dim_group)
+        return broadcast(tensor.contiguous(), src=src_for_dim, group=dim_group)
 
     # pyre-fixme[3]: Return type must be annotated.
     def all_gather(self, tensor: torch.Tensor, mesh_dim: int = 0):

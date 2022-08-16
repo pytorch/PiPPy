@@ -12,7 +12,8 @@ import torch
 import torch.distributed.rpc as rpc
 import pippy.fx
 
-from pippy.IR import Pipe, stage_backward, sync_barrier, _null_coalesce_accumulate
+from pippy.IR import Pipe
+from pippy.backward import stage_backward, sync_barrier, _null_coalesce_accumulate
 from pippy.events import EventRecorder, EventsContext, Event, Allocator
 from pippy.microbatch import split_args_kwargs_into_chunks, merge_chunks
 
@@ -1226,13 +1227,16 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
         elif target is _null_coalesce_accumulate:
             assert 'fw_stage' in node.meta
             stage_id, stage_executor = self.remote_stage_executor_rrefs[node.meta['fw_stage']]
-            logging.info(f'[root][{self.cur_microbatch}] Issuing accumulate grad invocation '
-                         f'for target {node.meta["fw_stage"]} on stage {stage_id}')
-            stage_executor.rpc_async().invoke(
-                invocation_key, Phase.ACCUMULATE_GRAD, args, kwargs, self.cur_microbatch,
-                debug_str=node.format_node(),
-                output_refcount=len(users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
-            return ValueReference(stage_id, invocation_key)
+            if torch.is_grad_enabled():
+                logging.info(f'[root][{self.cur_microbatch}] Issuing accumulate grad invocation '
+                             f'for target {node.meta["fw_stage"]} on stage {stage_id}')
+                stage_executor.rpc_async().invoke(
+                    invocation_key, Phase.ACCUMULATE_GRAD, args, kwargs, self.cur_microbatch,
+                    debug_str=node.format_node(),
+                    output_refcount=len(users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
+                return ValueReference(stage_id, invocation_key)
+            else:
+                return ValueReference(stage_id, "noop")
         else:
             raise AssertionError(f'Unknown operator {torch.typename(target)}')
 

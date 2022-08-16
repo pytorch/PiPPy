@@ -8,7 +8,7 @@ dist
 .pyre/
 .watchmanconfig
 **/*.json
-**/slurm-*.out
+**/*.out
 **/.DS_STORE
 
 # spmd ignores

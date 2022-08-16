@@ -2,7 +2,7 @@
 import torch
 import torch.nn as nn
 from torch.testing._internal.common_utils import run_tests
-from ..test_utils import DistTensorTestBase, with_comms
+from spmd.test._utils import DistTensorTestBase, with_comms  # type: ignore
 from spmd import (
     distribute_tensor,
     distribute_module,
@@ -43,6 +43,18 @@ class DistTensorAPITest(DistTensorTestBase):
         self.assertEqual(sharded_tensor.size(), torch.Size([12, 3]))
         local_tensor = sharded_tensor.to_local()
         self.assertEqual(local_tensor.size(), torch.Size([3, 3]))
+
+    @with_comms
+    def test_distribute_tensor_requires_grad(self):
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        shard_spec = [Shard(0)]
+        tensor_to_shard = torch.randn(12, 3, requires_grad=True)
+        sharded_tensor = distribute_tensor(
+            tensor_to_shard, device_mesh, shard_spec
+        )
+        self.assertTrue(sharded_tensor.requires_grad)
+        self.assertTrue(sharded_tensor.is_leaf)
+        self.assertEqual(sharded_tensor.size(), torch.Size([12, 3]))
 
     @with_comms
     def test_distribute_module(self):

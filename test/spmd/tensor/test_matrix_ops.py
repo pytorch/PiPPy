@@ -1,7 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 from torch.testing._internal.common_utils import run_tests
-from ..test_utils import DistTensorTestBase, with_comms
+from spmd.test._utils import DistTensorTestBase, with_comms  # type: ignore
 from spmd import distribute_tensor, DeviceMesh, Shard, Replicate
 
 
@@ -50,8 +50,7 @@ class DistMatrixOpsTest(DistTensorTestBase):
         grad_res = torch.ones(12, 16)
         grad_dist_res = distribute_tensor(grad_res, device_mesh, shard_spec)
         dist_res.backward(grad_dist_res)
-        print(mat1.grad)
-        # dist_res.sum().backward()
+        self.assertIsNotNone(mat1.grad)
 
     @with_comms
     def test_t(self):

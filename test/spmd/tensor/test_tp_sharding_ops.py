@@ -2,7 +2,11 @@
 from spmd.tensor.placement_types import Replicate
 import torch
 from torch.testing._internal.common_utils import run_tests
-from ..test_utils import DistTensorTestBase, with_comms, TEST_GPU_NUM
+from spmd.test._utils import (  # type: ignore
+    DistTensorTestBase,
+    with_comms,
+    TEST_GPU_NUM,
+)
 from spmd import DeviceMesh, DTensor, Shard, Replicate, distribute_tensor
 from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 
@@ -18,30 +22,14 @@ class TPShardingOpsTest(DistTensorTestBase):
         st_new = distribute_tensor(
             tensor.view(8, 4, 35, 13), device_mesh, sharding
         )
-
         self.assertEqual(st.to_local(), st_new.to_local())
         self.assertEqual(st.placements[0], st_new.placements[0])
-
-    @with_comms
-    def test_sharded_contiguous(self):
-        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
-        torch.manual_seed(self.rank)
-        tensor = torch.rand(3, 5, 6)
-        sharding = [Shard(0)]
-        dist_tensor = DTensor.from_local(tensor, device_mesh, sharding)
-        self.assertTrue(dist_tensor.is_contiguous())
-        new_dt = dist_tensor.transpose(0, 2)
-        # TODO: Investigate why after transpose dt is still contiguous.
-        self.assertFalse(new_dt.to_local().is_contiguous())
-        new_dt = new_dt.contiguous()
-        self.assertTrue(new_dt.is_contiguous())
-        self.assertTrue(new_dt.to_local().is_contiguous())
 
     @with_comms
     def test_sharded_transpose(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         torch.manual_seed(self.rank)
-        tensor = torch.rand(3, 5, 6)
+        tensor = torch.rand(3, 5, 6, device=self.device_type)
         sharding = [Shard(0)]
         dist_tensor = DTensor.from_local(tensor, device_mesh, sharding)
         new_dt = dist_tensor.transpose(0, 2)
@@ -57,9 +45,9 @@ class TPShardingOpsTest(DistTensorTestBase):
     def test_sharded_baddbmm(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         torch.manual_seed(self.rank)
-        tensor = torch.rand(3, 5, 6)
-        batch_1 = torch.rand(3, 5, 8)
-        batch_2 = torch.rand(3, 8, 6)
+        tensor = torch.rand(3, 5, 6, device=self.device_type)
+        batch_1 = torch.rand(3, 5, 8, device=self.device_type)
+        batch_2 = torch.rand(3, 8, 6, device=self.device_type)
         local_result = torch.baddbmm(
             tensor, batch_1, batch_2, beta=0.0, alpha=0.5
         )
@@ -77,8 +65,8 @@ class TPShardingOpsTest(DistTensorTestBase):
     def test_sharded_bmm(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         torch.manual_seed(self.rank)
-        input = torch.rand(3, 5, 8)
-        mat_2 = torch.rand(3, 8, 6)
+        input = torch.rand(3, 5, 8, device=self.device_type)
+        mat_2 = torch.rand(3, 8, 6, device=self.device_type)
         local_result = torch.bmm(input, mat_2)
         sharding = [Shard(0)]
         input_dt = DTensor.from_local(input, device_mesh, sharding)
@@ -94,7 +82,7 @@ class TPShardingOpsTest(DistTensorTestBase):
                 self.device_type, list(range(self.world_size))
             )
             torch.manual_seed(self.rank)
-            input = torch.rand(15, 27, 16)
+            input = torch.rand(15, 27, 16, device=self.device_type)
             local_result = torch.nn.functional.softmax(
                 input, dim=softmax_dim, dtype=torch.float32
             )
@@ -110,7 +98,7 @@ class TPShardingOpsTest(DistTensorTestBase):
     def test_sharded_permute(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         torch.manual_seed(self.rank)
-        tensor = torch.rand(3, 5, 6)
+        tensor = torch.rand(3, 5, 6, device=self.device_type)
         sharding = [Shard(0)]
         dist_tensor = DTensor.from_local(tensor, device_mesh, sharding)
         new_dt = dist_tensor.permute(1, 0, 2)
@@ -121,7 +109,7 @@ class TPShardingOpsTest(DistTensorTestBase):
     def test_replicated_permute(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         torch.manual_seed(0)
-        tensor = torch.rand(3, 5, 6)
+        tensor = torch.rand(3, 5, 6, device=self.device_type)
         sharding = [Replicate()]
         dist_tensor = DTensor.from_local(tensor, device_mesh, sharding)
         new_dt = dist_tensor.permute(1, 0, 2)
@@ -151,7 +139,7 @@ class TPShardingOpsTest(DistTensorTestBase):
     def test_sharded_split(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         torch.manual_seed(self.rank)
-        tensor = torch.rand(3, 5, 6)
+        tensor = torch.rand(3, 5, 6, device=self.device_type)
         sharding = [Shard(2)]
         dist_tensor = DTensor.from_local(tensor, device_mesh, sharding)
         dt_list = dist_tensor.split(dist_tensor.size(-1) // 2, dim=-1)
@@ -164,7 +152,7 @@ class TPShardingOpsTest(DistTensorTestBase):
     def test_view_with_sharding_dim_change(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         torch.manual_seed(self.rank)
-        tensor = torch.rand(3, 5, 6)
+        tensor = torch.rand(3, 5, 6, device=self.device_type)
         sharding = [Shard(2)]
         dt = DTensor.from_local(tensor, device_mesh, sharding)
         dt = dt._view_with_sharding_dim_change(1, (3, -1, 6))
