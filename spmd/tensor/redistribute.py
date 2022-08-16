@@ -1,5 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import List, cast
+from typing import List, Tuple, cast, Optional
 
 import torch
 import spmd.tensor.api as spmd_tensor
@@ -7,7 +7,10 @@ from spmd.tensor.placement_types import Placement, _Partial, Shard, Replicate
 from spmd.tensor.device_mesh import DeviceMesh
 
 
-def _replicate_then_shard(val):
+_PlacementItem = Tuple[int, Tuple[Placement, Placement]]
+
+
+def _replicate_then_shard(val: _PlacementItem) -> int:
     """
     Replicate from inner to outer dimension.
     Shard from outer to inner dimension.
@@ -21,7 +24,7 @@ def _replicate_then_shard(val):
         return 0
 
 
-def _decompose_reshard(val):
+def _decompose_reshard(val: List[_PlacementItem]) -> List[_PlacementItem]:
     """
     Decompose Si -> Sj into Si -> R -> Sj
     There's 2 ways a shardings can differ within a mesh dimension:
@@ -42,11 +45,11 @@ def _decompose_reshard(val):
     for i, (current, target) in val:
         # detect mis-aligned sharding
         if current.is_shard():
-            repeat_dim_current[current.dim] += 1
+            repeat_dim_current[cast(Shard, current).dim] += 1
         if target.is_shard():
-            repeat_dim_target[target.dim] += 1
+            repeat_dim_target[cast(Shard, target).dim] += 1
         if (
-                current.is_shard() and target.is_shard() and
+                isinstance(current, Shard) and isinstance(target, Shard) and
                 (current.dim != target.dim or repeat_dim_current[current.dim] != repeat_dim_target[target.dim])
         ):
             # decompose Shard(i) -> Shard(j) into Shard(i) -> Replicate() -> Shard(j)
@@ -74,13 +77,11 @@ def redistribute_spmd_tensor(
     sorted_placements = list(enumerate(zip(current_placements, placements)))
     sorted_placements = _decompose_reshard(sorted_placements)
     sorted_placements.sort(key=_replicate_then_shard)
-    attempted_transforms = [None] * len(placements)
 
     for i, (current, target) in sorted_placements:
         if current == target:
             # short cut, just use the original local tensor
             new_local_tensor = local_tensor
-            attempted_transforms[i] = target
             continue
 
         assert (
@@ -89,14 +90,13 @@ def redistribute_spmd_tensor(
 
         if target.is_replicate():
             # Case 1: target is Replicate
-            attempted_transforms[i] = target
             if current.is_partial():
                 partial_spec = cast(_Partial, current)
                 # all_reduce
                 new_local_tensor = device_mesh.all_reduce(
                     local_tensor, partial_spec.reduce_op, mesh_dim=i
                 )
-            else:
+            elif current.is_shard():
                 assert current.is_shard()
                 # for shard, all_gather all shards and return a tensor that is replicated on the previously sharded dimension
                 shard_spec = cast(Shard, current)
@@ -133,7 +133,6 @@ def redistribute_spmd_tensor(
             ), "Rank is not part of the mesh"  # TODO: figure out behavior here
             if current.is_partial():
                 # reduce scatter the current tensors
-                attempted_transforms[i] = target
                 new_tensor_size = list(local_tensor.size())
                 new_tensor_size[shard_dim] = chunk_size
                 new_local_tensor = torch.empty(
@@ -144,8 +143,8 @@ def redistribute_spmd_tensor(
                 new_local_tensor = device_mesh.reduce_scatter_base(
                     new_local_tensor, local_tensor, mesh_dim=i
                 )
-            elif current.is_replicate():
-                attempted_transforms[i] = target
+            else:
+                assert current.is_replicate()
                 # slice/narrow the tensor to corresponding local shard then return shard tensor
                 new_local_tensor = local_tensor.narrow(
                     shard_dim, my_rank * chunk_size, chunk_size
@@ -153,10 +152,6 @@ def redistribute_spmd_tensor(
 
         assert new_local_tensor is not None
         local_tensor = new_local_tensor
-
-    if attempted_transforms != list(placements):
-        # TODO: if not the same, we should apply all_to_all reshuffle
-        raise NotImplementedError(f"Could not redistribute the tensor! Got {attempted_transforms} vs {list(placements)}")
 
     assert new_local_tensor is not None, "redistribute failed!"
 
