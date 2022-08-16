@@ -113,7 +113,6 @@ from spmd.tensor.ops.prop_rules import pointwise_prop
 #     "sub",
 #     "subtract",
 #     "tan",
-#     "tanh",
 #     "true_divide",
 #     "trunc",
 #     "xlogy",
@@ -123,6 +122,7 @@ pointwise_ops = [
     "aten.relu.default",
     "aten.gelu.default",
     "aten.sigmoid.default",
+    "aten.tanh.default",
 ]
 
 
