@@ -1,9 +1,8 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import List, Dict
+from typing import List, Dict, cast
 from spmd.tensor.api import DTensor
 from spmd.tensor.dispatch import OpSchema, OutputSharding
-from spmd.tensor.placement_types import Replicate, _Partial, PlacementSpec
-from spmd.tensor.ops.utils import register_impl
+from spmd.tensor.placement_types import _Partial, PlacementSpec
 
 
 def _gen_placement_spec_with_pending_sum(
@@ -117,24 +116,41 @@ def einop_rule(
     )
 
 
-@register_impl("aten.sum.default")
-def dist_sum(self: DTensor) -> DTensor:
-    self_local = self.to_local()
-    self_placement = self.placements[0]
-    device_mesh = self.device_mesh
+def reduction_rule(op_schema: OpSchema) -> OutputSharding:
+    """
+    Propagate the sharding for reduction operations. Examples:
+        ij->i - sum on dim
+    """
+    alphabet = "abcdefghijklmnopqrstuvwxyz"
+    # reduction op usually begin with a single tensor
+    input_spec = cast(PlacementSpec, op_schema.args_schema[0])
+    input_chars = alphabet[: input_spec.ndim]
 
-    local_sum = self_local.sum()
-
-    if self_placement.is_shard() or self_placement.is_partial():
-        placements = [_Partial()]
-        # partial reduce
-        partial_sum = DTensor(local_sum, device_mesh, placements)
-        # all_reduce across device
-        replicate_placements = [Replicate()]
-        return partial_sum.redistribute(device_mesh, replicate_placements)
-    elif self_placement.is_replicate():
-        return DTensor(
-            local_sum, device_mesh=device_mesh, placements=self.placements
+    if len(op_schema.args_schema) > 1 and isinstance(
+        op_schema.args_schema[1], (int, list)
+    ):
+        # this is usually a dim-based reduction op schema pattern, it
+        # might not be true for every op for other special cases, we
+        # need to specialize them as needed.
+        # TODO: add support for things like `torch.unique` where it
+        # does not follow the reduction op convention.
+        dim_list = (
+            [op_schema.args_schema[1]]
+            if isinstance(op_schema.args_schema[1], int)
+            else op_schema.args_schema[1]
+        )
+        out_dimchars = input_chars.translate(
+            {ord(alphabet[dim]): None for dim in dim_list}
         )
     else:
-        raise RuntimeError("Not supported!")
+        # reducing to a single scalar tensor, we just mark output as empty
+        out_dimchars = ""
+
+    fmt = f"{input_chars}->{out_dimchars}"
+    return einop_rule(fmt, op_schema)
+
+
+reduction_ops = ["aten.sum.SymInt", "aten.sum.default", "aten.sum.dim_IntList"]
+
+for reduction_op in reduction_ops:
+    DTensor._op_to_rules[reduction_op] = reduction_rule

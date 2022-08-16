@@ -3,7 +3,7 @@
 from typing import Optional
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.ops.math_ops import einop_rule
-from spmd.tensor.ops.pointwise_ops import pointwise_rules
+from spmd.tensor.ops.pointwise_ops import pointwise_rule
 from spmd.tensor.placement_types import _Partial, PlacementSpec
 from spmd.tensor.ops.utils import register_prop_rule
 
@@ -58,7 +58,7 @@ def addmm_rules(op_schema: OpSchema) -> OutputSharding:
     # TODO: add multi dim support for addmm
 
     # run point wise rule on input + (mm_out) with linearity
-    output_sharding = pointwise_rules(
+    output_sharding = pointwise_rule(
         OpSchema((input_spec, mm_out_spec), {}), linearity=True
     )
     # if propagation failed, edit the schema suggestion from pointwise rules
