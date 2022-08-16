@@ -187,7 +187,9 @@ class MultiDimRedistributeTest(DistTensorTestBase):
 
             for inputs in all_inputs:
                 # if partial, temporarily make it Replicated, then replace replicated with partial afterwards
-                repl_inputs = [Replicate() if s.is_partial() else s for s in inputs]
+                repl_inputs = [
+                    Replicate() if s.is_partial() else s for s in inputs
+                ]
                 dt = distribute_tensor(full_tensor, device_mesh, repl_inputs)
 
                 if repl_inputs != inputs:
