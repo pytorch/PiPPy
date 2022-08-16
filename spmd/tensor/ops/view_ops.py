@@ -1,6 +1,6 @@
 from argparse import ArgumentError
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union, Sequence
 
 from spmd.tensor.placement_types import PlacementSpec
 import functools
@@ -10,21 +10,37 @@ from spmd.tensor.dispatch import OpSchema
 from spmd.tensor.ops.utils import register_prop_rule
 
 
-prod = lambda xs: functools.reduce(operator.mul, xs, 1)
+def _prod(xs: Sequence[int]) -> int:
+    return functools.reduce(operator.mul, xs, 1)
 
 
 # output is new singleton dimension
-SINGLETON = ('singleton', )
+Shape = Tuple[int, ...]
+
+Singleton = Tuple[str]
+Dim = int
+Broadcast = Tuple[str, Dim, int]
+NewDim = Tuple[str, int]
+Repeat = Tuple[str, int, int]
+Flatten = Tuple[str, Tuple[int, ...]]
+Comp = Tuple[str, Dim, Shape, int]
 
 
-def BROADCAST(input_dim, dim_size):
+DimSpec = Union[Dim, Singleton, Broadcast, NewDim, Repeat, Flatten, Comp]
+DimMap = Tuple[DimSpec, ...]
+
+
+SINGLETON: Singleton = ('singleton', )
+
+
+def BROADCAST(input_dim: Dim, dim_size: int) -> Broadcast:
     """
     output is the broadcast of a singleton input dimension
     """
     return ('broadcast', input_dim, dim_size)
 
 
-def NEWDIM(val):
+def NEWDIM(val: int) -> Union[NewDim, Singleton]:
     """
     create a new 'generic' dimension with a given size 'val'
     """
@@ -35,7 +51,7 @@ def NEWDIM(val):
         return ('newdim', val)
 
 
-def REPEAT(input_dim, times):
+def REPEAT(input_dim: Dim, times: int) -> Union[Dim, Repeat]:
     """
     The output dimension is a repeat of the input dimension.
     Repeat happens externally. E.g. for repeat=2 [0, 1, 2] -> [0, 1, 2, 0, 1, 2]
@@ -50,7 +66,7 @@ def REPEAT(input_dim, times):
         return ('repeat', input_dim, times)
 
 
-def FLATTEN(input_dims: Tuple):
+def FLATTEN(input_dims: Tuple[int, ...]) -> Union[Dim, Singleton, Flatten]:
     """
     create a dimension that is a flattened version of the given input dimensions.
     """
@@ -64,7 +80,7 @@ def FLATTEN(input_dims: Tuple):
         return ('flatten', input_dims)
 
 
-def COMP(input_dim, group_shape, idx):
+def COMP(input_dim: Dim, group_shape: Tuple[int, ...], idx: int) -> Union[Dim, Singleton, Comp]:
     """
     This dimension is a member of a decomposition of the input dim.
     Note , inpnut dim itself could be a FLATTENED input dim.
@@ -88,11 +104,11 @@ def COMP(input_dim, group_shape, idx):
         return ('comp', input_dim, new_group_shape, new_idx)
 
 
-def dim_pad_left(input_shape, min_dims):
+def dim_pad_left(input_shape: Shape, min_dims: int) -> DimMap:
     return (SINGLETON, ) * max(0, min_dims - len(input_shape)) + tuple(range(len(input_shape)))
 
 
-def dim_atleast_3d(num_dims):
+def dim_atleast_3d(num_dims: int) -> DimMap:
     if num_dims == 0:
         return (SINGLETON, SINGLETON, SINGLETON)
     elif num_dims == 1:
@@ -103,7 +119,7 @@ def dim_atleast_3d(num_dims):
         return tuple(range(num_dims))
 
 
-def expand(input_shape, shape):
+def expand(input_shape: Shape, shape: Shape) -> DimMap:
     """ Implements broadcast on multiple dimensions """
     assert len(shape) >= len(input_shape)
 
@@ -122,7 +138,7 @@ def expand(input_shape, shape):
     return tuple(mapping)
 
 
-def normalize_sizes(*sizes):
+def normalize_sizes(*sizes) -> Shape:
     if isinstance(sizes[0], int):
         return sizes
     elif len(sizes) == 1:
@@ -182,7 +198,7 @@ def infer_size(total_size, sizes):
     Infer the size of this dimension given the total_size.
     """
     infers = [i for i, s in enumerate(sizes) if s == -1]
-    size = prod(sizes)
+    size = _prod(sizes)
     assert len(infers) <= 1, 'can only infer one size'
     if infers:
         size = -size
@@ -198,10 +214,10 @@ def view_groups(from_size, to_size):
     Split up the total view into smaller groups of dimensions whose size will match:
     view_groups([3, 4, 5], [12, 5]) -> [([3, 4], [12]), ([5], [5])]
     """
-    from_nelem = prod(from_size)
+    from_nelem = _prod(from_size)
     to_size = infer_size(from_nelem, normalize_sizes(*to_size))
 
-    assert from_nelem == prod(to_size), 'Total view shape does not add up'
+    assert from_nelem == _prod(to_size), 'Total view shape does not add up'
 
     from_idx = 0
     to_idx = 0
@@ -355,7 +371,7 @@ def propagate_shape_and_sharding(in_shard, local_in_shape, rule, mesh_sizes):
             for in_dim in cmd[1][1:]:
                 assert not in_dim in sharded_in_dims, 'Only the first member of a FLATTEN group can be sharded'
             return (
-                prod(get_dim_size(a)[0] for a in cmd[1]),
+                _prod(get_dim_size(a)[0] for a in cmd[1]),
                 cmd[1][0] if cmd[1][0] in sharded_in_dims else None
             )
         elif cmd[0] == 'comp':

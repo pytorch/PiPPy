@@ -4,7 +4,7 @@ import math
 import warnings
 import torch
 from torch.utils._pytree import tree_map, tree_flatten
-from typing import Dict, Callable, Optional, Sequence
+from typing import Dict, Callable, Optional, Sequence, Tuple, Any
 from spmd.tensor.device_mesh import get_global_device_mesh, DeviceMesh
 from spmd.tensor.placement_types import (
     Placement,
@@ -114,12 +114,12 @@ class FromTorchTensor(torch.autograd.Function):
         return grad_output.to_local(), None, None, None
 
 
-def _reshape_alias(x, shape, strides):
+def _reshape_alias(x: torch.Tensor, shape: Tuple[int, ...], strides: Tuple[int, ...]) -> torch.Tensor:
     return torch.ops.aten.view(x, shape)
 
 from torch._decomp import decomposition_table
 
-CURRENT_DECOMPOSITION_TABLE: Dict[torch._ops.OpOverload, Callable] = {
+_CURRENT_DECOMPOSITION_TABLE: Dict[torch._ops.OpOverload, Callable[..., Any]] = {
     torch.ops.aten._reshape_alias.default: _reshape_alias,
 }
 
@@ -232,9 +232,9 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # first we need to lift some private aten aliases to public calls
         if kwargs is None:
             kwargs = {}
-        if func in CURRENT_DECOMPOSITION_TABLE:
+        if func in _CURRENT_DECOMPOSITION_TABLE:
             with torch.overrides.enable_reentrant_dispatch():
-                return CURRENT_DECOMPOSITION_TABLE[func](*args, **kwargs)
+                return _CURRENT_DECOMPOSITION_TABLE[func](*args, **kwargs)
 
 
         # check that we are not getting mixed vanilla and Distributed tensors
