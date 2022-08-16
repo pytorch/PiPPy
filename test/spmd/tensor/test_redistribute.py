@@ -156,64 +156,68 @@ class RedistributeTest(DistTensorTestBase):
 class MultiDimRedistributeTest(DistTensorTestBase):
     @property
     def world_size(self) -> int:
-        return 6
+        return 8
 
     @with_comms
     def test_multi_dim_mesh(self):
-        mesh_shape = torch.arange(self.world_size).view(-1, 2)
-        device_mesh = DeviceMesh(self.device_type, mesh_shape)
-        tensor_shape = (6, 12)
-
-        if torch.distributed.get_rank() == 0:
-            full_tensor = torch.randn(*tensor_shape)
-        else:
-            # these should be entirely ignored
-            # because distribute_tensor is expected to override shards in ranks != 0
-            full_tensor = torch.ones(*tensor_shape)
-
-        possibilities = [Replicate()] + [
-            Shard(i) for i in range(full_tensor.ndim)
-        ]
-        all_outputs = list(
-            itertools.product(*(mesh_shape.ndim * [possibilities]))
-        )
-        all_inputs = list(
-            itertools.product(
-                *(mesh_shape.ndim * [possibilities + [_Partial()]])
-            )
-        )
-
-        for inputs in all_inputs:
-            # if partial, temporarily make it Replicated, then replace replicated with partial afterwards
-            repl_inputs = [Replicate() if s.is_partial() else s for s in inputs]
-            dt = distribute_tensor(full_tensor, device_mesh, repl_inputs)
-
-            if repl_inputs != inputs:
-                # create a new DTensor reinterpreting some of the replicated entires as "Partial"
-                dt = DTensor(dt.to_local(), device_mesh, inputs)
+        devices = torch.arange(self.world_size)
+        for mesh_shape in [devices, devices.view(4, 2), devices.view(2, 2, 2)]:
+            mesh_shape = torch.arange(self.world_size).view(-1, 2)
+            device_mesh = DeviceMesh(self.device_type, mesh_shape)
+            tensor_shape = (16, 24)
 
             if torch.distributed.get_rank() == 0:
-                print(inputs)
+                full_tensor = torch.randn(*tensor_shape)
+            else:
+                # these should be entirely ignored
+                # because distribute_tensor is expected to override shards in ranks != 0
+                full_tensor = torch.ones(*tensor_shape)
 
-            for outputs in all_outputs:
-                dt2 = dt.redistribute(device_mesh, outputs)
-                if torch.distributed.get_rank() == 0:
-                    print("  ", outputs)
+            possibilities = [Replicate()] + [
+                Shard(i) for i in range(full_tensor.ndim)
+            ]
+            all_outputs = list(
+                itertools.product(*(mesh_shape.ndim * [possibilities]))
+            )
+            all_inputs = list(
+                itertools.product(
+                    *(mesh_shape.ndim * [possibilities + [_Partial()]])
+                )
+            )
 
-                local_full = dt.redistribute(
-                    device_mesh, device_mesh.ndim * [Replicate()]
-                ).to_local()
-                if torch.distributed.get_rank() == 0:
-                    self.assertEqual(local_full.shape, full_tensor.shape)
+            for inputs in all_inputs:
+                # if partial, temporarily make it Replicated, then replace replicated with partial afterwards
+                repl_inputs = [Replicate() if s.is_partial() else s for s in inputs]
+                dt = distribute_tensor(full_tensor, device_mesh, repl_inputs)
 
-                    num_sums = 1
-                    for idx, input in enumerate(inputs):
-                        if input.is_partial():
-                            num_sums *= mesh_shape.size(idx)
-                    expected = (
-                        num_sums * full_tensor
-                    )  # + torch.ones(*tensor_shape)
-                    self.assertEqual(local_full, expected)
+                if repl_inputs != inputs:
+                    # create a new DTensor reinterpreting some of the replicated entires as "Partial"
+                    dt = DTensor(dt.to_local(), device_mesh, inputs)
+
+                # if torch.distributed.get_rank() == 0:
+                #     print(inputs)
+
+                for outputs in all_outputs:
+                    # if torch.distributed.get_rank() == 0:
+                    #     print("  ", outputs)
+
+                    dt2 = dt.redistribute(device_mesh, outputs)
+
+                    local_full = dt2.redistribute(
+                        device_mesh, device_mesh.ndim * [Replicate()]
+                    ).to_local()
+
+                    if torch.distributed.get_rank() == 0:
+                        self.assertEqual(local_full.shape, full_tensor.shape)
+
+                        num_sums = 1
+                        for idx, input in enumerate(inputs):
+                            if input.is_partial():
+                                num_sums *= mesh_shape.size(idx)
+                        expected = (
+                            num_sums * full_tensor
+                        )  # + torch.ones(*tensor_shape)
+                        self.assertEqual(local_full, expected)
 
 
 if __name__ == "__main__":
