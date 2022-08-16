@@ -37,6 +37,7 @@ def _decompose_reshard(val: List[_PlacementItem]) -> List[_PlacementItem]:
     """
     # detect mis-aligned repeated shardings
     from collections import defaultdict
+
     repeat_dim_current = defaultdict(int)
     repeat_dim_target = defaultdict(int)
 
@@ -49,8 +50,13 @@ def _decompose_reshard(val: List[_PlacementItem]) -> List[_PlacementItem]:
         if target.is_shard():
             repeat_dim_target[cast(Shard, target).dim] += 1
         if (
-                isinstance(current, Shard) and isinstance(target, Shard) and
-                (current.dim != target.dim or repeat_dim_current[current.dim] != repeat_dim_target[target.dim])
+            isinstance(current, Shard)
+            and isinstance(target, Shard)
+            and (
+                current.dim != target.dim
+                or repeat_dim_current[current.dim]
+                != repeat_dim_target[target.dim]
+            )
         ):
             # decompose Shard(i) -> Shard(j) into Shard(i) -> Replicate() -> Shard(j)
             output.append((i, (current, Replicate())))
