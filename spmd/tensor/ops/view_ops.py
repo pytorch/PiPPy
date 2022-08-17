@@ -6,7 +6,7 @@ from spmd.tensor.placement_types import PlacementSpec
 import functools
 import operator
 from spmd.tensor.api import Shard
-from spmd.tensor.dispatch import OpSchema
+from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.ops.utils import register_prop_rule
 
 
@@ -423,7 +423,7 @@ def propagate_shape_and_sharding(in_shard, local_in_shape, rule, mesh_sizes):
 def register_prop_rule_map(aten_op_name, local_op_name):
 
     @register_prop_rule(aten_op_name)
-    def reshape_prop(op_schema: OpSchema):
+    def reshape_prop(op_schema: OpSchema) -> OutputSharding:
         spec = ops[local_op_name]
 
         # note we are passing _global_ tensors
@@ -439,11 +439,15 @@ def register_prop_rule_map(aten_op_name, local_op_name):
         )
 
         # The code below doesn't work : it doesn't let me change the propery
-        args  = op_schema.args_spec
+        args  = op_schema.args_schema
         if spec.shape_argnum is not None:
-            op_schema.args_spec = args[:spec.shape_argnum] + (tuple(local_out_shape), ) + args[spec.shape_argnum + 1:]
+            op_schema.args_schema = args[:spec.shape_argnum] + (tuple(local_out_shape), ) + args[spec.shape_argnum + 1:]
 
-        return PlacementSpec(ndim=len(local_out_shape), mesh=op_schema.args_spec[0].mesh, placements=shard_out)
+        return OutputSharding(
+            output_spec=PlacementSpec(
+                ndim=len(local_out_shape),
+                mesh=op_schema.args_spec[0].mesh,
+                placements=shard_out))
 
 
 register_prop_rule_map('aten.view.default', Tensor.view)
