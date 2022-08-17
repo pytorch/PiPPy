@@ -3,13 +3,8 @@ import copy
 import math
 import warnings
 import torch
-<<<<<<< HEAD
-from torch.utils._pytree import tree_map, tree_flatten
-from typing import Dict, Callable, Optional, Sequence, Tuple, Any
-=======
 from torch.utils._pytree import tree_flatten
 from typing import Dict, Callable, Optional, Sequence
->>>>>>> multidim_redistribute
 from spmd.tensor.device_mesh import get_global_device_mesh, DeviceMesh
 from spmd.tensor.placement_types import (
     Placement,
