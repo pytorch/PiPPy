@@ -6,7 +6,7 @@ import torch
 import torch.utils._pytree as pytree
 from typing import List
 from spmd.tensor.api import DTensor
-from spmd.tensor.placement_types import Shard
+from spmd.tensor.placement_types import Replicate, Shard
 from spmd.tensor.utils import unwrap_local_tensor
 from spmd.tensor.ops.utils import unwrap_single_placement, register_impl
 
@@ -18,38 +18,47 @@ of DTensor and all corner cases for sharded distributed tensor.
 """
 
 
+<<<<<<< HEAD
+def dist_view_base(self: DTensor, op, *shape) -> DTensor:
+    shape = shape[0]
+    try:
+        infer_idx = shape.index(-1)
+    except ValueError:
+        infer_idx = None  # type: ignore
+
+    # Infer the dim which is specified with -1.
+    if infer_idx is not None:
+        st_size = math.prod(self.size())  # type: ignore[attr-defined]
+        shape_size = -1 * math.prod(shape)  # type: ignore[attr-defined]
+        # pyre-fixme[60]: Concatenation not yet support for multiple variadic
+        shape = (
+            *shape[:infer_idx],
+            st_size // shape_size,
+            *shape[infer_idx + 1 :],
+        )
+    if self.size() == shape:
+        return self
+
+=======
 @register_impl("aten.view.SymInt")
 @register_impl("aten.view.default")
 # pyre-fixme[2]: Parameter must be annotated.
 def dist_view(self: DTensor, *shape) -> DTensor:
     mat_placement = pytree.tree_map(unwrap_single_placement, self)
+>>>>>>> main
     local_mat = pytree.tree_map(unwrap_local_tensor, self)
+    mat_placement = pytree.tree_map(unwrap_single_placement, self)
     if mat_placement.is_replicate():
-        return DTensor.from_local(
+        return DTensor(
             local_mat.view(*shape), self.device_mesh, [mat_placement]
         )
-
     elif mat_placement.is_shard():
-        shape = shape[0]
-        try:
-            infer_idx = shape.index(-1)
-        except ValueError:
-            infer_idx = None  # type: ignore
-
-        # Infer the dim which is specified with -1.
-        if infer_idx is not None:
-            st_size = math.prod(self.size())  # type: ignore[attr-defined]
-            shape_size = -1 * math.prod(shape)  # type: ignore[attr-defined]
-            # pyre-fixme[60]: Concatenation not yet support for multiple variadic
-            shape = (
-                *shape[:infer_idx],
-                st_size // shape_size,
-                *shape[infer_idx + 1 :],
-            )
-        if self.size() == shape:
-            return self
-
         sharding_dim = mat_placement.dim
+        placements = self.placements
+        if len(shape) <= sharding_dim:
+            sharding_dim = 0
+            placements = [Shard(sharding_dim)]
+
         # When the sharding dim is negative, we need to ensure the new
         # sharded tensor is still sharded by the original dimension.
         if sharding_dim < 0:
@@ -67,10 +76,33 @@ def dist_view(self: DTensor, *shape) -> DTensor:
             shape[sharding_dim] // world_size,
             *shape[sharding_dim + 1 :],
         )
-        new_local_tensor = local_mat.view(*new_local_tensor_size)
-        return DTensor(new_local_tensor, self.device_mesh, self.placements)
+        if op == "view":
+            new_local_tensor = local_mat.view(*new_local_tensor_size)
+        elif op == "_unsafe_view":
+            new_local_tensor = torch.ops.aten._unsafe_view(
+                local_mat, new_local_tensor_size
+            )
+        return DTensor(
+            new_local_tensor,
+            self.device_mesh,
+            placements,
+            requires_grad=new_local_tensor.requires_grad,
+        )
     else:
         raise RuntimeError("not supported!")
+
+
+@register_impl("aten.view.SymInt")
+@register_impl("aten.view.default")
+# pyre-fixme[2]: Parameter must be annotated.
+def dist_view(self: DTensor, *shape) -> DTensor:
+    return dist_view_base(self, "view", *shape)
+
+
+@register_impl("aten._unsafe_view.default")
+# pyre-fixme[2]: Parameter must be annotated.
+def dist_unsafe_view(self: DTensor, *shape) -> DTensor:
+    return dist_view_base(self, "_unsafe_view", *shape)
 
 
 @register_impl("aten.transpose.int")
@@ -84,7 +116,12 @@ def dist_transpose(self: DTensor, dim0: int, dim1: int) -> DTensor:
     new_shard_dim = dim0 if mat_placement.is_shard(dim=dim1) else new_shard_dim
     new_sharding_placement = [Shard(new_shard_dim)]
     local_tensor = local_mat.transpose(dim0, dim1)
-    return DTensor(local_tensor, device_mesh, new_sharding_placement)
+    return DTensor(
+        local_tensor,
+        device_mesh,
+        new_sharding_placement,
+        requires_grad=local_tensor.requires_grad,
+    )
 
 
 @register_impl("aten.baddbmm.default")
@@ -101,21 +138,68 @@ def dist_baddbmm(
     local_tensor = torch.ops.aten.baddbmm(
         local_input, local_batch1, local_batch2, beta=beta, alpha=alpha
     )
-    return DTensor(local_tensor, self.device_mesh, self.placements)
+    return DTensor(
+        local_tensor,
+        self.device_mesh,
+        self.placements,
+        requires_grad=local_tensor.requires_grad,
+    )
 
 
 @register_impl("aten.bmm.default")
 def dist_bmm(self: DTensor, mat2: DTensor) -> DTensor:
+    self_placement, mat2_placement = pytree.tree_map(
+        unwrap_single_placement, (self, mat2)
+    )
+    if self_placement != mat2_placement:
+        if self_placement.is_replicate():
+            self = self.redistribute(self.device_mesh, mat2.placements)
+        elif mat2_placement.is_replicate():
+            mat2 = mat2.redistribute(mat2.device_mesh, self.placements)
     local_input, local_mat2 = pytree.tree_map(unwrap_local_tensor, (self, mat2))
     local_tensor = torch.ops.aten.bmm(local_input, local_mat2)
-    return DTensor(local_tensor, self.device_mesh, self.placements)
+    assert self.placements[0].is_shard()
+    return DTensor(
+        local_tensor,
+        self.device_mesh,
+        self.placements,
+        requires_grad=local_tensor.requires_grad,
+    )
 
 
 @register_impl("aten._softmax.default")
 def dist_softmax(self: DTensor, dim: int, half_to_float: bool) -> DTensor:
     local_input = pytree.tree_map(unwrap_local_tensor, (self))
     local_tensor = local_input.softmax(dim=dim)
-    return DTensor(local_tensor, self.device_mesh, self.placements)
+    return DTensor(
+        local_tensor,
+        self.device_mesh,
+        self.placements,
+        requires_grad=local_tensor.requires_grad,
+    )
+
+
+@register_impl("aten._softmax_backward_data.default")
+def dist_softmax_backward(grad_output, output, dim, input_dtype) -> DTensor:
+    grad_output_placement, output_placement = pytree.tree_map(
+        unwrap_single_placement, (grad_output, output)
+    )
+    if grad_output_placement != output_placement:
+        grad_output = grad_output.redistribute(
+            grad_output.device_mesh, output.placements
+        )
+    local_grad, local_output = pytree.tree_map(
+        unwrap_local_tensor, (grad_output, output)
+    )
+    local_tensor = torch.ops.aten._softmax_backward_data(
+        local_grad, local_output, dim, input_dtype
+    )
+    return DTensor(
+        local_tensor,
+        grad_output.device_mesh,
+        grad_output.placements,
+        requires_grad=local_tensor.requires_grad,
+    )
 
 
 @register_impl("aten.permute.default")
@@ -125,13 +209,23 @@ def dist_permute(self: DTensor, dims: List[int]) -> DTensor:
 
     if mat_placement.is_replicate():
         local_tensor = torch.ops.aten.permute(local_mat, dims=dims)
-        return DTensor(local_tensor, self.device_mesh, [mat_placement])
+        return DTensor(
+            local_tensor,
+            self.device_mesh,
+            [mat_placement],
+            requires_grad=local_tensor.requires_grad,
+        )
     elif mat_placement.is_shard():
         sharding_dim = mat_placement.dim
         new_sharding_dim = dims.index(sharding_dim)
         new_sharding_placement = [Shard(new_sharding_dim)]
         local_tensor = torch.ops.aten.permute(local_mat, dims=dims)
-        return DTensor(local_tensor, self.device_mesh, new_sharding_placement)
+        return DTensor(
+            local_tensor,
+            self.device_mesh,
+            new_sharding_placement,
+            requires_grad=local_tensor.requires_grad,
+        )
     else:
         raise RuntimeError("Not supported!")
 
@@ -141,7 +235,10 @@ def dist_cat(tensor_list: List[DTensor], dim: int = 0) -> DTensor:
     local_inputs = pytree.tree_map(unwrap_local_tensor, tensor_list)
     local_tensor = torch.ops.aten.concat(local_inputs, dim=dim)
     return DTensor(
-        local_tensor, tensor_list[0].device_mesh, tensor_list[0].placements
+        local_tensor,
+        tensor_list[0].device_mesh,
+        tensor_list[0].placements,
+        requires_grad=local_tensor.requires_grad,
     )
 
 
@@ -163,6 +260,74 @@ def dist_split(self: DTensor, split_size_or_sections, dim=0) -> List[DTensor]:
             split_size_or_sections //= world_size
     tensor_list = local_mat.split(split_size_or_sections, dim=dim)
     return [
-        DTensor(tensor, self.device_mesh, [mat_placement])
+        DTensor(
+            tensor,
+            self.device_mesh,
+            [mat_placement],
+            requires_grad=tensor.requires_grad,
+        )
         for tensor in tensor_list
     ]
+
+
+@register_impl("aten._reshape_alias.default")
+def dist_reshape_alias(self, size, stride) -> DTensor:
+    mat_placement = pytree.tree_map(unwrap_single_placement, self)
+    if mat_placement.is_partial():
+        self = self.redistribute(self.device_mesh, [Replicate()])
+        local_input = pytree.tree_map(unwrap_local_tensor, self)
+        local_tensor = torch.ops.aten._reshape_alias(local_input, size, stride)
+        return DTensor(
+            local_tensor,
+            self.device_mesh,
+            self.placements,
+            requires_grad=local_tensor.requires_grad,
+        )
+    sharding_dim = mat_placement.dim
+    world_size = self.device_mesh.size(dim=0)
+    if sharding_dim < 0:
+        sharding_dim = self.dim() + sharding_dim
+    if type(size) is list:
+        size[sharding_dim] //= world_size
+    else:
+        size //= world_size
+    stride_thresh = stride[sharding_dim]
+    for i in range(0, len(stride)):
+        if stride[i] > stride_thresh:
+            stride[i] //= world_size
+    local_input = pytree.tree_map(unwrap_local_tensor, self)
+    local_tensor = torch.ops.aten._reshape_alias(local_input, size, stride)
+    return DTensor(
+        local_tensor,
+        self.device_mesh,
+        self.placements,
+        requires_grad=local_tensor.requires_grad,
+    )
+
+
+@register_impl("aten.expand.default")
+def dist_expand(self, size, implicit=False):
+    mat_placement = pytree.tree_map(unwrap_single_placement, self)
+    local_input = pytree.tree_map(unwrap_local_tensor, self)
+    if mat_placement.is_replicate():
+        return DTensor(
+            local_input.expand(size),
+            self.device_mesh,
+            self.placements,
+            requires_grad=local_input.requires_grad,
+        )
+    else:
+        sharding_dim = mat_placement.dim
+        world_size = self.device_mesh.size(dim=0)
+        if type(size) is list:
+            size[sharding_dim] //= world_size
+        else:
+            size //= world_size
+        local_tensor = local_input.expand(size)
+
+        return DTensor(
+            local_tensor,
+            self.device_mesh,
+            self.placements,
+            requires_grad=local_tensor.requires_grad,
+        )

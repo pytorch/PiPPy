@@ -5,7 +5,7 @@ import torch.nn as nn
 from spmd.tensor import DTensor, Placement, Shard, Replicate
 from spmd.tensor.device_mesh import get_global_device_mesh, DeviceMesh
 
-torch.__future__.set_overwrite_module_params_on_conversion(True)
+torch.__future__.set_overwrite_module_params_on_conversion(False)
 
 
 def distribute_tensor(

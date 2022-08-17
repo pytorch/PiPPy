@@ -1,6 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 from spmd.tensor.placement_types import Replicate
 import torch
+import torch.distributed as dist
 from torch.testing._internal.common_utils import run_tests
 from spmd.test._utils import (  # type: ignore
     DistTensorTestBase,
@@ -24,6 +25,8 @@ class TPShardingOpsTest(DistTensorTestBase):
         )
         self.assertEqual(st.to_local(), st_new.to_local())
         self.assertEqual(st.placements[0], st_new.placements[0])
+        self.assertEqual(st.stride(), tensor.view(8, 4, 35, 13).stride())
+        self.assertEqual(st_new.stride(), tensor.view(8, 4, 35, 13).stride())
 
     @with_comms
     def test_sharded_transpose(self):
@@ -62,6 +65,44 @@ class TPShardingOpsTest(DistTensorTestBase):
         self.assertEqual(new_dt.to_local(), local_result)
 
     @with_comms
+    @skip_if_lt_x_gpu(TEST_GPU_NUM)
+    def test_sharded_baddbmm_with_bwd(self):
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        torch.manual_seed(10)
+        tensor = torch.rand(
+            8, 5, 6, device=self.device_type, requires_grad=True
+        )
+        batch_1 = torch.rand(
+            8, 5, 8, device=self.device_type, requires_grad=True
+        )
+        batch_2 = torch.rand(
+            8, 8, 6, device=self.device_type, requires_grad=True
+        )
+        local_result = torch.baddbmm(
+            tensor, batch_1, batch_2, beta=0.0, alpha=0.5
+        )
+        sharding = [Shard(0)]
+        tensor_dt = distribute_tensor(tensor, device_mesh, sharding)
+        batch_1_dt = distribute_tensor(batch_1, device_mesh, sharding)
+        batch_2_dt = distribute_tensor(batch_2, device_mesh, sharding)
+        new_dt = torch.baddbmm(
+            tensor_dt, batch_1_dt, batch_2_dt, beta=0.0, alpha=0.5
+        )
+        self.assertTrue(tensor.requires_grad)
+        self.assertTrue(tensor_dt.requires_grad)
+        self.assertTrue(new_dt.placements[0].is_shard(dim=0))
+        local_result.sum().backward()
+        new_dt.sum().backward()
+        batch_1_dt_grad = torch.empty(
+            batch_1_dt.grad.size(),
+            dtype=batch_1_dt.grad.dtype,
+            device=self.device_type,
+        )
+        dist._all_gather_base(batch_1_dt_grad, batch_1_dt.grad.to_local())
+        self.assertEqual(batch_1_dt_grad, batch_1.grad)
+        self.assertEqual(tensor_dt.grad.to_local(), tensor.grad)
+
+    @with_comms
     def test_sharded_bmm(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         torch.manual_seed(self.rank)
@@ -74,6 +115,41 @@ class TPShardingOpsTest(DistTensorTestBase):
         new_dt = torch.bmm(input_dt, mat_2_dt)
         self.assertTrue(new_dt.placements[0].is_shard(dim=0))
         self.assertEqual(new_dt.to_local(), local_result)
+
+    @with_comms
+    def test_sharded_bmm_with_bwd(self):
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        torch.manual_seed(10)
+        input = torch.rand(
+            16, 5, 8, device=self.device_type, requires_grad=True
+        )
+        mat_2 = torch.rand(
+            16, 8, 6, device=self.device_type, requires_grad=True
+        )
+        local_result = torch.bmm(input, mat_2)
+        sharding = [Shard(0)]
+        input_dt = distribute_tensor(input, device_mesh, sharding)
+        mat_2_dt = distribute_tensor(mat_2, device_mesh, sharding)
+        new_dt = torch.bmm(input_dt, mat_2_dt)
+        self.assertTrue(input.requires_grad)
+        self.assertTrue(input_dt.requires_grad)
+        self.assertTrue(new_dt.placements[0].is_shard(dim=0))
+        local_result.sum().backward()
+        new_dt.sum().backward()
+        input_dt_grad = torch.empty(
+            input_dt.grad.size(),
+            dtype=input_dt.grad.dtype,
+            device=self.device_type,
+        )
+        dist._all_gather_base(input_dt_grad, input_dt.grad.to_local())
+        self.assertEqual(input_dt_grad, input.grad)
+        mat_2_dt_grad = torch.empty(
+            mat_2_dt.grad.size(),
+            dtype=mat_2_dt.grad.dtype,
+            device=self.device_type,
+        )
+        dist._all_gather_base(mat_2_dt_grad, mat_2_dt.grad.to_local())
+        self.assertEqual(mat_2_dt_grad, mat_2.grad)
 
     @with_comms
     def test_sharded_softmax(self):
@@ -93,6 +169,30 @@ class TPShardingOpsTest(DistTensorTestBase):
             )
             self.assertTrue(new_dt.placements[0].is_shard(dim=0))
             self.assertEqual(new_dt.to_local(), local_result)
+
+    @with_comms
+    def test_sharded_softmax_with_bwd(self):
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        torch.manual_seed(10)
+        tensor = torch.rand(
+            16, 5, 8, device=self.device_type, requires_grad=True
+        )
+        local_result = tensor.softmax(dim=-1)
+        sharding = [Shard(0)]
+        tensor_dt = distribute_tensor(tensor, device_mesh, sharding)
+        new_dt = tensor_dt.softmax(dim=-1)
+        self.assertTrue(tensor.requires_grad)
+        self.assertTrue(tensor_dt.requires_grad)
+        self.assertTrue(new_dt.placements[0].is_shard(dim=0))
+        local_result.sum().backward()
+        new_dt.sum().backward()
+        tensor_dt_grad = torch.empty(
+            tensor_dt.grad.size(),
+            dtype=tensor_dt.grad.dtype,
+            device=self.device_type,
+        )
+        dist._all_gather_base(tensor_dt_grad, tensor_dt.grad.to_local())
+        self.assertEqual(tensor_dt_grad, tensor.grad)
 
     @with_comms
     def test_sharded_permute(self):

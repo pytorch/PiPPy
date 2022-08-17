@@ -1,6 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import copy
-import math
 import warnings
 import torch
 from torch.utils._pytree import tree_flatten
@@ -14,6 +13,7 @@ from spmd.tensor.placement_types import (
     DTensorSpec,
 )
 from spmd.tensor.redistribute import Redistribute
+from spmd.tensor._view_n_reshard import _ViewAndRedistribute
 
 from spmd.tensor.dispatch import operator_dispatch, OpSchema, OutputSharding
 
@@ -336,45 +336,4 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     # pyre-fixme[3]: Return type must be annotated.
     # pyre-fixme[2]: Parameter must be annotated.
     def _view_with_sharding_dim_change(self, sharding_dim, shape):
-        if (
-            self.placements[0].is_shard(dim=sharding_dim)
-            or self.placements[0].is_replicate()
-            or self.placements[0].is_partial()
-        ):
-            return self.view(shape)
-        else:
-            if sharding_dim < 0:
-                sharding_dim += self.dim()
-
-            device_mesh = self.device_mesh
-            world_size = device_mesh.size(dim=0)
-            new_sharding_placement = [Shard(sharding_dim)]
-
-            # Fix shape
-            try:
-                infer_idx = shape.index(-1)
-            except ValueError:
-                infer_idx = None
-
-            # Infer the dim which is specified with -1.
-            if infer_idx is not None:
-                st_size = math.prod(self.size())  # type: ignore[attr-defined]
-                shape_size = -1 * math.prod(shape)  # type: ignore[attr-defined]
-                # pyre-fixme[60]: Concatenation not yet support for multiple variadic
-                shape = (
-                    *shape[:infer_idx],
-                    st_size // shape_size,
-                    *shape[infer_idx + 1 :],
-                )
-
-            # pyre-fixme[60]: Concatenation not yet support for multiple variadic
-            new_local_tensor_size = (
-                *shape[:sharding_dim],
-                shape[sharding_dim] // world_size,
-                *shape[sharding_dim + 1 :],
-            )
-            new_local_tensor = self.to_local().view(*new_local_tensor_size)
-
-            return DTensor.from_local(
-                new_local_tensor, device_mesh, new_sharding_placement
-            )
+        return _ViewAndRedistribute.apply(self, sharding_dim, shape)
