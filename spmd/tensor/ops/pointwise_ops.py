@@ -124,7 +124,7 @@ pointwise_ops = [
 ]
 
 
-def pointwise_rules(
+def pointwise_rule(
     op_schema: OpSchema, linearity: bool = False
 ) -> OutputSharding:
     """
@@ -134,6 +134,8 @@ def pointwise_rules(
     """
     alphabet = "abcdefghijklmnopqrstuvwxyz"
     # handle the case of broadcasting, find the max_dim first
+    # TODO: handle the "broadcasting to a common shape case"
+    # TODO: handle inplace op properly without run propagation
     input_specs = op_schema.args_spec
     max_dim = max(input.ndim for input in input_specs)
     dimchars = []
@@ -147,4 +149,4 @@ def pointwise_rules(
 
 
 for op in pointwise_ops:
-    DTensor._op_to_rules[op] = pointwise_rules
+    DTensor._op_to_rules[op] = pointwise_rule
