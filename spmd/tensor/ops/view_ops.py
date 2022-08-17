@@ -2,7 +2,7 @@ from argparse import ArgumentError
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union, Sequence
 
-from spmd.tensor.placement_types import PlacementSpec
+from spmd.tensor.placement_types import DTensorSpec
 import functools
 import operator
 from spmd.tensor.api import Shard
@@ -467,23 +467,35 @@ def propagate_shape_and_sharding(in_shard, local_in_shape, rule, mesh_sizes):
     )
 
 
+def local_shape(spec: DTensorSpec, rank: int) -> Tuple[int, ...]:
+    """
+    Given a DTensorSpec and a global rank, compute the shape of a local
+    shard of the given DTensor.
+    """
+    local_shape = list(spec.shape)  # start with global shape
+    for idx, placement in enumerate(spec.placements):
+        if isinstance(placement, Shard):
+            assert (
+                local_shape[placement.dim] % spec.mesh.size(idx) == 0
+            ), "Only even sharding supported for now."
+            local_shape[placement.dim] //= spec.mesh.size(idx)
+    return tuple(local_shape)
+
+
 def register_prop_rule_map(aten_op_name, local_op_name):
     @register_prop_rule(aten_op_name)
     def reshape_prop(op_schema: OpSchema) -> OutputSharding:
         spec = ops[local_op_name]
 
         # note we are passing _global_ tensors
-        rules = spec.dim_map(*op_schema.args, **op_schema.kwargs)
+        rules = spec.dim_map(*op_schema.args_schema, **op_schema.kwargs_schema)
 
         # note we are passing _local_ tensor shapes
         local_out_shape, shard_out = propagate_shape_and_sharding(
-            op_schema.args_spec[0].placements,
-            op_schema.args[0]
-            .to_local()
-            .shape,  # TODO check how to properly access local shape
-            # op_schema.args_with_local_tensor[0].shape,
+            op_schema.args_schema[0].placements,
+            local_shape(op_schema.args_schema[0], torch.distributed.get_rank()),
             rules,
-            op_schema.args_spec[0].mesh.mesh.shape,
+            op_schema.args_schema[0].mesh.mesh.shape,
         )
 
         # The code below doesn't work : it doesn't let me change the propery
@@ -496,10 +508,11 @@ def register_prop_rule_map(aten_op_name, local_op_name):
             )
 
         return OutputSharding(
-            output_spec=PlacementSpec(
+            output_spec=DTensorSpec(
                 ndim=len(local_out_shape),
-                mesh=op_schema.args_spec[0].mesh,
+                mesh=op_schema.args_schema[0].mesh,
                 placements=shard_out,
+                shape=local_out_shape,
             )
         )
 
