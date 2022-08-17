@@ -1,9 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import Optional
 from spmd.tensor.api import DTensor
-from spmd.tensor.dispatch import OpSchema
-from spmd.tensor.placement_types import PlacementSpec
-from spmd.tensor.ops.prop_rules import pointwise_prop
+from spmd.tensor.dispatch import OpSchema, OutputSharding
+from spmd.tensor.ops.math_ops import einop_rule
 
 # leave the pointwise_ops list here for convenience,
 # it might not be a complete list.
@@ -126,9 +124,29 @@ pointwise_ops = [
 ]
 
 
-def pointwise_rules(op_schema: OpSchema) -> Optional[PlacementSpec]:
-    return pointwise_prop(op_schema.args_spec)
+def pointwise_rule(
+    op_schema: OpSchema, linearity: bool = False
+) -> OutputSharding:
+    """
+    Propagate the sharding for pointwise operations. Examples:
+        ij,ij->ij - addition/mul
+        ij,j->ij - broadcasted addition
+    """
+    alphabet = "abcdefghijklmnopqrstuvwxyz"
+    # handle the case of broadcasting, find the max_dim first
+    # TODO: handle the "broadcasting to a common shape case"
+    # TODO: handle inplace op properly without run propagation
+    input_specs = op_schema.args_spec
+    max_dim = max(input.ndim for input in input_specs)
+    dimchars = []
+    for input in input_specs:
+        start_dim = max_dim - input.ndim
+        p = alphabet[start_dim:max_dim]
+        dimchars.append(p)
+    out_dimchars = alphabet[:max_dim]
+    fmt = f"{','.join(p for p in dimchars)}->{out_dimchars}"
+    return einop_rule(fmt, op_schema, linearity=linearity)
 
 
 for op in pointwise_ops:
-    DTensor._op_to_rules[op] = pointwise_rules
+    DTensor._op_to_rules[op] = pointwise_rule

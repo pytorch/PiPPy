@@ -9,17 +9,16 @@ from functools import reduce
 import torch
 import torch.distributed.rpc as rpc
 import torch.multiprocessing as mp
+from transformers import BertLMHeadModel, BertConfig
 
-import transformers.utils.fx as fx
 import pippy.fx
 from pippy.IR import MultiUseParameterConfig, Pipe, PipeSplitWrapper, annotate_split_points
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverInterleaved1F1B, \
     PipelineDriverBase
 from pippy.events import EventsContext
+from pippy.hf import PiPPyHFTracer
 from pippy.microbatch import CustomReducer, TensorChunkSpec
 from pippy.visualizer import events_to_json
-from transformers import BertLMHeadModel, BertConfig
-from transformers.modeling_utils import ModuleUtilsMixin
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
@@ -55,31 +54,6 @@ pippy.fx.Tracer.proxy_buffer_attributes = True
 
 def get_number_of_params(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-
-@pippy.fx.wrap
-def torch_ones_wrapper(*args, **kwargs):
-    return torch.ones(*args, **kwargs)
-
-
-@pippy.fx.wrap
-def torch_create_extended_attention_mask_for_decoder_wrapper(*args, **kwargs):
-    return ModuleUtilsMixin.create_extended_attention_mask_for_decoder(*args, **kwargs)
-
-
-class HFBertTracer(fx.HFTracer):
-    def trace(self, root, concrete_args=None):
-        graph = super().trace(root, concrete_args)
-        # HACK to replace HF's non-resolvable wrappers with the original
-        # tensor constructor functions
-        # Requires this patch to HF: https://github.com/jamesr66a/transformers/commit/ede9d30f36f12be390692617ef76e2928b1612bd
-        for node in graph.nodes:
-            if node.op == 'call_function':
-                if getattr(node.target, '_orig', None) == torch.ones:
-                    node.target = torch_ones_wrapper
-                elif getattr(node.target, '_orig', None) == ModuleUtilsMixin.create_extended_attention_mask_for_decoder:
-                    node.target = torch_create_extended_attention_mask_for_decoder_wrapper
-        return graph
 
 
 def add_split_points(bert, encoders_per_rank):
@@ -129,15 +103,13 @@ def run_master(args):
 
     # print(bert)
 
-    hf_tracer = HFBertTracer()
-
     input_names = bert_input_dict.keys()
     sig = inspect.signature(bert.forward)
     concrete_args = {p.name: p.default for p in sig.parameters.values() if p.name not in input_names}
 
     print('Instantiating BERT Pipeline')
     output_loss_value_spec = {'loss': True, 'logits': False}
-    bert_pipe = Pipe.from_tracing(bert, MULTI_USE_PARAM_CONFIG, tracer=hf_tracer, concrete_args=concrete_args,
+    bert_pipe = Pipe.from_tracing(bert, MULTI_USE_PARAM_CONFIG, tracer=PiPPyHFTracer(), concrete_args=concrete_args,
                                   output_loss_value_spec=output_loss_value_spec)
     assert sm_cnt == len(list(bert_pipe.split_gm.children()))
     bert_pipe.to(device)

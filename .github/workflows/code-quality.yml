@@ -32,10 +32,10 @@ jobs:
       run: pylint --disable=all --enable=unused-import $(git ls-files '*.py')
     - name: Lint with mypy
       if: always()
-      run: mypy $(git ls-files '*.py' | grep -v pippy/fx | grep -v test/.*fx)
+      run: mypy $(git ls-files '*.py' | grep -v pippy/fx | grep -v test/.*fx | grep -v examples/hf)
     - name: Lint with flake8
       if: always()
-      run: flake8 pippy
+      run: flake8 pippy spmd
     - name: Lint with black for SPMD
       if: always()
       run: black --check --line-length 80 spmd test/spmd

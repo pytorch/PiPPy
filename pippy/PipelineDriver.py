@@ -595,7 +595,7 @@ class PipeStageExecutor(EventRecorder):
                 fut.wait()
 
         with self.value_store_lock:
-            assert output_unique_key not in self.value_store
+            assert output_unique_key not in self.value_store, f"output_unique_key = {output_unique_key}"
             self.value_store[output_unique_key] = RefcountedFuture(future, output_refcount)
 
         return ValueReference(self.stage_id, output_unique_key)

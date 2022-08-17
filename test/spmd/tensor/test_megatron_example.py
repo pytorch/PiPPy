@@ -88,7 +88,7 @@ class DistTensorMegatronTest(DistTensorTestBase):
         model = SimpleModel(self.device_type)
         torch.manual_seed(5)
         model_tp = SimpleModel(self.device_type)
-        # shard_module(model_tp, self.device_type)
+        shard_module(model_tp, self.device_type)
 
         output = model(inp)
         output_tp = model_tp(inp)
@@ -97,7 +97,7 @@ class DistTensorMegatronTest(DistTensorTestBase):
         output.sum().backward()
         output_tp.sum().backward()
         # This is for FSDP + TP integration.
-        # self.assertTrue(model_tp.net1.weight._local_tensor.grad is not None)
+        self.assertTrue(model_tp.net1.weight._local_tensor.grad is not None)
 
         optim = torch.optim.SGD(model.parameters(), lr=LR)
         optim.step()

@@ -41,17 +41,16 @@ def distribute_tensor(
     if placements is None:
         placements = [Replicate() for _ in range(device_mesh.ndim)]
 
-    # distribute the tensor according to PlacementSpec
-    assert len(placements) == 1, "Only support 1-d placement now"
+    # distribute the tensor according to DTensorSpec
     for idx, placement in enumerate(placements):
         if placement.is_shard():
             placement = cast(Shard, placement)
             shard_dim = placement.dim
             assert (
                 shard_dim <= tensor.ndim
-            ), "Sharding dim {shard_dim} greater than tensor ndim {tensor.ndim}"
-            # TODO: handle multi-dim device mesh and last shard
-            num_chunks = device_mesh.size()
+            ), f"Sharding dim {shard_dim} greater than tensor ndim {tensor.ndim}"
+            # TODO: handle uneven shard sizes
+            num_chunks = device_mesh.size(dim=idx)
             assert tensor.size(shard_dim) % num_chunks == 0, (
                 f"Only support chunk sharding evenly now, but tensor got "
                 f"dimension {shard_dim} of size {tensor.size(shard_dim)}, "
@@ -66,25 +65,18 @@ def distribute_tensor(
             # field, as ProcessGroupNCCL refuse to take a tensor with requires_grad
             # to do inplace update! So we manually set it here
             local_tensor.requires_grad_(tensor.requires_grad)
-            dist_tensor = DTensor(
-                local_tensor,
-                device_mesh,
-                placements,
-                requires_grad=local_tensor.requires_grad,
-            )
+            tensor = local_tensor
         elif placement.is_replicate():
-            device_mesh.broadcast(tensor, mesh_dim=idx)
-            dist_tensor = DTensor(
-                tensor,
-                device_mesh,
-                placements,
-                requires_grad=tensor.requires_grad,
-            )
+            tensor = device_mesh.broadcast(tensor, mesh_dim=idx)
         else:
             raise RuntimeError("Not supported!")
 
-    # pyre-fixme[61]: `dist_tensor` is undefined, or not always defined.
-    return dist_tensor
+    return DTensor(
+        tensor,
+        device_mesh,
+        placements,
+        requires_grad=tensor.requires_grad,
+    )
 
 
 # pyre-fixme[3]: Return type must be annotated.

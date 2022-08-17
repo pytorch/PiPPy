@@ -114,7 +114,7 @@ def _insert_stage_symbolic_backward(g : pippy.fx.Graph, output_loss_value_spec):
     val_to_grad : Dict[pippy.fx.Node, Optional[pippy.fx.Node]] = {loss_node : None}
 
     def assign_or_accumulate_grad(forward_node, grad_value):
-        if forward_node in val_to_grad:
+        if forward_node in val_to_grad and forward_node.op != 'placeholder':
             grad_value = g.call_function(_null_coalesce_accumulate, (val_to_grad[forward_node], grad_value))
         val_to_grad[forward_node] = grad_value
 
