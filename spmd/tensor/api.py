@@ -108,8 +108,11 @@ class FromTorchTensor(torch.autograd.Function):
         return grad_output.to_local(), None, None, None
 
 
-def _reshape_alias(x: torch.Tensor, shape: Tuple[int, ...], strides: Tuple[int, ...]) -> torch.Tensor:
+def _reshape_alias(
+    x: torch.Tensor, shape: Tuple[int, ...], strides: Tuple[int, ...]
+) -> torch.Tensor:
     return torch.ops.aten.view(x, shape)
+
 
 from torch._decomp import decomposition_table
 
@@ -229,7 +232,6 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         if func in _CURRENT_DECOMPOSITION_TABLE:
             with torch.overrides.enable_reentrant_dispatch():
                 return _CURRENT_DECOMPOSITION_TABLE[func](*args, **kwargs)
-
 
         # check that we are not getting mixed vanilla and Distributed tensors
         arg_list, _ = tree_flatten(args)

@@ -30,14 +30,14 @@ DimSpec = Union[Dim, Singleton, Broadcast, NewDim, Repeat, Flatten, Comp]
 DimMap = Tuple[DimSpec, ...]
 
 
-SINGLETON: Singleton = ('singleton', )
+SINGLETON: Singleton = ("singleton",)
 
 
 def BROADCAST(input_dim: Dim, dim_size: int) -> Broadcast:
     """
     output is the broadcast of a singleton input dimension
     """
-    return ('broadcast', input_dim, dim_size)
+    return ("broadcast", input_dim, dim_size)
 
 
 def NEWDIM(val: int) -> Union[NewDim, Singleton]:
@@ -48,7 +48,7 @@ def NEWDIM(val: int) -> Union[NewDim, Singleton]:
         # a NEWDIM of size 1 is a singleton!
         return SINGLETON
     else:
-        return ('newdim', val)
+        return ("newdim", val)
 
 
 def REPEAT(input_dim: Dim, times: int) -> Union[Dim, Repeat]:
@@ -63,7 +63,7 @@ def REPEAT(input_dim: Dim, times: int) -> Union[Dim, Repeat]:
         # repeating a singleton is the same as broadcasting it
         return BROADCAST(input_dim, times)
     else:
-        return ('repeat', input_dim, times)
+        return ("repeat", input_dim, times)
 
 
 def FLATTEN(input_dims: Tuple[int, ...]) -> Union[Dim, Singleton, Flatten]:
@@ -77,14 +77,16 @@ def FLATTEN(input_dims: Tuple[int, ...]) -> Union[Dim, Singleton, Flatten]:
         # flattening a single dimension is no-op
         return input_dims[0]
     else:
-        return ('flatten', input_dims)
+        return ("flatten", input_dims)
 
 
-def COMP(input_dim: Dim, group_shape: Tuple[int, ...], idx: int) -> Union[Dim, Singleton, Comp]:
+def COMP(
+    input_dim: Dim, group_shape: Tuple[int, ...], idx: int
+) -> Union[Dim, Singleton, Comp]:
     """
     This dimension is a member of a decomposition of the input dim.
     Note , inpnut dim itself could be a FLATTENED input dim.
-    E.g. 
+    E.g.
     view([6], [2,3]) -> [COMP(0, (2,3,4), 0), COMP(0, (2,3,4), 1), COMP(0, (2,3,4), 2)]
     """
     assert len(group_shape) > 0
@@ -97,15 +99,18 @@ def COMP(input_dim: Dim, group_shape: Tuple[int, ...], idx: int) -> Union[Dim, S
     else:
         # remove singletons from group
         # group_mapping = [(new_index, (shape, old_index)) ...]
-        group_mapping = list(enumerate(
-            (s, i) for i, s in enumerate(group_shape) if s != 1))
+        group_mapping = list(
+            enumerate((s, i) for i, s in enumerate(group_shape) if s != 1)
+        )
         new_group_shape = tuple(m[1][0] for m in group_mapping)
         new_idx = next(filter(lambda x: x[1][1] == idx, group_mapping))[0]
-        return ('comp', input_dim, new_group_shape, new_idx)
+        return ("comp", input_dim, new_group_shape, new_idx)
 
 
 def dim_pad_left(input_shape: Shape, min_dims: int) -> DimMap:
-    return (SINGLETON, ) * max(0, min_dims - len(input_shape)) + tuple(range(len(input_shape)))
+    return (SINGLETON,) * max(0, min_dims - len(input_shape)) + tuple(
+        range(len(input_shape))
+    )
 
 
 def dim_atleast_3d(num_dims: int) -> DimMap:
@@ -120,7 +125,7 @@ def dim_atleast_3d(num_dims: int) -> DimMap:
 
 
 def expand(input_shape: Shape, shape: Shape) -> DimMap:
-    """ Implements broadcast on multiple dimensions """
+    """Implements broadcast on multiple dimensions"""
     assert len(shape) >= len(input_shape)
 
     # 1. create padded input dimensions
@@ -130,11 +135,15 @@ def expand(input_shape: Shape, shape: Shape) -> DimMap:
     for p, desired_s in zip(padded_input, shape):
         if p == SINGLETON:
             actual_s = 1
-            assert(desired_s >= 0)
+            assert desired_s >= 0
         else:
             actual_s = input_shape[p]
-            assert(actual_s == 1 or desired_s == -1 or desired_s == actual_s)
-        mapping.append(p if desired_s in (1, -1) or desired_s == actual_s else BROADCAST(p, desired_s))
+            assert actual_s == 1 or desired_s == -1 or desired_s == actual_s
+        mapping.append(
+            p
+            if desired_s in (1, -1) or desired_s == actual_s
+            else BROADCAST(p, desired_s)
+        )
     return tuple(mapping)
 
 
@@ -144,32 +153,36 @@ def normalize_sizes(*sizes) -> Shape:
     elif len(sizes) == 1:
         return sizes[0]
     else:
-        raise ArgumentError('Size must be int... or tuple')
+        raise ArgumentError("Size must be int... or tuple")
 
 
 def dim_flatten(shape):
     if len(shape) == 0:
-        return (SINGLETON, )
+        return (SINGLETON,)
     elif len(shape) == 1:
-        return (0, )
+        return (0,)
     else:
-        return (FLATTEN(tuple(range(len(shape)))), )
+        return (FLATTEN(tuple(range(len(shape)))),)
 
 
 def dim_movedim(shape_len, input, destination):
     if not isinstance(input, tuple):
-        input = (input, )
+        input = (input,)
     if not isinstance(destination, tuple):
-        destination = (destination, )
-    
+        destination = (destination,)
+
     assert len(input) == len(destination)
     input_set = set(input)
-    assert len(input_set) == len(input), 'Found repeated input dims'
-    assert len(set(destination)) == len(destination), 'Found repeated output dims'
+    assert len(input_set) == len(input), "Found repeated input dims"
+    assert len(set(destination)) == len(
+        destination
+    ), "Found repeated output dims"
     assert max(input) < shape_len
     assert max(destination) < shape_len
 
-    dest = [-1, ] * shape_len
+    dest = [
+        -1,
+    ] * shape_len
     for i, d in zip(input, destination):
         dest[d] = i
 
@@ -181,14 +194,14 @@ def dim_movedim(shape_len, input, destination):
     return tuple(dest)
 
 
-
 def dim_repeat(shape, sizes):
     sizes = normalize_sizes(*sizes)
-    assert len(sizes) >= len(shape), f'Number of dimensions of repeat dims {sizes} can not be smaller than number of dimensions of tensor {shape}.'
+    assert len(sizes) >= len(
+        shape
+    ), f"Number of dimensions of repeat dims {sizes} can not be smaller than number of dimensions of tensor {shape}."
     pad = len(sizes) - len(shape)
-    return (
-        tuple(REPEAT(SINGLETON, s) for s in sizes[:pad]) +
-        tuple(REPEAT(i, s) for i, s in enumerate(sizes[pad:]))
+    return tuple(REPEAT(SINGLETON, s) for s in sizes[:pad]) + tuple(
+        REPEAT(i, s) for i, s in enumerate(sizes[pad:])
     )
 
 
@@ -199,11 +212,13 @@ def infer_size(total_size, sizes):
     """
     infers = [i for i, s in enumerate(sizes) if s == -1]
     size = _prod(sizes)
-    assert len(infers) <= 1, 'can only infer one size'
+    assert len(infers) <= 1, "can only infer one size"
     if infers:
         size = -size
         missing_size = total_size // size
-        assert total_size % size == 0, f"size inferred for -1 is not integral {sizes} should have {total_size} elements."
+        assert (
+            total_size % size == 0
+        ), f"size inferred for -1 is not integral {sizes} should have {total_size} elements."
         return [s if s != -1 else missing_size for s in sizes]
     assert size == total_size, f"sizes do not match {total_size} vs {size}"
     return sizes
@@ -217,7 +232,7 @@ def view_groups(from_size, to_size):
     from_nelem = _prod(from_size)
     to_size = infer_size(from_nelem, normalize_sizes(*to_size))
 
-    assert from_nelem == _prod(to_size), 'Total view shape does not add up'
+    assert from_nelem == _prod(to_size), "Total view shape does not add up"
 
     from_idx = 0
     to_idx = 0
@@ -302,7 +317,7 @@ def view_groups(from_size, to_size):
 
 def dim_tile(shape, dims):
     if len(dims) < len(shape):
-        dims = (1, ) * (len(shape) - len(dims)) + dims
+        dims = (1,) * (len(shape) - len(dims)) + dims
     return dim_repeat(shape, dims)
 
 
@@ -319,14 +334,14 @@ def dim_unsqueeze(shape, dim):
     dims = tuple(range(len(shape)))
     if dim == -1:
         dim = len(dims)
-    return dims[:dim] + (SINGLETON, ) + dims[dim:]
+    return dims[:dim] + (SINGLETON,) + dims[dim:]
 
 
 @dataclass
 class Op:
     dim_map: Optional[List[int]] = None
     shape_argnum: Optional[Union[int, str]] = None
- 
+
 
 import torch
 from torch import Tensor
@@ -335,18 +350,41 @@ ops = {
     torch.atleast_1d: Op(dim_map=lambda x: dim_pad_left(x.shape, 1)),
     torch.atleast_2d: Op(dim_map=lambda x: dim_pad_left(x.shape, 2)),
     torch.atleast_3d: Op(dim_map=lambda x: dim_atleast_3d(len(x.shape))),
-    torch.broadcast_to: Op(dim_map=lambda input, shape: expand(input.shape, shape), shape_argnum=1),
-    Tensor.expand: Op(dim_map=lambda self, *sizes: expand(self.shape, normalize_sizes(*sizes)), shape_argnum=1),
+    torch.broadcast_to: Op(
+        dim_map=lambda input, shape: expand(input.shape, shape), shape_argnum=1
+    ),
+    Tensor.expand: Op(
+        dim_map=lambda self, *sizes: expand(
+            self.shape, normalize_sizes(*sizes)
+        ),
+        shape_argnum=1,
+    ),
     torch.flatten: Op(dim_map=lambda tensor: dim_flatten(tensor.shape)),
-    torch.movedim: Op(dim_map=lambda input, source, destination: dim_movedim(len(input.shape), source, destination)),
+    torch.movedim: Op(
+        dim_map=lambda input, source, destination: dim_movedim(
+            len(input.shape), source, destination
+        )
+    ),
     torch.permute: Op(dim_map=lambda input, dims: dims),
     torch.ravel: Op(dim_map=lambda tensor: dim_flatten(tensor.shape)),
-    Tensor.repeat: Op(dim_map=lambda self, *sizes: dim_repeat(self.shape, sizes)),
-    torch.reshape: Op(dim_map=lambda input, shape: view_groups(input.shape, shape)[1], shape_argnum=1),
+    Tensor.repeat: Op(
+        dim_map=lambda self, *sizes: dim_repeat(self.shape, sizes)
+    ),
+    torch.reshape: Op(
+        dim_map=lambda input, shape: view_groups(input.shape, shape)[1],
+        shape_argnum=1,
+    ),
     torch.tile: Op(dim_map=lambda input, dims: dim_tile(input.shape, dims)),
-    torch.transpose: Op(dim_map=lambda input, dim0, dim1: dim_transpose(input.shape, dim0, dim1)),
-    torch.unsqueeze: Op(dim_map=lambda input, dim: dim_unsqueeze(input.shape, dim)),
-    Tensor.view: Op(dim_map=lambda input, *shape: view_groups(input.shape, shape)[1], shape_argnum=1),
+    torch.transpose: Op(
+        dim_map=lambda input, dim0, dim1: dim_transpose(input.shape, dim0, dim1)
+    ),
+    torch.unsqueeze: Op(
+        dim_map=lambda input, dim: dim_unsqueeze(input.shape, dim)
+    ),
+    Tensor.view: Op(
+        dim_map=lambda input, *shape: view_groups(input.shape, shape)[1],
+        shape_argnum=1,
+    ),
 }
 
 
@@ -364,17 +402,19 @@ def propagate_shape_and_sharding(in_shard, local_in_shape, rule, mesh_sizes):
         if isinstance(cmd, int):
             return (
                 local_in_shape[cmd],
-                cmd if cmd in sharded_in_dims else None
+                cmd if cmd in sharded_in_dims else None,
             )
 
-        elif cmd[0] == 'flatten':
+        elif cmd[0] == "flatten":
             for in_dim in cmd[1][1:]:
-                assert not in_dim in sharded_in_dims, 'Only the first member of a FLATTEN group can be sharded'
+                assert (
+                    not in_dim in sharded_in_dims
+                ), "Only the first member of a FLATTEN group can be sharded"
             return (
                 _prod(get_dim_size(a)[0] for a in cmd[1]),
-                cmd[1][0] if cmd[1][0] in sharded_in_dims else None
+                cmd[1][0] if cmd[1][0] in sharded_in_dims else None,
             )
-        elif cmd[0] == 'comp':
+        elif cmd[0] == "comp":
             if cmd[2] > 0:
                 # we will shard only on the first dimension of the group
                 # so the shape should be the nominal shape of the component
@@ -392,20 +432,24 @@ def propagate_shape_and_sharding(in_shard, local_in_shape, rule, mesh_sizes):
                     if isinstance(shard, Shard) and shard.dim == in_dim:
                         submesh_size *= size
                 out_size = cmd[1][0]
-                assert out_size % submesh_size, 'Resulting dimension size is not divisible by its mesh dimension.'
+                assert (
+                    out_size % submesh_size
+                ), "Resulting dimension size is not divisible by its mesh dimension."
                 return out_size // submesh_size, in_dim
-        elif cmd[0] == 'singleton':
+        elif cmd[0] == "singleton":
             return 1, None
-        elif cmd[0] == 'broadcast':
+        elif cmd[0] == "broadcast":
             return cmd[2], None
-        elif cmd[0] == 'newdim':
+        elif cmd[0] == "newdim":
             return cmd[1], None
-        elif cmd[0] == 'repeat':
-            assert not cmd[1] in sharded_in_dims, 'Cannot tile sharded dimension.'
+        elif cmd[0] == "repeat":
+            assert (
+                not cmd[1] in sharded_in_dims
+            ), "Cannot tile sharded dimension."
             return local_in_shape[cmd[1]], None
         else:
-            raise RuntimeError(f'cmd not found: {cmd}, in rule: {rule}')
- 
+            raise RuntimeError(f"cmd not found: {cmd}, in rule: {rule}")
+
     dim_map = {}
     out_shape = []
     for dim, cmd in enumerate(rule):
@@ -416,12 +460,14 @@ def propagate_shape_and_sharding(in_shard, local_in_shape, rule, mesh_sizes):
 
     return (
         out_shape,
-        [Shard(dim_map[s.dim]) if isinstance(s, Shard) else s for s in in_shard]
+        [
+            Shard(dim_map[s.dim]) if isinstance(s, Shard) else s
+            for s in in_shard
+        ],
     )
 
 
 def register_prop_rule_map(aten_op_name, local_op_name):
-
     @register_prop_rule(aten_op_name)
     def reshape_prop(op_schema: OpSchema) -> OutputSharding:
         spec = ops[local_op_name]
@@ -432,27 +478,35 @@ def register_prop_rule_map(aten_op_name, local_op_name):
         # note we are passing _local_ tensor shapes
         local_out_shape, shard_out = propagate_shape_and_sharding(
             op_schema.args_spec[0].placements,
-            op_schema.args[0].to_local().shape,  # TODO check how to properly access local shape
+            op_schema.args[0]
+            .to_local()
+            .shape,  # TODO check how to properly access local shape
             # op_schema.args_with_local_tensor[0].shape,
             rules,
             op_schema.args_spec[0].mesh.mesh.shape,
         )
 
         # The code below doesn't work : it doesn't let me change the propery
-        args  = op_schema.args_schema
+        args = op_schema.args_schema
         if spec.shape_argnum is not None:
-            op_schema.args_schema = args[:spec.shape_argnum] + (tuple(local_out_shape), ) + args[spec.shape_argnum + 1:]
+            op_schema.args_schema = (
+                args[: spec.shape_argnum]
+                + (tuple(local_out_shape),)
+                + args[spec.shape_argnum + 1 :]
+            )
 
         return OutputSharding(
             output_spec=PlacementSpec(
                 ndim=len(local_out_shape),
                 mesh=op_schema.args_spec[0].mesh,
-                placements=shard_out))
+                placements=shard_out,
+            )
+        )
 
 
-register_prop_rule_map('aten.view.default', Tensor.view)
-register_prop_rule_map('aten.unsqueeze.default', torch.unsqueeze)
-register_prop_rule_map('aten.expand.default', Tensor.expand)
-register_prop_rule_map('aten.permute.default', torch.permute)
-register_prop_rule_map('aten.repeat.default', Tensor.repeat)
-register_prop_rule_map('aten.transpose.int', torch.transpose)
+register_prop_rule_map("aten.view.default", Tensor.view)
+register_prop_rule_map("aten.unsqueeze.default", torch.unsqueeze)
+register_prop_rule_map("aten.expand.default", Tensor.expand)
+register_prop_rule_map("aten.permute.default", torch.permute)
+register_prop_rule_map("aten.repeat.default", Tensor.repeat)
+register_prop_rule_map("aten.transpose.int", torch.transpose)
