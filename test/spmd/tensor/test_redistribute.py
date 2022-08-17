@@ -99,11 +99,11 @@ class RedistributeTest(DistTensorTestBase):
         self.assertEqual(grad_input.to_local(), torch.ones(12, 3))
 
     @with_comms
-    def test_partial_to_replicate(self):
-        # we only need to test forward path related to partial
-        # becaues _Partial should only exist in op impls
-        # and we don't allow reshard to produce a partial
-        # placement (i.e. user can't reshard to partial)
+    def test_partial_to_replicate_forward_backward(self):
+        # Although we don't allow user to reshard to produce a partial
+        # placement (i.e. user can't reshard to partial), we do allow
+        # replicate to partial internally, and also partial to replicate
+        # backward should work as expected
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         partial_local = torch.randn(
             12, 3, device=self.device_type, requires_grad=True
@@ -111,12 +111,57 @@ class RedistributeTest(DistTensorTestBase):
         partial_spec = [_Partial(ReduceOp.SUM)]
         replica_spec = [Replicate()]
         # test partial -> replicate, which trigger all_reduce
-        partial_tensor = DTensor(partial_local, device_mesh, partial_spec)
+        partial_tensor = DTensor(
+            partial_local, device_mesh, partial_spec, requires_grad=True
+        )
         global_partial_tensor = partial_tensor.redistribute(
             device_mesh, replica_spec
         )
         self.assertEqual(partial_tensor.size(), partial_local.size())
         self.assertEqual(partial_local * 4, global_partial_tensor.to_local())
+
+        # test backward to have replicate grad on partial
+        global_partial_tensor.to_local().sum().backward()
+        self.assertIsNotNone(partial_tensor.grad)
+        self.assertTrue(partial_tensor.grad.placements[0].is_replicate())
+        self.assertEqual(
+            partial_tensor.grad.to_local(), torch.ones_like(partial_local)
+        )
+
+    @with_comms
+    def test_replicate_to_partial(self):
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        local_tensor = torch.randn(
+            12, 3, device=self.device_type, requires_grad=True
+        )
+        partial_spec = [_Partial(ReduceOp.SUM)]
+        replica_spec = [Replicate()]
+        # 1) test replicate -> partial forward
+        replica_tensor = DTensor(
+            local_tensor, device_mesh, replica_spec, requires_grad=True
+        )
+        with self.assertRaisesRegex(
+            RuntimeError, "Can not redistribute to _Partial"
+        ):
+            partial_tensor = replica_tensor.redistribute(
+                device_mesh, partial_spec
+            )
+
+        from spmd.tensor.redistribute import Redistribute
+
+        partial_tensor = Redistribute.apply(
+            replica_tensor, device_mesh, partial_spec
+        )
+        self.assertEqual(partial_tensor.size(), local_tensor.size())
+        # test it successfully zero out the gradients
+        if self.rank == 0:
+            self.assertEqual(
+                replica_tensor.to_local(), partial_tensor.to_local()
+            )
+        else:
+            self.assertEqual(
+                partial_tensor.to_local(), torch.zeros_like(local_tensor)
+            )
 
     @with_comms
     def test_partial_to_shard_0(self):

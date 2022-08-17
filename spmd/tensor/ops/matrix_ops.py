@@ -1,27 +1,86 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 # implement matrix related ops for distributed tensor
 from typing import Optional
-from spmd.tensor.dispatch import OpSchema
-from spmd.tensor.placement_types import PlacementSpec
-from spmd.tensor.ops.prop_rules import einop_prop, mm_prop, pointwise_prop
+from spmd.tensor.dispatch import OpSchema, OutputSharding
+from spmd.tensor.ops.math_ops import einop_rule
+from spmd.tensor.ops.pointwise_ops import pointwise_rules
+from spmd.tensor.placement_types import _Partial, PlacementSpec
 from spmd.tensor.ops.utils import register_prop_rule
 
 
+def mm_prop(
+    mat1_spec: PlacementSpec, mat2_spec: PlacementSpec
+) -> Optional[PlacementSpec]:
+    # mm propagation rule:
+    # mat1: shard(0),  mat2: replicate
+    # mat1: replicate, mat2: shard(1)
+    # mat1: shard(1),  mat2: shard(0)
+    # propagation rules only propagates the combs without communication
+    # TODO: support multi-dim device mesh op with einop propagation
+    if (
+        mat1_spec.placements[0].is_shard(dim=0)
+        and mat2_spec.placements[0].is_replicate()
+    ):
+        return mat1_spec
+    elif mat1_spec.placements[0].is_replicate() and mat2_spec.placements[
+        0
+    ].is_shard(dim=1):
+        return mat2_spec
+    elif mat1_spec.placements[0].is_shard(dim=1) and mat2_spec.placements[
+        0
+    ].is_shard(dim=0):
+        placements = [_Partial()]
+        return PlacementSpec(mat1_spec.ndim, mat1_spec.mesh, placements)
+    elif (
+        mat1_spec.placements[0].is_replicate()
+        and mat2_spec.placements[0].is_replicate()
+    ):
+        return mat1_spec
+    else:
+        # not local compute, need to rely on auto redistribute, return None
+        return None
+
+
 @register_prop_rule("aten.mm.default")
-def mm_rules(op_schema: OpSchema) -> Optional[PlacementSpec]:
+def mm_rules(op_schema: OpSchema) -> OutputSharding:
     mat1_spec, mat2_spec = op_schema.args_spec
-    return mm_prop(mat1_spec, mat2_spec)
+    return OutputSharding(mm_prop(mat1_spec, mat2_spec))
 
 
 @register_prop_rule("aten.addmm.default")
-def addmm_rules(op_schema: OpSchema) -> Optional[PlacementSpec]:
+def addmm_rules(op_schema: OpSchema) -> OutputSharding:
     input_spec, mat1_spec, mat2_spec = op_schema.args_spec
     mm_out_spec = mm_prop(mat1_spec, mat2_spec)
     if mm_out_spec is None:
-        return None
-    return pointwise_prop((input_spec, mm_out_spec))
+        # non-eligible input, suggest addmm input specs
+        # TODO: add suggested input specs for resharding
+        return OutputSharding(None)
+    # TODO: add multi dim support for addmm
+
+    # run point wise rule on input + (mm_out) with linearity
+    output_sharding = pointwise_rules(
+        OpSchema((input_spec, mm_out_spec), {}), linearity=True
+    )
+    # if propagation failed, edit the schema suggestion from pointwise rules
+    # to return addmm suggestion instead as it's a chained suggestion.
+    if (
+        output_sharding.output_spec is None
+        and output_sharding.schema_suggestions is not None
+    ):
+        pointwise_suggestion = output_sharding.schema_suggestions[0]
+        assert output_sharding.schema_suggestions is not None
+        output_sharding.schema_suggestions[0] = OpSchema(
+            args_schema=(
+                pointwise_suggestion.args_schema[0],
+                mat1_spec,
+                mat2_spec,
+            ),
+            kwargs_schema=op_schema.kwargs_schema,
+        )
+
+    return output_sharding
 
 
 @register_prop_rule("aten.t.default")
-def transpose_rule(op_schema: OpSchema) -> Optional[PlacementSpec]:
-    return einop_prop("ij->ji", op_schema.args_spec)
+def transpose_rule(op_schema: OpSchema) -> OutputSharding:
+    return einop_rule("ij->ji", op_schema)

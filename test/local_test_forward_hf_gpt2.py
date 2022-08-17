@@ -9,14 +9,14 @@ from typing import Dict
 import torch
 import torch.distributed.rpc as rpc
 import torch.multiprocessing as mp
+from transformers import GPT2Model, GPT2Config
 
-import transformers.utils.fx as fx
+import pippy.fx
 from pippy.IR import MultiUseParameterConfig, Pipe, PipeSplitWrapper, annotate_split_points
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverBase
+from pippy.hf import PiPPyHFTracer
 from pippy.microbatch import TensorChunkSpec
-import pippy.fx
-from test_commons import tp_transports # type: ignore
-from transformers import GPT2Model, GPT2Config
+from test_commons import tp_transports  # type: ignore
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
@@ -30,24 +30,6 @@ VERBOSE = bool(int(os.environ.get('VERBOSE', False)))
 
 if VERBOSE:
     logging.getLogger().setLevel(logging.DEBUG)
-
-@pippy.fx.wrap
-def torch_arange_wrapper(*args, **kwargs):
-    return torch.arange(*args, **kwargs)
-
-
-class HFGPT2Tracer(fx.HFTracer):
-    def trace(self, root, concrete_args=None):
-        graph = super().trace(root, concrete_args)
-        # HACK to replace HF's non-resolvable wrappers with the original
-        # tensor constructor functions
-        # Requires this patch to HF: https://github.com/jamesr66a/transformers/commit/ede9d30f36f12be390692617ef76e2928b1612bd
-        for node in graph.nodes:
-            if node.op == 'call_function':
-                if getattr(node.target, '_orig', None) == torch.arange:
-                    node.target = torch_arange_wrapper
-        return graph
-
 
 pippy.fx.Tracer.proxy_buffer_attributes = True
 
@@ -75,10 +57,8 @@ def run_master(args):
     sig = inspect.signature(gpt2.forward)
     concrete_args = {p.name: p.default for p in sig.parameters.values() if p.name not in input_names}
 
-    hf_tracer = HFGPT2Tracer()
-
     print('Instantiating GPT2 Pipeline')
-    gpt2_pipe = Pipe.from_tracing(gpt2, MULTI_USE_PARAM_CONFIG, tracer=hf_tracer, concrete_args=concrete_args)
+    gpt2_pipe = Pipe.from_tracing(gpt2, MULTI_USE_PARAM_CONFIG, tracer=PiPPyHFTracer(), concrete_args=concrete_args)
 
     assert gpt2.config.n_layer + 2 == len(list(gpt2_pipe.split_gm.children()))
 

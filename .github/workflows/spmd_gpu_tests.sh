@@ -8,6 +8,7 @@ echo "SHARD: ${SHARD}"
 
 nvidia-smi
 nvcc --version
+cat /etc/os-release
 which python3
 python3 --version
 which pip3

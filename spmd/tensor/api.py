@@ -4,7 +4,7 @@ from functools import reduce
 import operator
 import warnings
 import torch
-from torch.utils._pytree import tree_map, tree_flatten
+from torch.utils._pytree import tree_flatten
 from typing import Dict, Callable, Optional, Sequence
 from spmd.tensor.device_mesh import get_global_device_mesh, DeviceMesh
 from spmd.tensor.placement_types import (
@@ -16,13 +16,7 @@ from spmd.tensor.placement_types import (
 )
 from spmd.tensor.redistribute import Redistribute
 
-from spmd.tensor.utils import unwrap_local_tensor, unwrap_spec, wrap
-from spmd.tensor.dispatch import (
-    OpInfo,
-    OpSchema,
-    OutputSpecType,
-    dispatch_operator,
-)
+from spmd.tensor.dispatch import operator_dispatch, OpSchema, OutputSharding
 
 # NOTE [Autograd interaction between torch.Tensor]
 #
@@ -122,7 +116,7 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
 
     # class attribute that handles operator placements propagation
     # rules, keyed by aten op name, value is propagation func
-    _op_to_rules: Dict[str, Callable[[OpSchema], OutputSpecType]] = {}
+    _op_to_rules: Dict[str, Callable[[OpSchema], OutputSharding]] = {}
 
     # class attribute that handles custom registered ops, all handled
     # custom ops should appear in this table, and overriding the default
@@ -220,45 +214,23 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     # pyre-fixme[2]: Parameter must be annotated.
     def __torch_dispatch__(cls, func, types, args=(), kwargs=None):
         # check that we are not getting mixed vanilla and Distributed tensors
-        arg_list, arg_spec = tree_flatten(args)
+        arg_list, _ = tree_flatten(args)
         for arg in arg_list:
             if isinstance(arg, torch.Tensor) and not isinstance(arg, DTensor):
                 raise RuntimeError(
                     f"{func}: got mixed distributed and non-distributed tensors."
                 )
 
-        # User defined custom aten operator implementation
-        if str(func) in DTensor._custom_dispatch_ops:
-            # dispatch to user defined custom distributed tensor ops
-            return DTensor._custom_dispatch_ops[str(func)](*args, **kwargs)
+        if kwargs is None:
+            kwargs = {}
 
-        # unwrap local tensors, and placement specs, then
-        # call into dispatch logic and get back local tensor
-        # results and output placement specs
-        arg_spec = tree_map(unwrap_spec, args)
-        args_with_local_tensors = tree_map(unwrap_local_tensor, args)
-        kwargs_spec = tree_map(unwrap_spec, kwargs)
-        kwarg_with_local_tensors = tree_map(unwrap_local_tensor, kwargs)
-
-        op_info = OpInfo(
+        return operator_dispatch(
             func,
-            OpSchema(
-                args_with_local_tensors,
-                kwarg_with_local_tensors,
-                arg_spec,
-                kwargs_spec,
-            ),
+            args,
+            kwargs,
+            DTensor._op_to_rules,
+            DTensor._custom_dispatch_ops,
         )
-
-        # call into dispatch logic to do sharding propagations
-        local_res, output_spec = dispatch_operator(
-            op_info, DTensor._op_to_rules
-        )
-
-        # rewrap results back to dist tensor if the output is a tensor,
-        # if the results are not tensor (i.e. int/float/bool), we simply
-        # ignore the output_placements and return directly
-        return wrap(local_res, output_spec)
 
     @classmethod
     def from_local(
@@ -334,6 +306,12 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # raise error if new placements not specified
         if placements is None:
             raise RuntimeError("placements is needed for redistribute!")
+
+        for placement in placements:
+            if placement.is_partial():
+                raise RuntimeError(
+                    "Can not redistribute to _Partial, _Partial is for internal use only!"
+                )
 
         # pyre-fixme[16]: `Redistribute` has no attribute `apply`.
         return Redistribute.apply(self, device_mesh, placements)
