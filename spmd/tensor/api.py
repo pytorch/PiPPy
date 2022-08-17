@@ -11,7 +11,7 @@ from spmd.tensor.placement_types import (
     Shard,
     Replicate,
     _Partial,
-    PlacementSpec,
+    DTensorSpec,
 )
 from spmd.tensor.redistribute import Redistribute
 
@@ -123,8 +123,8 @@ _CURRENT_DECOMPOSITION_TABLE: Dict[torch._ops.OpOverload, Callable] = {
 
 class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     _local_tensor: torch.Tensor
-    _placement_spec: PlacementSpec
-    __slots__ = ["_local_tensor", "_placement_spec"]
+    _spec: DTensorSpec
+    __slots__ = ["_local_tensor", "_spec"]
 
     # class attribute that handles operator placements propagation
     # rules, keyed by aten op name, value is propagation func
@@ -191,8 +191,8 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         )
         # deepcopy and set spec, data should be handled
         # by __init__ or from_local instead.
-        r._placement_spec = PlacementSpec(
-            r.ndim, device_mesh, copy.deepcopy(placements)
+        r._spec = DTensorSpec(
+            device_mesh, copy.deepcopy(placements), shape=r.size()
         )
         # detach local tensor from autograd graph as we initialize the
         # distributed tensor and autograd will be working on top of
@@ -204,7 +204,7 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     # pyre-fixme[3]: Return type must be annotated.
     def __repr__(self):
         # TODO: consider all_gather the local tensors for better debugging
-        return f"DTensor(local_tensor={self._local_tensor}, device_mesh={self._placement_spec.mesh}, placements={self._placement_spec.placements})"
+        return f"DTensor(local_tensor={self._local_tensor}, device_mesh={self._spec.mesh}, placements={self._spec.placements})"
 
     @classmethod
     # pyre-fixme[3]: Return type must be annotated.
@@ -340,9 +340,9 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     def placements(self) -> Sequence[Placement]:
         # placement should be a read only propety
         # to disallow caller modification on it
-        # caller who want a different PlacementSpec
+        # caller who want a different DTensorSpec
         # should call redistribute instead.
-        return self._placement_spec.placements
+        return self._spec.placements
 
     @property
     def device_mesh(self) -> DeviceMesh:
@@ -350,7 +350,7 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # to disallow caller modification on it
         # caller who want a different device_mesh
         # should call redistribute instead.
-        return self._placement_spec.mesh
+        return self._spec.mesh
 
     # TODO: This is a temporary hack to unblock TP efforts. We need to
     # come up with a more principle design for customized ops like this.
