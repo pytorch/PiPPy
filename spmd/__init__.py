@@ -48,7 +48,7 @@ def distribute_tensor(
             shard_dim = placement.dim
             assert (
                 shard_dim <= tensor.ndim
-            ), "Sharding dim {shard_dim} greater than tensor ndim {tensor.ndim}"
+            ), f"Sharding dim {shard_dim} greater than tensor ndim {tensor.ndim}"
             # TODO: handle uneven shard sizes
             num_chunks = device_mesh.size(dim=idx)
             assert tensor.size(shard_dim) % num_chunks == 0, (
