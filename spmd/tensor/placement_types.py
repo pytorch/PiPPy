@@ -1,4 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+import torch
 import torch.distributed.distributed_c10d as c10d
 
 from dataclasses import dataclass
@@ -44,11 +45,27 @@ class _Partial(Placement):
 
 # used internally to propagate the placements
 @dataclass
-class PlacementSpec(object):
-    # number of dimensions (rank) of the current dist tensor
-    ndim: int
+class DTensorSpec(object):
     mesh: DeviceMesh
     placements: Sequence[Placement]
+    # ndim of the current dist tensor, if only pass in shape, this
+    # field will be updated to len(shape), if not pass in shape, must
+    # pass in ndim
+    ndim: int = -1
+    # shape of the current dist tensor, this will be set upon
+    # construction of the DTensor, prop rule could read it, and
+    # don't need to set in output spec when calculate the output
+    # sharding
+    shape: Optional[torch.Size] = None
+
+    def __post_init__(self) -> None:
+        if self.ndim == -1:
+            if self.shape is not None:
+                self.ndim = len(self.shape)
+            else:
+                raise RuntimeError("must either pass in shape or pass in ndim!")
+        elif self.shape is not None:
+            assert self.ndim == len(self.shape), "shape and ndim is different!"
 
     @property
     def dim_map(self) -> List[int]:
@@ -68,7 +85,7 @@ class PlacementSpec(object):
         tensor dimension is sharded or not.
 
         Note that if placements contains `_Partial`, we have to
-        explicitly deal with it, so that when we create a PlacementSpec
+        explicitly deal with it, so that when we create a DTensorSpec
         with dim_map, we could properly record the pending sums.
         """
         # dims mapping of dist tensor sharding
@@ -96,20 +113,25 @@ class PlacementSpec(object):
 
     @classmethod
     def from_dim_map(
-        cls, mesh: DeviceMesh, dim_map: List[int], sums: List[int]
-    ) -> "PlacementSpec":
+        cls,
+        mesh: DeviceMesh,
+        dim_map: List[int],
+        sums: List[int],
+        shape: Optional[torch.Size] = None,
+    ) -> "DTensorSpec":
         """
-        Construct a PlacementSpec from dim_map list and pending sum.
+        Construct a DTensorSpec from dim_map list and pending sum.
 
         Args:
-            mesh (class:`DeviceMesh`): device mesh to be used in the PlacementSpec
+            mesh (class:`DeviceMesh`): device mesh to be used in the DTensorSpec
             dim_map (List[int]): a list of integer that represents sharding on each
                 tensor dimension, see `dim_map` property doc for details
             sums (List[int]): a list of integer that represents the dist tensor have
                 pending sum on which device mesh dimension.
+            shape (torch.Size, optional): shape of the DTensor associated with this spec.
 
         Return:
-            a class:`PlacementSpec` object
+            a class:`DTensorSpec` object
         """
         # by default replicate on device mesh dims
         placements: List[Placement] = [Replicate() for _ in range(mesh.ndim)]
@@ -132,11 +154,11 @@ class PlacementSpec(object):
                     )
                 placements[m] = Shard(i)
 
-        return cls(len(dim_map), mesh, placements)
+        return cls(mesh, placements, shape=shape, ndim=len(dim_map))
 
 
 # ATen op schemas could have Tensor, Tuple[Tensor] and List[Tensor], so output type sould
 # be the same set of possiblities.
 OutputSpecType = Optional[
-    Union[PlacementSpec, Tuple[PlacementSpec, ...], List[PlacementSpec]]
+    Union[DTensorSpec, Tuple[DTensorSpec, ...], List[DTensorSpec]]
 ]
