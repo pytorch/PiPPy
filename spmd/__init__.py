@@ -41,7 +41,7 @@ def distribute_tensor(
     if placements is None:
         placements = [Replicate() for _ in range(device_mesh.ndim)]
 
-    # distribute the tensor according to PlacementSpec
+    # distribute the tensor according to DTensorSpec
     for idx, placement in enumerate(placements):
         if placement.is_shard():
             placement = cast(Shard, placement)

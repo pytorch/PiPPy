@@ -12,7 +12,7 @@ class DistTensorTest(DistTensorTestBase):
     # @with_comms
     # def test_tensor_constructor(self):
     #     import spmd.tensor as dist_tensor
-    #     shard_spec = DTensorSpec(device_mesh, strategies=[Shard(0)])
+    #     shard_spec = PlacementSpec(device_mesh, strategies=[Shard(0)])
     #     empty_tensor = dist_tensor.empty((12, 10), placement_spec=shard_spec)
     #     zero_tensor = dist_tensor.zeros((12, 10), placement_spec=shard_spec)
     #     one_tensor = dist_tensor.ones((12, 10), placement_spec=shard_spec)

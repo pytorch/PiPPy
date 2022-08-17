@@ -2,18 +2,18 @@
 from typing import List, Dict, cast
 from spmd.tensor.api import DTensor
 from spmd.tensor.dispatch import OpSchema, OutputSharding
-from spmd.tensor.placement_types import _Partial, PlacementSpec
+from spmd.tensor.placement_types import _Partial, DTensorSpec
 from spmd.tensor.ops.utils import as_list
 
 
-def _gen_placement_spec_with_pending_sum(
-    spec: PlacementSpec, pending_sum: List[int]
-) -> PlacementSpec:
+def _gen_spec_with_pending_sum(
+    spec: DTensorSpec, pending_sum: List[int]
+) -> DTensorSpec:
     new_placements = [
         placement if i not in pending_sum else _Partial()
         for i, placement in enumerate(spec.placements)
     ]
-    return PlacementSpec(spec.ndim, spec.mesh, new_placements)
+    return DTensorSpec(spec.mesh, new_placements, shape=spec.shape, ndim=spec.ndim)
 
 
 def einop_rule(
@@ -74,7 +74,7 @@ def einop_rule(
         # we fail the sharding propagation with suggestion to make all inputs
         # be partial on the corresponding mesh dim
         new_arg_specs = tuple(
-            _gen_placement_spec_with_pending_sum(spec, pending_sums)
+            _gen_spec_with_pending_sum(spec, pending_sums)
             for spec in input_specs
         )
         return OutputSharding(
@@ -109,7 +109,7 @@ def einop_rule(
             pending_sums.append(shard_on_mesh)
 
     return OutputSharding(
-        PlacementSpec.from_dim_map(
+        DTensorSpec.from_dim_map(
             input_specs[0].mesh,
             [dim_to_sharding[dim] for dim in output_dim],
             pending_sums,
@@ -124,7 +124,7 @@ def reduction_rule(op_schema: OpSchema) -> OutputSharding:
     """
     alphabet = "abcdefghijklmnopqrstuvwxyz"
     # reduction op usually begin with a single tensor
-    input_spec = cast(PlacementSpec, op_schema.args_schema[0])
+    input_spec = cast(DTensorSpec, op_schema.args_schema[0])
     input_chars = alphabet[: input_spec.ndim]
 
     if len(op_schema.args_schema) > 1 and isinstance(
