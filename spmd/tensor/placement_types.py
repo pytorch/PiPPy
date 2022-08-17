@@ -81,6 +81,19 @@ class PlacementSpec(object):
                 r[shard_dim] = i
         return r
 
+    @property
+    def sums(self) -> List[int]:
+        """
+        sums is a property we derive from `placements` of the
+        distributed tensor. It simply return a list of ints where
+        sums[i] denotes the pending sum (partial) on mesh dim i
+        """
+        return [
+            idx
+            for idx, placement in enumerate(self.placements)
+            if placement.is_partial()
+        ]
+
     @classmethod
     def from_dim_map(
         cls, mesh: DeviceMesh, dim_map: List[int], sums: List[int]
