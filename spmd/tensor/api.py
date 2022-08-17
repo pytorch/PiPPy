@@ -15,7 +15,7 @@ from spmd.tensor.placement_types import (
 )
 from spmd.tensor.redistribute import Redistribute
 
-from spmd.tensor.utils import unwrap_local_tensor, unwrap_spec, wrap
+from spmd.tensor.utils import unwrap_local_tensor, unwrap_spec, wrap, print0
 from spmd.tensor.dispatch import (
     OpInfo,
     OpSchema,

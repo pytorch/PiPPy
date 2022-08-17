@@ -6,6 +6,11 @@ from spmd.tensor.placement_types import PlacementSpec
 from spmd.tensor.dispatch import OutputSpecType
 
 
+def print0(to_print: str) -> None:
+    if torch.distributed.get_rank() == 0:
+        print(to_print)
+
+
 # pyre-fixme[3]: Return type must be annotated.
 # pyre-fixme[2]: Parameter must be annotated.
 def all_equal(xs):
