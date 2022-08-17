@@ -22,7 +22,7 @@ from spmd.tensor.utils import (
 """
 If set to true, __DEBUG_STRICT will fail when an op doesn't have a sharding rule registered.
 """
-_DEBUG_STRICT = False
+_DEBUG_STRICT = True
 
 
 @dataclass
@@ -219,7 +219,7 @@ def operator_dispatch(
         # we will change the behavior to reshard to full
         # replicate and do the computatation
         if _DEBUG_STRICT:
-            raise RuntimeError(
+            raise NotImplementedError(
                 f"Operator {op_key} does not have a DistributedTensor rule registered."
             )
         # default to local tensor ops, this is wrong
