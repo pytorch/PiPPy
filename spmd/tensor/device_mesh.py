@@ -130,6 +130,13 @@ class DeviceMesh(object):
                 f"DeviceMesh cannot have duplicate values, but found {self.mesh.tolist()}"
             )
 
+        # coordinates of this rank on the mesh
+        rank_coords = (self.mesh == get_rank()).nonzero()
+        assert rank_coords.size(0) in (0, 1)
+        self._coordinate_on_dim: Optional[List[int]] = (
+            rank_coords[0].tolist() if rank_coords.size(0) > 0 else None
+        )
+
         # groups created by dimension, each dimension should have exact
         # one valid process group per rank
         self._dim_groups: List[ProcessGroup] = []
@@ -214,6 +221,13 @@ class DeviceMesh(object):
     def get_rank(self) -> int:
         return get_rank()
 
+    def get_coordinate_on_dim(self, dim: int) -> Optional[int]:
+        """
+        Return the relative index of this rank relative to a given
+        dimension of the mesh. If this rank is not part of the mesh, return None.
+        """
+        return self._coordinate_on_dim[dim] if self._coordinate_on_dim else None
+
     def scatter(
         self, scatter_list: List[torch.Tensor], mesh_dim: int = 0
     ) -> torch.Tensor:
@@ -272,18 +286,25 @@ class DeviceMesh(object):
         output_tensor: torch.Tensor,
         tensor: torch.Tensor,
         mesh_dim: int = 0,
+        tensor_dim: int = 0,
     ):
         # only nccl have all_gather base
         if self.backend() == "nccl":
-            return _all_gather_base(
+            if tensor_dim != 0:
+                tensor = tensor.transpose(tensor_dim, 0)
+            # TODO needs contiguous?
+            output = _all_gather_base(
                 output_tensor, tensor, group=self._dim_groups[mesh_dim]
             )
+            if tensor_dim != 0:
+                output = output.transpose(tensor_dim, 0)
+            return output
         else:
             # if not nccl, fallback to use all_gather
             # and reform the output tensor by concat
             gathered_chunks = self.all_gather(tensor, mesh_dim=mesh_dim)
             # TODO: find more performant way
-            output_tensor.copy_(torch.cat(gathered_chunks))
+            output_tensor.copy_(torch.cat(gathered_chunks, dim=tensor_dim))
             return output_tensor
 
     # pyre-fixme[3]: Return type must be annotated.
