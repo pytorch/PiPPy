@@ -4,7 +4,7 @@ import math
 import warnings
 import torch
 from torch.utils._pytree import tree_flatten
-from typing import Dict, Callable, Optional, Sequence
+from typing import Dict, Callable, Optional, Sequence, Tuple
 from spmd.tensor.device_mesh import get_global_device_mesh, DeviceMesh
 from spmd.tensor.placement_types import (
     Placement,
@@ -113,7 +113,7 @@ def _reshape_alias(x: torch.Tensor, shape: Tuple[int, ...], strides: Tuple[int, 
 
 from torch._decomp import decomposition_table
 
-_CURRENT_DECOMPOSITION_TABLE: Dict[torch._ops.OpOverload, Callable[..., Any]] = {
+_CURRENT_DECOMPOSITION_TABLE: Dict[torch._ops.OpOverload, Callable] = {
     torch.ops.aten._reshape_alias.default: _reshape_alias,
 }
 

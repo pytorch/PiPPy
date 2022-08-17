@@ -432,14 +432,16 @@ def register_prop_rule_map(aten_op_name, local_op_name):
         # note we are passing _local_ tensor shapes
         local_out_shape, shard_out = propagate_shape_and_sharding(
             op_schema.args_spec[0].placements,
-            op_schema.args_with_local_tensor[0].shape,
+            op_schema.args[0].to_local().shape,  # TODO check how to properly access local shape
+            # op_schema.args_with_local_tensor[0].shape,
             rules,
             op_schema.args_spec[0].mesh.mesh.shape,
         )
 
-        args  = op_schema.args_with_local_tensor
+        # The code below doesn't work : it doesn't let me change the propery
+        args  = op_schema.args_spec
         if spec.shape_argnum is not None:
-            op_schema.args_with_local_tensor = args[:spec.shape_argnum] + (tuple(local_out_shape), ) + args[spec.shape_argnum + 1:]
+            op_schema.args_spec = args[:spec.shape_argnum] + (tuple(local_out_shape), ) + args[spec.shape_argnum + 1:]
 
         return PlacementSpec(ndim=len(local_out_shape), mesh=op_schema.args_spec[0].mesh, placements=shard_out)
 
