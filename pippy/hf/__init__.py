@@ -5,8 +5,8 @@ from pippy.hf.utils import (
     PiPPySeq2SeqTrainingArguments,
     PiPPyTrainer,
     PiPPySeq2SeqTrainer,
-    run_pippy, wrap
+    wrap
 )
 
 __all__ = ['PiPPyHFTracer', 'PiPPyTrainingArguments', 'PiPPySeq2SeqTrainingArguments', 'PiPPyTrainer',
-           'PiPPySeq2SeqTrainer', 'run_pippy', 'wrap']
+           'PiPPySeq2SeqTrainer', 'wrap']
