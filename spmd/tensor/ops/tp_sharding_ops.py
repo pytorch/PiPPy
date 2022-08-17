@@ -18,7 +18,6 @@ of DTensor and all corner cases for sharded distributed tensor.
 """
 
 
-<<<<<<< HEAD
 def dist_view_base(self: DTensor, op, *shape) -> DTensor:
     shape = shape[0]
     try:
@@ -39,13 +38,6 @@ def dist_view_base(self: DTensor, op, *shape) -> DTensor:
     if self.size() == shape:
         return self
 
-=======
-@register_impl("aten.view.SymInt")
-@register_impl("aten.view.default")
-# pyre-fixme[2]: Parameter must be annotated.
-def dist_view(self: DTensor, *shape) -> DTensor:
-    mat_placement = pytree.tree_map(unwrap_single_placement, self)
->>>>>>> main
     local_mat = pytree.tree_map(unwrap_local_tensor, self)
     mat_placement = pytree.tree_map(unwrap_single_placement, self)
     if mat_placement.is_replicate():

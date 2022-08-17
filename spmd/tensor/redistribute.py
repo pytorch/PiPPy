@@ -71,7 +71,6 @@ def redistribute_spmd_tensor(
     input: "spmd_tensor.DTensor",
     device_mesh: DeviceMesh,
     placements: List[Placement],
-    is_backward: bool = False,
 ) -> "spmd_tensor.DTensor":
     current_placements = input.placements
     local_tensor = input.to_local()
