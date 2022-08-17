@@ -1,5 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import List, Tuple, cast, Optional
+from typing import Dict, List, Tuple, cast
 
 import torch
 import spmd.tensor.api as spmd_tensor
@@ -38,10 +38,10 @@ def _decompose_reshard(val: List[_PlacementItem]) -> List[_PlacementItem]:
     # detect mis-aligned repeated shardings
     from collections import defaultdict
 
-    repeat_dim_current = defaultdict(int)
-    repeat_dim_target = defaultdict(int)
+    repeat_dim_current: Dict[int, int] = defaultdict(int)
+    repeat_dim_target: Dict[int, int] = defaultdict(int)
 
-    output = []
+    output: List[_PlacementItem] = []
 
     for i, (current, target) in val:
         # detect mis-aligned sharding
