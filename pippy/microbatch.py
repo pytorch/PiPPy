@@ -29,7 +29,8 @@ def shard_dict_of_args(args_dict, args_chunk_spec, num_chunks, _debug_mask_minib
 
     arg_specs = []
 
-    assert len(args_dict) == len(args_chunk_spec)
+    assert len(args_dict) == len(args_chunk_spec),\
+        f'args_dict.keys() = {list(args_dict.keys())} args_chunk_spec.keys() = {list(args_chunk_spec.keys())}'
     for arg_key, arg in args_dict.items():
         chunk_spec = args_chunk_spec[arg_key]
         flat, spec = tree_flatten(arg)
