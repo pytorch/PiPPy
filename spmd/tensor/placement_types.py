@@ -58,7 +58,7 @@ class DTensorSpec(object):
     # sharding
     shape: Optional[torch.Size] = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.ndim == -1:
             if self.shape is not None:
                 self.ndim = len(self.shape)
@@ -113,7 +113,11 @@ class DTensorSpec(object):
 
     @classmethod
     def from_dim_map(
-        cls, mesh: DeviceMesh, dim_map: List[int], sums: List[int], shape: Optional[torch.Size] = None
+        cls,
+        mesh: DeviceMesh,
+        dim_map: List[int],
+        sums: List[int],
+        shape: Optional[torch.Size] = None,
     ) -> "DTensorSpec":
         """
         Construct a DTensorSpec from dim_map list and pending sum.
@@ -151,7 +155,6 @@ class DTensorSpec(object):
                 placements[m] = Shard(i)
 
         return cls(mesh, placements, shape=shape, ndim=len(dim_map))
-
 
 
 # ATen op schemas could have Tensor, Tuple[Tensor] and List[Tensor], so output type sould

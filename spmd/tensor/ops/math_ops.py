@@ -13,7 +13,9 @@ def _gen_spec_with_pending_sum(
         placement if i not in pending_sum else _Partial()
         for i, placement in enumerate(spec.placements)
     ]
-    return DTensorSpec(spec.mesh, new_placements, shape=spec.shape, ndim=spec.ndim)
+    return DTensorSpec(
+        spec.mesh, new_placements, shape=spec.shape, ndim=spec.ndim
+    )
 
 
 def einop_rule(
