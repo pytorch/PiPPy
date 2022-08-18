@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import torch
+import torch.distributed
 import transformers
 import transformers.utils.fx as fx
 from transformers import (
@@ -15,10 +16,7 @@ from transformers import (
 )
 from transformers.modeling_utils import ModuleUtilsMixin
 from transformers.utils import (
-    is_sagemaker_dp_enabled,
-    is_sagemaker_mp_enabled,
     is_torch_available,
-    is_torch_tpu_available,
 )
 from transformers.utils import torch_required, cached_property
 
@@ -49,16 +47,12 @@ class PiPPyTrainingArguments(TrainingArguments):
         default=int(os.getenv("RANK", -1)), metadata={"help": "Rank."}
     )
 
-    local_rank: int = field(
-        default=-1, metadata={"help": "Local Rank."}
+    driver_index: int = field(
+        default=-1, metadata={"help": "Index of current pipeline driver in all pipeline drivers."}
     )
 
-    local_process_index: int = field(
-        default=-1, metadata={"help": "Local process index."}
-    )
-
-    process_index: int = field(
-        default=-1, metadata={"help": "Process index."}
+    local_driver_index: int = field(
+        default=-1, metadata={"help": "Index of current pipeline driver in local pipeline drivers."}
     )
 
     master_addr: str = field(
@@ -115,13 +109,27 @@ class PiPPyTrainingArguments(TrainingArguments):
             self._device = torch.device('cpu')
         return self._device
 
+    # Overriding property `world_size` in TrainingArguments
+    # Here it means number of pipelines
     @property
     def world_size(self):
         return self.dp_group_size
 
+    # Overriding property `process_index` in TrainingArguments
+    # Here it means the index of current pipeline driver in all pipeline drivers
+    @property
+    def process_index(self):
+        return self.driver_index
+
+    # Overriding property `local_process_index` in TrainingArguments
+    # Here it means the index of current pipeline driver in local pipeline drivers
+    @property
+    def local_process_index(self):
+        return self.local_driver_index
+
     def __post_init__(self):
         super().__post_init__()
-        # TODO: checks here
+        self.local_rank = -1  # must be -1 to disable automatic DDP in the HF trainer
 
     @contextlib.contextmanager
     def main_process_first(self, local=True, desc="work"):
@@ -130,8 +138,8 @@ class PiPPyTrainingArguments(TrainingArguments):
             if local:
                 is_main_process = self.local_process_index == 0
                 main_process_desc = "main local process"
-            elif is_sagemaker_mp_enabled():
-                is_main_process = False  # TODO is_main_process = smp.rank() == 0
+            # elif is_sagemaker_mp_enabled():
+            #     is_main_process = smp.rank() == 0
             else:
                 is_main_process = self.process_index == 0
 
@@ -139,23 +147,23 @@ class PiPPyTrainingArguments(TrainingArguments):
                 if not is_main_process:
                     # tell all replicas to wait
                     logger.debug(f"{self.process_index}: waiting for the {main_process_desc} to perform {desc}")
-                    if is_torch_tpu_available():
-                        pass  # TODO xm.rendezvous(desc)
-                    elif is_sagemaker_dp_enabled():
-                        pass  # TODO dist.barrier()
-                    else:
-                        torch.distributed.barrier(group=pippy.utils.dp_pg_for_reference)
+                    # if is_torch_tpu_available():
+                    #     xm.rendezvous(desc)
+                    # elif is_sagemaker_dp_enabled():
+                    #     dist.barrier()
+                    # else:
+                    torch.distributed.barrier(group=pippy.utils.dp_pg_for_reference)
                 yield
             finally:
                 if is_main_process:
                     # the wait is over
-                    logger.debug(f"{self.process_index}: {main_process_desc} completed {desc}, releasing all replicas")
-                    if is_torch_tpu_available():
-                        pass  # TODO xm.rendezvous(desc)
-                    elif is_sagemaker_dp_enabled():
-                        pass  # TODO dist.barrier()
-                    else:
-                        torch.distributed.barrier(group=pippy.utils.dp_pg_for_reference)
+                    # logger.debug(f"{self.process_index}: {main_process_desc} completed {desc}, releasing all replicas")
+                    # if is_torch_tpu_available():
+                    #     pass  # TODO xm.rendezvous(desc)
+                    # elif is_sagemaker_dp_enabled():
+                    #     pass  # TODO dist.barrier()
+                    # else:
+                    torch.distributed.barrier(group=pippy.utils.dp_pg_for_reference)
         else:
             yield
 

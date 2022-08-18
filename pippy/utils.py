@@ -97,10 +97,7 @@ def run_worker(rank, run_master, args, *extra_args):
 
     if rank >= 0 and rank // args.dp_group_size == 0:
         args.rank = rank
-        # TODO: REMOVE THIS!!!! VVVV
-        args.local_rank = -1  # TODO: must be -1 to disable automatic DDP in the HF trainer
-        args.process_index = rank  # TODO: Is it correct?
-        args.local_process_index = rank  # TODO: Is it correct?
-        # TODO: REMOVE THIS!!!! ^^^^
+        args.driver_index = rank
+        args.local_driver_index = os.getenv('LOCAL_RANK', rank)
         run_master(pp_ranks_per_dp_group[rank], args, *extra_args)
     rpc.shutdown()
