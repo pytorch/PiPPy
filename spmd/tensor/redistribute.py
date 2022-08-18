@@ -156,7 +156,7 @@ def redistribute_spmd_tensor(
                 # For replicate -> partial, we zero out all other ranks of the current mesh dim
                 # and leave only 1 rank have the data, to perform a "zero cost" reshard.
                 my_rank = device_mesh.get_rank()
-                if my_rank not in [0, 2, 4, 6]:
+                if my_rank % device_mesh.size(0) != 0:
                     new_local_tensor = local_tensor.zero_()
                 else:
                     new_local_tensor = local_tensor
