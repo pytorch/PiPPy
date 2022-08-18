@@ -3,20 +3,18 @@ import argparse
 import copy
 import logging
 import os
-import socket
-from typing import Dict
 import unittest
+from typing import Dict
 
 import torch
 import torch.distributed.rpc as rpc
-import torch.multiprocessing as mp
 
+import pippy.fx
+from pippy import run_pippy
 from pippy.IR import MultiUseParameterConfig, Pipe, TrivialLossWrapper, pipe_split
 from pippy.PipelineDriver import PipelineDriverBase, PipelineDriverFillDrain, PipelineDriver1F1B, \
     PipelineDriverInterleaved1F1B
 from pippy.microbatch import TensorChunkSpec, CustomReducer, split_args_kwargs_into_chunks
-import pippy.fx
-from test_commons import tp_transports # type: ignore
 
 # TODOs for implementing forward/backward/loss with schedules:
 # * ability to switch between full-batch loss vs. per-microbatch loss. shen mentioned
@@ -62,7 +60,7 @@ def set_grad_in_executor(executor, qualname, value):
 pippy.fx.Tracer.proxy_buffer_attributes = True
 
 
-def run_master(args):
+def run_master(_, args):
     torch.manual_seed(42)
 
     d_hid = 50
@@ -247,37 +245,6 @@ def run_master(args):
     #     prof.export_chrome_trace(f'{os.path.splitext(os.path.basename(__file__))[0]}.json')
 
 
-def run_worker(rank, world_size, args):
-    os.environ['MASTER_ADDR'] = args.master_addr
-    os.environ['MASTER_PORT'] = args.master_port
-    # Exclude IB for metadata transport due to lack of EFA support on AWS
-    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256,
-                                              rpc_timeout=1800,
-                                              _transports=tp_transports())
-    if args.cuda:
-        n_devs = torch.cuda.device_count()
-        if n_devs > 0:
-            dev_id = rank % n_devs
-            for i in range(world_size):
-                options.set_device_map(f"worker{i}", {dev_id: i % n_devs})
-        else:
-            args.cuda = 0
-
-    args.device = f'cuda:{dev_id}' if args.cuda else 'cpu'
-    print(f"rank = {rank} host/pid/device = "
-          f"{socket.gethostname()}/{os.getpid()}/{args.device}")
-
-    rpc.init_rpc(
-        f"worker{rank}",
-        rank=rank,
-        world_size=world_size,
-        rpc_backend_options=options
-    )
-    if rank == 0:
-        run_master(args)
-    rpc.shutdown()
-
-
 def main(args=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 4)))
@@ -295,16 +262,12 @@ def main(args=None):
     if args.schedule == 'Interleaved1F1B':
         args.world_size = 2
 
-    if args.rank == -1:
-        mp.spawn(run_worker, args=(args.world_size, args,), nprocs=args.world_size, join=True)
-    elif args.rank < args.world_size:
-        run_worker(args.rank, args.world_size, args)
-    else:
-        print("I'm unused, exiting")
+    run_pippy(run_master, args)
 
 
 if __name__ == "__main__":
     main()
+
 
 class LocalTestForwardAutoParallelTest(unittest.TestCase):
     def test_forward_backward(self):

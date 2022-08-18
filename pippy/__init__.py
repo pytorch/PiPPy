@@ -5,6 +5,7 @@ from pippy.IR import (
 from pippy.PipelineDriver import (
     PipelineDriverFillDrain, PipelineDriver1F1B
 )
+from pippy.utils import run_pippy
 
-__all__ = ['PipeSequential', 'LossWrapper', 'TrivialLossWrapper', 'Pipe', 'pipe_split',
+__all__ = ['PipeSequential', 'LossWrapper', 'TrivialLossWrapper', 'Pipe', 'pipe_split', 'run_pippy',
            'PipeSplitWrapper', 'annotate_split_points', 'PipelineDriverFillDrain', 'PipelineDriver1F1B']
