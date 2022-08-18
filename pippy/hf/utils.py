@@ -49,16 +49,12 @@ class PiPPyTrainingArguments(TrainingArguments):
         default=int(os.getenv("RANK", -1)), metadata={"help": "Rank."}
     )
 
-    local_rank: int = field(
-        default=-1, metadata={"help": "Local Rank."}
+    driver_index: int = field(
+        default=-1, metadata={"help": "Index of current pipeline driver in all pipeline drivers."}
     )
 
-    local_process_index: int = field(
-        default=-1, metadata={"help": "Local process index."}
-    )
-
-    process_index: int = field(
-        default=-1, metadata={"help": "Process index."}
+    local_driver_index: int = field(
+        default=-1, metadata={"help": "Index of current pipeline driver in local pipeline drivers."}
     )
 
     master_addr: str = field(
@@ -104,9 +100,23 @@ class PiPPyTrainingArguments(TrainingArguments):
         else:
             return torch.device('cpu')
 
+    # Overriding property `world_size` in TrainingArguments
+    # Here it means number of pipelines
     @property
     def world_size(self):
         return self.dp_group_size
+
+    # Overriding property `process_index` in TrainingArguments
+    # Here it means the index of current pipeline driver in all pipeline drivers
+    @property
+    def process_index(self):
+        return self.driver_index
+
+    # Overriding property `local_process_index` in TrainingArguments
+    # Here it means the index of current pipeline driver in local pipeline drivers
+    @property
+    def local_process_index(self):
+        return self.local_driver_index
 
     def __post_init__(self):
         super().__post_init__()
