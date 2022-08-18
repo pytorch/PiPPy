@@ -67,9 +67,6 @@ class OpSchema(object):
             item for item in self.args_schema if isinstance(item, DTensorSpec)
         )
 
-    args: Tuple[object, ...]
-    kwargs: Dict[str, object]
-
 
 @dataclass
 class OutputSharding:
@@ -110,8 +107,6 @@ def operator_dispatch(
     op_schema = OpSchema(
         args_schema,
         kwargs_schema,
-        args,
-        kwargs,
     )
     sharding_prop_func = op_to_rules.get(op_key, None)
 

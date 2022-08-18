@@ -160,8 +160,10 @@ def dimmap_tests():
     dimmap_test(torch.movedim, (randn(24, 12), (1, 0), (0, 1)), (1, 0))
 
     dimmap_test(torch.movedim, (randn(36, 24, 12), (1, 2), (0, 1)), (1, 2, 0))
+    dimmap_test(torch.movedim, (randn(36, 24, 12), (1, 2), (-3, -2)), (1, 2, 0))
 
     dimmap_test(torch.permute, (randn(24, 36, 42), (2, 0, 1)), (2, 0, 1))
+    dimmap_test(torch.permute, (randn(24, 36, 42), (-1, -3, -2)), (2, 0, 1))
 
     dimmap_test(torch.ravel, (randn(24, 36),), (FLATTEN((0, 1)),))
     dimmap_test(torch.ravel, (randn(42),), (0,))
@@ -197,6 +199,7 @@ def dimmap_tests():
     )
 
     dimmap_test(torch.transpose, (randn(24, 60, 42, 60), 2, 0), (2, 1, 0, 3))
+    dimmap_test(torch.transpose, (randn(24, 60, 42, 60), -1, 0), (3, 1, 2, 0))
 
     dimmap_test(torch.unsqueeze, (randn(42, 24, 36), 1), (0, SINGLETON, 1, 2))
 
