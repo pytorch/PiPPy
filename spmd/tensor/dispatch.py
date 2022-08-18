@@ -1,8 +1,11 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 from dataclasses import dataclass
 from typing import List, Callable, Dict, Tuple, Optional, cast
+
+import torch
 from torch.utils._pytree import tree_map
 
+import spmd.tensor.api as spmd_tensor
 from spmd.tensor.placement_types import DTensorSpec, OutputSpecType
 from spmd.tensor.utils import (
     unwrap_local_tensor,
@@ -85,8 +88,27 @@ class OutputSharding:
     failed_reason: Optional[str] = None
 
 
+def is_inplace_op(op_call: torch._ops.OpOverload) -> bool:
+    # util function to check if an op is inplace or not
+    # TODO: bind the core inplace op check to python
+    op_schema = op_call._schema
+    if not op_schema.is_mutable or len(op_schema.returns) != 1:
+        return False
+
+    alias_info = op_schema.arguments[0].alias_info
+    if alias_info is None or not alias_info.is_write:
+        return False
+
+    for arg in op_schema.arguments[1:]:
+        if arg.alias_info is not None:
+            return False
+
+    return_alias = op_schema.returns[0].alias_info
+    return return_alias and return_alias.is_write
+
+
 def operator_dispatch(
-    op_call: Callable[..., object],
+    op_call: torch._ops.OpOverload,
     args: Tuple[object, ...],
     kwargs: Dict[str, object],
     op_to_rules: Dict[str, Callable[[OpSchema], OutputSharding]],
@@ -163,7 +185,14 @@ def operator_dispatch(
             **local_tensor_kwargs,
         )
 
-        return wrap(local_results, output_sharding.output_spec)
+        if not is_inplace_op(op_call):
+            return wrap(local_results, output_sharding.output_spec)
+        else:
+            # inplace op should return self instead of new wrappr
+            self = cast(spmd_tensor.DTensor, args[0])
+            self._spec = cast(DTensorSpec, output_sharding.output_spec)
+            return self
+
     else:
         # step 3. If there's not even one sharding rule
         # implemented for the operator, we fall back to

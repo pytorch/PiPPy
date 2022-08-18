@@ -54,10 +54,18 @@ class DistTensorOpsTest(DistTensorTestBase):
         self.assertEqual(tensor.grad, torch.ones(3, 5, 6))
 
     @with_comms
+    def test_inplace_op(self):
+        mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        input_tensor = torch.randn((12, 3), device=self.device_type)
+        dist_tensor = distribute_tensor(input_tensor, mesh, [Shard(0)])
+        res = dist_tensor.add_(3)
+        # inplace op should be the same instance before and after
+        self.assertTrue(res is dist_tensor)
+
+    @with_comms
     def test_ones_like(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
-        replica_spec = [Replicate()]
 
         input_tensor = torch.randn(4, 8, requires_grad=True)
         dist_tensor = DTensor.from_local(input_tensor, device_mesh, shard_spec)
