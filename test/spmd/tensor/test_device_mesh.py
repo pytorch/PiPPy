@@ -292,7 +292,7 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
             gathered_tensor = mesh.all_gather_base(res_tensor, local_tensor, mesh_dim=dim)
             exp_tensor = torch.ones(3 * dim_group_size, 3)
             for i in range(len(global_ranks)):
-                exp_tensor[i*3:(i+1)*3] = torch.ones(3,3) * global_ranks[i]
+                exp_tensor[i * 3:(i + 1) * 3] = torch.ones(3, 3) * global_ranks[i]
             self.assertEqual(gathered_tensor, exp_tensor)
 
     @with_comms
