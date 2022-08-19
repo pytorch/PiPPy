@@ -94,6 +94,17 @@ class PiPPyTrainingArguments(TrainingArguments):
     def device(self, value):
         self._device = value
 
+    # Process Group including all drivers
+    _driver_group = None
+
+    @property
+    def driver_group(self):
+        return self._driver_group
+
+    @driver_group.setter
+    def driver_group(self, value):
+        self._driver_group = value
+
     @cached_property
     @torch_required
     def _setup_devices(self) -> "torch.device":
@@ -152,7 +163,7 @@ class PiPPyTrainingArguments(TrainingArguments):
                     # elif is_sagemaker_dp_enabled():
                     #     dist.barrier()
                     # else:
-                    torch.distributed.barrier(group=pippy.utils.dp_pg_for_reference)
+                    torch.distributed.barrier(group=self.driver_group)
                 yield
             finally:
                 if is_main_process:
@@ -163,7 +174,7 @@ class PiPPyTrainingArguments(TrainingArguments):
                     # elif is_sagemaker_dp_enabled():
                     #     pass  # TODO dist.barrier()
                     # else:
-                    torch.distributed.barrier(group=pippy.utils.dp_pg_for_reference)
+                    torch.distributed.barrier(group=self.driver_group)
         else:
             yield
 

@@ -89,8 +89,7 @@ def run_worker(rank, run_master, args, *extra_args):
     pp_ranks_per_dp_group = [[i * args.dp_group_size + rank for i in range(args.pp_group_size)]
                              for rank in range(args.dp_group_size)]
 
-    global dp_pg_for_reference
-    dp_pg_for_reference = torch.distributed.new_group(list(range(args.dp_group_size)))
+    args.driver_group = torch.distributed.new_group(list(range(args.dp_group_size)))
 
     global exclude_master
     exclude_master = args.exclude_master if hasattr(args, 'exclude_master') else 0
