@@ -612,7 +612,7 @@ class PipeStageExecutor(EventRecorder):
             with self.value_store_cv:
                 if output_unique_key in self.value_store:
                     logging.warning(f'[{self.stage_id}] Indexed value already in store: {(output_unique_key, output_refcount, value_ref, idx)}')
-                    #raise RuntimeError(f'Repeated index value call detected, potentially due to getitem calls not consumed in previous batch')
+                    # raise RuntimeError(f'Repeated index value call detected, potentially due to getitem calls not consumed in previous batch')
 
                 # Wait for the future representing the stage output to be created
                 while value_ref.unique_key not in self.value_store:
@@ -1185,8 +1185,8 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
             stage_id = args[0].stage_id
             num_users = len(users)
             if (not torch.is_grad_enabled() or
-                args[0].unique_key == "noop" or
-                num_users == 0):
+                    args[0].unique_key == "noop" or
+                    num_users == 0):
                 # TODO: investigate why there are getitem calls with 0 users
                 return ValueReference(stage_id, "noop")
             else:
