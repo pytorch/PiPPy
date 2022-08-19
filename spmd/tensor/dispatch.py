@@ -188,7 +188,7 @@ def operator_dispatch(
         if not is_inplace_op(op_call):
             return wrap(local_results, output_sharding.output_spec)
         else:
-            # inplace op should return self instead of new wrappr
+            # inplace op should return self instead of re-wrapping
             self = cast(spmd_tensor.DTensor, args[0])
             self._spec = cast(DTensorSpec, output_sharding.output_spec)
             return self
