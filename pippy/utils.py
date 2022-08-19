@@ -50,6 +50,8 @@ def run_pippy(run_master, args, *extra_args):
 
 
 def run_worker(rank, run_master, args, *extra_args):
+    args.rank = rank
+
     os.environ['MASTER_ADDR'] = args.master_addr
     os.environ['MASTER_PORT'] = args.master_port
 
@@ -96,7 +98,6 @@ def run_worker(rank, run_master, args, *extra_args):
     exclude_master = args.exclude_master if hasattr(args, 'exclude_master') else 0
 
     if rank >= 0 and rank // args.dp_group_size == 0:
-        args.rank = rank
         args.driver_index = rank
         args.local_driver_index = os.getenv('LOCAL_RANK', rank)
         run_master(pp_ranks_per_dp_group[rank], args, *extra_args)

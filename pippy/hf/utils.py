@@ -88,7 +88,13 @@ class PiPPyTrainingArguments(TrainingArguments):
 
     @property
     def device(self):
-        return super().device
+        if self.rank == -1:
+            if self.cuda and torch.cuda.is_available():
+                return torch.device('cuda')
+            else:
+                return torch.device('cpu')
+        else:
+            return super().device
 
     @device.setter
     def device(self, value):
@@ -257,6 +263,7 @@ class PiPPyHFTracer(fx.HFTracer):
 
 
 def wrap(model, training_args, pp_ranks, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec):
+    model.to(training_args.device)
     model_to_wrap[model.__class__.__name__](model, training_args, pp_ranks)
 
     all_worker_ranks = pp_ranks[training_args.exclude_master:]
