@@ -1,10 +1,8 @@
-from argparse import ArgumentError
 from dataclasses import dataclass
 from typing import (
     Callable,
     Dict,
     Iterable,
-    List,
     Optional,
     Tuple,
     Set,
@@ -26,122 +24,143 @@ def _prod(xs: Iterable[int]) -> int:
 
 
 Shape = Tuple[int, ...]
-Singleton = Tuple[str]  # This is always ('singleton', )
-InputDim = int  # The output dimension corresponds to the i-th input dimension
-NewDim = Tuple[str, int]  # ('newdim', new_dim_size)
 
-# NOTE: Could not figure out how to make pyre work with forward references
-#       beyond self-reference, so I am duplicating the definition below
-DimSpec = Union[
-    InputDim,
-    Singleton,
-    Tuple[str, "DimSpec", int],  # Broadcast
-    NewDim,
-    Tuple[str, "DimSpec", int],  # Repeat
-    Tuple[str, Tuple["DimSpec", ...]],  # Flatten
-    Tuple[str, "DimSpec", Shape, int],  # Comp
-]
-Broadcast = Tuple[str, DimSpec, int]  #  ('broadcast', input_dim_spec, size)
-Repeat = Tuple[str, DimSpec, int]  # ('repeat', input_dim_spec, times)
-Flatten = Tuple[str, Tuple[DimSpec, ...]]  # ('flatten', (input_dim_spec, ...))
-Comp = Tuple[
-    str, DimSpec, Shape, int
-]  # ('comp', dim_spec, group_shape, component_id_in_group)
+
+@dataclass
+class DimSpec:
+    """Specifies how an output dimension maps to an input dimension."""
+
+    pass
+
 
 # Rules that map each dimension of the output to dimensions of the input tensor
 DimMap = Tuple[DimSpec, ...]
 
 
-Dim = InputDim
+@dataclass
+class Singleton(DimSpec):
+    """Output dimension is a singleton"""
 
-SINGLETON: Singleton = ("singleton",)
+    pass
 
 
-def BROADCAST(input_dim: DimSpec, dim_size: int) -> Broadcast:
+@dataclass
+class InputDim(DimSpec):
+    """Output dimension maps directly to an input dimension."""
+
+    input_dim: int
+
+
+@dataclass
+class Broadcast(DimSpec):
+    """Output is the broadcast of a singleton input dimension."""
+
+    dim: DimSpec
+    dim_size: int
+
+    @classmethod
+    def new(cls, dim: DimSpec, dim_size: int) -> DimSpec:
+        return Broadcast(dim, dim_size)
+
+
+@dataclass
+class NewDim(DimSpec):
+    """This is a new dimension created by the op."""
+
+    size: int
+
+    @classmethod
+    def new(cls, size: int) -> DimSpec:
+        return Singleton() if size == 1 else NewDim(size)
+
+
+@dataclass
+class Repeat(DimSpec):
+    """Output dimension is the input dimension repeated n-times."""
+
+    input_dim: DimSpec
+    times: int
+
+    @classmethod
+    def new(cls, dim: DimSpec, times: int) -> DimSpec:
+        if times == 1:
+            return dim
+        elif isinstance(dim, Singleton):
+            # repeating a singleton is the same as broadcasting it
+            return Broadcast(dim, times)
+        else:
+            return Repeat(dim, times)
+
+
+@dataclass
+class Flatten(DimSpec):
     """
-    output is the broadcast of a singleton input dimension
+    Output dimension is a set of input dimensions flattened, keeping
+    right-most adjacent elements adjacent in the output.
     """
-    return ("broadcast", input_dim, dim_size)
+
+    input_dims: Sequence[DimSpec]
+
+    @classmethod
+    def new(cls, dims: Sequence[DimSpec]) -> DimSpec:
+        if len(dims) == 0:
+            # flattening a scalar leads to a singleton
+            return Singleton()
+        elif len(dims) == 1:
+            # flattening a single dimension is no-op
+            return dims[0]
+        else:
+            return Flatten(dims)
 
 
-def NEWDIM(val: int) -> Union[NewDim, Singleton]:
-    """
-    create a new 'generic' dimension with a given size 'val'
-    """
-    if val == 1:
-        # a NEWDIM of size 1 is a singleton!
-        return SINGLETON
-    else:
-        return ("newdim", val)
-
-
-def REPEAT(input_dim: DimSpec, times: int) -> DimSpec:
-    """
-    The output dimension is a repeat of the input dimension.
-    Repeat happens externally. E.g. for repeat=2 [0, 1, 2] -> [0, 1, 2, 0, 1, 2]
-    # Note: this is a specialization of MAPDIM
-    """
-    if times == 1:
-        return input_dim
-    elif input_dim == SINGLETON:
-        # repeating a singleton is the same as broadcasting it
-        return BROADCAST(input_dim, times)
-    else:
-        return ("repeat", input_dim, times)
-
-
-def FLATTEN(input_dims: Tuple[DimSpec, ...]) -> DimSpec:
-    """
-    create a dimension that is a flattened version of the given input dimensions.
-    """
-    if len(input_dims) == 0:
-        # flattening a scalar leads to a singleton
-        return SINGLETON
-    elif len(input_dims) == 1:
-        # flattening a single dimension is no-op
-        return input_dims[0]
-    else:
-        return ("flatten", input_dims)
-
-
-def COMP(input_dim: DimSpec, group_shape: Tuple[int, ...], idx: int) -> DimSpec:
+@dataclass
+class Split(DimSpec):
     """
     This dimension is a member of a decomposition of the input dim.
-    Note , inpnut dim itself could be a FLATTENED input dim.
-    E.g.
-    view([6], [2,3]) -> [COMP(0, (2,3,4), 0), COMP(0, (2,3,4), 1), COMP(0, (2,3,4), 2)]
+    Note that input_dim itself could be a Flattened set of input dims.
     """
-    assert len(group_shape) > 0
-    if len(group_shape) == 1:
-        # not really a group, just return the input dim back
-        assert idx == 0
-        return input_dim
-    elif group_shape[idx] == 1:
-        return SINGLETON
-    else:
-        # remove singletons from group
-        # group_mapping = [(new_index, (shape, old_index)) ...]
-        group_mapping = list(
-            enumerate((s, i) for i, s in enumerate(group_shape) if s != 1)
-        )
-        new_group_shape = tuple(m[1][0] for m in group_mapping)
-        new_idx = next(filter(lambda x: x[1][1] == idx, group_mapping))[0]
-        return ("comp", input_dim, new_group_shape, new_idx)
+
+    input_dim: DimSpec
+    group_shape: Shape
+    split_id: int
+
+    @classmethod
+    def new(
+        cls, dim: DimSpec, group_shape: Tuple[int, ...], idx: int
+    ) -> DimSpec:
+        assert len(group_shape) > 0
+        if len(group_shape) == 1:
+            # not really a group, just return the input dim back
+            assert idx == 0
+            return dim
+        elif group_shape[idx] == 1:
+            return Singleton()
+        else:
+            # remove singletons from group
+            # group_mapping = [(new_index, (shape, old_index)) ...]
+            group_mapping = list(
+                enumerate((s, i) for i, s in enumerate(group_shape) if s != 1)
+            )
+            new_group_shape = tuple(m[1][0] for m in group_mapping)
+            new_idx = next(filter(lambda x: x[1][1] == idx, group_mapping))[0]
+            return Split(dim, new_group_shape, new_idx)
 
 
 def dim_pad_left(ndim: int, min_dims: int) -> DimMap:
-    return (SINGLETON,) * max(0, min_dims - ndim) + tuple(range(ndim))
+    return (Singleton(),) * max(0, min_dims - ndim) + tuple(
+        InputDim(i) for i in range(ndim)
+    )
 
 
 def dim_atleast_3d(ndim: int) -> DimMap:
     if ndim == 0:
-        return (SINGLETON, SINGLETON, SINGLETON)
+        return (Singleton(), Singleton(), Singleton())
     elif ndim == 1:
-        return (SINGLETON, 0, SINGLETON)
+        return (Singleton(), InputDim(0), Singleton())
     elif ndim == 2:
-        return (0, 1, SINGLETON)
+        return (InputDim(0), InputDim(1), Singleton())
     else:
-        return tuple(range(ndim))
+        return tuple(InputDim(i) for i in range(ndim))
 
 
 def expand(input_shape: Shape, shape: Shape) -> DimMap:
@@ -153,16 +172,19 @@ def expand(input_shape: Shape, shape: Shape) -> DimMap:
     # 2. check that input shapes are compatible
     mapping = []
     for p, desired_s in zip(padded_input, shape):
-        if p == SINGLETON:
+        if isinstance(p, Singleton):
             actual_s = 1
             assert desired_s >= 0
         else:
-            actual_s = input_shape[p]
+            assert isinstance(
+                p, InputDim
+            ), f"DimSpec not supported in expand: {p}"
+            actual_s = input_shape[p.input_dim]
             assert actual_s == 1 or desired_s == -1 or desired_s == actual_s
         mapping.append(
             p
             if desired_s in (1, -1) or desired_s == actual_s
-            else BROADCAST(p, desired_s)
+            else Broadcast.new(p, desired_s)
         )
     return tuple(mapping)
 
@@ -178,14 +200,16 @@ def normalize_sizes(sizes: Union[Shape, Tuple[Shape]]) -> Shape:
 
 def dim_flatten(ndim: int) -> DimMap:
     if ndim == 0:
-        return (SINGLETON,)
+        return (Singleton(),)
     elif ndim == 1:
-        return (0,)
+        return (InputDim(0),)
     else:
-        return (FLATTEN(tuple(range(ndim))),)
+        return (Flatten.new(tuple(InputDim(i) for i in range(ndim))),)
 
 
-def normalize_dims(dims: Union[int, Tuple[int, ...]], ndim: int) -> Tuple[int]:
+def normalize_dims(
+    dims: Union[int, Tuple[int, ...]], ndim: int
+) -> Tuple[int, ...]:
     if isinstance(dims, int):
         dims = (dims,)
     return tuple(normalize_dim(dim, ndim) for dim in dims)
@@ -223,7 +247,7 @@ def dim_movedim(
         if dest[i] == -1:
             dest[i] = next(unused_inputs_iter)
 
-    return tuple(dest)
+    return tuple(InputDim(i) for i in dest)
 
 
 def dim_repeat(ndim: int, sizes: Shape) -> DimMap:
@@ -232,8 +256,8 @@ def dim_repeat(ndim: int, sizes: Shape) -> DimMap:
         len(sizes) >= ndim
     ), f"Number of dimensions of repeat dims {sizes} can not be smaller than number of dimensions of tensor {ndim}."
     pad = len(sizes) - ndim
-    return tuple(REPEAT(SINGLETON, s) for s in sizes[:pad]) + tuple(
-        REPEAT(i, s) for i, s in enumerate(sizes[pad:])
+    return tuple(Repeat.new(Singleton(), s) for s in sizes[:pad]) + tuple(
+        Repeat.new(InputDim(i), s) for i, s in enumerate(sizes[pad:])
     )
 
 
@@ -256,12 +280,32 @@ def infer_size(total_size: int, sizes: Shape) -> Shape:
     return sizes
 
 
-def view_groups(
-    from_size: Shape, to_size: Shape
-) -> Tuple[List[Tuple[List[int], List[int]]], DimMap]:
+def view_groups(from_size: Shape, to_size: Shape) -> DimMap:
     """
-    Split up the total view into smaller groups of dimensions whose size will match:
-    view_groups([3, 4, 5], [12, 5]) -> [([3, 4], [12]), ([5], [5])]
+    A view or reshape operation can be decomposed into a set of 3 types of smaller operations:
+    1) Forward a dimension from input to output
+    2) Flatten a set of dimensions into a single dimension
+    3) Split one dimension into multiple dimensions
+
+    view_groups identifies these operations and returns, for each output dimension, what
+    is operation was performed in the input dimension. For example:
+
+        view_groups([2, 3, 4], [2, 12]) -> (
+            InputDim(0),
+            Flatten((InputDim(1), InputDim(2)))
+        )
+
+    - ouptut dimension 0 maps to input dimension 0
+    - output dimension 1 maps to a flattened input dimensions 1 and 2
+
+
+        view_groups([2, 3], [3, 2]) -> (
+            Split(Flatten((InputDim(0), InputDim(1))), (3, 2), 0),
+            Split(Flatten((InputDim(0), InputDim(1))), (3, 2), 1),
+        )
+
+    - in the above, input is flattened into a single dimension and then split
+      into two separate dimensions with different sizes from the input.
     """
     from_nelem = _prod(from_size)
     to_size = infer_size(from_nelem, normalize_sizes(to_size))
@@ -273,80 +317,60 @@ def view_groups(
     from_len = len(from_size)
     to_len = len(to_size)
 
-    result = []
-    result_dim = []
+    result_pp = []
 
     while from_idx < from_len or to_idx < to_len:
-        from_group, to_group = [], []
-        from_group_dim, to_group_dim = [], []
+        from_group_dim, to_group_shape = [], []
 
-        # if f is None:
         if from_idx >= from_len:
             f = 1
         else:
             f = from_size[from_idx]
-            from_group.append(f)
             from_group_dim.append(from_idx)
             from_idx += 1
 
-        # if t is None:
         if to_idx >= to_len:
             t = 1
         else:
             t = to_size[to_idx]
-            to_group.append(t)
-            to_group_dim.append(to_idx)
+            to_group_shape.append(t)
             to_idx += 1
 
         # if any of the groups is singleton, great, we need to backtrack though
         if f == 1 and t != 1:
             # produces ([1], [])
             to_idx -= 1
-            to_group = []
-            to_group_dim = []
+            to_group_shape = []
         elif f != 1 and t == 1:
             # produces ([], [1])
             from_idx -= 1
-            from_group = []
             from_group_dim = []
         else:
             # produces ([1], [1]),  ([2], [2]), ([2,3], [6])
             while f != t:
                 if f < t:
                     nf = from_size[from_idx]
-
-                    from_group.append(nf)
                     from_group_dim.append(from_idx)
-
                     from_idx += 1
                     f *= nf
                 else:
                     nt = to_size[to_idx]
-
-                    to_group.append(nt)
-                    to_group_dim.append(to_idx)
-
+                    to_group_shape.append(nt)
                     to_idx += 1
                     t *= nt
 
-        result.append((from_group, to_group))
-        result_dim.append((from_group_dim, to_group_dim))
+        if len(to_group_shape) > 0:
+            flattened = Flatten.new(
+                tuple(
+                    InputDim(fi) for fi in from_group_dim if from_size[fi] > 1
+                )
+            )
+            result_pp += [
+                Split.new(flattened, tuple(to_group_shape), i)
+                for i in range(len(to_group_shape))
+            ]
 
-    result_pp = []
-    for (_, r), (f, t) in zip(result, result_dim):
-        if len(t) == 0:
-            # we are removing the dimension
-            # TODO: we need to mark it for autograd purposes later
-            continue
-        # removing singleton dimensions from the interior of the
-        # flattened tuple
-        # TODO: we need to mark it for autograd purposes later
-        ff = FLATTEN(tuple(fi for fi in f if from_size[fi] > 1))
-        tr = tuple(r)
-        result_pp += [COMP(ff, tr, i) for i in range(len(r))]
-    result_pp = tuple(result_pp)
-
-    return result, result_pp
+    return tuple(result_pp)
 
 
 def dim_tile(ndim: int, dims: Tuple[int, ...]) -> DimMap:
@@ -360,17 +384,18 @@ def dim_transpose(ndim: int, dim1: int, dim2: int) -> DimMap:
     dim2 = normalize_dim(dim2, ndim)
     assert dim1 < ndim
     assert dim2 < ndim
-    dimmap = list(range(ndim))
-    dimmap[dim1] = dim2
-    dimmap[dim2] = dim1
+    dimmap = list(InputDim(i) for i in range(ndim))
+    swapdim = dimmap[dim1]
+    dimmap[dim1] = dimmap[dim2]
+    dimmap[dim2] = swapdim
     return tuple(dimmap)
 
 
 def dim_unsqueeze(ndim: int, dim: int) -> DimMap:
-    dims = tuple(range(ndim))
+    dims = tuple(InputDim(i) for i in range(ndim))
     if dim < 0:
         dim += ndim + 1
-    return dims[:dim] + (SINGLETON,) + dims[dim:]
+    return dims[:dim] + (Singleton(),) + dims[dim:]
 
 
 @dataclass
@@ -400,14 +425,16 @@ ops: Dict[Callable[..., torch.Tensor], Op] = {
         )
     ),
     torch.permute: Op(
-        dim_map=lambda input, dims: normalize_dims(dims, input.ndim)
+        dim_map=lambda input, dims: tuple(
+            InputDim(i) for i in normalize_dims(dims, input.ndim)
+        )
     ),
     torch.ravel: Op(dim_map=lambda tensor: dim_flatten(tensor.ndim)),
     Tensor.repeat: Op(
         dim_map=lambda self, *sizes: dim_repeat(self.ndim, sizes)
     ),
     torch.reshape: Op(
-        dim_map=lambda input, shape: view_groups(input.shape, shape)[1],
+        dim_map=lambda input, shape: view_groups(input.shape, shape),
         shape_argnum=1,
     ),
     torch.tile: Op(dim_map=lambda input, dims: dim_tile(input.ndim, dims)),
@@ -418,7 +445,7 @@ ops: Dict[Callable[..., torch.Tensor], Op] = {
         dim_map=lambda input, dim: dim_unsqueeze(input.ndim, dim)
     ),
     Tensor.view: Op(
-        dim_map=lambda input, *shape: view_groups(input.shape, shape)[1],
+        dim_map=lambda input, *shape: view_groups(input.shape, shape),
         shape_argnum=1,
     ),
 }
@@ -433,41 +460,47 @@ def propagate_shape_and_sharding(
     """
     Takes as input the shape of the _local_ tensor, and the input sharding,
     and produce corresponding output sharding and shape of the _local_ output tensor.
+
+    Sharding propagation follows mapped dimensions:
+    - An output dimension that maps directly to an input dimension is sharded equally
+    - An output dimension that is a flattened set of input dimensions can only be
+      sharded if only the leftmost flattened dimension is sharded.
+    - An output dimension that is a split of the input dimension can only be sharded
+      if the leftmost split size is divisible by the mesh dimension
     """
     assert len(in_shard) == len(mesh_sizes)
-    # print('local_output_shape:', in_shard, local_in_shape, rule, mesh_sizes)
 
     sharded_in_dims: Set[int] = set(
         s.dim for s in in_shard if isinstance(s, Shard)
     )
 
     def get_dim_size(cmd: DimSpec) -> Tuple[int, Optional[InputDim]]:
-        if isinstance(cmd, int):
+        if isinstance(cmd, InputDim):
             return (
-                local_in_shape[cmd],
-                cmd if cmd in sharded_in_dims else None,
+                local_in_shape[cmd.input_dim],
+                cmd if cmd.input_dim in sharded_in_dims else None,
             )
-
-        elif cmd[0] == "flatten":
-            cmd = cast(Flatten, cmd)
-            for in_dim in cmd[1][1:]:
+        elif isinstance(cmd, Flatten):
+            for dim in cmd.input_dims[1:]:
                 assert (
-                    not in_dim in sharded_in_dims
-                ), "Only the first member of a FLATTEN group can be sharded"
+                    not isinstance(dim, InputDim)
+                    or dim.input_dim not in sharded_in_dims
+                ), "Only the first member of a Flatten dimension group can be sharded"
+            dim0 = cmd.input_dims[0]
             return (
-                _prod(get_dim_size(a)[0] for a in cmd[1]),
-                cast(InputDim, cmd[1][0])
-                if cmd[1][0] in sharded_in_dims
+                _prod(get_dim_size(a)[0] for a in cmd.input_dims),
+                dim0
+                if isinstance(dim0, InputDim)
+                and dim0.input_dim in sharded_in_dims
                 else None,
             )
-        elif cmd[0] == "comp":
-            cmd = cast(Comp, cmd)
-            if cmd[3] > 0:
+        elif isinstance(cmd, Split):
+            if cmd.split_id:
                 # we will shard only on the first dimension of the group
                 # so the shape should be the nominal shape of the component
-                return cmd[2][cmd[3]], None
+                return cmd.group_shape[cmd.split_id], None
             else:
-                dim_size, in_dim = get_dim_size(cmd[1])
+                dim_size, in_dim = get_dim_size(cmd.input_dim)
                 if in_dim is None:
                     # in case input dim is not sharded; our size will be
                     # the size of the corresponding input
@@ -478,24 +511,23 @@ def propagate_shape_and_sharding(
                 for size, shard in zip(mesh_sizes, in_shard):
                     if isinstance(shard, Shard) and shard.dim == in_dim:
                         submesh_size *= size
-                out_size = cmd[2][0]
+                out_size = cmd.group_shape[0]
                 assert (
                     out_size % submesh_size == 0
                 ), f"Resulting dimension size {out_size} is not divisible by its mesh dimension {submesh_size}."
                 return out_size // submesh_size, in_dim
-        elif cmd[0] == "singleton":
+        elif isinstance(cmd, Singleton):
             return 1, None
-        elif cmd[0] == "broadcast":
-            return cast(Broadcast, cmd)[2], None
-        elif cmd[0] == "newdim":
-            return cast(NewDim, cmd)[1], None
-        elif cmd[0] == "repeat":
-            cmd = cast(Repeat, cmd)
-            size, in_dim = get_dim_size(cmd[1])
+        elif isinstance(cmd, Broadcast):
+            return cmd.dim_size, None
+        elif isinstance(cmd, NewDim):
+            return cmd.size, None
+        elif isinstance(cmd, Repeat):
+            size, in_dim = get_dim_size(cmd.input_dim)
             assert (
-                in_dim not in sharded_in_dims
+                in_dim is None or in_dim.input_dim not in sharded_in_dims
             ), "Cannot tile sharded dimension."
-            return size * cmd[2], None
+            return size * cmd.times, None
         else:
             raise RuntimeError(f"cmd not found: {cmd}, in rule: {rule}")
 
@@ -505,7 +537,7 @@ def propagate_shape_and_sharding(
         out_size, in_dim = get_dim_size(cmd)
         out_shape.append(out_size)
         if in_dim is not None:
-            dim_map[in_dim] = dim
+            dim_map[in_dim.input_dim] = dim
 
     return (
         tuple(out_shape),
@@ -542,28 +574,22 @@ def register_prop_rule_map(
         # note we are passing _global_ tensors
         rules = spec.dim_map(*op_schema.args_schema, **op_schema.kwargs_schema)
 
-        if torch.distributed.get_rank() == 0:
-            print("----", aten_op_name)
-            print(rules)
-            print(op_schema.args_schema)
-
         # note we are passing _local_ tensor shapes
         input_dtensor_spec = op_schema.args_schema[0]
+
         assert isinstance(
             input_dtensor_spec, DTensorSpec
         ), "Expected first input to be a DTensorSpec"
+        global_in_shape = input_dtensor_spec.shape
+        assert global_in_shape is not None, "Shape required."
+
         local_out_shape, shard_out = propagate_shape_and_sharding(
             input_dtensor_spec.placements,
             local_shape(input_dtensor_spec, torch.distributed.get_rank()),
             rules,
             tuple(input_dtensor_spec.mesh.mesh.shape),
         )
-        if torch.distributed.get_rank() == 0:
-            print(input_dtensor_spec.shape, local_out_shape)
-            print(input_dtensor_spec.placements)
-            print(shard_out)
-
-        # The code below doesn't work : it doesn't let me change the propery
+        # We only need the local shape to lower he call into the local op
         args = op_schema.args_schema
         if spec.shape_argnum is not None:
             op_schema.args_schema = (
@@ -572,20 +598,25 @@ def register_prop_rule_map(
                 + args[cast(int, spec.shape_argnum) + 1 :]
             )
 
-        if torch.distributed.get_rank() == 0:
-            print(op_schema.args_schema)
-
+        # We want to infer the output shape
+        global_out_shape, _ = propagate_shape_and_sharding(
+            input_dtensor_spec.placements,
+            tuple(global_in_shape),
+            rules,
+            tuple(input_dtensor_spec.mesh.mesh.shape),
+        )
         return OutputSharding(
             output_spec=DTensorSpec(
-                ndim=len(local_out_shape),
+                ndim=len(global_out_shape),
                 mesh=input_dtensor_spec.mesh,
                 placements=shard_out,
-                shape=torch.Size(local_out_shape),
+                shape=torch.Size(global_out_shape),
             )
         )
 
 
 register_prop_rule_map("aten.view.default", Tensor.view)
+register_prop_rule_map("aten.view.SymInt", Tensor.view)
 register_prop_rule_map("aten.unsqueeze.default", torch.unsqueeze)
 register_prop_rule_map("aten.expand.default", Tensor.expand)
 register_prop_rule_map("aten.permute.default", torch.permute)
