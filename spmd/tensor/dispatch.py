@@ -90,7 +90,9 @@ class OutputSharding:
 
 def is_inplace_op(op_call: torch._ops.OpOverload) -> bool:
     # util function to check if an op is inplace or not
-    # TODO: bind the core inplace op check to python
+    # TODO: This function is copied from ATen/BatchedFallback.cpp
+    # We should bind the inplace op check to schema python
+    # bindings directly.
     op_schema = op_call._schema
     if not op_schema.is_mutable or len(op_schema.returns) != 1:
         return False
