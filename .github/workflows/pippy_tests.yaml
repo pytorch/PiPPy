@@ -1,4 +1,4 @@
-name: Python package
+name: PiPPy tests
 
 on:
   push:
@@ -15,7 +15,7 @@ on:
 
 concurrency:
   # Cancel CI on previous commit when a new commit is pushed to the same branch
-  group: ${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
