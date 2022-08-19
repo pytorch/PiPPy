@@ -20,7 +20,6 @@ from transformers.utils import (
 )
 from transformers.utils import torch_required, cached_property
 
-import pippy
 import pippy.hf.bart as bart
 import pippy.hf.bert as bert
 import pippy.hf.gpt2 as gpt2
