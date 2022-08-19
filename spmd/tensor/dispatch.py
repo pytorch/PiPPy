@@ -4,7 +4,10 @@ from typing import List, Callable, Dict, Tuple, Optional, cast
 
 import torch
 from torch.utils._pytree import tree_map
-from torchgen.model import FunctionSchema, SchemaKind
+from torchgen.model import (  # pyre-ignore[21]: Undefined import
+    FunctionSchema,
+    SchemaKind,
+)
 
 import spmd.tensor.api as spmd_tensor
 from spmd.tensor.placement_types import DTensorSpec, OutputSpecType
@@ -183,10 +186,12 @@ def operator_dispatch(
                 if not isinstance(output_sharding.output_spec, tuple)
                 else output_sharding.output_spec
             )
+            out_dts = []
             for i, out in enumerate(func_schema.arguments.out):
                 out_dt = cast(spmd_tensor.DTensor, kwargs[out.name])
                 out_dt._spec = cast(DTensorSpec, output_specs[i])
-
+                out_dts.append(out_dt)
+            return tuple(out_dts)
         else:
             return wrap(local_results, output_sharding.output_spec)
 
