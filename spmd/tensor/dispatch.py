@@ -1,8 +1,12 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 from dataclasses import dataclass
 from typing import List, Callable, Dict, Tuple, Optional, cast
-from torch.utils._pytree import tree_map
 
+import torch
+from torch.utils._pytree import tree_map
+from torchgen.model import FunctionSchema, SchemaKind
+
+import spmd.tensor.api as spmd_tensor
 from spmd.tensor.placement_types import DTensorSpec, OutputSpecType
 from spmd.tensor.utils import (
     unwrap_local_tensor,
@@ -10,6 +14,7 @@ from spmd.tensor.utils import (
     unwrap_schema,
     pack_args_kwargs_with_local_tensor,
 )
+
 
 """
 If set to true, __DEBUG_STRICT will fail when an op doesn't have a sharding rule registered.
@@ -86,12 +91,15 @@ class OutputSharding:
 
 
 def operator_dispatch(
-    op_call: Callable[..., object],
+    op_call: torch._ops.OpOverload,
     args: Tuple[object, ...],
     kwargs: Dict[str, object],
     op_to_rules: Dict[str, Callable[[OpSchema], OutputSharding]],
     custom_dispatch_ops: Dict[str, Callable[..., object]],
 ) -> object:
+
+    func_schema = FunctionSchema.parse(str(op_call._schema))
+    schema_kind = func_schema.kind()
 
     op_key = str(op_call)
     # STEP 0. See if threre're user defined custom aten operator
@@ -163,7 +171,25 @@ def operator_dispatch(
             **local_tensor_kwargs,
         )
 
-        return wrap(local_results, output_sharding.output_spec)
+        if schema_kind == SchemaKind.inplace:
+            # inplace op should return self instead of re-wrapping
+            self = cast(spmd_tensor.DTensor, args[0])
+            self._spec = cast(DTensorSpec, output_sharding.output_spec)
+            return self
+        elif schema_kind == SchemaKind.out:
+            # out variant could possibly have multiple out args (i.e. lu_unpack.out)
+            output_specs = (
+                (output_sharding.output_spec,)
+                if not isinstance(output_sharding.output_spec, tuple)
+                else output_sharding.output_spec
+            )
+            for i, out in enumerate(func_schema.arguments.out):
+                out_dt = cast(spmd_tensor.DTensor, kwargs[out.name])
+                out_dt._spec = cast(DTensorSpec, output_specs[i])
+
+        else:
+            return wrap(local_results, output_sharding.output_spec)
+
     else:
         # step 3. If there's not even one sharding rule
         # implemented for the operator, we fall back to
