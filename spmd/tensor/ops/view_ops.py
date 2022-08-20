@@ -458,8 +458,8 @@ def propagate_shape_and_sharding(
     mesh_sizes: Shape,
 ) -> Tuple[Shape, Sequence[Placement]]:
     """
-    Takes as input the shape of the _local_ tensor, and the input sharding,
-    and produce corresponding output sharding and shape of the _local_ output tensor.
+    Takes as input the global shape of the tensor, and the input sharding,
+    and produce corresponding output sharding and shape of the output tensor.
 
     Sharding propagation follows mapped dimensions:
     - An output dimension that maps directly to an input dimension is sharded equally
@@ -469,7 +469,6 @@ def propagate_shape_and_sharding(
       if the leftmost split size is divisible by the mesh dimension
     """
     assert len(in_shard) == len(mesh_sizes)
-
     sharded_in_dims: Set[int] = set(
         s.dim for s in in_shard if isinstance(s, Shard)
     )
@@ -495,27 +494,20 @@ def propagate_shape_and_sharding(
                 else None,
             )
         elif isinstance(cmd, Split):
-            if cmd.split_id:
-                # we will shard only on the first dimension of the group
-                # so the shape should be the nominal shape of the component
-                return cmd.group_shape[cmd.split_id], None
-            else:
-                dim_size, in_dim = get_dim_size(cmd.input_dim)
-                if in_dim is None:
-                    # in case input dim is not sharded; our size will be
-                    # the size of the corresponding input
-                    return dim_size, None
+            _, in_dim = get_dim_size(cmd.input_dim)
+            out_size = cmd.group_shape[cmd.split_id]
+            if cmd.split_id == 0 and in_dim is not None:
                 # we need to check that the input dimension is divisble
                 # by the size of the submesh we're sharding it on
                 submesh_size = 1
                 for size, shard in zip(mesh_sizes, in_shard):
                     if isinstance(shard, Shard) and shard.dim == in_dim:
                         submesh_size *= size
-                out_size = cmd.group_shape[0]
                 assert (
                     out_size % submesh_size == 0
                 ), f"Resulting dimension size {out_size} is not divisible by its mesh dimension {submesh_size}."
-                return out_size // submesh_size, in_dim
+            # we will only shard our first component of the split
+            return out_size, in_dim if cmd.split_id == 0 else None
         elif isinstance(cmd, Singleton):
             return 1, None
         elif isinstance(cmd, Broadcast):
@@ -559,7 +551,7 @@ def local_shape(spec: DTensorSpec, rank: int) -> Tuple[int, ...]:
         if isinstance(placement, Shard):
             assert (
                 local_shape[placement.dim] % spec.mesh.size(idx) == 0
-            ), "Only even sharding supported for now."
+            ), f"Only even sharding supported for now. (Got {local_shape[placement.dim]} // {spec.mesh.size(idx)} for mesh idx {idx}"
             local_shape[placement.dim] //= spec.mesh.size(idx)
     return tuple(local_shape)
 
@@ -583,12 +575,22 @@ def register_prop_rule_map(
         global_in_shape = input_dtensor_spec.shape
         assert global_in_shape is not None, "Shape required."
 
-        local_out_shape, shard_out = propagate_shape_and_sharding(
+        global_out_shape, shard_out = propagate_shape_and_sharding(
             input_dtensor_spec.placements,
-            local_shape(input_dtensor_spec, torch.distributed.get_rank()),
+            tuple(global_in_shape),
             rules,
             tuple(input_dtensor_spec.mesh.mesh.shape),
         )
+        output_dtensor_spec = DTensorSpec(
+            ndim=len(global_out_shape),
+            mesh=input_dtensor_spec.mesh,
+            placements=shard_out,
+            shape=torch.Size(global_out_shape),
+        )
+        local_out_shape = local_shape(
+            output_dtensor_spec, torch.distributed.get_rank()
+        )
+
         # We only need the local shape to lower he call into the local op
         args = op_schema.args_schema
         if spec.shape_argnum is not None:
@@ -598,21 +600,7 @@ def register_prop_rule_map(
                 + args[cast(int, spec.shape_argnum) + 1 :]
             )
 
-        # We want to infer the output shape
-        global_out_shape, _ = propagate_shape_and_sharding(
-            input_dtensor_spec.placements,
-            tuple(global_in_shape),
-            rules,
-            tuple(input_dtensor_spec.mesh.mesh.shape),
-        )
-        return OutputSharding(
-            output_spec=DTensorSpec(
-                ndim=len(global_out_shape),
-                mesh=input_dtensor_spec.mesh,
-                placements=shard_out,
-                shape=torch.Size(global_out_shape),
-            )
-        )
+        return OutputSharding(output_spec=output_dtensor_spec)
 
 
 register_prop_rule_map("aten.view.default", Tensor.view)

@@ -462,6 +462,33 @@ class TestViewOps(DistTensorTestBase):
             (Flatten((InputDim(2), InputDim(4))),),
         )
 
+        self.dimmap_test(
+            Tensor.view,
+            (randn(48, 35, 26), (24, 4, 35, 13)),
+            (
+                Split(
+                    Flatten(input_dims=(InputDim(0), InputDim(1), InputDim(2))),
+                    group_shape=(24, 4, 35, 13),
+                    split_id=0,
+                ),
+                Split(
+                    Flatten(input_dims=(InputDim(0), InputDim(1), InputDim(2))),
+                    group_shape=(24, 4, 35, 13),
+                    split_id=1,
+                ),
+                Split(
+                    Flatten(input_dims=(InputDim(0), InputDim(1), InputDim(2))),
+                    group_shape=(24, 4, 35, 13),
+                    split_id=2,
+                ),
+                Split(
+                    Flatten(input_dims=(InputDim(0), InputDim(1), InputDim(2))),
+                    group_shape=(24, 4, 35, 13),
+                    split_id=3,
+                ),
+            ),
+        )
+
 
 if __name__ == "__main__":
     run_tests()
