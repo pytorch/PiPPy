@@ -1,0 +1,104 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
+import os
+import socket
+
+import torch
+import torch.multiprocessing as mp
+import torch.distributed.rpc as rpc
+
+
+def has_efa() -> bool:
+    try:
+        import subprocess
+        return subprocess.run(["fi_info", "-p", "efa", "-t", "FI_EP_RDM"],
+                              stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL).returncode == 0
+    except FileNotFoundError:
+        return False
+    except PermissionError:
+        return False
+
+
+def tp_transports():
+    return ["shm", "uv"] if has_efa() else None
+
+
+def run_pippy(run_master, args, *extra_args):
+    if not hasattr(args, 'world_size'):
+        assert hasattr(args, 'pp_group_size')
+        args.dp_group_size = args.dp_group_size if hasattr(args, 'dp_group_size') else 1
+    else:
+        if not hasattr(args, 'dp_group_size'):
+            args.pp_group_size = args.pp_group_size if hasattr(args, 'pp_group_size') else args.world_size
+            assert args.world_size % args.pp_group_size == 0
+            args.dp_group_size = args.world_size // args.pp_group_size
+        elif not hasattr(args, 'pp_group_size'):
+            args.dp_group_size = args.dp_group_size if hasattr(args, 'dp_group_size') else 1
+            assert args.world_size % args.dp_group_size == 0
+            args.pp_group_size = args.world_size // args.dp_group_size
+        else:
+            pass
+            # TODO: doesn't work for PiPPyTrainingArguments
+            # assert args.world_size == args.dp_group_size * args.pp_group_size
+
+    actual_world_size = args.dp_group_size * args.pp_group_size
+    if args.rank == -1:
+        mp.spawn(run_worker, args=(run_master, args, *extra_args), nprocs=actual_world_size, join=True)
+    elif args.rank < actual_world_size:
+        run_worker(args.rank, run_master, args, *extra_args)
+    else:
+        print("I'm unused, exiting")
+
+
+def run_worker(rank, run_master, args, *extra_args):
+    os.environ['MASTER_ADDR'] = args.master_addr
+    os.environ['MASTER_PORT'] = args.master_port
+
+    actual_world_size = args.dp_group_size * args.pp_group_size
+
+    # TODO: Move to training args, blocked by: cannot pickle 'TensorPipeRpcBackendOptions' object
+    # Exclude IB for metadata transport due to lack of EFA support on AWS
+    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256,
+                                              rpc_timeout=1800,
+                                              _transports=tp_transports())
+    if args.cuda:
+        n_devs = torch.cuda.device_count()
+        if n_devs > 0:
+            dev_id = rank % n_devs
+            for i in range(actual_world_size):
+                options.set_device_map(f"worker{i}", {dev_id: i % n_devs})
+    args.device = f'cuda:{dev_id}' if args.cuda else 'cpu'
+    print(f"rank = {rank} host/pid/device = "
+          f"{socket.gethostname()}/{os.getpid()}/{args.device}")
+
+    # Init DDP process group
+    backend = "nccl" if args.cuda else "gloo"
+    torch.distributed.init_process_group(backend=backend, rank=rank, world_size=actual_world_size)
+
+    rpc.init_rpc(
+        f"worker{rank}",
+        rank=rank,
+        world_size=actual_world_size,
+        rpc_backend_options=options
+    )
+
+    global dp_pg_per_pp_rank
+    dp_ranks_per_pp_rank = torch.arange(actual_world_size).reshape(args.pp_group_size,
+                                                                   args.dp_group_size).tolist()
+    dp_pg_per_pp_rank = [torch.distributed.new_group(ranks) for ranks in dp_ranks_per_pp_rank]
+
+    pp_ranks_per_dp_group = [[i * args.dp_group_size + rank for i in range(args.pp_group_size)]
+                             for rank in range(args.dp_group_size)]
+
+    global dp_pg_for_reference
+    dp_pg_for_reference = torch.distributed.new_group(list(range(args.dp_group_size)))
+
+    global exclude_master
+    exclude_master = args.exclude_master if hasattr(args, 'exclude_master') else 0
+
+    if rank >= 0 and rank // args.dp_group_size == 0:
+        args.rank = rank
+        args.driver_index = rank
+        args.local_driver_index = os.getenv('LOCAL_RANK', rank)
+        run_master(pp_ranks_per_dp_group[rank], args, *extra_args)
+    rpc.shutdown()

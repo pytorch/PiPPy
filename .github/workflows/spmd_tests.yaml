@@ -46,7 +46,7 @@ jobs:
       matrix:
         shard: ["0", "1", "2", "3"]
     env:
-      DOCKER_IMAGE: qts8n/cuda-python:devel
+      DOCKER_IMAGE: gingerhugo/cuda-11.7-python-3.9:v1.0.1.1
       SPMD_ROOT: /PiPPy
       VERBOSE: "0"
       OMP_NUM_THREADS: "1"

@@ -2,27 +2,24 @@
 import argparse
 import logging
 import os
-import socket
 import time
+import unittest
 from collections import defaultdict
 from functools import reduce
 from typing import List, Dict, Any
-import unittest
 
 import torch
-import torch.distributed.rpc as rpc
-import torch.multiprocessing as mp
 import torch.nn as nn
 from torch.autograd import Function
 
+import pippy.fx
+from pippy import run_pippy
 from pippy.IR import MultiUseParameterConfig, Pipe, pipe_split, TrivialLossWrapper
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, Phase, PipelineDriverBase, \
     EventsContext, PipelineDriverInterleaved1F1B
 from pippy.events import Event
 from pippy.microbatch import TensorChunkSpec, CustomReducer
 from pippy.visualizer import events_to_json
-import pippy.fx
-from test_commons import tp_transports # type: ignore
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
@@ -137,7 +134,7 @@ class MyLinear(nn.Module):
         )
 
 
-def run_master(args):
+def run_master(_, args):
     d_hid = 100
     bs = 400
     chunks = 4
@@ -272,36 +269,6 @@ def check_events_for_single_batch(events: List[Event], all_stages: List[int], ch
             f"Backward microbatch {mbid} doesn't overlap with next microbatch {next_mbid}"
 
 
-def run_worker(rank, world_size, args):
-    os.environ['MASTER_ADDR'] = args.master_addr
-    os.environ['MASTER_PORT'] = args.master_port
-    # Exclude IB for metadata transport due to lack of EFA support on AWS
-    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256,
-                                              rpc_timeout=1800,
-                                              _transports=tp_transports())
-    if args.cuda:
-        n_devs = torch.cuda.device_count()
-        if n_devs > 0:
-            dev_id = rank % n_devs
-            for i in range(world_size):
-                options.set_device_map(f"worker{i}", {dev_id: i % n_devs})
-        else:
-            args.cuda = 0
-    args.device = f'cuda:{dev_id}' if args.cuda else 'cpu'
-    print(f"rank = {rank} host/pid/device = "
-          f"{socket.gethostname()}/{os.getpid()}/{args.device}")
-
-    rpc.init_rpc(
-        f"worker{rank}",
-        rank=rank,
-        world_size=world_size,
-        rpc_backend_options=options
-    )
-    if rank == 0:
-        run_master(args)
-    rpc.shutdown()
-
-
 def main(args=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 5)))
@@ -315,12 +282,7 @@ def main(args=None):
     parser.add_argument('--checkpoint', type=int, default=0, choices=[0, 1])
     args = parser.parse_args(args)
 
-    if args.rank == -1:
-        mp.spawn(run_worker, args=(args.world_size, args,), nprocs=args.world_size, join=True)
-    elif args.rank < args.world_size:
-        run_worker(args.rank, args.world_size, args)
-    else:
-        print("I'm unused, exiting")
+    run_pippy(run_master, args)
 
 
 if __name__ == "__main__":

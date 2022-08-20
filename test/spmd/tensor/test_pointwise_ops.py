@@ -21,7 +21,9 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         input_tensor = torch.randn(
             *input_size, device=self.device_type, requires_grad=True
         )
-        dist_tensor = DTensor(input_tensor, mesh, spec)
+        dist_tensor = DTensor(
+            input_tensor, mesh, spec, requires_grad=input_tensor.requires_grad
+        )
         reset_seed() if reset_seed else None
         dt = op(dist_tensor, **kwargs)
         reset_seed() if reset_seed else None

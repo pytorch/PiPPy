@@ -54,10 +54,38 @@ class DistTensorOpsTest(DistTensorTestBase):
         self.assertEqual(tensor.grad, torch.ones(3, 5, 6))
 
     @with_comms
+    def test_inplace_op(self):
+        mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        input_tensor = torch.randn((12, 3), device=self.device_type)
+        dt_to_add = distribute_tensor(input_tensor, mesh, [Shard(0)])
+        dt_to_mul = dt_to_add.clone()
+        expected_add_dt = dt_to_add.clone() + 3
+        add_res = dt_to_add.add_(3)
+        expected_mul_dt = dt_to_mul.clone() * 3
+        mul_res = dt_to_mul.mul_(3)
+        # inplace op should be the same instance before and after
+        self.assertTrue(add_res is dt_to_add)
+        self.assertEqual(add_res.to_local(), expected_add_dt.to_local())
+
+        self.assertTrue(mul_res is dt_to_mul)
+        self.assertEqual(mul_res.to_local(), expected_mul_dt.to_local())
+
+    # TODO: Test fails in GPU test.
+    # @with_comms
+    # def test_op_out_variant(self):
+    #     mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+    #     input_tensor = torch.randn((12, 3), device=self.device_type)
+    #     dist_tensor_out = distribute_tensor(input_tensor, mesh, [Shard(0)])        
+    #     expected_dt = dist_tensor_out.clone() + 3
+    #     res = torch.add(dist_tensor_out, 3, out=dist_tensor_out)
+    #     # op out variant should be the same instance before and after
+    #     self.assertTrue(res is dist_tensor_out)
+    #     self.assertEqual(dist_tensor_out.to_local(), expected_dt.to_local())
+
+    @with_comms
     def test_ones_like(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
-        replica_spec = [Replicate()]
 
         input_tensor = torch.randn(4, 8, requires_grad=True)
         dist_tensor = DTensor.from_local(input_tensor, device_mesh, shard_spec)

@@ -19,6 +19,7 @@ of DTensor and all corner cases for sharded distributed tensor.
 """
 
 
+@register_impl("aten.view.SymInt")
 @register_impl("aten.view.default")
 # pyre-fixme[2]: Parameter must be annotated.
 def dist_view(self: DTensor, *shape) -> DTensor:

@@ -176,7 +176,7 @@ class DistTensorTest(DistTensorTestBase):
         self.assertEqual(local_tensor_with_grad.grad, expected_grad)
 
     @with_comms
-    def test_placement_spec_read_only_after_set(self):
+    def test_dtensor_spec_read_only_after_set(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
         local_tensor = torch.randn(3, 3)

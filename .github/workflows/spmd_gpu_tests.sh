@@ -21,9 +21,7 @@ apt-get install git -y
 # Install dependencies
 # Turn off progress bar to save logs
 pip3 install --upgrade pip
-pip3 config set global.progress_bar off
-pip3 install flake8 pytest pytest-cov pytest-shard numpy expecttest hypothesis
-if [ -f requirements.txt ]; then pip3 install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cu102/torch_nightly.html; fi
+if [ -f requirements.txt ]; then pip3 install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cu117/torch_nightly.html; fi
 
 # Install pippy
 python3 spmd/setup.py install
