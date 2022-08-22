@@ -143,11 +143,6 @@ class TestViewOps(DistTensorTestBase):
         flat_args, _ = tree_flatten(args)
         in_shape = flat_args[0].shape
 
-        assert not isinstance(rules, list)
-
-        if dist.get_rank() == 0:
-            print("-------- ", op)
-
         no_shard_dims = set()
         for rule in rules:
             if isinstance(rule, Repeat):
@@ -188,8 +183,6 @@ class TestViewOps(DistTensorTestBase):
             if dist.get_rank() == 0:
                 self.assertEqual(outputs, full_out)
 
-    device_mesh = None
-
     def dimmap_test(self, op, args, expected_rule_output):
         rules = ops[op].dim_map(*args)
         self.assertEquals(rules, expected_rule_output)
@@ -198,7 +191,7 @@ class TestViewOps(DistTensorTestBase):
     @with_comms
     def test_view_ops(self):
         self.device_mesh = DeviceMesh(
-            "cpu", torch.arange(dist.get_world_size()).view(-1, 2)
+            self.device_type, torch.arange(dist.get_world_size()).view(-1, 2)
         )
         self.dimmap_test(torch.atleast_1d, (randn(()),), (Singleton(),))
         self.dimmap_test(torch.atleast_1d, (randn(24),), (InputDim(0),))

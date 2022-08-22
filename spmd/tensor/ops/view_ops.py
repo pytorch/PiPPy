@@ -559,14 +559,11 @@ def local_shape(spec: DTensorSpec, rank: int) -> Tuple[int, ...]:
 def register_prop_rule_map(
     aten_op_name: str, local_op_name: Callable[..., torch.Tensor]
 ) -> None:
+    spec: Op = ops[local_op_name]
+
     @register_prop_rule(aten_op_name)
     def reshape_prop(op_schema: OpSchema) -> OutputSharding:
-        spec = ops[local_op_name]
-
-        # note we are passing _global_ tensors
         rules = spec.dim_map(*op_schema.args_schema, **op_schema.kwargs_schema)
-
-        # note we are passing _local_ tensor shapes
         input_dtensor_spec = op_schema.args_schema[0]
 
         assert isinstance(
