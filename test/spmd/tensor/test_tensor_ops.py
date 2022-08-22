@@ -75,7 +75,7 @@ class DistTensorOpsTest(DistTensorTestBase):
     # def test_op_out_variant(self):
     #     mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
     #     input_tensor = torch.randn((12, 3), device=self.device_type)
-    #     dist_tensor_out = distribute_tensor(input_tensor, mesh, [Shard(0)])        
+    #     dist_tensor_out = distribute_tensor(input_tensor, mesh, [Shard(0)])
     #     expected_dt = dist_tensor_out.clone() + 3
     #     res = torch.add(dist_tensor_out, 3, out=dist_tensor_out)
     #     # op out variant should be the same instance before and after

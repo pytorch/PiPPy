@@ -1,7 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 # implement matrix related ops for distributed tensor
-from functools import reduce
-import operator
+import math
 
 import torch
 import torch.utils._pytree as pytree
@@ -39,12 +38,8 @@ def dist_view(self: DTensor, *shape) -> DTensor:
 
         # Infer the dim which is specified with -1.
         if infer_idx is not None:
-            st_size = reduce(
-                operator.mul, self.size(), 1
-            )  # type: ignore[attr-defined]
-            shape_size = -1 * reduce(
-                operator.mul, shape, 1
-            )  # type: ignore[attr-defined]
+            st_size = math.prod(self.size())  # type: ignore[attr-defined]
+            shape_size = -1 * math.prod(shape)  # type: ignore[attr-defined]
             # pyre-fixme[60]: Concatenation not yet support for multiple variadic
             shape = (
                 *shape[:infer_idx],

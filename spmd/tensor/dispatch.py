@@ -115,10 +115,7 @@ def operator_dispatch(
     args_schema = tree_map(unwrap_schema, args)
     kwargs_schema = tree_map(unwrap_schema, kwargs)
 
-    op_schema = OpSchema(
-        args_schema,
-        kwargs_schema,
-    )
+    op_schema = OpSchema(args_schema, kwargs_schema)
     sharding_prop_func = op_to_rules.get(op_key, None)
 
     # step 1. there's sharding propagation rule, run
@@ -169,10 +166,7 @@ def operator_dispatch(
         # run local op computation with potentially modified args/kwargs
         local_tensor_args = cast(Tuple[object, ...], local_tensor_args)
         local_tensor_kwargs = cast(Dict[str, object], local_tensor_kwargs)
-        local_results = op_call(
-            *local_tensor_args,
-            **local_tensor_kwargs,
-        )
+        local_results = op_call(*local_tensor_args, **local_tensor_kwargs)
 
         if schema_kind == SchemaKind.inplace:
             # inplace op should return self instead of re-wrapping
@@ -212,8 +206,5 @@ def operator_dispatch(
         else:
             tensor_args = tree_map(unwrap_local_tensor, args)
             tensor_kwargs = tree_map(unwrap_local_tensor, kwargs)
-            local_results = op_call(
-                *tensor_args,
-                **tensor_kwargs,
-            )
+            local_results = op_call(*tensor_args, **tensor_kwargs)
             return wrap(local_results, op_schema.args_spec[0])
