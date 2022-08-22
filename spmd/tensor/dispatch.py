@@ -208,7 +208,7 @@ def operator_dispatch(
                 out_dt = cast(spmd_tensor.DTensor, kwargs[out.name])
                 out_dt._spec = cast(DTensorSpec, output_specs[i])
                 out_dts.append(out_dt)
-            return tuple(out_dts)
+            return tuple(out_dts) if len(out_dts) > 1 else out_dts[0]
         else:
             return wrap(local_results, output_sharding.output_spec)
 
