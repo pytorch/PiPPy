@@ -141,7 +141,8 @@ def run_master(pp_ranks, args):
         grad_value = rpc.rpc_sync(module_rref.owner(), get_grad_from_executor, (module_rref, param_qualname))
         pipe_grads[name] = copy.deepcopy(grad_value)
 
-    wrapper_ddp = torch.nn.parallel.DistributedDataParallel(wrapper, process_group=pippy.utils.dp_pg_for_reference)
+    # User driver group as the DDP reference group
+    wrapper_ddp = torch.nn.parallel.DistributedDataParallel(wrapper, process_group=args.driver_group)
 
     optim = torch.optim.SGD(wrapper_ddp.parameters(), lr=0.05)
     optim.zero_grad()

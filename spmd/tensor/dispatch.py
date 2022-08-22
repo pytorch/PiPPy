@@ -93,6 +93,19 @@ class OutputSharding:
     failed_reason: Optional[str] = None
 
 
+def _reshape_alias(
+    x: torch.Tensor, shape: Tuple[int, ...], strides: Tuple[int, ...]
+) -> torch.Tensor:
+    return torch.ops.aten.view(x, shape)
+
+
+_CURRENT_DECOMPOSITION_TABLE: Dict[
+    Callable[..., object], Callable[..., object]
+] = {
+    torch.ops.aten._reshape_alias.default: _reshape_alias,
+}
+
+
 def operator_dispatch(
     op_call: torch._ops.OpOverload,
     args: Tuple[object, ...],
@@ -100,6 +113,10 @@ def operator_dispatch(
     op_to_rules: Dict[str, Callable[[OpSchema], OutputSharding]],
     custom_dispatch_ops: Dict[str, Callable[..., object]],
 ) -> object:
+    # first we need to lift some private aten aliases to public calls
+    if op_call in _CURRENT_DECOMPOSITION_TABLE:
+        with torch.overrides.enable_reentrant_dispatch():
+            return _CURRENT_DECOMPOSITION_TABLE[op_call](*args, **kwargs)
 
     func_schema = FunctionSchema.parse(str(op_call._schema))
     schema_kind = func_schema.kind()

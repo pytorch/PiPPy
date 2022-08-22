@@ -51,6 +51,8 @@ def run_pippy(run_master, args, *extra_args):
 
 
 def run_worker(rank, run_master, args, *extra_args):
+    args.rank = rank
+
     os.environ['MASTER_ADDR'] = args.master_addr
     os.environ['MASTER_PORT'] = args.master_port
 
@@ -90,14 +92,12 @@ def run_worker(rank, run_master, args, *extra_args):
     pp_ranks_per_dp_group = [[i * args.dp_group_size + rank for i in range(args.pp_group_size)]
                              for rank in range(args.dp_group_size)]
 
-    global dp_pg_for_reference
-    dp_pg_for_reference = torch.distributed.new_group(list(range(args.dp_group_size)))
+    args.driver_group = torch.distributed.new_group(list(range(args.dp_group_size)))
 
     global exclude_master
     exclude_master = args.exclude_master if hasattr(args, 'exclude_master') else 0
 
     if rank >= 0 and rank // args.dp_group_size == 0:
-        args.rank = rank
         args.driver_index = rank
         args.local_driver_index = os.getenv('LOCAL_RANK', rank)
         run_master(pp_ranks_per_dp_group[rank], args, *extra_args)

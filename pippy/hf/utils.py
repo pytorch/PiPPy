@@ -20,7 +20,6 @@ from transformers.utils import (
 )
 from transformers.utils import torch_required, cached_property
 
-import pippy
 import pippy.hf.bart as bart
 import pippy.hf.bert as bert
 import pippy.hf.gpt2 as gpt2
@@ -88,11 +87,28 @@ class PiPPyTrainingArguments(TrainingArguments):
 
     @property
     def device(self):
-        return super().device
+        if self.rank == -1:
+            if self.cuda and torch.cuda.is_available():
+                return torch.device('cuda')
+            else:
+                return torch.device('cpu')
+        else:
+            return super().device
 
     @device.setter
     def device(self, value):
         self._device = value
+
+    # Process Group including all drivers
+    _driver_group = None
+
+    @property
+    def driver_group(self):
+        return self._driver_group
+
+    @driver_group.setter
+    def driver_group(self, value):
+        self._driver_group = value
 
     @cached_property
     @torch_required
@@ -152,7 +168,7 @@ class PiPPyTrainingArguments(TrainingArguments):
                     # elif is_sagemaker_dp_enabled():
                     #     dist.barrier()
                     # else:
-                    torch.distributed.barrier(group=pippy.utils.dp_pg_for_reference)
+                    torch.distributed.barrier(group=self.driver_group)
                 yield
             finally:
                 if is_main_process:
@@ -163,7 +179,7 @@ class PiPPyTrainingArguments(TrainingArguments):
                     # elif is_sagemaker_dp_enabled():
                     #     pass  # TODO dist.barrier()
                     # else:
-                    torch.distributed.barrier(group=pippy.utils.dp_pg_for_reference)
+                    torch.distributed.barrier(group=self.driver_group)
         else:
             yield
 
@@ -257,6 +273,7 @@ class PiPPyHFTracer(fx.HFTracer):
 
 
 def wrap(model, training_args, pp_ranks, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec):
+    model.to(training_args.device)
     model_to_wrap[model.__class__.__name__](model, training_args, pp_ranks)
 
     all_worker_ranks = pp_ranks[training_args.exclude_master:]
