@@ -121,6 +121,9 @@ pointwise_ops = [
     "aten.relu.default",
     "aten.gelu.default",
     "aten.sigmoid.default",
+    "aten.add.out",
+    "aten.add_.Scalar",
+    "aten.mul_.Scalar",
 ]
 
 
