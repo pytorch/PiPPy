@@ -1,9 +1,9 @@
-# Using cuda 11.7
-FROM nvidia/cuda:11.7.0-cudnn8-devel-ubuntu18.04
+# Using cuda 11.3
+FROM nvidia/cuda:11.3.1-devel-ubuntu18.04
 
-# nvidia cuda 11.7 paths
-ENV LD_LIBRARY_PATH=/usr/local/cuda-11.7/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
-ENV LIBRARY_PATH=${LIBRARY_PATH}:/usr/local/cuda-11.7/lib64
+# nvidia cuda 11.3 paths
+ENV LD_LIBRARY_PATH=/usr/local/cuda-11.3/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
+ENV LIBRARY_PATH=${LIBRARY_PATH}:/usr/local/cuda-11.3/lib64
 
 # ensure local python is preferred over distribution python
 ENV PATH /usr/local/bin:$PATH
@@ -16,7 +16,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN echo "US/Pacific" > /etc/timezone \
     && ln -fs /usr/share/zoneinfo/America/Los_Angeles /etc/localtime \
     && apt update && apt upgrade -y \
-    && apt-get -y install build-essential checkinstall wget \
+    && apt-get -y install build-essential checkinstall wget git \
 	libreadline-gplv2-dev libncursesw5-dev libssl-dev \
 	libsqlite3-dev tk-dev libgdbm-dev libc6-dev libbz2-dev libffi-dev zlib1g-dev
 
@@ -42,5 +42,5 @@ RUN pip3 install --upgrade pip \
 	&& pip3 config set global.progress_bar off \
 	&& pip3 install flake8 pytest pytest-cov pytest-shard numpy expecttest hypothesis pyyaml
 
-LABEL versin="1.0.1.1"
-LABEL description="Build docker image for ubuntu Linux OS with cuda 11.7 and Python."
+LABEL versin="1.0.1"
+LABEL description="Build docker image for ubuntu Linux OS with cuda 11.3 and Python."
