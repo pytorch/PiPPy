@@ -14,6 +14,10 @@ python3 --version
 which pip3
 pip3 --version
 
+# Install git
+apt-get update
+apt-get install git -y
+
 # Install dependencies
 # Turn off progress bar to save logs
 pip3 install --upgrade pip
