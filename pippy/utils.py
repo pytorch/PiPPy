@@ -69,6 +69,10 @@ def run_worker(rank, run_master, args, *extra_args):
             dev_id = rank % n_devs
             for i in range(actual_world_size):
                 options.set_device_map(f"worker{i}", {dev_id: i % n_devs})
+        else:
+            args.cuda = 0
+            print('Warning: no CUDA device found. Running on CPU instead.')
+
     args.device = f'cuda:{dev_id}' if args.cuda else 'cpu'
     print(f"rank = {rank} host/pid/device = "
           f"{socket.gethostname()}/{os.getpid()}/{args.device}")
