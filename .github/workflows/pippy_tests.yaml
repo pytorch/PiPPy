@@ -6,7 +6,7 @@ on:
     - main
   pull_request:
     paths:
-      - '.github/**'
+      - '.github/workflows/pippy**'
       - 'pippy/**'
       - 'test/**'
       - '!test/spmd/**'
@@ -229,7 +229,7 @@ jobs:
             "${DOCKER_IMAGE}"
           )
           # Run GPU tests and return error signal from docker
-          docker exec -t -w "${PIPPY_ROOT}" "${container_name}" bash -c "bash .github/workflows/gpu_tests.sh; exit \$?"
+          docker exec -t -w "${PIPPY_ROOT}" "${container_name}" bash -c "bash .github/workflows/pippy_gpu_tests.sh; exit \$?"
       - name: Chown workspace
         if: always()
         run: |
