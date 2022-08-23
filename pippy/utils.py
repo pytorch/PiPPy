@@ -60,7 +60,7 @@ def run_worker(rank, run_master, args, *extra_args):
 
     # TODO: Move to training args, blocked by: cannot pickle 'TensorPipeRpcBackendOptions' object
     # Exclude IB for metadata transport due to lack of EFA support on AWS
-    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256,
+    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=512,
                                               rpc_timeout=1800,
                                               _transports=tp_transports())
     if args.cuda:
