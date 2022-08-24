@@ -126,6 +126,8 @@ jobs:
         run: python test/local_test_forward_backward.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
       - name: Run null_coalesce_accumulate integration test
         run: python test/local_test_null_coalesce_accumulate.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+      - name: Run PP + DDP test
+        run: python test/local_test_ddp.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
       - name: Run HF BERT forward-only integration test
         run: python test/local_test_forward_hf_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
       - name: Run HF GPT2 forward-only integration test
@@ -221,32 +223,6 @@ jobs:
           docker stop $(docker ps -q) || true
           # Prune all of the docker images
           docker system prune -af
-
-  ddp_test:
-    runs-on: linux.2xlarge
-    strategy:
-      matrix:
-        python-version: ["3.7", "3.8", "3.9"]
-        replicate: ["0", "1"]
-        schedule: ["FillDrain", "1F1B"]
-        verbose: ["0"]
-        checkpoint: [ "0", "1" ]
-    container:
-      image: python:${{ matrix.python-version }}
-
-    steps:
-      - uses: actions/checkout@v2
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install flake8 pytest pytest-cov numpy
-          if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
-      - name: Install pavel's huggingface fork
-        run: pip install git+https://github.com/huggingface/transformers.git@main sentencepiece six sacremoses
-      - name: Install pippy
-        run: "python setup.py install"
-      - name: Run PP + DDP test - Transmitted parameters
-        run: python test/local_test_ddp.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
 
   fx_test:
     runs-on: linux.2xlarge
