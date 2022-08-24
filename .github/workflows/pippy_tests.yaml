@@ -43,7 +43,7 @@ jobs:
         run: |
           pytest --cov=pippy --ignore=test/hf_test.py --ignore=test/spmd/ --ignore=test/test_fx.py --ignore=test/test_fx_experimental.py --ignore=test/fx test/
 
-  hf_model_tests_forward:
+  hf_model_tests:
     runs-on: linux.12xlarge
     strategy:
       matrix:
@@ -64,32 +64,10 @@ jobs:
       - name: Install pippy
         run: "python setup.py install"
       # Single thread to avoid OOM
-      - name: Test with pytest
+      - name: Test forward only
         run: |
           pytest --shard-id=${{ matrix.shard }} --num-shards=4 -k 'not HFModelsForwardBackwardTest' -sv --cov=pippy test/hf_test.py
-
-  hf_model_tests_forward_backward:
-    runs-on: linux.24xlarge
-    strategy:
-      matrix:
-        python-version: ["3.7", "3.8", "3.9"]
-        shard: ["0", "1", "2", "3"]
-    container:
-      image: python:${{ matrix.python-version }}
-
-    steps:
-      - uses: actions/checkout@v2
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install flake8 pytest pytest-cov pytest-xdist pytest-shard numpy
-          if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
-      - name: Install pavel's huggingface fork
-        run: pip install git+https://github.com/huggingface/transformers.git@main sentencepiece six sacremoses
-      - name: Install pippy
-        run: "python setup.py install"
-      # Single thread to avoid OOM
-      - name: Test with pytest
+      - name: Test forward and backward
         run: |
           pytest --shard-id=${{ matrix.shard }} --num-shards=4 -k 'HFModelsForwardBackwardTest' -sv --cov=pippy test/hf_test.py
 
