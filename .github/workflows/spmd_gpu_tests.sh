@@ -30,4 +30,4 @@ set -ex
 
 # Run all integration tests
 # pytest --shard-id=${SHARD} --num-shards=4 --cov=spmd test/spmd/ 
-pytest --shard-id=${SHARD} --num-shards=4 --cov=spmd test/spmd/tensor/test_tp_sharding_ops.py -k test_view_with_sharding_dim_change
+pytest --shard-id=${SHARD} --num-shards=4 --cov=spmd -s test/spmd/tensor/test_tp_sharding_ops.py -k test_view_with_sharding_dim_change
