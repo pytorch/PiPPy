@@ -41,6 +41,7 @@ class DistTensorTestBase(MultiProcessTestCase):
         # Wait for all ranks to reach here before starting shutdown.
         dist.barrier()
         dist.destroy_process_group()
+        print("Finished destroy!!! ")
 
     def setUp(self) -> None:
         super().setUp()
