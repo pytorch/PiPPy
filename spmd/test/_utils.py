@@ -39,9 +39,11 @@ class DistTensorTestBase(MultiProcessTestCase):
 
     def destroy_pg(self) -> None:
         # Wait for all ranks to reach here before starting shutdown.
+        print("Before destroy!!! \n\n\n\n")
         dist.barrier()
+        print("Before destroy after barrier \n\n\n\n\n!!! ")
         dist.destroy_process_group()
-        print("Finished destroy!!! ")
+        print("Finished destroy!!! \n\n\n\n\n")
 
     def setUp(self) -> None:
         super().setUp()
