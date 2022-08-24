@@ -6,6 +6,7 @@ set -x
 echo "VERBOSE: ${VERBOSE}"
 echo "REPLICATE: ${REPLICATE}"
 echo "SCHEDULE: ${SCHEDULE}"
+export NCCL_DEBUG=INFO
 
 nvidia-smi
 nvcc --version
