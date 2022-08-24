@@ -17,25 +17,38 @@ def mm_prop(
     # mat1: shard(1),  mat2: shard(0)
     # propagation rules only propagates the combs without communication
     # TODO: support multi-dim device mesh op with einop propagation
+
+    mat1_shape = list(mat1_spec.shape) # m * n
+    mat2_shape = list(mat2_spec.shape) # n * p
+    res_shape = list([mat1_shape[0], mat2_shape[-1]]) # m * p
+
     if (
         mat1_spec.placements[0].is_shard(dim=0)
         and mat2_spec.placements[0].is_replicate()
     ):
-        return mat1_spec
+        return DTensorSpec(
+            mat1_spec.mesh, mat1_spec.placements, shape=res_shape
+        )
     elif mat1_spec.placements[0].is_replicate() and mat2_spec.placements[
         0
     ].is_shard(dim=1):
-        return mat2_spec
+        return DTensorSpec(
+            mat2_spec.mesh, mat2_spec.placements, shape=res_shape
+        )
     elif mat1_spec.placements[0].is_shard(dim=1) and mat2_spec.placements[
         0
     ].is_shard(dim=0):
         placements = [_Partial()]
-        return DTensorSpec(mat1_spec.mesh, placements, shape=mat1_spec.shape)
+        return DTensorSpec(
+            mat1_spec.mesh, placements, shape=res_shape
+        )
     elif (
         mat1_spec.placements[0].is_replicate()
         and mat2_spec.placements[0].is_replicate()
     ):
-        return mat1_spec
+        return DTensorSpec(
+            mat1_spec.mesh, mat1_spec.placements, shape=res_shape
+        )
     else:
         # not local compute, need to rely on auto redistribute, return None
         return None
