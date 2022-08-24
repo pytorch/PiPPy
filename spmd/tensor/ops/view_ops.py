@@ -236,9 +236,7 @@ def dim_movedim(
     assert max(input) < ndim
     assert max(destination) < ndim
 
-    dest = [
-        -1,
-    ] * ndim
+    dest = [-1] * ndim
     for i, d in zip(input, destination):
         dest[d] = i
 

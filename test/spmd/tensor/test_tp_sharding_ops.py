@@ -149,7 +149,11 @@ class TPShardingOpsTest(DistTensorTestBase):
 
     @with_comms
     def test_view_with_sharding_dim_change(self):
-        print("CUDA \n\n\n\n\n\n", list(range(self.world_size)), torch.cuda.is_available())
+        print(
+            "CUDA \n\n\n\n\n\n",
+            list(range(self.world_size)),
+            torch.cuda.is_available(),
+        )
         # device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         # torch.manual_seed(self.rank)
         # tensor = torch.rand(3, 5, 6, device=self.device_type)
