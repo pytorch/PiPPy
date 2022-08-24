@@ -421,7 +421,6 @@ dtensor_dispatch_expected_failures = {
     aten.elu.default: {f32},
     aten.embedding.default: {f32},
     aten.embedding_renorm_.default: {f32},
-    aten.empty.SymInt: {f32},
     aten.empty.memory_format: {f32},
     aten.empty_like.default: {f32},
     aten.eq.Scalar: {f32},
