@@ -41,7 +41,8 @@ class TPShardingOpsTest(DistTensorTestBase):
     # TODO: Need to investigate why test failed in CPU for baddbmm.
     @with_comms
     @skip_if_lt_x_gpu(TEST_GPU_NUM)
-    def test_sharded_baddbmm(self):
+    def test_sharded_baddbmm_beta_zero(self):
+        # If beta is 0, input tensor will be ignored
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         torch.manual_seed(self.rank)
         tensor = torch.rand(3, 5, 6, device=self.device_type)
@@ -56,6 +57,26 @@ class TPShardingOpsTest(DistTensorTestBase):
         batch_2_dt = DTensor.from_local(batch_2, device_mesh, sharding)
         new_dt = torch.baddbmm(
             tensor_dt, batch_1_dt, batch_2_dt, beta=0.0, alpha=0.5
+        )
+        self.assertTrue(new_dt.placements[0].is_shard(dim=0))
+        self.assertEqual(new_dt.to_local(), local_result)
+
+    @with_comms
+    def test_sharded_baddbmm_beta_nonzero(self):
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        torch.manual_seed(self.rank)
+        tensor = torch.rand(3, 5, 6, device=self.device_type)
+        batch_1 = torch.rand(3, 5, 8, device=self.device_type)
+        batch_2 = torch.rand(3, 8, 6, device=self.device_type)
+        local_result = torch.baddbmm(
+            tensor, batch_1, batch_2, beta=0.8, alpha=0.5
+        )
+        sharding = [Shard(0)]
+        tensor_dt = DTensor.from_local(tensor, device_mesh, sharding)
+        batch_1_dt = DTensor.from_local(batch_1, device_mesh, sharding)
+        batch_2_dt = DTensor.from_local(batch_2, device_mesh, sharding)
+        new_dt = torch.baddbmm(
+            tensor_dt, batch_1_dt, batch_2_dt, beta=0.8, alpha=0.5
         )
         self.assertTrue(new_dt.placements[0].is_shard(dim=0))
         self.assertEqual(new_dt.to_local(), local_result)
