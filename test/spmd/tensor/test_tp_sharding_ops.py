@@ -154,9 +154,9 @@ class TPShardingOpsTest(DistTensorTestBase):
         tensor = torch.rand(3, 5, 6, device=self.device_type)
         sharding = [Shard(2)]
         dt = DTensor.from_local(tensor, device_mesh, sharding)
-        dt = dt._view_with_sharding_dim_change(1, (3, -1, 6))
-        self.assertTrue(dt.placements[0].is_shard(dim=1))
-        self.assertEqual(dt.to_local(), tensor.view(3, -1, 6))
+        # dt = dt._view_with_sharding_dim_change(1, (3, -1, 6))
+        # self.assertTrue(dt.placements[0].is_shard(dim=1))
+        # self.assertEqual(dt.to_local(), tensor.view(3, -1, 6))
 
 
 if __name__ == "__main__":
