@@ -40,7 +40,7 @@ class TPShardingOpsTest(DistTensorTestBase):
 
     # TODO: Need to investigate why test failed in CPU for baddbmm.
     @with_comms
-    #@skip_if_lt_x_gpu(TEST_GPU_NUM)
+    @skip_if_lt_x_gpu(TEST_GPU_NUM)
     def test_sharded_baddbmm(self):
         # If beta is 0, input tensor will be ignored
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
@@ -58,8 +58,8 @@ class TPShardingOpsTest(DistTensorTestBase):
         new_dt = torch.baddbmm(
             tensor_dt, batch_1_dt, batch_2_dt, beta=0.0, alpha=0.5
         )
-        #self.assertTrue(new_dt.placements[0].is_shard(dim=0))
-        #self.assertEqual(new_dt.to_local(), local_result)
+        self.assertTrue(new_dt.placements[0].is_shard(dim=0))
+        self.assertEqual(new_dt.to_local(), local_result)
 
         # If beta != 0
         local_result = torch.baddbmm(
