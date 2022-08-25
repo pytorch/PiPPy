@@ -431,7 +431,6 @@ dtensor_dispatch_expected_failures = {
     aten.erfinv.default: {f32},
     aten.exp.default: {f32},
     aten.exp2.default: {f32},
-    aten.expand.SymInt: {f32},
     aten.expm1.default: {f32},
     aten.eye.default: {f32},
     aten.fill_.Scalar: {f32},
@@ -723,11 +722,21 @@ dtensor_dispatch_expected_failures = {
 
 # these sometimes pass and sometimes fail
 # i.e. view only works with certain sharding dims
+# we need to remove many of them from list once op
+# get full support with varying sharding specs
 dtensor_dispatch_skips = {
     aten.view.default: {f32},
     aten.unsqueeze.default: {f32},
     aten.repeat.default: {f32},
     aten.cat.default: {f32},
+    aten._softmax.default: {f32},
+    aten.addmm.default: {f32},
+    aten.mm.default: {f32},
+    aten.bmm.default: {f32},
+    aten.sum.default: {f32},
+    aten.sum.dim_IntList: {f32},
+    aten.t.default: {f32},
+    aten.transpose.int: {f32},
 }
 
 dtensor_dispatch_device_expected_failures = defaultdict(dict)
@@ -740,12 +749,23 @@ dtensor_dispatch_device_skips = defaultdict(dict)
 # TODO: need to clean this list and remove all cases
 op_inputs_skips = {
     "argwhere",
+    "cumprod",
     "__rmatmul__",
     "softmax",
     "nn.functional.softmin",
     "nn.functional.embedding",
+    "nn.functional.embedding_bag",
     "nn.functional.feature_alpha_dropout",
     "nn.functional.hinge_embedding_loss",
+    "nn.functional.cosine_embedding_loss",
+    "fft.hfft",
+    "fft.hfft2",
+    "fft.hfft2",
+    "istft",
+    "matmul",
+    "ones_like",
+    "prod",
+    "segment_reduce",
 }
 
 
