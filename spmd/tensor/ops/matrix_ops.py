@@ -85,21 +85,20 @@ def addmm_rules(op_schema: OpSchema) -> OutputSharding:
 def transpose_rule(op_schema: OpSchema) -> OutputSharding:
     return einop_rule("ij->ji", op_schema)
 
+def bmm_prop(
+    tensor1_spec: DTensorSpec, tensor2_spec: DTensorSpec
+) -> Optional[DTensorSpec]:
+    # bmm propagation rule:
+    # tensor1: shard(0),  tensor2: replicate
+    # tensor1: replicate, tensor2: shard(1)
+    # tensor1: shard(1),  tensor2: shard(0)
+
 
 @register_prop_rule("aten.bmm.default")
 def bmm_rules(op_schema: OpSchema) -> OutputSharding:
-    mat1_spec, mat2_spec = op_schema.args_spec
-    mat1_shape = list(mat1_spec.shape) # b * n * m
-    mat2_shape = list(mat2_spec.shape) # b * m * p
-    return OutputSharding(
-        DTensorSpec(
-            mat1_spec.mesh,
-            mat1_spec.placements,
-            shape=list([mat1_shape[0], mat1_shape[1], mat2_shape[-1]]) # b * n * p
-        )
-    )
+    tensor1_spec, tensor2_spec = op_schema.args_spec
+    return OutputSharding(bmm_prop(tensor1_spec, tensor2_spec))
 
 @register_prop_rule("aten.baddbmm.default")
 def baddmm_rules(op_schema: OpSchema) -> OutputSharding:
-    input_spec, _, _ = op_schema.args_spec
-    return OutputSharding(input_spec)
+    input_spec, tensor1_spec, tensor2_spec = op_schema.args_spec
