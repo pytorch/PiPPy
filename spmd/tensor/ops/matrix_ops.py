@@ -100,5 +100,5 @@ def bmm_rules(op_schema: OpSchema) -> OutputSharding:
     return OutputSharding(bmm_prop(tensor1_spec, tensor2_spec))
 
 @register_prop_rule("aten.baddbmm.default")
-def baddmm_rules(op_schema: OpSchema) -> OutputSharding:
+def baddbmm_rules(op_schema: OpSchema) -> OutputSharding:
     input_spec, tensor1_spec, tensor2_spec = op_schema.args_spec
