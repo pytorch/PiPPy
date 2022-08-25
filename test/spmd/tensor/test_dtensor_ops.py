@@ -3,6 +3,14 @@
 import torch
 import os
 from enum import Enum
+import sys
+import atexit
+import re
+from collections import defaultdict
+import unittest
+import warnings
+from typing import Dict, Set, List
+
 from torch.overrides import resolve_name
 from torch.utils._pytree import tree_map, tree_flatten
 import torch.utils._python_dispatch
@@ -23,12 +31,6 @@ from torchgen.model import OperatorName
 from spmd import DeviceMesh, Replicate
 from spmd.test._utils import DistTensorTestBase, TEST_SKIPS, DTensorConverter
 
-import sys
-import atexit
-import re
-from collections import defaultdict
-import unittest
-import warnings
 
 
 bf16 = torch.bfloat16
@@ -72,7 +74,9 @@ common_ops.XS = 2
 # override debug strict in this file to allow easier testing, we will remove
 # debug assert in next few PRs
 import spmd.tensor.dispatch as dtensor_dispatch
+
 dtensor_dispatch._DEBUG_STRICT = True
+
 
 def assert_ref_dtensor_equal(test_case, dtensor_rs, rs, msg_callable):
     mesh = test_case.mesh
@@ -126,10 +130,10 @@ def assert_ref_dtensor_equal(test_case, dtensor_rs, rs, msg_callable):
 # WARNING: Python dict literals will silently ignore duplicate keys
 COLLECT_EXPECT = os.getenv("PYTORCH_COLLECT_EXPECT", "0") == "1"
 
-seen_succeeded = {}
-seen_failed = {}
-failed_reasons = defaultdict(set)
-dispatch_functions = {}
+seen_succeeded: Dict[torch._ops.OpOverload, Set[torch.dtype]] = {}
+seen_failed: Dict[torch._ops.OpOverload, Set[torch.dtype]] = {}
+failed_reasons: Dict[torch._ops.OpOverload, List[str]] = defaultdict(set)
+dispatch_functions: Dict[torch._ops.OpOverload, Set[torch.dtype]] = {}
 
 
 def print_seen():
@@ -179,7 +183,7 @@ if COLLECT_EXPECT:
     atexit.register(print_seen)
 
 # Success forces pass; failure forces fail; skip unconditionally skips testing
-TestExpect = Enum("TestExpect", ("SUCCESS", "XFAILURE", "SKIP"))
+ExpectTestState = Enum("ExpectTestState", ("SUCCESS", "XFAILURE", "SKIP"))
 
 # unlike print produce strides
 def verbose_print(e):
@@ -209,7 +213,7 @@ def run_dtensor_crossref(
     dtype,
     device_type,
 ):
-    do_dtensor = test_expect is not TestExpect.SKIP
+    do_dtensor = test_expect is not ExpectTestState.SKIP
     to_dtensor = DTensorConverter(test_case.mesh, args, kwargs)
 
     # TODO: also handle cases where func raise an exception
@@ -257,7 +261,7 @@ meta disagrees with real impl:
                             f"originally (*{args}, **{kwargs})"
                         )
         except Exception as e:
-            if test_expect is TestExpect.XFAILURE:
+            if test_expect is ExpectTestState.XFAILURE:
                 return rs
             seen_failed.setdefault(func, set()).add(dtype)
             if isinstance(e, NotImplementedError):
@@ -275,7 +279,7 @@ failed to run: {resolve_name(func)}(
             ) from e
         else:
             seen_succeeded.setdefault(func, set()).add(dtype)
-            if test_expect is TestExpect.XFAILURE and not COLLECT_EXPECT:
+            if test_expect is ExpectTestState.XFAILURE and not COLLECT_EXPECT:
                 raise RuntimeError(f"unexpected success {resolve_name(func)}")
 
     return rs
@@ -298,7 +302,7 @@ sys.exit()
 aten = torch.ops.aten
 
 # these always fail
-dtensor_dispatch_expected_failures = {
+dtensor_dispatch_expected_failures: Dict[torch._ops.OpOverload, Set[torch.dtype]] = {
     aten._adaptive_avg_pool2d.default: {f32},
     aten._adaptive_avg_pool3d.default: {f32},
     aten._cdist_forward.default: {f32},
@@ -732,7 +736,7 @@ dtensor_dispatch_expected_failures = {
 # i.e. view only works with certain sharding dims
 # we need to remove many of them from list once op
 # get full support with varying sharding specs
-dtensor_dispatch_skips = {
+dtensor_dispatch_skips: Dict[torch._ops.OpOverload, Set[torch.dtype]] = {
     aten.new_empty_strided.default: {f32},
     aten.view.default: {f32},
     aten.unsqueeze.default: {f32},
@@ -748,8 +752,8 @@ dtensor_dispatch_skips = {
     aten.transpose.int: {f32},
 }
 
-dtensor_dispatch_device_expected_failures = defaultdict(dict)
-dtensor_dispatch_device_skips = defaultdict(dict)
+dtensor_dispatch_device_expected_failures: Dict[torch._ops.OpOverload, Set[torch.dtype]] = defaultdict(dict)
+dtensor_dispatch_device_skips: Dict[torch._ops.OpOverload, Set[torch.dtype]] = defaultdict(dict)
 
 # ops inside this might even fail without dtensor
 # tests, as we rescale op db common test size factor (i.e. L, M, S)
@@ -810,19 +814,19 @@ class DTensorCrossRefDispatchMode(
         self.test_case.rel_tol = self.rel_tol
 
         if self.dtype in dtensor_dispatch_skips.get(func, set()):
-            test_expect = TestExpect.SKIP
+            test_expect = ExpectTestState.SKIP
         elif self.dtype in dtensor_dispatch_device_skips[self.device_type].get(
             func, set()
         ):
-            test_expect = TestExpect.SKIP
+            test_expect = ExpectTestState.SKIP
         elif self.dtype in dtensor_dispatch_expected_failures.get(func, set()):
-            test_expect = TestExpect.XFAILURE
+            test_expect = ExpectTestState.XFAILURE
         elif self.dtype in dtensor_dispatch_device_expected_failures[
             self.device_type
         ].get(func, set()):
-            test_expect = TestExpect.XFAILURE
+            test_expect = ExpectTestState.XFAILURE
         else:
-            test_expect = TestExpect.SUCCESS
+            test_expect = ExpectTestState.SUCCESS
 
         return run_dtensor_crossref(
             self.test_case,
