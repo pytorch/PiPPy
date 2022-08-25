@@ -522,6 +522,7 @@ dtensor_dispatch_expected_failures = {
     aten.logical_xor.default: {f32},
     aten.logit.default: {f32},
     aten.logsumexp.default: {f32},
+    aten.logspace.default: {f32},
     aten.lt.Scalar: {f32},
     aten.lt.Tensor: {f32},
     aten.lu_unpack.default: {f32},
@@ -687,6 +688,7 @@ dtensor_dispatch_expected_failures = {
     aten.tan.default: {f32},
     aten.tanh.default: {f32},
     aten.threshold.default: {f32},
+    aten.threshold_backward.default: {f32},
     aten.to_sparse.default: {f32},
     aten.to_sparse.sparse_dim: {f32},
     aten.topk.default: {f32},
@@ -725,6 +727,7 @@ dtensor_dispatch_expected_failures = {
 # we need to remove many of them from list once op
 # get full support with varying sharding specs
 dtensor_dispatch_skips = {
+    aten.new_empty_strided.default: {f32},
     aten.view.default: {f32},
     aten.unsqueeze.default: {f32},
     aten.repeat.default: {f32},
@@ -752,6 +755,7 @@ op_inputs_skips = {
     "cumprod",
     "__rmatmul__",
     "softmax",
+    "meshgrid",
     "nn.functional.softmin",
     "nn.functional.embedding",
     "nn.functional.embedding_bag",
@@ -761,8 +765,11 @@ op_inputs_skips = {
     "fft.hfft",
     "fft.hfft2",
     "fft.hfft2",
+    "fft.ifftn",
     "istft",
+    "isclose",
     "matmul",
+    "_masked.var",
     "ones_like",
     "prod",
     "segment_reduce",
