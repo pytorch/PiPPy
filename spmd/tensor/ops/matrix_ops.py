@@ -84,3 +84,22 @@ def addmm_rules(op_schema: OpSchema) -> OutputSharding:
 @register_prop_rule("aten.t.default")
 def transpose_rule(op_schema: OpSchema) -> OutputSharding:
     return einop_rule("ij->ji", op_schema)
+
+
+@register_prop_rule("aten.bmm.default")
+def bmm_rules(op_schema: OpSchema) -> OutputSharding:
+    mat1_spec, mat2_spec = op_schema.args_spec
+    mat1_shape = list(mat1_spec.shape) # b * n * m
+    mat2_shape = list(mat2_spec.shape) # b * m * p
+    return OutputSharding(
+        DTensorSpec(
+            mat1_spec.mesh,
+            mat1_spec.placements,
+            shape=list([mat1_shape[0], mat1_shape[1], mat2_shape[-1]]) # b * n * p
+        )
+    )
+
+@register_prop_rule("aten.baddbmm.default")
+def baddmm_rules(op_schema: OpSchema) -> OutputSharding:
+    input_spec, _, _ = op_schema.args_spec
+    return OutputSharding(input_spec)
