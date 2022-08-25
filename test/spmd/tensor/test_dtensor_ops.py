@@ -1,4 +1,4 @@
-# Owner(s): ["module: primTorch"]
+# Owner(s): ["module: distributed"]
 
 import torch
 import os
@@ -16,23 +16,19 @@ from torch.testing._internal.common_utils import (
 from torch.testing._internal.common_device_type import (
     ops,
     instantiate_device_type_tests,
-    onlyCUDA,
 )
 import torch.testing._internal.common_methods_invocations as common_ops
-from torchgen.utils import YamlLoader
 from torchgen.model import OperatorName
 
-from spmd import DeviceMesh, Shard, Replicate, distribute_tensor
+from spmd import DeviceMesh, Replicate
 from spmd.test._utils import DistTensorTestBase, TEST_SKIPS, DTensorConverter
 
 import sys
-import yaml
 import atexit
 import re
 from collections import defaultdict
 import unittest
 import warnings
-import weakref
 
 
 bf16 = torch.bfloat16
@@ -73,8 +69,10 @@ common_ops.M = 12
 common_ops.S = 4
 common_ops.XS = 2
 
-# torch.testing._internal.common_method_invocations.
-
+# override debug strict in this file to allow easier testing, we will remove
+# debug assert in next few PRs
+import spmd.tensor.dispatch as dtensor_dispatch
+dtensor_dispatch._DEBUG_STRICT = True
 
 def assert_ref_dtensor_equal(test_case, dtensor_rs, rs, msg_callable):
     mesh = test_case.mesh
@@ -347,6 +345,7 @@ dtensor_dispatch_expected_failures = {
     aten.alias.default: {f32},
     aten.all.default: {f32},
     aten.all.dim: {f32},
+    aten.allclose.default: {f32},
     aten.amax.default: {f32},
     aten.amin.default: {f32},
     aten.aminmax.default: {f32},
@@ -354,6 +353,7 @@ dtensor_dispatch_expected_failures = {
     aten.any.default: {f32},
     aten.any.dim: {f32},
     aten.arange.default: {f32},
+    aten.arange.start: {f32},
     aten.arange.start_step: {f32},
     aten.argmax.default: {f32},
     aten.argmin.default: {f32},
@@ -769,7 +769,10 @@ op_inputs_skips = {
     "istft",
     "isclose",
     "matmul",
+    "_masked.mean",
     "_masked.var",
+    "_masked.std",
+    "_masked.normalize",
     "ones_like",
     "prod",
     "segment_reduce",
