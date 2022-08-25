@@ -32,7 +32,6 @@ from spmd import DeviceMesh, Replicate
 from spmd.test._utils import DistTensorTestBase, TEST_SKIPS, DTensorConverter
 
 
-
 bf16 = torch.bfloat16
 f64 = torch.float64
 f32 = torch.float32
@@ -132,7 +131,7 @@ COLLECT_EXPECT = os.getenv("PYTORCH_COLLECT_EXPECT", "0") == "1"
 
 seen_succeeded: Dict[torch._ops.OpOverload, Set[torch.dtype]] = {}
 seen_failed: Dict[torch._ops.OpOverload, Set[torch.dtype]] = {}
-failed_reasons: Dict[torch._ops.OpOverload, List[str]] = defaultdict(set)
+failed_reasons: Dict[torch._ops.OpOverload, List[str]] = {}
 dispatch_functions: Dict[torch._ops.OpOverload, Set[torch.dtype]] = {}
 
 
@@ -302,7 +301,9 @@ sys.exit()
 aten = torch.ops.aten
 
 # these always fail
-dtensor_dispatch_expected_failures: Dict[torch._ops.OpOverload, Set[torch.dtype]] = {
+dtensor_dispatch_expected_failures: Dict[
+    torch._ops.OpOverload, Set[torch.dtype]
+] = {
     aten._adaptive_avg_pool2d.default: {f32},
     aten._adaptive_avg_pool3d.default: {f32},
     aten._cdist_forward.default: {f32},
@@ -752,8 +753,12 @@ dtensor_dispatch_skips: Dict[torch._ops.OpOverload, Set[torch.dtype]] = {
     aten.transpose.int: {f32},
 }
 
-dtensor_dispatch_device_expected_failures: Dict[torch._ops.OpOverload, Set[torch.dtype]] = defaultdict(dict)
-dtensor_dispatch_device_skips: Dict[torch._ops.OpOverload, Set[torch.dtype]] = defaultdict(dict)
+dtensor_dispatch_device_expected_failures: Dict[
+    torch._ops.OpOverload, Set[torch.dtype]
+] = {}
+dtensor_dispatch_device_skips: Dict[
+    torch._ops.OpOverload, Set[torch.dtype]
+] = {}
 
 # ops inside this might even fail without dtensor
 # tests, as we rescale op db common test size factor (i.e. L, M, S)

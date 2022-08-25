@@ -123,7 +123,9 @@ class DTensorConverter(object):
             if isinstance(arg, torch.Tensor):
                 choices_for_args.append(self.gen_sharding_choices_for_arg(arg))
 
-        self.sharding_combs: Iterator[Sequence[Placement]] = iter(itertools.product(*choices_for_args))
+        self.sharding_combs: Iterator[Sequence[Placement]] = iter(
+            itertools.product(*choices_for_args)
+        )
 
     def successful(self) -> bool:
         return self.hit > 0 and self.miss == 0
@@ -156,14 +158,15 @@ class DTensorConverter(object):
     ) -> Sequence[Placement]:
         # NOTE we assume cube mesh here to simplify things
         mesh_size = self.mesh.size()
+        sharding_choices: List[Placement] = [Replicate()]
         if arg.dtype == torch.bool:
             # c10d collective does not support bool tensor
             # for bool tensor we treat it as replicated
-            sharding_choices = [Replicate()] * mesh_size
+            sharding_choices = sharding_choices * mesh_size
         else:
             # only generating choices with: replicate, or sharding
             # evenly on a dimension that could be sharded
-            sharding_choices = cast(List[Placement], [Replicate()]) + [
+            sharding_choices = sharding_choices + [
                 Shard(i)
                 for i, s, in enumerate(arg.shape)
                 if s > 1 and s % mesh_size == 0
@@ -182,7 +185,7 @@ class DTensorConverter(object):
             next_sharding_choices = next(self.sharding_combs)
             idx = 0
 
-            new_args = []
+            new_args: List[object] = []
             for arg in self.flatten_args:
                 if isinstance(arg, torch.Tensor):
                     new_args.append(
@@ -194,7 +197,7 @@ class DTensorConverter(object):
                 else:
                     new_args.append(arg)
 
-            new_kwargs = []
+            new_kwargs: List[object] = []
             for arg in self.flatten_kwargs:
                 if isinstance(arg, torch.Tensor):
                     new_kwargs.append(
@@ -232,7 +235,7 @@ class DTensorConverter(object):
                 else:
                     r = distribute_tensor(t, mesh, placements)
                 if type(t) is torch.nn.Parameter:
-                    r = torch.nn.Parameter(r, requires_grad=r.requires_grad)
+                    r = torch.nn.Parameter(r, requires_grad=r.requires_grad)  # type: ignore
                 return r
             else:
                 self.miss += 1
