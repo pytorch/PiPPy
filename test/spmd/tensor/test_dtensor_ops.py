@@ -6,7 +6,6 @@ from enum import Enum
 import sys
 import atexit
 import re
-from collections import defaultdict
 import unittest
 import warnings
 from typing import Dict, Set, List
