@@ -103,6 +103,15 @@ jobs:
         run: |
           # Ensure the working directory gets chowned back to the current user
           docker run --rm -v "$(pwd):${SPMD_ROOT}" -w "${SPMD_ROOT}" "${DOCKER_IMAGE}" chown -R "$(id -u):$(id -g)" .
-      - name: Teardown Linux
-        uses: pytorch/pytorch/.github/actions/teardown-linux@master
-        if: always()
+      - name: Hold runner for 2 hours or until ssh sessions have drained
+        shell: bash
+        if: inputs.skip-wait-ssh == ''
+        run: pytorch/pytorch/.github/scripts/wait_for_ssh_to_drain.sh
+      - name: Kill containers, clean up images
+        shell: bash
+        run: |
+          # ignore expansion of "docker ps -q" since it could be empty
+          # shellcheck disable=SC2046
+          docker stop $(docker ps -q) || true
+          # Prune all of the docker images
+          docker system prune -af
