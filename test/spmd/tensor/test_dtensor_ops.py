@@ -753,11 +753,16 @@ dtensor_dispatch_skips: Dict[torch._ops.OpOverload, Set[torch.dtype]] = {
 }
 
 dtensor_dispatch_device_expected_failures: Dict[
-    torch._ops.OpOverload, Set[torch.dtype]
+    str, Dict[torch._ops.OpOverload, Set[torch.dtype]]
 ] = {}
 dtensor_dispatch_device_skips: Dict[
-    torch._ops.OpOverload, Set[torch.dtype]
+    str, Dict[torch._ops.OpOverload, Set[torch.dtype]]
 ] = {}
+
+dtensor_dispatch_device_expected_failures["cpu"] = {}
+dtensor_dispatch_device_expected_failures["cuda"] = {}
+dtensor_dispatch_device_skips["cpu"] = {}
+dtensor_dispatch_device_skips["cuda"] = {}
 
 # ops inside this might even fail without dtensor
 # tests, as we rescale op db common test size factor (i.e. L, M, S)
