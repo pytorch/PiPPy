@@ -568,6 +568,7 @@ dtensor_dispatch_expected_failures = {
     aten.ne.Tensor: {f32},
     aten.neg.default: {f32},
     aten.new_empty.default: {f32},
+    aten.new_ones.default: {f32},
     aten.nextafter.default: {f32},
     aten.nll_loss2d_forward.default: {f32},
     aten.nll_loss_forward.default: {f32},
