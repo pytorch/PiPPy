@@ -67,6 +67,10 @@ jobs:
           sudo yum remove -y cuda || true
           sudo yum remove -y cuda-drivers || true
           sudo yum remove -y "*nvidia*" || true
+      - name: Setup SSH (Click me for login details)
+        uses: pytorch/pytorch/.github/actions/setup-ssh@master
+        with:
+          github-secret: ${{ secrets.GITHUB_TOKEN }}
       - name: Install nvidia driver, nvidia-docker runtime, set GPU_FLAG
         run: |
           bash .github/workflows/install_nvidia_utils_linux.sh || true
@@ -99,11 +103,6 @@ jobs:
         run: |
           # Ensure the working directory gets chowned back to the current user
           docker run --rm -v "$(pwd):${SPMD_ROOT}" -w "${SPMD_ROOT}" "${DOCKER_IMAGE}" chown -R "$(id -u):$(id -g)" .
-      - name: Kill containers, clean up images
+      - name: Teardown Linux
+        uses: pytorch/pytorch/.github/actions/teardown-linux@master
         if: always()
-        run: |
-          # ignore expansion of "docker ps -q" since it could be empty
-          # shellcheck disable=SC2046
-          docker stop $(docker ps -q) || true
-          # Prune all of the docker images
-          docker system prune -af
