@@ -155,7 +155,7 @@ jobs:
         run: python test/local_test_visualizer.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
 
   integration_test_gpu:
-    runs-on: linux.16xlarge.nvidia.gpu
+    runs-on: linux.g4dn.12xlarge.nvidia.gpu
     strategy:
       matrix:
         replicate: ["0", "1"]
