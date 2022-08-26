@@ -2,7 +2,7 @@
 import itertools
 import torch
 
-from torch.distributed.distributed_c10d import ReduceOp
+from torch.distributed.distributed_c10d import ReduceOp, new_group
 
 from torch.testing._internal.common_utils import run_tests
 
@@ -155,7 +155,7 @@ class RedistributeTest(DistTensorTestBase):
             replica_tensor, device_mesh, partial_spec
         )
         self.assertEqual(partial_tensor.size(), local_tensor.size())
-        # test it successfully zero out the gradients
+        # test it successfully zero out the contents on other ranks
         if self.rank == 0:
             self.assertEqual(
                 replica_tensor.to_local(), partial_tensor.to_local()
@@ -164,6 +164,23 @@ class RedistributeTest(DistTensorTestBase):
             self.assertEqual(
                 partial_tensor.to_local(), torch.zeros_like(local_tensor)
             )
+
+        # replicate to partial on sub groups
+        subgroup = new_group(ranks=[1, 3])
+        device_mesh = DeviceMesh(self.device_type, [1, 3], dim_groups=subgroup)
+        # 1) test replicate -> partial on subgroup
+        replica_tensor = DTensor(
+            local_tensor, device_mesh, replica_spec, requires_grad=True
+        )
+        partial_tensor = Redistribute.apply(
+            replica_tensor, device_mesh, partial_spec
+        )
+        self.assertEqual(partial_tensor.size(), local_tensor.size())
+
+        if self.rank == 1:
+            self.assertEqual(replica_tensor.to_local(), partial_tensor.to_local())
+        else:
+            self.assertEqual(replica_tensor.to_local(), torch.zeros_like(local_tensor))
 
     @with_comms
     def test_partial_to_shard_0(self):
