@@ -106,7 +106,7 @@ jobs:
       - name: Hold runner for 2 hours or until ssh sessions have drained
         shell: bash
         if: inputs.skip-wait-ssh == ''
-        run: pytorch/pytorch/.github/scripts/wait_for_ssh_to_drain.sh@master
+        run: .github/workflows/wait_for_ssh_to_drain.sh
       - name: Kill containers, clean up images
         shell: bash
         run: |
