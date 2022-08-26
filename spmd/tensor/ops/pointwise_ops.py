@@ -118,10 +118,17 @@ from spmd.tensor.ops.math_ops import einop_rule
 
 pointwise_ops = [
     "aten.relu.default",
+    "aten.tanh_backward.default",
+    "aten.relu_backward.default",
     "aten.gelu.default",
+    "aten.gelu_backward.default",
     "aten.sigmoid.default",
     "aten.sigmoid_backward.default",
     "aten.tanh.default",
+    "aten.threshold_backward.default",  # for test_activations
+    "aten.add.out",
+    "aten.add_.Scalar",
+    "aten.mul_.Scalar",
 ]
 
 

@@ -15,16 +15,20 @@ from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 class DistElementwiseOpsTest(DistTensorTestBase):
     # TODO: We need to add CPU tests for ops in the future.
     def _run_sharded_elementwise_ops(
-        self, mesh, spec, input_size, op, reset_seed=None, **kwargs
+        self, mesh, spec, input_size, op, reset_seed=None, run_bw=True, **kwargs
     ):
         torch.manual_seed(self.rank)
         input_tensor = torch.randn(
             *input_size, device=self.device_type, requires_grad=True
         )
-        dist_tensor = DTensor.from_local(input_tensor, mesh, spec)
+        dist_tensor = DTensor(
+            input_tensor, mesh, spec, requires_grad=input_tensor.requires_grad
+        )
         reset_seed() if reset_seed else None
         dt = op(dist_tensor, **kwargs)
-        dt.to_local().sum().backward()
+        if run_bw:
+            # TODO(anj): Add support for reshard on _Partial spec tensors.
+            dt.to_local().sum().backward()
         reset_seed() if reset_seed else None
         expected = op(input_tensor, **kwargs)
         
@@ -71,8 +75,10 @@ class DistElementwiseOpsTest(DistTensorTestBase):
             [Shard(0)],
             (8, 5),
             torch.nn.functional.dropout,
+            run_bw=False,
             p=0.4,
             training=False,
+            
         )
         self._run_sharded_elementwise_ops(
             device_mesh,
@@ -80,6 +86,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
             (3, 14),
             torch.nn.functional.dropout,
             reset_seed=_reset_random_seed,
+            run_bw=False,
             p=0.5,
             training=True,
         )
@@ -94,6 +101,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
                 [_Partial(ReduceOp.SUM)],
                 (8, 5),
                 torch.nn.functional.dropout,
+                run_bw=False,
             )
 
 
