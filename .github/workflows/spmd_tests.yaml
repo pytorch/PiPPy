@@ -41,7 +41,7 @@ jobs:
           pytest --shard-id=${{ matrix.shard }} --num-shards=4 --cov=spmd test/spmd/
 
   pytest_tests_gpu:
-    runs-on: linux.16xlarge.nvidia.gpu
+    runs-on: linux.g4dn.12xlarge.nvidia.gpu
     strategy:
       matrix:
         shard: ["0", "1", "2", "3"]
