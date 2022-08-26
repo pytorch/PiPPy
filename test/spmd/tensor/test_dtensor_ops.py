@@ -786,6 +786,7 @@ op_inputs_skips = {
     "fft.hfft2",
     "fft.hfftn",
     "fft.ifftn",
+    "fft.irfft",
     "istft",
     "isclose",
     "isreal",
