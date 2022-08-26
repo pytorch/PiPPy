@@ -612,8 +612,9 @@ class PipeStageExecutor(EventRecorder):
             (output_unique_key, output_refcount, value_ref, idx) = index_tuple
             logging.info(f'[{self.stage_id}] Received getitem call: {(output_unique_key, output_refcount, value_ref, idx)}')
             with self.value_store_cv:
+                # TODO: investigate why value reference in the last batch has not been fully consumed
                 if output_unique_key in self.value_store:
-                    logging.warning(f'[{self.stage_id}] Indexed value already in store: {(output_unique_key, output_refcount, value_ref, idx)}')
+                    logging.info(f'[{self.stage_id}] Indexed value already in store: {(output_unique_key, output_refcount, value_ref, idx)}')
                     # raise RuntimeError(f'Repeated index value call detected, potentially due to getitem calls not consumed in previous batch')
 
                 # Wait for the future representing the stage output to be created
