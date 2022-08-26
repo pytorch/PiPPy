@@ -97,7 +97,6 @@ class DDPWithDistTensorAPITest(DistTensorTestBase):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         n_features = 100
         model = MyModel(n_features, 1, device=self.device_type)
-        # model = MyModel(20, 20, device="meta")
         # mark model as replication
         replica_spec = [Replicate()]
         replicated_model = distribute_module(model, device_mesh, replica_spec)
@@ -109,7 +108,6 @@ class DDPWithDistTensorAPITest(DistTensorTestBase):
 
         # run DDP like a normal model
         output = replicated_model(sharded_input)
-        # output.sum().backward()
 
 
 if __name__ == "__main__":

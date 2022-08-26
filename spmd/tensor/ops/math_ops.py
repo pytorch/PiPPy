@@ -54,6 +54,7 @@ def einop_rule(
         for idx, spec in enumerate(input_specs):
             if spec.placements[mesh_dim].is_partial():
                 if not linearity:
+                    # TODO(anj): Insert reshard op for non linear ops and _Partial specs.
                     raise RuntimeError(
                         "Cannot do generic op on a tensor with partial sums"
                     )
@@ -128,7 +129,6 @@ def reduction_rule(op_schema: OpSchema) -> OutputSharding:
     # reduction op usually begin with a single tensor
     input_spec = cast(DTensorSpec, op_schema.args_schema[0])
     input_chars = alphabet[: input_spec.ndim]
-
     if len(op_schema.args_schema) > 1 and isinstance(
         op_schema.args_schema[1], (int, list)
     ):

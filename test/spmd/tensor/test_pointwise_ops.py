@@ -21,11 +21,13 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         input_tensor = torch.randn(
             *input_size, device=self.device_type, requires_grad=True
         )
-        dist_tensor = DTensor(input_tensor, mesh, spec)
+        dist_tensor = DTensor.from_local(input_tensor, mesh, spec)
         reset_seed() if reset_seed else None
         dt = op(dist_tensor, **kwargs)
+        dt.to_local().sum().backward()
         reset_seed() if reset_seed else None
         expected = op(input_tensor, **kwargs)
+        
         self.assertEqual(input_tensor, dist_tensor.to_local())
         self.assertEqual(expected, dt.to_local())
 
@@ -51,10 +53,10 @@ class DistElementwiseOpsTest(DistTensorTestBase):
             device_mesh, [Replicate()], (8, 5), torch.sigmoid
         )
         self._run_sharded_elementwise_ops(
-            device_mesh, [Shard(0)], (8, 5), torch.nn.Tanh
+            device_mesh, [Shard(0)], (8, 5), torch.tanh
         )
         self._run_sharded_elementwise_ops(
-            device_mesh, [Replicate()], (8, 5), torch.nn.Tanh
+            device_mesh, [Replicate()], (8, 5), torch.tanh
         )
 
     @with_comms

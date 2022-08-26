@@ -10,11 +10,12 @@ from spmd.tensor.utils import (
     unwrap_schema,
     pack_args_kwargs_with_local_tensor,
 )
+import torch
 
 """
 If set to true, __DEBUG_STRICT will fail when an op doesn't have a sharding rule registered.
 """
-_DEBUG_STRICT = False
+_DEBUG_STRICT = True
 
 
 @dataclass
@@ -167,7 +168,7 @@ def operator_dispatch(
     else:
         # step 3. If there's not even one sharding rule
         # implemented for the operator, we fall back to
-        # local tensor compute, this is wront currently
+        # local tensor compute, this is wrong currently
         # we will change the behavior to reshard to full
         # replicate and do the computatation
         if _DEBUG_STRICT:
