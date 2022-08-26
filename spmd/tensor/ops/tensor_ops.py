@@ -22,11 +22,3 @@ default_prop_ops = [
 ]
 for op in default_prop_ops:
     DTensor._op_to_rules[op] = default_prop_rule
-
-# @register_impl("aten.expand.default")
-# def dist_expand(types, args=(), kwargs=None):
-#     self_tensor = args[0]
-#     device_mesh = self_tensor.device_mesh
-
-#     new_local_tensor = torch.ones_like(self_tensor.to_local())
-#     return DTensor.from_local(new_local_tensor, device_mesh, self_tensor.placements)
