@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  HF_VERSION: 3223d49354e41dfa44649a9829c7b09013ad096e
+  HF_VERSION: 6faf283288ce3390281ad8c1d37ccb13f2d03990
 
 jobs:
 
