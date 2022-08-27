@@ -18,6 +18,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  HF_VERSION: 3223d49354e41dfa44649a9829c7b09013ad096e
+
 jobs:
 
   pytest_tests:
@@ -36,7 +39,7 @@ jobs:
           pip install flake8 pytest pytest-cov pytest-xdist numpy
           if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
       - name: Install pavel's huggingface fork
-        run: pip install git+https://github.com/huggingface/transformers.git@main sentencepiece six sacremoses
+        run: pip install git+https://github.com/huggingface/transformers.git@${HF_VERSION} sentencepiece six sacremoses
       - name: Install pippy
         run: "python setup.py install"
       - name: Test with pytest
@@ -60,7 +63,7 @@ jobs:
           pip install flake8 pytest pytest-cov pytest-xdist pytest-shard numpy
           if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
       - name: Install pavel's huggingface fork
-        run: pip install git+https://github.com/huggingface/transformers.git@main sentencepiece six sacremoses
+        run: pip install git+https://github.com/huggingface/transformers.git@${HF_VERSION} sentencepiece six sacremoses
       - name: Install pippy
         run: "python setup.py install"
       # Single thread to avoid OOM
@@ -115,7 +118,7 @@ jobs:
           pip install flake8 pytest pytest-cov numpy datasets evaluate sklearn sacrebleu
           if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
       - name: Install pavel's huggingface fork
-        run: pip install git+https://github.com/huggingface/transformers.git@main sentencepiece six sacremoses
+        run: pip install git+https://github.com/huggingface/transformers.git@${HF_VERSION} sentencepiece six sacremoses
       - name: Install pippy
         run: "python setup.py install"
       - name: Run forward-only integration test
@@ -202,6 +205,7 @@ jobs:
             -e OMP_NUM_THREADS \
             -e REPLICATE \
             -e SCHEDULE \
+            -e HF_VERSION \
             --tty \
             --detach \
             -v "$(pwd):${PIPPY_ROOT}" \

@@ -6,6 +6,7 @@ set -x
 echo "VERBOSE: ${VERBOSE}"
 echo "REPLICATE: ${REPLICATE}"
 echo "SCHEDULE: ${SCHEDULE}"
+echo "Transformer version: ${HF_VERSION}"
 
 nvidia-smi
 nvcc --version
@@ -25,7 +26,7 @@ pip3 install flake8 pytest pytest-cov numpy
 if [ -f requirements.txt ]; then pip3 install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cu102/torch_nightly.html; fi
 
 # Install pavel's huggingface fork
-pip3 install git+https://github.com/huggingface/transformers.git@main sentencepiece
+pip3 install git+https://github.com/huggingface/transformers.git@${HF_VERSION} sentencepiece
 
 # Install pippy
 python3 setup.py install
