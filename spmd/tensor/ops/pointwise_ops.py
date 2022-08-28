@@ -118,12 +118,30 @@ from spmd.tensor.ops.math_ops import einop_rule
 # ]
 
 pointwise_ops = [
-    "aten.relu.default",
-    "aten.gelu.default",
-    "aten.sigmoid.default",
-    "aten.add.out",
+    "aten._to_copy.default",
+    "aten._local_scalar_dense.default",
+    "aten.add.Tensor",
+    "aten.add.Scalar",
+    "aten.add_.Tensor",
     "aten.add_.Scalar",
+    "aten.add.out",
+    "aten.abs.default",
+    "aten.bitwise_and.Tensor",
+    "aten.bitwise_and_.Tensor",
+    "aten.bitwise_or_.Tensor",
+    "aten.eq.Tensor",
+    "aten.gelu.default",
+    "aten.relu.default",
+    "aten.le.Tensor",
+    "aten.sigmoid.default",
+    "aten.sub.Tensor",
+    "aten.threshold_backward.default",
+    "aten.isnan.default",
+    "aten.mul.Scalar",
     "aten.mul_.Scalar",
+    "aten.mul.Tensor",
+    "aten.mul_.Tensor",
+    "aten.ne.Scalar",
 ]
 
 
