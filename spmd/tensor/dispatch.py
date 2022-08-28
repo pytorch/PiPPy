@@ -22,7 +22,7 @@ from spmd.tensor.utils import (
 """
 If set to true, __DEBUG_STRICT will fail when an op doesn't have a sharding rule registered.
 """
-_DEBUG_STRICT = False
+_DEBUG_STRICT = True
 
 
 @dataclass
@@ -132,6 +132,9 @@ def operator_dispatch(
     args_schema = tree_map(unwrap_schema, args)
     kwargs_schema = tree_map(unwrap_schema, kwargs)
 
+    # TODO(anj): Check if the input to ops are all DTs with placements specs.
+    # If not, should we throw an error or convert them to DTs?
+
     op_schema = OpSchema(
         args_schema,
         kwargs_schema,
@@ -144,7 +147,7 @@ def operator_dispatch(
         output_sharding = sharding_prop_func(op_schema)
 
         # step 2. if can't get output_spec from sharding
-        # propagation (i.e. no ruls apply for input
+        # propagation (i.e. no rules apply for input
         # placements), we do auto redistribute on inputs
         # to get an eligble input, which we will pick a
         # target schema base on the redistribute cost
