@@ -61,6 +61,9 @@ dtype_abbrs = {
     torch.uint8: "u8",
 }
 
+DEVICE_TYPE = "cuda" if torch.cuda.is_available() else "cpu"
+NUM_DEVICES = 4
+
 # rewrite common size variables to sth can be sharded evenly
 # we can enable uneven shards later, but need to adjust more on
 # sample inputs (i.e. view/reshape need to adjust shape size as well)
@@ -852,7 +855,7 @@ class DTensorCrossRefDispatchMode(
 class TestDTensorOps(DistTensorTestBase):
     @property
     def world_size(self) -> int:
-        return 4
+        return NUM_DEVICES
 
     # only allow float dytpe for now, we can relax this constraint
     # when feel necessary later (i.e when adding quantization support).
@@ -860,13 +863,13 @@ class TestDTensorOps(DistTensorTestBase):
     @skipIfCrossRef
     @suppress_warnings
     @ops(common_ops.op_db, allowed_dtypes=(torch.float,))
-    def test_dtensor_ops_dispatch(self, device, dtype, op):
-        pg_backend = "nccl" if device == "cuda" else "gloo"
+    def test_dtensor_ops_dispatch(self, dtype, op):
+        pg_backend = "nccl" if DEVICE_TYPE == "cuda" else "gloo"
         if pg_backend == "nccl" and torch.cuda.device_count() < self.world_size:
             sys.exit(TEST_SKIPS[f"multi-gpu-{self.world_size}"].exit_code)
 
         self.init_pg(backend=pg_backend)
-        self.mesh = DeviceMesh(device, torch.arange(self.world_size))
+        self.mesh = DeviceMesh(DEVICE_TYPE, torch.arange(self.world_size))
         # test each op with dist tensor inputs and normal inputs
         func = op.get_op()
         if op.name in op_inputs_skips:
@@ -874,13 +877,13 @@ class TestDTensorOps(DistTensorTestBase):
             self.destroy_pg()
             return
 
-        samples = op.sample_inputs(device, dtype, requires_grad=False)
+        samples = op.sample_inputs(DEVICE_TYPE, dtype, requires_grad=False)
         for sample_input in samples:
             args = [sample_input.input] + list(sample_input.args)
             kwargs = sample_input.kwargs
 
             with DTensorCrossRefDispatchMode.push(
-                self, dtype=dtype, device=device
+                self, dtype=dtype, device=DEVICE_TYPE
             ):
                 func(*args, **kwargs)
                 # we need to figure out a way to test the out variant, out variant testing
@@ -892,7 +895,8 @@ class TestDTensorOps(DistTensorTestBase):
         self.destroy_pg()
 
 
-instantiate_device_type_tests(TestDTensorOps, globals())
+# only instantiate tests for DEVICE_TYPE alone (i.e. either CPU or GPU)
+instantiate_device_type_tests(TestDTensorOps, globals(), only_for=(DEVICE_TYPE))
 
 
 def print_op_str_if_not_supported(op_str):
