@@ -158,16 +158,14 @@ class DTensorConverter(object):
         # NOTE we assume cube mesh here to simplify things
         mesh_size = self.mesh.size()
         sharding_choices: List[Placement] = [Replicate()]
-        if arg.dtype == torch.bool:
-            # c10d collective does not support bool tensor
-            # for bool tensor we treat it as replicated
-            sharding_choices = sharding_choices * mesh_size
-        else:
+        # c10d collective does not support bool tensor
+        # for bool tensor we treat it as replicated
+        if arg.dtype != torch.bool:
             # only generating choices with: replicate, or sharding
             # evenly on a dimension that could be sharded
             sharding_choices = sharding_choices + [
                 Shard(i)
-                for i, s, in enumerate(arg.shape)
+                for i, s in enumerate(arg.shape)
                 if s > 1 and s % mesh_size == 0
             ]
         # TODO: add multi mesh choices
@@ -242,7 +240,8 @@ class DTensorConverter(object):
         elif torch.overrides.is_tensor_like(t):
             # Blindly converting tensor subclasses to dist tensor can cause
             # unpredictable problems, we explicitly disable this conversion
-            # for now.
+            # for now (i.e. we don't support DTensor holding tensor subclass
+            # until there's a strong reason later).
             self.miss += 1
             return t
         else:
