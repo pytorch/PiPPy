@@ -23,7 +23,7 @@ import torch
 """
 If set to true, __DEBUG_STRICT will fail when an op doesn't have a sharding rule registered.
 """
-_DEBUG_STRICT = True
+_DEBUG_STRICT = False
 
 
 @dataclass
