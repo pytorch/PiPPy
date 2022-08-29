@@ -155,7 +155,6 @@ class DTensorConverter(object):
     def gen_sharding_choices_for_arg(
         self, arg: torch.Tensor
     ) -> Sequence[Placement]:
-        # NOTE we assume cube mesh here to simplify things
         mesh_size = self.mesh.size()
         sharding_choices: List[Placement] = [Replicate()]
         # c10d collective does not support bool tensor
