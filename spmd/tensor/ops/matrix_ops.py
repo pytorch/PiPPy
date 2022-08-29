@@ -46,11 +46,12 @@ def mm_prop(
 
 
 def mm_rules(op_schema: OpSchema) -> OutputSharding:
-    mat1_spec, mat2_spec = op_schema.args_spec
+    mat1_spec, mat2_spec = op_schema.args_schema
     return OutputSharding(mm_prop(mat1_spec, mat2_spec))
 
 
 default_mm_ops = ["aten.mm.default", "aten.mul.Tensor"]
+
 
 for mm_op in default_mm_ops:
     DTensor._op_to_rules[mm_op] = mm_rules
@@ -58,7 +59,7 @@ for mm_op in default_mm_ops:
 
 @register_prop_rule("aten.addmm.default")
 def addmm_rules(op_schema: OpSchema) -> OutputSharding:
-    input_spec, mat1_spec, mat2_spec = op_schema.args_spec
+    input_spec, mat1_spec, mat2_spec = op_schema.args_schema
     mm_out_spec = mm_prop(mat1_spec, mat2_spec)
     if mm_out_spec is None:
         # non-eligible input, suggest addmm input specs
