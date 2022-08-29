@@ -715,6 +715,7 @@ def run_dtensor_crossref(
 
     return rs
 
+
 def check_dtensor_func(test_case, test_func, opinfo, dry_run=False):
     try:
         test_func()
@@ -729,6 +730,7 @@ def check_dtensor_func(test_case, test_func, opinfo, dry_run=False):
                 print(f"xfail('{opinfo.name}'),")
     else:
         test_case.destroy_pg()
+
 
 class TestDTensorOps(DistTensorTestBase):
     @property
