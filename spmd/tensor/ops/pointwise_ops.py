@@ -124,6 +124,7 @@ pointwise_ops = [
     "aten.add.out",
     "aten.add_.Scalar",
     "aten.mul_.Scalar",
+    "aten.mul.Tensor",
 ]
 
 

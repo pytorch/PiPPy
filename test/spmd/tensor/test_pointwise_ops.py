@@ -90,6 +90,23 @@ class DistElementwiseOpsTest(DistTensorTestBase):
                 torch.nn.functional.dropout,
             )
 
+    @with_comms
+    def test_mul(self):
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        torch.manual_seed(self.rank)
+        input_tensor = torch.randn(
+            *input_size, device=self.device_type, requires_grad=True
+        )
+        dist_tensor = DTensor(
+            input_tensor, mesh, spec, requires_grad=input_tensor.requires_grad
+        )
+        # Mutiplication with a scalar.
+        dt = torch.mul(dist_tensor, 8.0)
+        expected = torch.mul(input_tensor, 8.0)
+        self.assertEqual(input_tensor, dist_tensor.to_local())
+        self.assertEqual(expected, dt.to_local())
+        # Mutiplication with a matrix.
+        
 
 if __name__ == "__main__":
     run_tests()
