@@ -12,6 +12,7 @@ on:
       - '!test/spmd/**'
       - '!docs/**'
       - '!**.md'
+      - 'requirements.txt'
 
 concurrency:
   # Cancel CI on previous commit when a new commit is pushed to the same branch
