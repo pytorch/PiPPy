@@ -88,7 +88,7 @@ class DistMatrixOpsTest(DistTensorTestBase):
         grad_dist_res = distribute_tensor(grad_res, device_mesh, shard_spec)
         dist_res.backward(grad_dist_res)
         self.assertIsNotNone(mat1.grad)
-    
+
     @with_comms
     def test_mul(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
@@ -99,7 +99,9 @@ class DistMatrixOpsTest(DistTensorTestBase):
         mat1 = distribute_tensor(tensor_to_shard, device_mesh, shard_spec)
         # For scalar multipliers, we need to convert to DTs before calling `torch.mul`
         # TODO(anj): Are we breaking the API contract here by requiring this?
-        scalar_input = DTensor.from_local(torch.tensor(8.0), device_mesh, replica_spec)
+        scalar_input = DTensor.from_local(
+            torch.tensor(8.0), device_mesh, replica_spec
+        )
 
         dist_res = torch.mul(mat1, scalar_input)
         local_res = torch.mul(tensor_to_shard, 8.0)
