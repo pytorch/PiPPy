@@ -87,29 +87,63 @@ def transpose_rule(op_schema: OpSchema) -> OutputSharding:
 
 def bmm_prop(
     mat1_spec: DTensorSpec, mat2_spec: DTensorSpec
-) -> Optional[DTensorSpec]:
+) -> tuple[Optional[DTensorSpec], Optional[str]]:
     # bmm propagation rule:
-    # mat1: shard(0),  mat2: replicate
-    # mat1: replicate, mat2: shard(0)
-    # mat1: shard(0),  mat2: shard(0)
-    mat1_placement = unwrap_single_placement(mat1_spec)
-    mat2_placement = unwrap_single_placement(mat2_spec)
-    """
-    if mat1_placement != mat2_placement:
-        if mat1_placement.is_replicate():
-            mat1_spec = mat1.redistribute(mat1_spec.device_mesh, mat2_spec.placements)
-        elif mat2_placement.is_replicate():
-            mat2_spec = mat2.redistribute(mat2_spec.device_mesh, mat1_spec.placements)
-    """
-    assert(mat1_spec.placements[0].is_shard())
-    return mat1_spec
+    # mat1: shard(0),  mat2: shard(0) => reuse mat1 spec
+    # mat1: shard(0),  mat2: replicate => reuse mat1 spec
+    # mat1: replicate, mat2: shard(0) => reuse mat2 spec
+    # Only support sharding on the batch dim
+    # TODO: adopt einop_rule "bmk, bkn -> bmn", "bmn, bmn -> bmn"
+    if (
+        mat1_spec.placements[0].is_shard(dim=0)
+        and mat2_spec.placements[0].is_shard(dim=0)
+    ):
+        return mat1_spec, None
+    elif (
+        mat1_spec.placements[0].is_shard(dim=0)
+        and mat2_spec.placements[0].is_replicate()
+    ):
+        return mat1_spec, None
+    elif (
+        mat1_spec.placements[0].is_replicate()
+        and mat2_spec.placements[0].is_shard(dim=0)
+    ):
+        return mat2_spec, None
+    else:
+        return None, "Op tensors must be either replicate or sharded on the batch dim!"
 
 
 @register_prop_rule("aten.bmm.default")
 def bmm_rules(op_schema: OpSchema) -> OutputSharding:
-    tensor1_spec, tensor2_spec = op_schema.args_spec
-    return OutputSharding(bmm_prop(tensor1_spec, tensor2_spec))
+    mat1_spec, mat2_spec = op_schema.args_spec
+    output_spec, failed_reason = bmm_prop(mat1_spec, mat2_spec)
+    return OutputSharding(output_spec, failed_reason=failed_reason)
 
 @register_prop_rule("aten.baddbmm.default")
 def baddbmm_rules(op_schema: OpSchema) -> OutputSharding:
-    input_spec, tensor1_spec, tensor2_spec = op_schema.args_spec
+    input_spec, mat1_spec, mat2_spec = op_schema.args_spec
+    bmm_output_spec, failed_reason = bmm_prop(mat1_spec, mat2_spec)
+    if (bmm_output_spec is None):
+        return OutputSharding(bmm_output_spec, failed_reason=failed_reason)
+
+    # run point wise rule on input + (bmm_out) with linearity
+    output_sharding = pointwise_rule(
+        OpSchema((input_spec, bmm_output_spec), {}), linearity=True
+    )
+    # if propagation failed, edit the schema suggestion from pointwise rules
+    # to return baddbmm suggestion instead as it's a chained suggestion.
+    if (
+        output_sharding.output_spec is None
+        and output_sharding.schema_suggestions is not None
+    ):
+        pointwise_suggestion = output_sharding.schema_suggestions[0]
+        output_sharding.schema_suggestions[0] = OpSchema(
+            args_schema=(
+                pointwise_suggestion.args_schema[0],
+                mat1_spec,
+                mat2_spec,
+            ),
+            kwargs_schema=op_schema.kwargs_schema,
+        )
+
+    return output_sharding
