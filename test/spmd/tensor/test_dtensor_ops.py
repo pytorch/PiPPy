@@ -22,7 +22,11 @@ from torch.testing._internal.common_methods_invocations import DecorateInfo
 
 from spmd import DeviceMesh, Replicate
 from spmd.test.dtensor_lagging_op_db import dtensor_lagging_op_db
-from spmd.test._utils import DistTensorTestBase, TEST_SKIPS, DTensorConverter
+from spmd.test.common_utils import (
+    DistTensorTestBase,
+    TEST_SKIPS,
+    DTensorConverter,
+)
 
 
 DEVICE_TYPE = "cuda" if torch.cuda.is_available() else "cpu"
