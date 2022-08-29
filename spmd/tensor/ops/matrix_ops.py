@@ -86,12 +86,23 @@ def transpose_rule(op_schema: OpSchema) -> OutputSharding:
     return einop_rule("ij->ji", op_schema)
 
 def bmm_prop(
-    tensor1_spec: DTensorSpec, tensor2_spec: DTensorSpec
+    mat1_spec: DTensorSpec, mat2_spec: DTensorSpec
 ) -> Optional[DTensorSpec]:
     # bmm propagation rule:
-    # tensor1: shard(0),  tensor2: replicate
-    # tensor1: replicate, tensor2: shard(1)
-    # tensor1: shard(1),  tensor2: shard(0)
+    # mat1: shard(0),  mat2: replicate
+    # mat1: replicate, mat2: shard(0)
+    # mat1: shard(0),  mat2: shard(0)
+    mat1_placement = unwrap_single_placement(mat1_spec)
+    mat2_placement = unwrap_single_placement(mat2_spec)
+    """
+    if mat1_placement != mat2_placement:
+        if mat1_placement.is_replicate():
+            mat1_spec = mat1.redistribute(mat1_spec.device_mesh, mat2_spec.placements)
+        elif mat2_placement.is_replicate():
+            mat2_spec = mat2.redistribute(mat2_spec.device_mesh, mat1_spec.placements)
+    """
+    assert(mat1_spec.placements[0].is_shard())
+    return mat1_spec
 
 
 @register_prop_rule("aten.bmm.default")
