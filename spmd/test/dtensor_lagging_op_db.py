@@ -223,7 +223,6 @@ _dtensor_lagging_meta = {
     ("index_select", ""),
     ("inner", ""),
     ("int", ""),
-    ("inverse", ""),
     ("isclose", ""),
     ("isfinite", ""),
     ("isin", ""),
