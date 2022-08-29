@@ -564,7 +564,8 @@ def run_master(pp_ranks, training_args, model_args, data_args):
         )
         metrics["train_samples"] = min(max_train_samples, len(train_dataset))
 
-        trainer.save_model()  # Saves the tokenizer too for easy upload
+        # TODO: overwrite save_model method so that it does not pickle process group
+        #trainer.save_model()  # Saves the tokenizer too for easy upload
 
         trainer.log_metrics("train", metrics)
         trainer.save_metrics("train", metrics)

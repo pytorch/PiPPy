@@ -584,7 +584,8 @@ def run_master(pp_ranks, training_args, model_args, data_args):
         elif last_checkpoint is not None:
             checkpoint = last_checkpoint
         train_result = trainer.train(resume_from_checkpoint=checkpoint)
-        trainer.save_model()  # Saves the tokenizer too for easy upload
+        # TODO: overwrite save_model method so that it does not pickle process group
+        #trainer.save_model()  # Saves the tokenizer too for easy upload
         metrics = train_result.metrics
 
         max_train_samples = (
