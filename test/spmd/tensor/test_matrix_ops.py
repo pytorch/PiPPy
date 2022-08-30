@@ -4,7 +4,7 @@ from torch.testing._internal.common_utils import run_tests
 from spmd.tensor.api import DTensor
 from spmd.test.common_utils import DistTensorTestBase, with_comms  # type: ignore
 from spmd import distribute_tensor, DeviceMesh
-from spmd.tensor.placement_types import Shard, Replicate, _Partial
+from spmd.tensor.placement_types import Placement, Shard, Replicate, _Partial
 
 
 class DistMatrixOpsTest(DistTensorTestBase):
@@ -70,24 +70,30 @@ class DistMatrixOpsTest(DistTensorTestBase):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
         replica_spec = [Replicate()]
+        partial_spec = [_Partial()]
 
-        tensor_to_shard = torch.randn(12, 8, requires_grad=True)
-        mat1 = distribute_tensor(tensor_to_shard, device_mesh, shard_spec)
-        tensor_to_replicate = torch.randn(8, 16, requires_grad=True)
-        mat2 = distribute_tensor(tensor_to_replicate, device_mesh, replica_spec)
+        t1 = torch.randn(12, 8, requires_grad=True)
+        t2 = torch.randn(8, 16, requires_grad=True)
 
-        dist_res = torch.mm(mat1, mat2)
-        local_res = torch.mm(tensor_to_shard, tensor_to_replicate)
-        self.assertEqual(
-            dist_res.redistribute(device_mesh, replica_spec).to_local(),
-            local_res,
-        )
+        def test_placement_comb(
+            placement1: Placement, placement2: Placement
+        ) -> None:
+            dt1 = distribute_tensor(t1, device_mesh, placement1)
+            dt2 = distribute_tensor(t2, device_mesh, placement2)
+            dist_res = torch.mm(dt1, dt2)
+            local_res = torch.mm(t1, t2)
+            self.assertEqual(
+                dist_res.redistribute(device_mesh, replica_spec).to_local(),
+                local_res,
+            )
+            # backward
+            grad_res = torch.ones(12, 16)
+            grad_dist_res = distribute_tensor(grad_res, device_mesh, shard_spec)
+            dist_res.backward(grad_dist_res)
+            self.assertIsNotNone(dt1.grad)
 
-        # backward
-        grad_res = torch.ones(12, 16)
-        grad_dist_res = distribute_tensor(grad_res, device_mesh, shard_spec)
-        dist_res.backward(grad_dist_res)
-        self.assertIsNotNone(mat1.grad)
+        # test_placement_comb(shard_spec, replica_spec)
+        test_placement_comb(replica_spec, replica_spec)
 
     @with_comms
     def test_t(self):
