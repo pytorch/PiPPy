@@ -1,4 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+import sys 
+sys.path.append('/data/home/irisz/cluster/work/PiPPy')
 from typing import Sequence, Optional, cast
 import torch
 import torch.nn as nn

@@ -1,53 +1,73 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-import os
-import shutil
+# mypy: ignore-errors
 import tempfile
-
+from typing import Any, Dict
 
 import torch
 import torch.distributed as dist
 import torch.distributed._shard.checkpoint as cp
-from demo import ProcessGroupAwareLoadPlanner, ProcessGroupAwareSavePlanner
 from torch.distributed.fsdp.fully_sharded_data_parallel import (
     FullyShardedDataParallel as FSDP,
 )
 from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
 from torch.testing._internal.common_utils import run_tests
+from checkpoint import (
+    ProcessGroupAwareSavePlanner,
+    ProcessGroupAwareLoadPlanner,
+)
 
-from _utils import DistTensorTestBase, with_comms
+from .common_utils import DistTensorTestBase, with_comms
 
 CHECKPOINT_DIR = ""
 
+
 class MyModule(torch.nn.Module):
-    def __init__(self, rank, extra_state):
+    def __init__(
+        self, rank: int, extra_state: int, extra_state_tensor: torch.Tensor
+    ) -> None:
         super().__init__()
         self.param = torch.nn.Parameter(
-            torch.arange(
-                start=rank * 4, end=rank * 4 + 4, step=1, dtype=torch.float32
-            )
+            torch.arange(start=rank * 4, end=rank * 4 + 4, step=1, dtype=torch.float32)
         )
-        self.extra_state = extra_state
+        self._extra_state = extra_state
+        self._extra_state_tensor = extra_state_tensor
 
-    @property 
-    def extra_state(self):
+    @property
+    def extra_state(self) -> int:
         return self._extra_state
-    
-    @extra_state.setter 
-    def extra_state(self, new_extra_state):
+
+    @extra_state.setter
+    def extra_state(self, new_extra_state: int) -> None:
         self._extra_state = new_extra_state
 
-    def get_extra_state(self):
-        return {"extra_state": self._extra_state}
+    @property
+    def extra_state_tensor(self) -> torch.Tensor:
+        return self._extra_state_tensor
 
-    def set_extra_state(self, extra_state_dict):
+    @extra_state_tensor.setter
+    def extra_state_tensor(self, new_extra_state_tensor: torch.Tensor) -> None:
+        self._extra_state_tensor = new_extra_state_tensor
+
+    def get_extra_state(self) -> Dict[str, Any]:
+        return {
+            "extra_state": self._extra_state,
+            "extra_state_tensor": self._extra_state_tensor,
+        }
+
+    def set_extra_state(self, extra_state_dict: Dict[str, Any]) -> None:
         self._extra_state = extra_state_dict["extra_state"]
+        self._extra_state_tensor = extra_state_dict["extra_state_tensor"]
 
 
-class TestProcessGroupAwareSavePlanner(DistTensorTestBase):
+class TestProcessGroupAwarePlanner(DistTensorTestBase):
     @with_comms
-    def test_process_group_aware_planner(self):
+    def test_process_group_aware_planner(self) -> None:
 
-        model = MyModule(rank=dist.get_rank(), extra_state=0).cuda(dist.get_rank())
+        model = MyModule(
+            rank=dist.get_rank(),
+            extra_state=0,
+            extra_state_tensor=torch.tensor([[1.0, -1.0], [1.0, -1.0]]),
+        ).cuda(dist.get_rank())
 
         fsdp_0 = dist.new_group(ranks=[0, 2])
         fsdp_1 = dist.new_group(ranks=[1, 3])
@@ -57,6 +77,24 @@ class TestProcessGroupAwareSavePlanner(DistTensorTestBase):
             my_fsdp = fsdp_1
 
         model = FSDP(model, process_group=my_fsdp)
+        """
+        When the model is initialized, the param and extra_state_dict are as followed: 
+        param: tensor([ 0.,  1., 10., 11.], device='cuda:0', requires_grad=True) 
+        extra_state: 0  
+        extra_state: tensor([[ 1., -1.], [ 1., -1.]])
+
+        param: tensor([ 0.,  1., 10., 11.], device='cuda:2', requires_grad=True) 
+        extra_state:0 
+        extra_state:tensor([[ 1., -1.], [ 1., -1.]])
+
+        param: tensor([ 4.,  5., 14., 15.], device='cuda:1', requires_grad=True) 
+        extra_state:0 
+        extra_state:tensor([[ 1., -1.], [ 1., -1.]])
+
+        param: tensor([ 4.,  5., 14., 15.], device='cuda:3', requires_grad=True) 
+        extra_state:0 
+        extra_state:tensor([[ 1., -1.], [ 1., -1.]])
+        """
 
         with FSDP.state_dict_type(model, StateDictType.LOCAL_STATE_DICT):
             state_dict = model.state_dict()
@@ -67,8 +105,31 @@ class TestProcessGroupAwareSavePlanner(DistTensorTestBase):
                 planner=ProcessGroupAwareSavePlanner(),
             )
 
-        model = MyModule(rank=100, extra_state=100).cuda(dist.get_rank())
+        model = MyModule(
+            rank=100,
+            extra_state=100,
+            extra_state_tensor=torch.tensor([[100.0, -100.0], [100.0, -100.0]]),
+        ).cuda(dist.get_rank())
         model = FSDP(model, process_group=my_fsdp)
+        """
+        When the model is re-initialized, we have changed param and extra_state_dict. 
+        The updated values are as followed:
+        param: tensor([400., 401., 402., 403.], device='cuda:0', requires_grad=True) 
+        extra_state: 100 
+        extra_state: tensor([[ 100., -100.], [ 100., -100.]])
+
+        param: tensor([400., 401., 402., 403.], device='cuda:2', requires_grad=True) 
+        extra_state: 100 
+        extra_state: tensor([[ 100., -100.], [ 100., -100.]])
+
+        param: tensor([400., 401., 402., 403.], device='cuda:1', requires_grad=True) 
+        extra_state: 100 
+        extra_state: tensor([[ 100., -100.], [ 100., -100.]])
+
+        param: tensor([400., 401., 402., 403.], device='cuda:3', requires_grad=True) 
+        extra_state: 100 
+        extra_state: tensor([[ 100., -100.], [ 100., -100.]])
+        """
 
         with FSDP.state_dict_type(model, StateDictType.LOCAL_STATE_DICT):
             state_dict = model.state_dict()
@@ -81,15 +142,23 @@ class TestProcessGroupAwareSavePlanner(DistTensorTestBase):
             model.load_state_dict(state_dict)
 
         tensor_dict = {
-            0: torch.tensor([ 0,  1, 10, 11], dtype=torch.float32),
-            1: torch.tensor([ 4,  5, 14, 15], dtype=torch.float32),
-            2: torch.tensor([ 0,  1, 10, 11], dtype=torch.float32),
-            3: torch.tensor([ 4,  5, 14, 15], dtype=torch.float32),
+            0: torch.tensor([0, 1, 10, 11], dtype=torch.float32),
+            1: torch.tensor([4, 5, 14, 15], dtype=torch.float32),
+            2: torch.tensor([0, 1, 10, 11], dtype=torch.float32),
+            3: torch.tensor([4, 5, 14, 15], dtype=torch.float32),
         }
 
+        """
+        After loading the model from the checkpoint, we want to make sure that the values of
+        param and extra_state_dict match the values that are originally saved to the checkpoint.
+        """
         with FSDP.summon_full_params(model):
-            self.assertEqual(tensor_dict[dist.get_rank()], model.param.detach()) 
+            self.assertEqual(tensor_dict[dist.get_rank()], model.param.detach())
             self.assertEqual(0, model.extra_state)
+            self.assertEqual(
+                torch.tensor([[1.0, -1.0], [1.0, -1.0]]),
+                model.extra_state_tensor,
+            )
 
 
 if __name__ == "__main__":
