@@ -3,40 +3,23 @@ import argparse
 import inspect
 import logging
 import os
-import socket
 from functools import reduce
 
 import torch
-import torch.distributed.rpc as rpc
-import torch.multiprocessing as mp
+from transformers import T5ForConditionalGeneration, T5Config
 
-import transformers.utils.fx as fx
 import pippy.fx
+from pippy import run_pippy
 from pippy.IR import MultiUseParameterConfig, Pipe, PipeSplitWrapper, annotate_split_points
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverInterleaved1F1B, \
     PipelineDriverBase
 from pippy.events import EventsContext
+from pippy.hf import PiPPyHFTracer
 from pippy.microbatch import CustomReducer, TensorChunkSpec
 from pippy.visualizer import events_to_json
-from transformers import T5ForConditionalGeneration, T5Config
-from transformers.modeling_utils import ModuleUtilsMixin
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
-
-
-def has_efa() -> bool:
-    try:
-        import subprocess
-        return subprocess.run(["fi_info", "-p", "efa", "-t", "FI_EP_RDM"],
-                              stdout=subprocess.DEVNULL,
-                              stderr=subprocess.DEVNULL).returncode == 0
-    except FileNotFoundError:
-        return False
-
-
-def tp_transports():
-    return ["shm", "uv"] if has_efa() else None
 
 
 schedules = {
@@ -55,47 +38,6 @@ pippy.fx.Tracer.proxy_buffer_attributes = True
 
 def get_number_of_params(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-
-def torch_ones_wrapper(*args, **kwargs):
-    return torch.ones(*args, **kwargs)
-
-
-def torch_arange_wrapper(*args, **kwargs):
-    return torch.arange(*args, **kwargs)
-
-
-def torch_full_like_wrapper(*args, **kwargs):
-    return torch.full_like(*args, **kwargs)
-
-
-def torch_create_extended_attention_mask_for_decoder_wrapper(*args, **kwargs):
-    return ModuleUtilsMixin.create_extended_attention_mask_for_decoder(*args, **kwargs)
-
-
-def torch_zeros_wrapper(*args, **kwargs):
-    return torch.zeros(*args, **kwargs)
-
-
-class HFT5Tracer(fx.HFTracer):
-    def trace(self, root, concrete_args=None):
-        graph = super().trace(root, concrete_args)
-        # HACK to replace HF's non-resolvable wrappers with the original
-        # tensor constructor functions
-        # Requires this patch to HF: https://github.com/jamesr66a/transformers/commit/ede9d30f36f12be390692617ef76e2928b1612bd
-        for node in graph.nodes:
-            if node.op == 'call_function':
-                if getattr(node.target, '_orig', None) == torch.ones:
-                    node.target = torch_ones_wrapper
-                elif getattr(node.target, '_orig', None) == torch.arange:
-                    node.target = torch_arange_wrapper
-                elif getattr(node.target, '_orig', None) == torch.full_like:
-                    node.target = torch_full_like_wrapper
-                elif getattr(node.target, '_orig', None) == ModuleUtilsMixin.create_extended_attention_mask_for_decoder:
-                    node.target = torch_create_extended_attention_mask_for_decoder_wrapper
-                elif getattr(node.target, '_orig', None) == torch.zeros:
-                    node.target = torch_zeros_wrapper
-        return graph
 
 
 def add_split_points(t5, num_submodules):
@@ -166,11 +108,11 @@ def _add_split_points(t5, split_indices):
 
 
 def resolve_pg_per_stage(pp_rank):
-    assert dp_pg_per_pp_rank
-    return dp_pg_per_pp_rank[pp_rank + exclude_master]
+    assert pippy.utils.dp_pg_per_pp_rank
+    return pippy.utils.dp_pg_per_pp_rank[pp_rank + pippy.utils.exclude_master]
 
 
-def run_master(args, pp_ranks):
+def run_master(pp_ranks, args):
     torch.manual_seed(42)
 
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if args.replicate else MultiUseParameterConfig.TRANSMIT
@@ -189,10 +131,10 @@ def run_master(args, pp_ranks):
     print(t5.config)
     print(f"T5 total number of params = {get_number_of_params(t5) // 10 ** 6}M")
 
-    number_of_workers = len(pp_ranks) - exclude_master
+    number_of_workers = len(pp_ranks) - pippy.utils.exclude_master
     print(f"number_of_workers = {number_of_workers}")
     add_split_points(t5, number_of_workers)
-    all_worker_ranks = pp_ranks[exclude_master:exclude_master + number_of_workers]
+    all_worker_ranks = pp_ranks[pippy.utils.exclude_master:pippy.utils.exclude_master + number_of_workers]
     chunks = len(all_worker_ranks)
     bs = args.batch_size * chunks
     seq_length = args.seq_length
@@ -207,8 +149,6 @@ def run_master(args, pp_ranks):
 
     # print(t5)
 
-    hf_tracer = HFT5Tracer()
-
     input_names = t5_input_dict.keys()
     sig = inspect.signature(t5.forward)
     concrete_args = {p.name: p.default for p in sig.parameters.values() if p.name not in input_names}
@@ -217,7 +157,7 @@ def run_master(args, pp_ranks):
     output_loss_value_spec = {'loss': True, 'logits': False,
                               # 'past_key_values': False,
                               'encoder_last_hidden_state': False}
-    t5_pipe = Pipe.from_tracing(t5, MULTI_USE_PARAM_CONFIG, tracer=hf_tracer, concrete_args=concrete_args,
+    t5_pipe = Pipe.from_tracing(t5, MULTI_USE_PARAM_CONFIG, tracer=PiPPyHFTracer(), concrete_args=concrete_args,
                                 output_loss_value_spec=output_loss_value_spec)
     split_gm_children = list(t5_pipe.split_gm.children())
     assert number_of_workers == len(
@@ -268,58 +208,9 @@ def run_master(args, pp_ranks):
     print('Finished')
 
 
-def run_worker(rank, world_size, args):
-    os.environ['MASTER_ADDR'] = args.master_addr
-    os.environ['MASTER_PORT'] = args.master_port
-    # Exclude IB for metadata transport due to lack of EFA support on AWS
-    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256,
-                                              rpc_timeout=1800,
-                                              _transports=tp_transports())
-    if args.cuda:
-        n_devs = torch.cuda.device_count()
-        if n_devs > 0:
-            dev_id = rank % n_devs
-            for i in range(world_size):
-                options.set_device_map(f"worker{i}", {dev_id: i % n_devs})
-        else:
-            args.cuda = 0
-    args.device = f'cuda:{dev_id}' if args.cuda else 'cpu'
-    print(f"rank = {rank} host/pid/device = "
-          f"{socket.gethostname()}/{os.getpid()}/{args.device}")
-
-    # Init DDP process group
-    backend = "nccl" if args.cuda else "gloo"
-    torch.distributed.init_process_group(backend=backend, rank=rank, world_size=world_size)
-
-    rpc.init_rpc(
-        f"worker{rank}",
-        rank=rank,
-        world_size=world_size,
-        rpc_backend_options=options
-    )
-
-    global dp_pg_per_pp_rank
-    dp_ranks_per_pp_rank = torch.arange(args.world_size).reshape(args.pp_group_size, args.dp_group_size).tolist()
-    dp_pg_per_pp_rank = [torch.distributed.new_group(ranks) for ranks in dp_ranks_per_pp_rank]
-
-    pp_ranks_per_dp_group = [[i * args.dp_group_size + rank for i in range(args.pp_group_size)]
-                             for rank in range(args.dp_group_size)]
-
-    global dp_pg_for_reference
-    dp_pg_for_reference = torch.distributed.new_group(list(range(args.dp_group_size)))
-
-    global exclude_master
-    exclude_master = args.exclude_master
-
-    if rank >= 0 and rank // args.dp_group_size == 0:
-        args.rank = rank
-        run_master(args, pp_ranks_per_dp_group[rank])
-    rpc.shutdown()
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 16)))
+    parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 8)))
     parser.add_argument('--rank', type=int, default=int(os.getenv("RANK", -1)))
     parser.add_argument('--master_addr', type=str, default=os.getenv('MASTER_ADDR', 'localhost'))
     parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
@@ -347,9 +238,4 @@ if __name__ == "__main__":
 
     args.dp_group_size = args.world_size // args.pp_group_size
 
-    if args.rank == -1:
-        mp.spawn(run_worker, args=(args.world_size, args,), nprocs=args.world_size, join=True)
-    elif args.rank < args.world_size:
-        run_worker(args.rank, args.world_size, args)
-    else:
-        print("I'm unused, exiting")
+    run_pippy(run_master, args)

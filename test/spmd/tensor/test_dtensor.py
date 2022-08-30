@@ -4,7 +4,7 @@ import torch
 from torch.distributed.distributed_c10d import ReduceOp
 
 from torch.testing._internal.common_utils import run_tests
-from spmd.test._utils import DistTensorTestBase, with_comms  # type: ignore
+from spmd.test.common_utils import DistTensorTestBase, with_comms  # type: ignore
 from spmd.tensor import DeviceMesh, DTensor, Replicate, Shard, _Partial
 
 
@@ -176,7 +176,7 @@ class DistTensorTest(DistTensorTestBase):
         self.assertEqual(local_tensor_with_grad.grad, expected_grad)
 
     @with_comms
-    def test_placement_spec_read_only_after_set(self):
+    def test_dtensor_spec_read_only_after_set(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
         local_tensor = torch.randn(3, 3)

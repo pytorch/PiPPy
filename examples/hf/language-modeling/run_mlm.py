@@ -43,7 +43,6 @@ from transformers import (
     AutoTokenizer,
     DataCollatorForLanguageModeling,
     HfArgumentParser,
-    Trainer,
     is_torch_tpu_available,
     set_seed,
 )
@@ -51,7 +50,8 @@ from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
-from pippy.hf import PiPPyTrainingArguments, run_pippy, wrap
+from pippy import run_pippy
+from pippy.hf import PiPPyTrainingArguments, PiPPyTrainer, wrap
 from pippy.microbatch import TensorChunkSpec, CustomReducer
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
@@ -230,10 +230,10 @@ def main():
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
     # =============================================== PiPPy change start ===============================================
-    run_pippy(model_args, data_args, training_args, run_master)
+    run_pippy(run_master, training_args, model_args, data_args)
 
 
-def run_master(model_args, data_args, training_args, pp_ranks):
+def run_master(pp_ranks, training_args, model_args, data_args):
     # ================================================ PiPPy change end ================================================
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
     # information sent is the one passed as arguments along with your Python/PyTorch versions.
@@ -557,18 +557,10 @@ def run_master(model_args, data_args, training_args, pp_ranks):
         pad_to_multiple_of=8 if pad_to_multiple_of_8 else None,
     )
 
-    # =============================================== PiPPy change start ===============================================
-    optimizer_cls, optimizer_kwargs = Trainer.get_optimizer_cls_and_kwargs(training_args)
-    optimizer = model.instantiate_optimizer(optimizer_cls, **optimizer_kwargs)
-    lr_scheduler = model.instantiate_lr_scheduler(
-        transformers.optimization.TYPE_TO_SCHEDULER_FUNCTION[training_args.lr_scheduler_type],
-        num_warmup_steps=training_args.get_warmup_steps(training_args.max_steps),
-        num_training_steps=training_args.max_steps
-    )
-    # ================================================ PiPPy change end ================================================
-
     # Initialize our Trainer
-    trainer = Trainer(
+    # =============================================== PiPPy change start ===============================================
+    trainer = PiPPyTrainer(
+    # ================================================ PiPPy change end ================================================
         model=model,
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,
@@ -579,9 +571,6 @@ def run_master(model_args, data_args, training_args, pp_ranks):
         preprocess_logits_for_metrics=preprocess_logits_for_metrics
         if training_args.do_eval and not is_torch_tpu_available()
         else None,
-        # ============================================= PiPPy change start =============================================
-        optimizers=(optimizer, lr_scheduler),
-        # ============================================== PiPPy change end ==============================================
     )
     # =============================================== PiPPy change start ===============================================
     trainer._signature_columns = list(kwargs_chunk_spec.keys())
@@ -595,7 +584,8 @@ def run_master(model_args, data_args, training_args, pp_ranks):
         elif last_checkpoint is not None:
             checkpoint = last_checkpoint
         train_result = trainer.train(resume_from_checkpoint=checkpoint)
-        trainer.save_model()  # Saves the tokenizer too for easy upload
+        # TODO: overwrite save_model method so that it does not pickle process group
+        #trainer.save_model()  # Saves the tokenizer too for easy upload
         metrics = train_result.metrics
 
         max_train_samples = (

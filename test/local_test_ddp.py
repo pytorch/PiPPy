@@ -3,21 +3,19 @@ import argparse
 import copy
 import logging
 import os
-import socket
-from typing import Dict
 import unittest
+from typing import Dict
 
 import torch
 import torch.distributed.rpc as rpc
-import torch.multiprocessing as mp
 
+import pippy.fx
+from pippy import run_pippy
 from pippy.IR import MultiUseParameterConfig, Pipe, TrivialLossWrapper, pipe_split
 from pippy.PipelineDriver import (
     PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverBase, PipelineDriverInterleaved1F1B
 )
 from pippy.microbatch import TensorChunkSpec, CustomReducer
-import pippy.fx
-from test_commons import tp_transports # type: ignore
 
 # TODOs for implementing forward/backward/loss with schedules:
 # * ability to switch between full-batch loss vs. per-microbatch loss. shen mentioned
@@ -38,6 +36,7 @@ VERBOSE = bool(int(os.environ.get('VERBOSE', False)))
 if VERBOSE:
     logging.getLogger().setLevel(logging.DEBUG)
 
+
 def get_grad_from_executor(executor, qualname):
     mod = executor.local_value().mod
     if isinstance(mod, torch.nn.parallel.DistributedDataParallel):
@@ -48,9 +47,8 @@ def get_grad_from_executor(executor, qualname):
 
 pippy.fx.Tracer.proxy_buffer_attributes = True
 
-dp_pg_for_reference = None
 
-def run_master(args, pp_ranks):
+def run_master(pp_ranks, args):
     torch.manual_seed(42)
 
     d_hid = 50
@@ -85,7 +83,6 @@ def run_master(args, pp_ranks):
             x = torch.mm(x, self.mm_param)
             skip_connection = x
             x = torch.relu(x)
-            pipe_split()
             x = torch.mm(x, self.mm_param) + self.buffer[:x.shape[0]]
             x = self.lin(x)
             pipe_split()
@@ -111,12 +108,12 @@ def run_master(args, pp_ranks):
     kwargs_chunk_spec: Dict = {}
     output_chunk_spec = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
 
-    pipe_driver : PipelineDriverBase = schedules[args.schedule](ec_pipe, CHUNKS, args_chunk_spec, kwargs_chunk_spec,
-                                                                output_chunk_spec, args.pp_group_size,
-                                                                all_ranks=pp_ranks,
-                                                                _debug_mask_minibatches=DEBUG_MASK_MINIBATCHES,
-                                                                _record_mem_dumps=bool(args.record_mem_dumps),
-                                                                checkpoint=bool(args.checkpoint))
+    pipe_driver: PipelineDriverBase = schedules[args.schedule](ec_pipe, CHUNKS, args_chunk_spec, kwargs_chunk_spec,
+                                                               output_chunk_spec, args.pp_group_size,
+                                                               all_ranks=pp_ranks,
+                                                               _debug_mask_minibatches=DEBUG_MASK_MINIBATCHES,
+                                                               _record_mem_dumps=bool(args.record_mem_dumps),
+                                                               checkpoint=bool(args.checkpoint))
     print(f'Rank {args.rank} Instantiated pipe with ranks {pp_ranks}')
 
     pipe_driver.init_data_parallel(dp_group_size=args.dp_group_size)
@@ -143,7 +140,8 @@ def run_master(args, pp_ranks):
         grad_value = rpc.rpc_sync(module_rref.owner(), get_grad_from_executor, (module_rref, param_qualname))
         pipe_grads[name] = copy.deepcopy(grad_value)
 
-    wrapper_ddp = torch.nn.parallel.DistributedDataParallel(wrapper, process_group=dp_pg_for_reference)
+    # User driver group as the DDP reference group
+    wrapper_ddp = torch.nn.parallel.DistributedDataParallel(wrapper, process_group=args.driver_group)
 
     optim = torch.optim.SGD(wrapper_ddp.parameters(), lr=0.05)
     optim.zero_grad()
@@ -170,51 +168,9 @@ def run_master(args, pp_ranks):
     print('Gradient equivalence test passed')
 
 
-def run_worker(rank, world_size, args):
-    os.environ['MASTER_ADDR'] = args.master_addr
-    os.environ['MASTER_PORT'] = args.master_port
-    # Exclude IB for metadata transport due to lack of EFA support on AWS
-    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256,
-                                              rpc_timeout=1800,
-                                              _transports=tp_transports())
-    if args.cuda:
-        n_devs = torch.cuda.device_count()
-        if n_devs > 0:
-            dev_id = rank % n_devs
-            for i in range(world_size):
-                options.set_device_map(f"worker{i}", {dev_id: i % n_devs})
-        else:
-            args.cuda = 0
-    args.device = f'cuda:{dev_id}' if args.cuda else 'cpu'
-    print(f"rank = {rank} host/pid/device = "
-          f"{socket.gethostname()}/{os.getpid()}/{args.device}")
-
-    # Init DDP process group
-    backend = "nccl" if args.cuda else "gloo"
-    torch.distributed.init_process_group(backend=backend, rank=rank, world_size=world_size)
-
-    rpc.init_rpc(
-        f"worker{rank}",
-        rank=rank,
-        world_size=world_size,
-        rpc_backend_options=options
-    )
-
-    pp_ranks_per_dp_group = [[i * args.dp_group_size + rank for i in range(args.pp_group_size)]
-                             for rank in range(args.dp_group_size)]
-
-    global dp_pg_for_reference
-    dp_pg_for_reference = torch.distributed.new_group(list(range(args.dp_group_size)))
-
-    if rank >= 0 and rank // args.dp_group_size == 0:
-        args.rank = rank
-        run_master(args, pp_ranks_per_dp_group[rank])
-    rpc.shutdown()
-
-
 def main(args=None):
     parser = argparse.ArgumentParser()
-    parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 12)))
+    parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 4)))
     # in row-major
     # DP ranks are contiguous rows of size `args.dp_group_size`
     # PP ranks are non-contiguous columns of size `args.pp_group_size`
@@ -227,8 +183,6 @@ def main(args=None):
     #
     # DP ranks are [0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11]
     # PP ranks are [0, 4, 8], [1, 5, 9], [2, 6, 10], [3, 7, 11]
-    parser.add_argument('--dp_group_size', type=int, default=int(os.getenv("DP_GROUP_SIZE", 4)))
-    parser.add_argument('--pp_group_size', type=int, default=int(os.getenv("PP_GROUP_SIZE", 3)))
     parser.add_argument('--rank', type=int, default=int(os.getenv("RANK", -1)))
     parser.add_argument('--master_addr', type=str, default=os.getenv('MASTER_ADDR', 'localhost'))
     parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
@@ -239,14 +193,15 @@ def main(args=None):
     parser.add_argument('--checkpoint', type=int, default=0, choices=[0, 1])
     args = parser.parse_args(args)
 
-    assert args.dp_group_size * args.pp_group_size == args.world_size
+    # ExampleCode has two stages
+    args.pp_group_size = 2
+    assert args.world_size % args.pp_group_size == 0
 
-    if args.rank == -1:
-        mp.spawn(run_worker, args=(args.world_size, args,), nprocs=args.world_size, join=True)
-    elif args.rank < args.world_size:
-        run_worker(args.rank, args.world_size, args)
-    else:
-        print("I'm unused, exiting")
+    # Use world size to determine DDP size
+    args.dp_group_size = args.world_size // args.pp_group_size
+    print(f'Using data parallel group size: {args.dp_group_size}')
+
+    run_pippy(run_master, args)
 
 
 if __name__ == "__main__":

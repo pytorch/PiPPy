@@ -1,7 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 from torch.testing._internal.common_utils import run_tests
-from spmd.test._utils import (  # type: ignore
+from spmd.test.common_utils import (  # type: ignore
     DistTensorTestBase,
     with_comms,
     TEST_GPU_NUM,
@@ -21,7 +21,9 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         input_tensor = torch.randn(
             *input_size, device=self.device_type, requires_grad=True
         )
-        dist_tensor = DTensor(input_tensor, mesh, spec)
+        dist_tensor = DTensor(
+            input_tensor, mesh, spec, requires_grad=input_tensor.requires_grad
+        )
         reset_seed() if reset_seed else None
         dt = op(dist_tensor, **kwargs)
         reset_seed() if reset_seed else None

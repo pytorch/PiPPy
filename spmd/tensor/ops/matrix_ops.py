@@ -3,14 +3,14 @@
 from typing import Optional
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.ops.math_ops import einop_rule
-from spmd.tensor.ops.pointwise_ops import pointwise_rules
-from spmd.tensor.placement_types import _Partial, PlacementSpec
+from spmd.tensor.ops.pointwise_ops import pointwise_rule
+from spmd.tensor.placement_types import _Partial, DTensorSpec
 from spmd.tensor.ops.utils import register_prop_rule
 
 
 def mm_prop(
-    mat1_spec: PlacementSpec, mat2_spec: PlacementSpec
-) -> Optional[PlacementSpec]:
+    mat1_spec: DTensorSpec, mat2_spec: DTensorSpec
+) -> Optional[DTensorSpec]:
     # mm propagation rule:
     # mat1: shard(0),  mat2: replicate
     # mat1: replicate, mat2: shard(1)
@@ -30,7 +30,7 @@ def mm_prop(
         0
     ].is_shard(dim=0):
         placements = [_Partial()]
-        return PlacementSpec(mat1_spec.ndim, mat1_spec.mesh, placements)
+        return DTensorSpec(mat1_spec.mesh, placements, shape=mat1_spec.shape)
     elif (
         mat1_spec.placements[0].is_replicate()
         and mat2_spec.placements[0].is_replicate()
@@ -58,7 +58,7 @@ def addmm_rules(op_schema: OpSchema) -> OutputSharding:
     # TODO: add multi dim support for addmm
 
     # run point wise rule on input + (mm_out) with linearity
-    output_sharding = pointwise_rules(
+    output_sharding = pointwise_rule(
         OpSchema((input_spec, mm_out_spec), {}), linearity=True
     )
     # if propagation failed, edit the schema suggestion from pointwise rules
