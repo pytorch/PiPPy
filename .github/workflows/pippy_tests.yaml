@@ -199,6 +199,7 @@ jobs:
           # shellcheck disable=SC2086,SC2090
           container_name=$(docker run \
             --gpus all \
+            --shm-size=1g --ulimit memlock=-1 \
             -e VERBOSE \
             -e OMP_NUM_THREADS \
             -e REPLICATE \
