@@ -14,6 +14,7 @@ from spmd import (
     Replicate,
 )
 
+
 class SimpleModel(torch.nn.Module):
     def __init__(self, device):
         super(SimpleModel, self).__init__()
@@ -44,12 +45,12 @@ def shard_module(m, device_type):
     def shard_params(name, module):
         if isinstance(module, nn.Linear):
             if name == "net1":
-                sharded_weight = torch.nn.Parameter(
+                sharded_weight = nn.Parameter(
                     distribute_tensor(
                         module.weight, device_mesh, col_wise_sharding
                     )
                 )
-                sharded_bias = torch.nn.Parameter(
+                sharded_bias = nn.Parameter(
                     distribute_tensor(
                         module.bias, device_mesh, col_wise_sharding
                     )
@@ -60,12 +61,12 @@ def shard_module(m, device_type):
                     functools.partial(_gradient_hook, module.weight)
                 )
             elif name == "net2":
-                sharded_weight = torch.nn.Parameter(
+                sharded_weight = nn.Parameter(
                     distribute_tensor(
                         module.weight, device_mesh, row_wise_sharding
                     )
                 )
-                replicated_bias = torch.nn.Parameter(
+                replicated_bias = nn.Parameter(
                     distribute_tensor(module.bias, device_mesh, replicate)
                 )
                 module.register_parameter("weight", sharded_weight)
