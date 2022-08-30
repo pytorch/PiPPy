@@ -83,7 +83,6 @@ def run_master(pp_ranks, args):
             x = torch.mm(x, self.mm_param)
             skip_connection = x
             x = torch.relu(x)
-            pipe_split()
             x = torch.mm(x, self.mm_param) + self.buffer[:x.shape[0]]
             x = self.lin(x)
             pipe_split()
@@ -171,7 +170,7 @@ def run_master(pp_ranks, args):
 
 def main(args=None):
     parser = argparse.ArgumentParser()
-    parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 12)))
+    parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 4)))
     # in row-major
     # DP ranks are contiguous rows of size `args.dp_group_size`
     # PP ranks are non-contiguous columns of size `args.pp_group_size`
@@ -184,8 +183,6 @@ def main(args=None):
     #
     # DP ranks are [0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11]
     # PP ranks are [0, 4, 8], [1, 5, 9], [2, 6, 10], [3, 7, 11]
-    parser.add_argument('--dp_group_size', type=int, default=int(os.getenv("DP_GROUP_SIZE", 4)))
-    parser.add_argument('--pp_group_size', type=int, default=int(os.getenv("PP_GROUP_SIZE", 3)))
     parser.add_argument('--rank', type=int, default=int(os.getenv("RANK", -1)))
     parser.add_argument('--master_addr', type=str, default=os.getenv('MASTER_ADDR', 'localhost'))
     parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
@@ -196,7 +193,13 @@ def main(args=None):
     parser.add_argument('--checkpoint', type=int, default=0, choices=[0, 1])
     args = parser.parse_args(args)
 
-    assert args.dp_group_size * args.pp_group_size == args.world_size
+    # ExampleCode has two stages
+    args.pp_group_size = 2
+    assert args.world_size % args.pp_group_size == 0
+
+    # Use world size to determine DDP size
+    args.dp_group_size = args.world_size // args.pp_group_size
+    print(f'Using data parallel group size: {args.dp_group_size}')
 
     run_pippy(run_master, args)
 

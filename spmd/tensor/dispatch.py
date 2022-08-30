@@ -211,7 +211,7 @@ def operator_dispatch(
         # we will change the behavior to reshard to full
         # replicate and do the computatation
         if _DEBUG_STRICT:
-            raise RuntimeError(
+            raise NotImplementedError(
                 f"Operator {op_key} does not have a DistributedTensor rule registered."
             )
         # default to local tensor ops, this is wrong
