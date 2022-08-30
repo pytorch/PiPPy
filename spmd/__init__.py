@@ -12,8 +12,8 @@ def distribute_module(
     module: nn.Module,
     device_mesh: Optional[DeviceMesh] = None,
     partition_fn: Optional[Callable[[str, nn.Module], None]] = None,
-    input_fn: Optional[Callable[[Tuple[object]], None]] = None,
-    output_fn: Optional[Callable[[Tuple[object]], None]] = None,
+    input_fn: Optional[Callable[..., None]] = None,
+    output_fn: Optional[Callable[..., None]] = None,
 ) -> nn.Module:
     """
     This function converts all module parameters to :class:`DTensor` parameters
@@ -68,25 +68,25 @@ def distribute_module(
         # apply partition_fun to submodules
         for name, submod in module.named_modules():
             partition_fn(name, submod)
-
-        # replicate the rest of params/buffers if not been partitioned
-        # in the partition_fn, we can't easily use `module._apply` again
-        # here because we don't know what happened inside partition_fn
-        # as user could do anything, i.e. install hooks, and we want
-        # to preserve those.
-        for key, param in module.named_parameters():
-            if not isinstance(param, DTensor):
-                module.register_parameter(
-                    key, nn.Parameter(replicate_module_params_buffers(param))
-                )
+            # replicate the rest of params/buffers if not been partitioned
+            # in the partition_fn, we can't easily use `module._apply` again
+            # here because we don't know what happened inside partition_fn
+            # as user could do anything, i.e. install hooks, and we want
+            # to preserve those.
+            for key, param in submod._parameters.items():
+                if not isinstance(param, DTensor):
+                    submod.register_parameter(
+                        key,
+                        nn.Parameter(replicate_module_params_buffers(param)),
+                    )
 
     # register input_fn as module forward pre hook
     if input_fn is not None:
-        module.register_forward_pre_hook(lambda _, inputs: input_fn(inputs))
+        module.register_forward_pre_hook(lambda _, inputs: input_fn(inputs))  # type: ignore
     # register input_fn as module forward hook
     if output_fn is not None:
         module.register_forward_hook(
-            lambda mod, inputs, outputs: output_fn(outputs)
+            lambda mod, inputs, outputs: output_fn(outputs)  # type: ignore
         )
 
     # restore the overwrite_on_conversion state
