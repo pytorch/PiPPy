@@ -22,7 +22,6 @@ from torch.testing._internal.common_utils import run_tests
 from torch.utils._pytree import tree_flatten
 
 import itertools
-import spmd
 import torch
 import torch.distributed as dist
 

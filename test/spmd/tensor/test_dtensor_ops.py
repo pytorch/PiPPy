@@ -36,6 +36,7 @@ common_ops.M = 12
 common_ops.S = 4
 common_ops.XS = 2
 
+
 def assert_ref_dtensor_equal(test_case, dtensor_rs, rs):
     mesh = test_case.mesh
     flat_dtensor_rs, _ = tree_flatten(dtensor_rs)
