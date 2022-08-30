@@ -22,7 +22,7 @@ from spmd.tensor.utils import (
 """
 If set to true, __DEBUG_STRICT will fail when an op doesn't have a sharding rule registered.
 """
-_DEBUG_STRICT = False
+_DEBUG_STRICT = True
 
 
 @dataclass
@@ -131,9 +131,6 @@ def operator_dispatch(
     # unwrap the args/kwargs schema
     args_schema = tree_map(unwrap_schema, args)
     kwargs_schema = tree_map(unwrap_schema, kwargs)
-
-    # TODO(anj): Check if the input to ops are all DTs with placements specs.
-    # If not, should we throw an error or convert them to DTs?
 
     op_schema = OpSchema(
         args_schema,

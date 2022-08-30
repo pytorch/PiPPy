@@ -94,29 +94,29 @@ class DistElementwiseOpsTest(DistTensorTestBase):
     def test_mul(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         torch.manual_seed(self.rank)
-        spec = [Shard(0)]
+        spec = [Replicate()]
         input_tensor = torch.randn(
-            (8, 5), device=self.device_type, requires_grad=True
+            (2, 4), device=self.device_type, requires_grad=True
         )
         dtensor = DTensor(
             input_tensor, device_mesh, spec, requires_grad=input_tensor.requires_grad
         )
         # Mutiplication with a scalar.
-        dt = torch.mul(dist_tensor, 8.0)
+        dt = torch.mul(dtensor, 8.0)
         expected = torch.mul(input_tensor, 8.0)
-        self.assertEqual(input_tensor, dist_tensor.to_local())
+        self.assertEqual(input_tensor, dtensor.to_local())
         self.assertEqual(expected, dt.to_local())
         
         # Mutiplication with a matrix.
-        input_tensor = torch.randn(
-            (5, 8), device=self.device_type, requires_grad=True
+        other_tensor = torch.randn(
+            (2, 4), device=self.device_type, requires_grad=True
         )
         other_dtensor = DTensor(
             other_tensor, device_mesh, [Replicate()], requires_grad=input_tensor.requires_grad
         )
-        dt = torch.mul(dist_tensor, other_dtensor)
-        expected = torch.mul(input_tensor, other_dtensor)
-        self.assertEqual(input_tensor, dist_tensor.to_local())
+        dt = torch.mul(dtensor, other_dtensor)
+        expected = torch.mul(input_tensor, other_tensor)
+        self.assertEqual(input_tensor, dtensor.to_local())
         self.assertEqual(expected, dt.to_local())
 
 
