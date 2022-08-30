@@ -136,7 +136,6 @@ class TestViewOps(DistTensorTestBase):
         return 6
 
     def call_dt_test(self, op, args, kwargs, device_mesh: DeviceMesh):
-        spmd.tensor.dispatch._DEBUG_STRICT = True
         spec = ops[op]
         rules = spec.dim_map(*args, **kwargs)
         outputs = op(*args, **kwargs)
