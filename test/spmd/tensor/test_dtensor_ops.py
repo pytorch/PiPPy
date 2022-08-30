@@ -41,12 +41,6 @@ common_ops.M = 12
 common_ops.S = 4
 common_ops.XS = 2
 
-# override debug strict in this file to allow easier testing, we will remove
-# debug assert in next few PRs
-import spmd.tensor.dispatch as dtensor_dispatch
-
-dtensor_dispatch._DEBUG_STRICT = True
-
 
 def assert_ref_dtensor_equal(test_case, dtensor_rs, rs):
     mesh = test_case.mesh
@@ -135,10 +129,8 @@ dtensor_fails = {
     # we need to remove many of them from list once op
     # get full support with varying sharding specs
     xfail("__getitem__"),
-    xfail("__radd__"),
     xfail("__rdiv__"),
     xfail("__rmod__"),
-    xfail("__rmul__"),
     xfail("__rpow__"),
     xfail("__rsub__"),
     xfail("_masked.amax"),
@@ -156,7 +148,6 @@ dtensor_fails = {
     xfail("_masked.softmin"),
     xfail("_masked.softmax"),
     xfail("_masked.sum"),
-    xfail("abs"),
     xfail("acos"),
     xfail("acosh"),
     xfail("add"),
@@ -185,19 +176,14 @@ dtensor_fails = {
     xfail("atanh"),
     xfail("baddbmm"),
     xfail("bernoulli"),
-    xfail("bfloat16"),
     xfail("block_diag"),
     xfail("bmm"),
-    xfail("bool"),
     xfail("broadcast_shapes"),
     xfail("bucketize"),
-    xfail("byte"),
     xfail("cat"),
     xfail("cartesian_prod"),
     xfail("cdist"),
     xfail("ceil"),
-    xfail("chalf"),
-    xfail("char"),
     xfail("cholesky"),
     xfail("cholesky_inverse"),
     xfail("cholesky_solve"),
@@ -233,7 +219,6 @@ dtensor_fails = {
     xfail("div", "no_rounding_mode"),
     xfail("div", "trunc_rounding"),
     xfail("dot"),
-    xfail("double"),
     xfail("dsplit"),
     xfail("dstack"),
     xfail("eig"),
@@ -269,7 +254,6 @@ dtensor_fails = {
     xfail("flip"),
     xfail("fliplr"),
     xfail("flipud"),
-    xfail("float"),
     xfail("float_power"),
     xfail("floor"),
     xfail("floor_divide"),
@@ -284,7 +268,6 @@ dtensor_fails = {
     xfail("geqrf"),
     xfail("gradient"),
     xfail("gt"),
-    xfail("half"),
     xfail("heaviside"),
     xfail("histc"),
     xfail("histogram"),
@@ -302,7 +285,6 @@ dtensor_fails = {
     xfail("index_reduce"),
     xfail("index_select"),
     xfail("inner"),
-    xfail("int"),
     xfail("isfinite"),
     xfail("isin"),
     xfail("isinf"),
@@ -312,7 +294,6 @@ dtensor_fails = {
     xfail("kron"),
     xfail("kthvalue"),
     xfail("ldexp"),
-    xfail("le"),
     xfail("lerp"),
     xfail("lgamma"),
     xfail("linalg.cholesky"),
@@ -376,7 +357,6 @@ dtensor_fails = {
     xfail("logit"),
     xfail("logspace"),
     xfail("logsumexp"),
-    xfail("long"),
     xfail("lt"),
     xfail("lu"),
     xfail("lu_solve"),
@@ -398,7 +378,6 @@ dtensor_fails = {
     xfail("mm"),
     xfail("mode"),
     xfail("msort"),
-    xfail("mul"),
     xfail("multinomial"),
     xfail("mv"),
     xfail("mvlgamma", "mvlgamma_p_1"),
@@ -568,14 +547,12 @@ dtensor_fails = {
     xfail("select"),
     xfail("select_scatter"),
     xfail("sgn"),
-    xfail("short"),
     xfail("sign"),
     xfail("signbit"),
     xfail("sin"),
     xfail("sinc"),
     xfail("sinh"),
     xfail("slice_scatter"),
-    xfail("softmax", "with_dtype"),
     xfail("sort"),
     xfail("sparse.sampled_addmm"),
     xfail("special.airy_ai"),
