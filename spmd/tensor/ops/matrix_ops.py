@@ -43,8 +43,7 @@ def mm_prop(
 
 @register_prop_rule("aten.mm.default")
 def mm_rules(op_schema: OpSchema) -> OutputSharding:
-    mat1_spec, mat2_spec = op_schema.args_spec
-    return OutputSharding(mm_prop(mat1_spec, mat2_spec))
+    return einop_rule("mk,kn->mn", op_schema, linearity=True)
 
 
 @register_prop_rule("aten.addmm.default")
