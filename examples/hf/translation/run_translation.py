@@ -400,10 +400,13 @@ def run_master(pp_ranks, training_args, model_args, data_args):
     if model.__class__.__name__ == 'T5ForConditionalGeneration':
         output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b),
                              'logits': TensorChunkSpec(0),
-                             'encoder_last_hidden_state': TensorChunkSpec(0),
-                             'past_key_values': [
-                                 [TensorChunkSpec(0) for _ in range(model.config.num_decoder_layers)] for _ in range(4)
-                             ]}
+                             'encoder_last_hidden_state': TensorChunkSpec(0)
+                            }
+        if model.config.use_cache:
+            # past_key_values, optional, returned when use_cache=True is passed or when config.use_cache=True.
+            output_chunk_spec['past_key_values'] = [
+                [TensorChunkSpec(0) for _ in range(model.config.num_decoder_layers)] for _ in range(4)
+            ]
     else:
         output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b),
                              'logits': TensorChunkSpec(0),

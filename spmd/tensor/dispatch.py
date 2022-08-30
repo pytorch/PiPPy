@@ -20,9 +20,10 @@ from spmd.tensor.utils import (
 
 
 """
-If set to true, __DEBUG_STRICT will fail when an op doesn't have a sharding rule registered.
+If _ENABLE_FALLBACK set to False, dispatch will fail when an op doesn't
+have a sharding rule registered.
 """
-_DEBUG_STRICT = False
+_ENABLE_FALLBACK = False
 
 
 @dataclass
@@ -218,7 +219,7 @@ def operator_dispatch(
         # local tensor compute, this is wront currently
         # we will change the behavior to reshard to full
         # replicate and do the computatation
-        if _DEBUG_STRICT:
+        if not _ENABLE_FALLBACK:
             raise NotImplementedError(
                 f"Operator {op_key} does not have a DistributedTensor rule registered."
             )

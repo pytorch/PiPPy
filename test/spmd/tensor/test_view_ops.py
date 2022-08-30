@@ -2,7 +2,7 @@
 
 from typing import List, cast
 from spmd.tensor.placement_types import Placement
-from spmd.test._utils import (  # type: ignore
+from spmd.test.common_utils import (  # type: ignore
     DistTensorTestBase,
     with_comms,
 )
@@ -22,7 +22,6 @@ from torch.testing._internal.common_utils import run_tests
 from torch.utils._pytree import tree_flatten
 
 import itertools
-import spmd
 import torch
 import torch.distributed as dist
 
@@ -136,7 +135,6 @@ class TestViewOps(DistTensorTestBase):
         return 6
 
     def call_dt_test(self, op, args, kwargs, device_mesh: DeviceMesh):
-        spmd.tensor.dispatch._DEBUG_STRICT = True
         spec = ops[op]
         rules = spec.dim_map(*args, **kwargs)
         outputs = op(*args, **kwargs)
