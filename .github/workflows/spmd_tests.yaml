@@ -94,6 +94,7 @@ jobs:
             --detach \
             -v "$(pwd):${SPMD_ROOT}" \
             -w "${SPMD_ROOT}" \
+            --shm-size=1g --ulimit memlock=-1 \
             "${DOCKER_IMAGE}"
           )
           # Run GPU tests and return error signal from docker
