@@ -68,9 +68,9 @@ class DistMatrixOpsTest(DistTensorTestBase):
     @with_comms
     def test_mm(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
-        shard_spec = [Shard(0)]
+        shard0_spec = [Shard(0)]
+        shard1_spec = [Shard(1)]
         replica_spec = [Replicate()]
-        partial_spec = [_Partial()]
 
         t1 = torch.randn(12, 8, requires_grad=True)
         t2 = torch.randn(8, 16, requires_grad=True)
@@ -80,7 +80,7 @@ class DistMatrixOpsTest(DistTensorTestBase):
         ) -> None:
             dt1 = distribute_tensor(t1, device_mesh, placement1)
             dt2 = distribute_tensor(t2, device_mesh, placement2)
-            dist_res = torch.mm(dt1, dt2)
+            dist_res: DTensor = torch.mm(dt1, dt2)
             local_res = torch.mm(t1, t2)
             self.assertEqual(
                 dist_res.redistribute(device_mesh, replica_spec).to_local(),
@@ -88,12 +88,19 @@ class DistMatrixOpsTest(DistTensorTestBase):
             )
             # backward
             grad_res = torch.ones(12, 16)
-            grad_dist_res = distribute_tensor(grad_res, device_mesh, shard_spec)
+            grad_dist_res = distribute_tensor(
+                grad_res, device_mesh, dist_res.placements
+            )
             dist_res.backward(grad_dist_res)
             self.assertIsNotNone(dt1.grad)
 
-        # test_placement_comb(shard_spec, replica_spec)
         test_placement_comb(replica_spec, replica_spec)
+        test_placement_comb(shard0_spec, replica_spec)
+        test_placement_comb(replica_spec, shard1_spec)
+        with self.assertRaises(Exception):
+            test_placement_comb(shard1_spec, shard0_spec)
+            test_placement_comb(replica_spec, shard0_spec)
+            test_placement_comb(shard1_spec, replica_spec)
 
     @with_comms
     def test_t(self):
