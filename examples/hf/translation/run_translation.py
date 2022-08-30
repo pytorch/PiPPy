@@ -375,9 +375,6 @@ def run_master(pp_ranks, training_args, model_args, data_args):
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
     )
-    # We do not support outputting `past_key_values` currently. See comment below re `output_chunk_spec`
-    if hasattr(config, 'use_cache'):
-        config.use_cache = False
     tokenizer = AutoTokenizer.from_pretrained(
         model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
@@ -403,15 +400,13 @@ def run_master(pp_ranks, training_args, model_args, data_args):
     if model.__class__.__name__ == 'T5ForConditionalGeneration':
         output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b),
                              'logits': TensorChunkSpec(0),
-                             'encoder_last_hidden_state': TensorChunkSpec(0),
-                             # past_key_values, optional, returned when use_cache=True is passed or when
-                             # config.use_cache=True. Outputting past_key_values for t5-large or t5-3b incurs many
-                             # getitem calls, which may lead to hang, disabling for now
-                             # TODO: enable
-                             #'past_key_values': [
-                             #    [TensorChunkSpec(0) for _ in range(model.config.num_decoder_layers)] for _ in range(4)
-                             #]
+                             'encoder_last_hidden_state': TensorChunkSpec(0)
                             }
+        if model.config.use_cache:
+            # past_key_values, optional, returned when use_cache=True is passed or when config.use_cache=True.
+            output_chunk_spec['past_key_values'] = [
+                [TensorChunkSpec(0) for _ in range(model.config.num_decoder_layers)] for _ in range(4)
+            ]
     else:
         output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b),
                              'logits': TensorChunkSpec(0),
@@ -620,7 +615,6 @@ def run_master(pp_ranks, training_args, model_args, data_args):
 
     # Initialize our Trainer
     # =============================================== PiPPy change start ===============================================
-    logger.info(f'[PiPPy] Creating PiPPySeq2SeqTrainer ...')
     trainer = PiPPySeq2SeqTrainer(
     # ================================================ PiPPy change end ================================================
         model=model,
