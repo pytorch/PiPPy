@@ -7,15 +7,11 @@ import torch
 import torch.multiprocessing as mp
 import torch.distributed.rpc as rpc
 
-import pippy.fx
-
 
 VERBOSE = bool(int(os.environ.get('VERBOSE', False)))
 
 if VERBOSE:
     logging.getLogger().setLevel(logging.DEBUG)
-
-pippy.fx.Tracer.proxy_buffer_attributes = True
 
 
 def has_efa() -> bool:
