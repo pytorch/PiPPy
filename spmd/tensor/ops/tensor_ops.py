@@ -15,6 +15,7 @@ def default_prop_rule(op_schema: OpSchema) -> OutputSharding:
 
 
 default_prop_ops = [
+    "aten._to_copy.default",
     "aten._local_scalar_dense.default",
     "aten.clone.default",
     "aten.copy_.default",

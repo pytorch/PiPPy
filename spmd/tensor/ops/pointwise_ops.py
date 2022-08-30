@@ -118,8 +118,6 @@ from spmd.tensor.ops.math_ops import einop_rule
 # ]
 
 pointwise_ops = [
-    "aten._to_copy.default",
-    "aten._local_scalar_dense.default",
     "aten.add.Tensor",
     "aten.add.Scalar",
     "aten.add_.Tensor",
