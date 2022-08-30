@@ -1,10 +1,21 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import os
 import socket
+import logging
 
 import torch
 import torch.multiprocessing as mp
 import torch.distributed.rpc as rpc
+
+import pippy.fx
+
+
+VERBOSE = bool(int(os.environ.get('VERBOSE', False)))
+
+if VERBOSE:
+    logging.getLogger().setLevel(logging.DEBUG)
+
+pippy.fx.Tracer.proxy_buffer_attributes = True
 
 
 def has_efa() -> bool:
@@ -42,6 +53,10 @@ def run_pippy(run_master, args, *extra_args):
             # assert args.world_size == args.dp_group_size * args.pp_group_size
 
     actual_world_size = args.dp_group_size * args.pp_group_size
+    print(f'[PiPPy] World size: {actual_world_size}, '
+          f'DP group size: {args.dp_group_size}, '
+          f'PP group size: {args.pp_group_size}')
+
     if args.rank == -1:
         mp.spawn(run_worker, args=(run_master, args, *extra_args), nprocs=actual_world_size, join=True)
     elif args.rank < actual_world_size:
