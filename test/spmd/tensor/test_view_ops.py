@@ -37,10 +37,7 @@ class TestViewOps(DistTensorTestBase):
         )
         self.assertEquals(
             view_groups([3, 4, 5], [12, 5]),
-            (
-                Flatten((InputDim(0), InputDim(1))),
-                InputDim(2),
-            ),
+            (Flatten((InputDim(0), InputDim(1))), InputDim(2)),
         )
         self.assertEquals(
             view_groups([2, 3, 4, 5, 7], [12, 70]),
@@ -402,13 +399,7 @@ class TestViewOps(DistTensorTestBase):
         )
         self.dimmap_test(
             torch.tile,
-            (
-                randn(42, 24, 36),
-                (
-                    1,
-                    3,
-                ),
-            ),
+            (randn(42, 24, 36), (1, 3)),
             (InputDim(0), InputDim(1), Repeat(InputDim(2), 3)),
         )
 
@@ -435,11 +426,7 @@ class TestViewOps(DistTensorTestBase):
             (Flatten((InputDim(0), InputDim(1))), InputDim(2)),
         )
 
-        self.dimmap_test(
-            Tensor.view,
-            (randn(1, 1, 12), -1),
-            (InputDim(2),),
-        )
+        self.dimmap_test(Tensor.view, (randn(1, 1, 12), -1), (InputDim(2),))
 
         self.dimmap_test(
             Tensor.view,

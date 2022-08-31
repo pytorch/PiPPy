@@ -671,12 +671,7 @@ dtensor_fails = {
 }
 
 
-def run_dtensor_crossref(
-    test_case,
-    func,
-    args,
-    kwargs,
-):
+def run_dtensor_crossref(test_case, func, args, kwargs):
     to_dtensor = DTensorConverter(test_case.mesh, args, kwargs)
 
     # TODO: also handle cases where func raise an exception

@@ -216,9 +216,7 @@ class Redistribute(torch.autograd.Function):
 
         return (
             redistribute_spmd_tensor(
-                grad_output,
-                previous_device_mesh,
-                target_placements,
+                grad_output, previous_device_mesh, target_placements
             ),
             None,
             None,
