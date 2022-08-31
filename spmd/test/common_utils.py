@@ -206,17 +206,15 @@ class DTensorConverter(object):
                 else:
                     new_kwargs.append(arg)
 
-            return tree_unflatten(
-                new_args, self.flatten_args_spec
-            ), tree_unflatten(new_kwargs, self.flatten_kwargs_spec)
+            return (
+                tree_unflatten(new_args, self.flatten_args_spec),
+                tree_unflatten(new_kwargs, self.flatten_kwargs_spec),
+            )
         except StopIteration:
             raise StopIteration
 
     def to_dist_tensor(
-        self,
-        t: torch.Tensor,
-        mesh: DeviceMesh,
-        placements: List[Placement],
+        self, t: torch.Tensor, mesh: DeviceMesh, placements: List[Placement]
     ) -> torch.Tensor:
         if type(t) is torch.Tensor or type(t) is torch.nn.Parameter:
             if self.is_supported_tensor(t):
@@ -232,7 +230,9 @@ class DTensorConverter(object):
                 else:
                     r = distribute_tensor(t, mesh, placements)
                 if type(t) is torch.nn.Parameter:
-                    r = torch.nn.Parameter(r, requires_grad=r.requires_grad)  # type: ignore
+                    r = torch.nn.Parameter(
+                        r, requires_grad=r.requires_grad
+                    )  # type: ignore
                 return r
             else:
                 self.miss += 1

@@ -106,17 +106,12 @@ def redistribute_spmd_tensor(
                 new_size[shard_spec.dim] *= device_mesh.size(
                     i
                 )  # only works for evenly sharded tensors
-                new_local_tensor = torch.empty(
-                    new_size, device=local_tensor.device, dtype=input.dtype
-                )
-                # NOTE: all_gather_base only works well when tensor
-                # sharded on a sequential list of devices
-                device_mesh.all_gather_base(
-                    new_local_tensor,
+                # TODO: merge all_gather and all_gather_base call
+                gathered_list = device_mesh.all_gather(
                     local_tensor,
                     mesh_dim=i,
-                    tensor_dim=shard_spec.dim,
                 )
+                new_local_tensor = torch.cat(gathered_list, dim=shard_spec.dim)
         elif target.is_shard():
             # Case 2: target is Shard
             shard_dim = target.dim  # type: ignore
@@ -216,9 +211,7 @@ class Redistribute(torch.autograd.Function):
 
         return (
             redistribute_spmd_tensor(
-                grad_output,
-                previous_device_mesh,
-                target_placements,
+                grad_output, previous_device_mesh, target_placements
             ),
             None,
             None,

@@ -19,9 +19,7 @@ def _gen_spec_with_pending_sum(
 
 
 def einop_rule(
-    equation: str,
-    op_schema: OpSchema,
-    linearity: bool = False,
+    equation: str, op_schema: OpSchema, linearity: bool = False
 ) -> OutputSharding:
     """
     Propagate the sharding of inputs to output for ops whose data
