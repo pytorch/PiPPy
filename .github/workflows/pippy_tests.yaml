@@ -45,7 +45,7 @@ jobs:
           pytest --cov=pippy --ignore=test/hf_test.py --ignore=test/spmd/ --ignore=test/test_fx.py --ignore=test/test_fx_experimental.py --ignore=test/fx test/
 
   hf_model_tests:
-    runs-on: linux.4xlarge
+    runs-on: linux.12xlarge
     strategy:
       matrix:
         python-version: ["3.7", "3.8", "3.9"]
