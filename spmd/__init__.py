@@ -33,7 +33,7 @@ def distribute_module(
             output is sharded, or convert it back to torch.Tensor. output_fn will be
             installed as a module forward_hook.
 
-    Return:
+    Returns:
         A module that contains parameters/buffers that are all `DTensor`s.
     """
 
@@ -78,6 +78,11 @@ def distribute_module(
                     submod.register_parameter(
                         key,
                         nn.Parameter(replicate_module_params_buffers(param)),
+                    )
+            for key, buffer in submod._buffers.items():
+                if not isinstance(buffer, DTensor):
+                    submod._buffers[key] = replicate_module_params_buffers(
+                        param
                     )
 
     # register input_fn as module forward pre hook
