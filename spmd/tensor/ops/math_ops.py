@@ -147,7 +147,12 @@ def reduction_rule(op_schema: OpSchema) -> OutputSharding:
     return einop_rule(fmt, op_schema)
 
 
-reduction_ops = ["aten.sum.SymInt", "aten.sum.default", "aten.sum.dim_IntList"]
+reduction_ops = [
+    "aten.all.default",
+    "aten.sum.SymInt",
+    "aten.sum.default",
+    "aten.sum.dim_IntList",
+]
 
 for reduction_op in reduction_ops:
     DTensor._op_to_rules[reduction_op] = reduction_rule
