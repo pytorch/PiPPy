@@ -56,7 +56,7 @@ def bmm_rules(op_schema: OpSchema) -> OutputSharding:
 @register_prop_rule("aten.baddbmm.default")
 def baddbmm_rules(op_schema: OpSchema) -> OutputSharding:
     input_spec, mat1_spec, mat2_spec = op_schema.args_spec
-    mm_out_spec = bmm_rules(OpSchema((mat1_spec, mat2_spec), {})).output_spec
+    bmm_output_spec = bmm_rules(OpSchema((mat1_spec, mat2_spec), {})).output_spec
     if (bmm_output_spec is None):
         # TODO: add suggestion
         return OutputSharding(None)
@@ -72,6 +72,7 @@ def baddbmm_rules(op_schema: OpSchema) -> OutputSharding:
         and output_sharding.schema_suggestions is not None
     ):
         pointwise_suggestion = output_sharding.schema_suggestions[0]
+        assert output_sharding.schema_suggestions is not None
         output_sharding.schema_suggestions[0] = OpSchema(
             args_schema=(
                 pointwise_suggestion.args_schema[0],
