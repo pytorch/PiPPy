@@ -178,9 +178,13 @@ class RedistributeTest(DistTensorTestBase):
         self.assertEqual(partial_tensor.size(), local_tensor.size())
 
         if self.rank == 1:
-            self.assertEqual(replica_tensor.to_local(), partial_tensor.to_local())
+            self.assertEqual(
+                replica_tensor.to_local(), partial_tensor.to_local()
+            )
         else:
-            self.assertEqual(replica_tensor.to_local(), torch.zeros_like(local_tensor))
+            self.assertEqual(
+                replica_tensor.to_local(), torch.zeros_like(local_tensor)
+            )
 
     @with_comms
     def test_partial_to_shard_0(self):
