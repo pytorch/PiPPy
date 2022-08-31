@@ -452,6 +452,8 @@ class PipeStageExecutor(EventRecorder):
         self.optim_init_lock = threading.Lock()
         self.optim_init_cv = threading.Condition(self.optim_init_lock)
 
+        self.lr_scheduler = None
+
     def __getstate__(self):
         # Adding an empty __getstate__ function here to work around the DDP pickling issue (#153) that occurs when the
         # PipelineDiver asks PipeStageExecutors to install_peer_executor(a list of RRefs)
@@ -610,8 +612,9 @@ class PipeStageExecutor(EventRecorder):
             (output_unique_key, output_refcount, value_ref, idx) = index_tuple
             logging.info(f'[{self.stage_id}] Received getitem call: {(output_unique_key, output_refcount, value_ref, idx)}')
             with self.value_store_cv:
+                # TODO: investigate why value reference in the last batch has not been fully consumed
                 if output_unique_key in self.value_store:
-                    logging.warning(f'[{self.stage_id}] Indexed value already in store: {(output_unique_key, output_refcount, value_ref, idx)}')
+                    logging.info(f'[{self.stage_id}] Indexed value already in store: {(output_unique_key, output_refcount, value_ref, idx)}')
                     # raise RuntimeError(f'Repeated index value call detected, potentially due to getitem calls not consumed in previous batch')
 
                 # Wait for the future representing the stage output to be created
@@ -707,7 +710,11 @@ class PipeStageExecutor(EventRecorder):
                 self.optim_init_cv.wait()
 
         logging.info(f"[{self.stage_id}] Creating learning rate scheduler")
-        return lr_sched_class(self.optimizer, *args, **kwargs)
+        self.lr_scheduler = lr_sched_class(self.optimizer, *args, **kwargs)
+        return self.lr_scheduler
+
+    def step_lr_scheduler(self, *args, **kwargs):
+        self.lr_scheduler.step(*args, **kwargs)
 
     def _check_cleanup(self) -> bool:
         if len(self.value_store):
@@ -822,17 +829,29 @@ class PipelineOptimizer(torch.optim.Optimizer):
 
 
 class PipelineLRScheduler(torch.optim.lr_scheduler._LRScheduler):
-    def __init__(self, stage_to_scheds):
+    def __init__(self, stage_to_scheds, stage_to_executor):
         # A dict from stage id to LR schedulers
         self.stage_to_scheds = stage_to_scheds
+        self.stage_to_executor = stage_to_executor
         self.new_step_called = False
         self.last_lr = []
 
     def step(self, *args, **kwargs):
         futs = []
         # Step all remote LR schedulers
+
+        # We use the executor block below because calling scheduler.step()
+        # remotely might cause pickling nested functions, where these nested
+        # functions are usually defined inside user's lr scheduler constructor
+        # as lambda functions to be used by the lr scheduler
+        # See https://github.com/pytorch/PiPPy/issues/404
+        """
         for scheduler in self.stage_to_scheds.values():
             futs.append(scheduler.rpc_async().step(*args, **kwargs))
+        """
+        for executor in self.stage_to_executor.values():
+            futs.append(executor.rpc_async().step_lr_scheduler(*args, **kwargs))
+
         _wait_for_all(futs)
         # Mark new step (invalidates last_lr)
         self.new_step_called = True
@@ -923,6 +942,7 @@ class PipelineDriverBase(torch.nn.Module):
             assert len(self.all_ranks) == self.world_size, "Explicitly specified ranks must match world_size"
         else:
             self.all_ranks = list(range(self.world_size))
+        logging.info(f'[root] Creating pipeline driver with {self.world_size} workers: {self.all_ranks}')
 
         class ExecutorDescriptor:
             name : str
@@ -1053,7 +1073,7 @@ class PipelineDriverBase(torch.nn.Module):
                 remote_lr_sched = executor.remote().instantiate_lr_scheduler(lr_sched_class, *args, **kwargs)
                 stage_to_scheds[stage] = remote_lr_sched
 
-        return PipelineLRScheduler(stage_to_scheds)
+        return PipelineLRScheduler(stage_to_scheds, self.stage_to_executor)
 
     def _sync_replicated_params(self):
         logging.info(f'[root] Synchronizing gradients for {len(self.pipe.replicated_params)} sets of replicated parameters')

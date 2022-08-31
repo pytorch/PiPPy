@@ -1,56 +1,20 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 # implement matrix related ops for distributed tensor
-from typing import Optional
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.ops.math_ops import einop_rule
 from spmd.tensor.ops.pointwise_ops import pointwise_rule
-from spmd.tensor.placement_types import _Partial, DTensorSpec
 from spmd.tensor.ops.utils import register_prop_rule
-
-
-def mm_prop(
-    mat1_spec: DTensorSpec, mat2_spec: DTensorSpec
-) -> Optional[DTensorSpec]:
-    # mm propagation rule:
-    # mat1: shard(0),  mat2: replicate
-    # mat1: replicate, mat2: shard(1)
-    # mat1: shard(1),  mat2: shard(0)
-    # propagation rules only propagates the combs without communication
-    # TODO: support multi-dim device mesh op with einop propagation
-    if (
-        mat1_spec.placements[0].is_shard(dim=0)
-        and mat2_spec.placements[0].is_replicate()
-    ):
-        return mat1_spec
-    elif mat1_spec.placements[0].is_replicate() and mat2_spec.placements[
-        0
-    ].is_shard(dim=1):
-        return mat2_spec
-    elif mat1_spec.placements[0].is_shard(dim=1) and mat2_spec.placements[
-        0
-    ].is_shard(dim=0):
-        placements = [_Partial()]
-        return DTensorSpec(mat1_spec.mesh, placements, shape=mat1_spec.shape)
-    elif (
-        mat1_spec.placements[0].is_replicate()
-        and mat2_spec.placements[0].is_replicate()
-    ):
-        return mat1_spec
-    else:
-        # not local compute, need to rely on auto redistribute, return None
-        return None
 
 
 @register_prop_rule("aten.mm.default")
 def mm_rules(op_schema: OpSchema) -> OutputSharding:
-    mat1_spec, mat2_spec = op_schema.args_spec
-    return OutputSharding(mm_prop(mat1_spec, mat2_spec))
+    return einop_rule("mk,kn->mn", op_schema, linearity=False)
 
 
 @register_prop_rule("aten.addmm.default")
 def addmm_rules(op_schema: OpSchema) -> OutputSharding:
     input_spec, mat1_spec, mat2_spec = op_schema.args_spec
-    mm_out_spec = mm_prop(mat1_spec, mat2_spec)
+    mm_out_spec = mm_rules(OpSchema((mat1_spec, mat2_spec), {})).output_spec
     if mm_out_spec is None:
         # non-eligible input, suggest addmm input specs
         # TODO: add suggested input specs for resharding
