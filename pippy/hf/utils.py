@@ -274,6 +274,7 @@ class PiPPyHFTracer(fx.HFTracer):
 
 def wrap(model, training_args, pp_ranks, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec):
     model.to(training_args.device)
+    logger.info('[PiPPy] Splitting model ...')
     model_to_wrap[model.__class__.__name__](model, training_args, pp_ranks)
 
     all_worker_ranks = pp_ranks[training_args.exclude_master:]
@@ -284,10 +285,13 @@ def wrap(model, training_args, pp_ranks, args_chunk_spec, kwargs_chunk_spec, out
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.TRANSMIT
     output_loss_value_spec = {k: isinstance(v, CustomReducer) for k, v in output_chunk_spec.items()}
     model_config = model.config
+
+    logger.info('[PiPPy] Creating pipeline ...')
     model = Pipe.from_tracing(model, MULTI_USE_PARAM_CONFIG, tracer=PiPPyHFTracer(), concrete_args=concrete_args,
                               output_loss_value_spec=output_loss_value_spec)
     model.config = model_config
 
+    logger.info('[PiPPy] Initializing pipeline driver ...')
     model = PipelineDriverFillDrain(model, training_args.chunks or len(all_worker_ranks),
                                     args_chunk_spec, kwargs_chunk_spec, output_chunk_spec,
                                     world_size=len(all_worker_ranks),

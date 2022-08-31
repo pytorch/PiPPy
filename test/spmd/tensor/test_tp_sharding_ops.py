@@ -1,8 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from spmd.tensor.placement_types import Replicate
 import torch
 from torch.testing._internal.common_utils import run_tests
-from spmd.test._utils import (  # type: ignore
+from spmd.test.common_utils import (  # type: ignore
     DistTensorTestBase,
     with_comms,
     TEST_GPU_NUM,

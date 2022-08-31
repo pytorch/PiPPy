@@ -6,7 +6,7 @@ on:
     - main
   pull_request:
     paths:
-      - '.github/**'
+      - '.github/workflows/spmd**'
       - 'spmd/**'
       - 'test/spmd/**'
       - '!docs/**'

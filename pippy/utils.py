@@ -1,10 +1,17 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import os
 import socket
+import logging
 
 import torch
 import torch.multiprocessing as mp
 import torch.distributed.rpc as rpc
+
+
+VERBOSE = bool(int(os.environ.get('VERBOSE', False)))
+
+if VERBOSE:
+    logging.getLogger().setLevel(logging.DEBUG)
 
 
 def has_efa() -> bool:
@@ -42,6 +49,10 @@ def run_pippy(run_master, args, *extra_args):
             # assert args.world_size == args.dp_group_size * args.pp_group_size
 
     actual_world_size = args.dp_group_size * args.pp_group_size
+    print(f'[PiPPy] World size: {actual_world_size}, '
+          f'DP group size: {args.dp_group_size}, '
+          f'PP group size: {args.pp_group_size}')
+
     if args.rank == -1:
         mp.spawn(run_worker, args=(run_master, args, *extra_args), nprocs=actual_world_size, join=True)
     elif args.rank < actual_world_size:
@@ -60,7 +71,7 @@ def run_worker(rank, run_master, args, *extra_args):
 
     # TODO: Move to training args, blocked by: cannot pickle 'TensorPipeRpcBackendOptions' object
     # Exclude IB for metadata transport due to lack of EFA support on AWS
-    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256,
+    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=512,
                                               rpc_timeout=1800,
                                               _transports=tp_transports())
     if args.cuda:
@@ -69,6 +80,10 @@ def run_worker(rank, run_master, args, *extra_args):
             dev_id = rank % n_devs
             for i in range(actual_world_size):
                 options.set_device_map(f"worker{i}", {dev_id: i % n_devs})
+        else:
+            args.cuda = 0
+            print('Warning: no CUDA device found. Running on CPU instead.')
+
     args.device = f'cuda:{dev_id}' if args.cuda else 'cpu'
     print(f"rank = {rank} host/pid/device = "
           f"{socket.gethostname()}/{os.getpid()}/{args.device}")

@@ -20,9 +20,10 @@ from spmd.tensor.utils import (
 
 
 """
-If set to true, __DEBUG_STRICT will fail when an op doesn't have a sharding rule registered.
+If _ENABLE_FALLBACK set to False, dispatch will fail when an op doesn't
+have a sharding rule registered.
 """
-_DEBUG_STRICT = False
+_ENABLE_FALLBACK = False
 
 
 @dataclass
@@ -93,6 +94,19 @@ class OutputSharding:
     failed_reason: Optional[str] = None
 
 
+def _reshape_alias(
+    x: torch.Tensor, shape: Tuple[int, ...], strides: Tuple[int, ...]
+) -> torch.Tensor:
+    return torch.ops.aten.view(x, shape)
+
+
+_CURRENT_DECOMPOSITION_TABLE: Dict[
+    Callable[..., object], Callable[..., object]
+] = {
+    torch.ops.aten._reshape_alias.default: _reshape_alias,
+}
+
+
 def operator_dispatch(
     op_call: torch._ops.OpOverload,
     args: Tuple[object, ...],
@@ -100,6 +114,10 @@ def operator_dispatch(
     op_to_rules: Dict[str, Callable[[OpSchema], OutputSharding]],
     custom_dispatch_ops: Dict[str, Callable[..., object]],
 ) -> object:
+    # first we need to lift some private aten aliases to public calls
+    if op_call in _CURRENT_DECOMPOSITION_TABLE:
+        with torch.overrides.enable_reentrant_dispatch():
+            return _CURRENT_DECOMPOSITION_TABLE[op_call](*args, **kwargs)
 
     func_schema = FunctionSchema.parse(str(op_call._schema))
     schema_kind = func_schema.kind()
@@ -191,7 +209,7 @@ def operator_dispatch(
                 out_dt = cast(spmd_tensor.DTensor, kwargs[out.name])
                 out_dt._spec = cast(DTensorSpec, output_specs[i])
                 out_dts.append(out_dt)
-            return tuple(out_dts)
+            return tuple(out_dts) if len(out_dts) > 1 else out_dts[0]
         else:
             return wrap(local_results, output_sharding.output_spec)
 
@@ -201,8 +219,8 @@ def operator_dispatch(
         # local tensor compute, this is wront currently
         # we will change the behavior to reshard to full
         # replicate and do the computatation
-        if _DEBUG_STRICT:
-            raise RuntimeError(
+        if not _ENABLE_FALLBACK:
+            raise NotImplementedError(
                 f"Operator {op_key} does not have a DistributedTensor rule registered."
             )
         # default to local tensor ops, this is wrong
