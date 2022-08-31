@@ -2,10 +2,10 @@
 import torch
 import torch.nn as nn
 from torch.testing._internal.common_utils import run_tests
-from spmd.test.common_utils import (
+from spmd.test.common_utils import (  # type: ignore
     DistTensorTestBase,
     with_comms,
-)  # type: ignore
+)
 from spmd import (
     distribute_tensor,
     distribute_module,
