@@ -22,7 +22,7 @@ concurrency:
 jobs:
 
   pytest_tests:
-    runs-on: linux.12xlarge
+    runs-on: linux.4xlarge
     strategy:
       matrix:
         python-version: ["3.7", "3.8", "3.9"]
@@ -45,7 +45,7 @@ jobs:
           pytest --cov=pippy --ignore=test/hf_test.py --ignore=test/spmd/ --ignore=test/test_fx.py --ignore=test/test_fx_experimental.py --ignore=test/fx test/
 
   hf_model_tests:
-    runs-on: linux.12xlarge
+    runs-on: linux.4xlarge
     strategy:
       matrix:
         python-version: ["3.7", "3.8", "3.9"]
@@ -73,7 +73,7 @@ jobs:
           pytest --shard-id=${{ matrix.shard }} --num-shards=4 -k 'HFModelsForwardBackwardTest' -sv --cov=pippy test/hf_test.py
 
   min_gpt_test:
-    runs-on: linux.12xlarge
+    runs-on: linux.4xlarge
     strategy:
       matrix:
         python-version: ["3.7", "3.8", "3.9"]
@@ -95,7 +95,7 @@ jobs:
         run: python test/min_gpt_tracing.py
 
   integration_test_cpu:
-    runs-on: linux.12xlarge
+    runs-on: linux.4xlarge
     strategy:
       matrix:
         python-version: ["3.7", "3.8", "3.9"]
