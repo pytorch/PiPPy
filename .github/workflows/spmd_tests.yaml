@@ -20,7 +20,7 @@ concurrency:
 jobs:
 
   pytest_tests:
-    runs-on: linux.12xlarge
+    runs-on: linux.4xlarge
     strategy:
       matrix:
         python-version: ["3.9"]
