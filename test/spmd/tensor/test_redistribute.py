@@ -166,18 +166,24 @@ class RedistributeTest(DistTensorTestBase):
             )
 
         # replicate to partial on sub groups
+        local_tensor = torch.randn(12, 3, device=self.device_type)
         subgroup = new_group(ranks=[1, 3])
         device_mesh = DeviceMesh(self.device_type, [1, 3], dim_groups=subgroup)
         # 1) test replicate -> partial on subgroup
         replica_tensor = DTensor(
-            local_tensor, device_mesh, replica_spec, requires_grad=True
+            local_tensor,
+            device_mesh,
+            replica_spec,
+            requires_grad=local_tensor.requires_grad,
         )
         partial_tensor = Redistribute.apply(
             replica_tensor, device_mesh, partial_spec
         )
         self.assertEqual(partial_tensor.size(), local_tensor.size())
 
-        if self.rank == 1:
+        if self.rank != 3:
+            # replicate to partial should only zero out rank 3, and leave
+            # rank 0/2 (not in the group) and 1 (the first rank of the group) un-touched
             self.assertEqual(
                 replica_tensor.to_local(), partial_tensor.to_local()
             )
