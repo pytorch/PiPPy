@@ -42,5 +42,5 @@ RUN pip3 install --upgrade pip \
 	&& pip3 config set global.progress_bar off \
 	&& pip3 install flake8 pytest pytest-cov pytest-shard numpy expecttest hypothesis pyyaml
 
-LABEL versin="1.0.1"
+LABEL versin="1.0.2"
 LABEL description="Build docker image for ubuntu Linux OS with cuda 11.3 and Python."
