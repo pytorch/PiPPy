@@ -7,8 +7,8 @@ from spmd.test.common_utils import (  # type: ignore
     with_comms,
 )
 from spmd import distribute_tensor, DeviceMesh
-from spmd.tensor.placement_types import Placement, Shard, Replicate, _Partial
-from typing import Sequence, cast
+from spmd.tensor.placement_types import Shard, Replicate, _Partial
+# from typing import Sequence, cast
 
 
 class DistMatrixOpsTest(DistTensorTestBase):
