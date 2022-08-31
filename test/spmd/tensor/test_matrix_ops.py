@@ -1,8 +1,13 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 from torch.testing._internal.common_utils import run_tests
+from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 from spmd.tensor.api import DTensor
-from spmd.test._utils import DistTensorTestBase, with_comms  # type: ignore
+from spmd.test._utils import (  # type: ignore
+    DistTensorTestBase,
+    with_comms,
+    TEST_GPU_NUM,
+)
 from spmd import distribute_tensor, DeviceMesh
 from spmd.tensor.placement_types import Shard, Replicate, _Partial
 
@@ -103,6 +108,52 @@ class DistMatrixOpsTest(DistTensorTestBase):
         self.assertEqual(tranposed_mat2.size(), torch.Size([12, 8]))
         self.assertEqual(tranposed_mat2.placements, shard_spec)
 
+    # TODO: Need to investigate why test failed in CPU for baddbmm.
+    @with_comms
+    @skip_if_lt_x_gpu(TEST_GPU_NUM)
+    def test_sharded_baddbmm(self):
+        # If beta is 0, input tensor will be ignored
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        torch.manual_seed(self.rank)
+        tensor = torch.rand(3, 5, 6, device=self.device_type)
+        batch_1 = torch.rand(3, 5, 8, device=self.device_type)
+        batch_2 = torch.rand(3, 8, 6, device=self.device_type)
+        local_result = torch.baddbmm(
+            tensor, batch_1, batch_2, beta=0.0, alpha=0.5
+        )
+        sharding = [Shard(0)]
+        tensor_dt = DTensor.from_local(tensor, device_mesh, sharding)
+        batch_1_dt = DTensor.from_local(batch_1, device_mesh, sharding)
+        batch_2_dt = DTensor.from_local(batch_2, device_mesh, sharding)
+        new_dt = torch.baddbmm(
+            tensor_dt, batch_1_dt, batch_2_dt, beta=0.0, alpha=0.5
+        )
+        self.assertTrue(new_dt.placements[0].is_shard(dim=0))
+        self.assertEqual(new_dt.to_local(), local_result)
+
+        # If beta != 0
+        local_result = torch.baddbmm(
+            tensor, batch_1, batch_2, beta=0.8, alpha=0.5
+        )
+        new_dt = torch.baddbmm(
+            tensor_dt, batch_1_dt, batch_2_dt, beta=0.8, alpha=0.5
+        )
+        self.assertTrue(new_dt.placements[0].is_shard(dim=0))
+        self.assertEqual(new_dt.to_local(), local_result)
+
+    @with_comms
+    def test_sharded_bmm(self):
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        torch.manual_seed(self.rank)
+        input = torch.rand(3, 5, 8, device=self.device_type)
+        mat_2 = torch.rand(3, 8, 6, device=self.device_type)
+        local_result = torch.bmm(input, mat_2)
+        sharding = [Shard(0)]
+        input_dt = DTensor.from_local(input, device_mesh, sharding)
+        mat_2_dt = DTensor.from_local(mat_2, device_mesh, sharding)
+        new_dt = torch.bmm(input_dt, mat_2_dt)
+        self.assertTrue(new_dt.placements[0].is_shard(dim=0))
+        self.assertEqual(new_dt.to_local(), local_result)
 
 if __name__ == "__main__":
     run_tests()

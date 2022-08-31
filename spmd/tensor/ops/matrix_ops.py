@@ -85,46 +85,17 @@ def addmm_rules(op_schema: OpSchema) -> OutputSharding:
 def transpose_rule(op_schema: OpSchema) -> OutputSharding:
     return einop_rule("ij->ji", op_schema)
 
-def bmm_prop(
-    mat1_spec: DTensorSpec, mat2_spec: DTensorSpec
-) -> tuple[Optional[DTensorSpec], Optional[str]]:
-    # bmm propagation rule:
-    # mat1: shard(0),  mat2: shard(0) => reuse mat1 spec
-    # mat1: shard(0),  mat2: replicate => reuse mat1 spec
-    # mat1: replicate, mat2: shard(0) => reuse mat2 spec
-    # Only support sharding on the batch dim
-    # TODO: adopt einop_rule "bmk, bkn -> bmn", "bmn, bmn -> bmn"
-    if (
-        mat1_spec.placements[0].is_shard(dim=0)
-        and mat2_spec.placements[0].is_shard(dim=0)
-    ):
-        return mat1_spec, None
-    elif (
-        mat1_spec.placements[0].is_shard(dim=0)
-        and mat2_spec.placements[0].is_replicate()
-    ):
-        return mat1_spec, None
-    elif (
-        mat1_spec.placements[0].is_replicate()
-        and mat2_spec.placements[0].is_shard(dim=0)
-    ):
-        return mat2_spec, None
-    else:
-        return None, "Op tensors must be either replicate or sharded on the batch dim!"
-
-
 @register_prop_rule("aten.bmm.default")
 def bmm_rules(op_schema: OpSchema) -> OutputSharding:
-    mat1_spec, mat2_spec = op_schema.args_spec
-    output_spec, failed_reason = bmm_prop(mat1_spec, mat2_spec)
-    return OutputSharding(output_spec, failed_reason=failed_reason)
+    return einop_rule("bmk,bkn->bmn", op_schema, linearity=False)
 
 @register_prop_rule("aten.baddbmm.default")
 def baddbmm_rules(op_schema: OpSchema) -> OutputSharding:
     input_spec, mat1_spec, mat2_spec = op_schema.args_spec
-    bmm_output_spec, failed_reason = bmm_prop(mat1_spec, mat2_spec)
+    mm_out_spec = bmm_rules(OpSchema((mat1_spec, mat2_spec), {})).output_spec
     if (bmm_output_spec is None):
-        return OutputSharding(bmm_output_spec, failed_reason=failed_reason)
+        # TODO: add suggestion
+        return OutputSharding(None)
 
     # run point wise rule on input + (bmm_out) with linearity
     output_sharding = pointwise_rule(
