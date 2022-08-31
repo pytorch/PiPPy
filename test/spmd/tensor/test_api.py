@@ -36,31 +36,31 @@ class DTensorAPITest(DistTensorTestBase):
     def test_distribute_tensor(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
-        tensor_to_shard = torch.randn(12, 3)
-        sharded_tensor = distribute_tensor(
-            tensor_to_shard, device_mesh, shard_spec
-        )
-        self.assertEqual(sharded_tensor.size(), torch.Size([12, 3]))
-        local_tensor = sharded_tensor.to_local()
-        self.assertEqual(local_tensor.size(), torch.Size([3, 3]))
 
-    @with_comms
-    def test_distribute_tensor_requires_grad(self):
-        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
-        shard_spec = [Shard(0)]
-        tensor_to_shard = torch.randn(12, 3, requires_grad=True)
-        sharded_tensor = distribute_tensor(
-            tensor_to_shard, device_mesh, shard_spec
-        )
-        self.assertTrue(sharded_tensor.requires_grad)
-        self.assertTrue(sharded_tensor.is_leaf)
-        self.assertEqual(sharded_tensor.size(), torch.Size([12, 3]))
+        for requires_grad in [True, False]:
+
+            tensor_to_shard = torch.randn(
+                3 * self.world_size, 3, requires_grad=requires_grad
+            )
+            dist_tensor = distribute_tensor(
+                tensor_to_shard, device_mesh, shard_spec
+            )
+            self.assertEqual(
+                dist_tensor.size(), torch.Size([3 * self.world_size, 3])
+            )
+            local_tensor = dist_tensor.to_local()
+            self.assertEqual(local_tensor.size(), torch.Size([3, 3]))
+            if requires_grad:
+                self.assertTrue(dist_tensor.requires_grad)
+                self.assertTrue(dist_tensor.is_leaf)
 
     @with_comms
     def test_distribute_module(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         # fully shard all linear modules on dim 0
-        module_to_shard = MyModel(20, 20, device=self.device_type)
+        module_to_shard = MyModel(
+            5 * self.world_size, 20, device=self.device_type
+        )
         shard_spec = [Shard(0)]
 
         def shard_fn(name, module):
@@ -80,7 +80,7 @@ class DTensorAPITest(DistTensorTestBase):
 
         replica_spec = [Replicate()]
         # fully replicate all modules without passing in partition_fn
-        module_to_replicate = MyModel(20, 20, device=self.device_type)
+        module_to_replicate = MyModel(5, 20, device=self.device_type)
         replica_module = distribute_module(module_to_replicate, device_mesh)
         for param in replica_module.parameters():
             self.assertIsInstance(param, DTensor)
@@ -95,7 +95,7 @@ class DTensorAPITest(DistTensorTestBase):
                     )
                     module.register_parameter(name, dist_param)
 
-        module_to_replicate = MyModel(20, 20, device=self.device_type)
+        module_to_replicate = MyModel(5, 20, device=self.device_type)
         replica_module = distribute_module(
             module_to_replicate, device_mesh, replicate_fn
         )
@@ -114,7 +114,9 @@ class DTensorAPITest(DistTensorTestBase):
                     )
                     module.register_parameter(name, dist_param)
 
-        module_to_distribute = MyModel(20, 20, device=self.device_type)
+        module_to_distribute = MyModel(
+            5 * self.world_size, 20, device=self.device_type
+        )
         dist_module = distribute_module(
             module_to_distribute, device_mesh, shard_fn
         )

@@ -28,10 +28,10 @@ def distribute_module(
             by default we replicate all module parameters of `module` across the mesh.
         input_fn (Callable): specify the input distribution, i.e. could control how the
             input of the module is sharded. `input_fn` will be installed as a module
-            forward_pre_hook.
+            `forward_pre_hook` (pre forward hook).
         output_fn (Callable): specify the output distribution, i.e. could control how the
             output is sharded, or convert it back to torch.Tensor. output_fn will be
-            installed as a module forward_hook.
+            installed as a module `forward_hook` (post forward hook).
 
     Returns:
         A module that contains parameters/buffers that are all `DTensor`s.
@@ -47,43 +47,39 @@ def distribute_module(
     )
     torch.__future__.set_overwrite_module_params_on_conversion(True)
 
-    # this function loop over the whole module parameters
-    # and buffers, replicate all non DTensor params/buffers
-    # to DTensor parameters/buffers
-    def replicate_module_params_buffers(t: torch.Tensor) -> torch.Tensor:
-        if isinstance(t, torch.Tensor) and not isinstance(t, DTensor):
-            # replicate the tensor if it has not been converted yet.
-            assert device_mesh is not None
-            return distribute_tensor(
-                t, device_mesh, [Replicate()] * device_mesh.ndim
-            )
-        else:
-            return t
+    def replicate_module_params_buffers(m: nn.Module, mesh: DeviceMesh) -> None:
+        # This function loop over the immediate module parameters and
+        # buffers, replicate all non DTensor params/buffers to DTensor
+        # parameters/buffers, if they have not been partitioned in the
+        # partition_fn, we can't easily use `module._apply` here
+        # because we don't know what happened inside partition_fn as
+        # user could do anything, i.e. install hooks, and we want to
+        # preserve those.
+        full_replicate = [Replicate()] * mesh.ndim
+        for key, param in m._parameters.items():
+            if param is not None and not isinstance(param, DTensor):
+                submod.register_parameter(
+                    key,
+                    nn.Parameter(
+                        distribute_tensor(param.data, mesh, full_replicate)
+                    ),
+                )
+        for key, buffer in m._buffers.items():
+            if buffer is not None and not isinstance(buffer, DTensor):
+                submod._buffers[key] = distribute_tensor(
+                    buffer, mesh, full_replicate
+                )
 
     if partition_fn is None:
         # if partition_fn not specified, we by default replicate
         # all module params/buffers
-        module._apply(replicate_module_params_buffers)
+        for name, submod in module.named_modules():
+            replicate_module_params_buffers(submod, device_mesh)
     else:
         # apply partition_fun to submodules
         for name, submod in module.named_modules():
             partition_fn(name, submod)
-            # replicate the rest of params/buffers if not been partitioned
-            # in the partition_fn, we can't easily use `module._apply` again
-            # here because we don't know what happened inside partition_fn
-            # as user could do anything, i.e. install hooks, and we want
-            # to preserve those.
-            for key, param in submod._parameters.items():
-                if not isinstance(param, DTensor):
-                    submod.register_parameter(
-                        key,
-                        nn.Parameter(replicate_module_params_buffers(param)),
-                    )
-            for key, buffer in submod._buffers.items():
-                if not isinstance(buffer, DTensor):
-                    submod._buffers[key] = replicate_module_params_buffers(
-                        param
-                    )
+            replicate_module_params_buffers(submod, device_mesh)
 
     # register input_fn as module forward pre hook
     if input_fn is not None:
