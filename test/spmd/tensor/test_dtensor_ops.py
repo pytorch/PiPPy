@@ -148,8 +148,6 @@ dtensor_fails = {
     xfail("_masked.softmin"),
     xfail("_masked.softmax"),
     xfail("_masked.sum"),
-    xfail("acos"),
-    xfail("acosh"),
     xfail("add"),
     xfail("addbmm"),
     xfail("addcdiv"),
