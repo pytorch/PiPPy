@@ -69,7 +69,7 @@ class DistMatrixOpsTest(DistTensorTestBase):
         mat2_grad = mat2.grad.redistribute(device_mesh, replica_spec)
         self.assertEqual(mat2_grad.to_local(), tensor_to_shard0.grad)
 
-    # Fail GPU test
+    # Fail GPU test, comment it for now.
     # @with_comms
     # def test_mm(self):
     #     device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
