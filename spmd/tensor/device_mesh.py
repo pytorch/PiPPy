@@ -143,9 +143,26 @@ class DeviceMesh(object):
         if dim_groups is not None:
             # if user hand creating dimension based groups
             # we just take it and use it for communication
-            # we assume user passing dim_gruops are legit
-            # TODO: add more checks to check the correctness
-            # of user passed in dim groups
+            if not isinstance(dim_groups, list):
+                raise RuntimeError("dim_groups expected to be Optional[List[ProcessGroup]]")
+
+            for group in dim_groups:
+                if not isinstance(group, ProcessGroup):
+                    raise RuntimeError(
+                        f"found object in dim_groups that is not a ProcessGroup: {group}"
+                    )
+
+            if self.get_rank() in self.mesh:
+                if len(dim_groups) != self.mesh.ndim:
+                    raise RuntimeError(
+                        f"length of dim_groups ({len(dim_groups)}) expected to be equal to mesh.ndim ({self.mesh.ndim})"
+                    )
+            else:
+                if len(dim_groups) != 0:
+                    raise RuntimeError(
+                        f"length of dim_groups ({len(dim_groups)}) expected to be equal to 0"
+                    )
+
             self._dim_groups = dim_groups
             return
 
