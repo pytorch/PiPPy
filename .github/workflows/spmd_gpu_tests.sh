@@ -25,4 +25,4 @@ python3 spmd/setup.py install
 set -ex
 
 # Run all integration tests
-pytest --shard-id=${SHARD} --num-shards=4 --cov=spmd test/spmd/
+pytest --shard-id=${SHARD} --num-shards=4 --cov=spmd test/spmd/ --ignore=test/spmd/tensor/test_dtensor_ops.py

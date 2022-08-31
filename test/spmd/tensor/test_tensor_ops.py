@@ -1,7 +1,10 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 from torch.testing._internal.common_utils import run_tests
-from spmd.test.common_utils import DistTensorTestBase, with_comms  # type: ignore
+from spmd.test.common_utils import (
+    DistTensorTestBase,
+    with_comms,
+)  # type: ignore
 from spmd import distribute_tensor, DeviceMesh, DTensor, Shard, Replicate
 
 
@@ -70,17 +73,16 @@ class DistTensorOpsTest(DistTensorTestBase):
         self.assertTrue(mul_res is dt_to_mul)
         self.assertEqual(mul_res.to_local(), expected_mul_dt.to_local())
 
-    # TODO: Test fails in GPU test.
-    # @with_comms
-    # def test_op_out_variant(self):
-    #     mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
-    #     input_tensor = torch.randn((12, 3), device=self.device_type)
-    #     dist_tensor_out = distribute_tensor(input_tensor, mesh, [Shard(0)])
-    #     expected_dt = dist_tensor_out.clone() + 3
-    #     res = torch.add(dist_tensor_out, 3, out=dist_tensor_out)
-    #     # op out variant should be the same instance before and after
-    #     self.assertTrue(res is dist_tensor_out)
-    #     self.assertEqual(dist_tensor_out.to_local(), expected_dt.to_local())
+    @with_comms
+    def test_op_out_variant(self):
+        mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        input_tensor = torch.randn((12, 3), device=self.device_type)
+        dist_tensor_out = distribute_tensor(input_tensor, mesh, [Shard(0)])
+        expected_dt = dist_tensor_out.clone() + 3
+        res = torch.add(dist_tensor_out, 3, out=dist_tensor_out)
+        # op out variant should be the same instance before and after
+        self.assertTrue(res is dist_tensor_out)
+        self.assertEqual(dist_tensor_out.to_local(), expected_dt.to_local())
 
     @with_comms
     def test_ones_like(self):

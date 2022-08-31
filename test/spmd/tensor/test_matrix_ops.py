@@ -2,7 +2,10 @@
 import torch
 from torch.testing._internal.common_utils import run_tests
 from spmd.tensor.api import DTensor
-from spmd.test.common_utils import DistTensorTestBase, with_comms  # type: ignore
+from spmd.test.common_utils import (
+    DistTensorTestBase,
+    with_comms,
+)  # type: ignore
 from spmd import distribute_tensor, DeviceMesh
 from spmd.tensor.placement_types import Shard, Replicate, _Partial
 

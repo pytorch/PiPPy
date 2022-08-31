@@ -6,7 +6,10 @@ from torch.distributed.distributed_c10d import ReduceOp
 
 from torch.testing._internal.common_utils import run_tests
 
-from spmd.test.common_utils import DistTensorTestBase, with_comms  # type: ignore
+from spmd.test.common_utils import (
+    DistTensorTestBase,
+    with_comms,
+)  # type: ignore
 from spmd.tensor import DeviceMesh, DTensor, Replicate, Shard, _Partial
 from spmd import distribute_tensor
 
@@ -257,9 +260,8 @@ class MultiDimRedistributeTest(DistTensorTestBase):
                         for idx, input in enumerate(inputs):
                             if input.is_partial():
                                 num_sums *= mesh_shape.size(idx)
-                        # TODO: Test fails in GPU test.
-                        # expected = num_sums * full_tensor
-                        # self.assertEqual(local_full, expected)
+                        expected = num_sums * full_tensor
+                        self.assertEqual(local_full, expected)
 
 
 if __name__ == "__main__":
