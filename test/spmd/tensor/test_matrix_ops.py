@@ -2,7 +2,10 @@
 import torch
 from torch.testing._internal.common_utils import run_tests
 from spmd.tensor.api import DTensor
-from spmd.test.common_utils import DistTensorTestBase, with_comms  # type: ignore
+from spmd.test.common_utils import (  # type: ignore
+    DistTensorTestBase,
+    with_comms,
+)
 from spmd import distribute_tensor, DeviceMesh
 from spmd.tensor.placement_types import Placement, Shard, Replicate, _Partial
 from typing import Sequence, cast
@@ -88,8 +91,7 @@ class DistMatrixOpsTest(DistTensorTestBase):
                 local_res,
             )
             # backward
-            grad_res = torch.ones(dist_res.to_local().shape)
-            grad_dist_res = DTensor(grad_res, device_mesh, dist_res.placements)
+            grad_dist_res = torch.ones_like(dist_res)
             dist_res.backward(grad_dist_res)
             self.assertIsNotNone(dt1.grad)
 

@@ -41,9 +41,7 @@ default_prop_ops = [
     "aten.new_empty_strided.default",
 ]
 
-no_shard_prop_ops = [
-    "aten._local_scalar_dense.default",
-]
+no_shard_prop_ops = ["aten._local_scalar_dense.default"]
 
 for op in default_prop_ops:
     DTensor._op_to_rules[op] = default_prop_rule
