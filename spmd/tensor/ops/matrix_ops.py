@@ -10,6 +10,7 @@ from spmd.tensor.ops.utils import register_prop_rule
 def mm_rules(op_schema: OpSchema) -> OutputSharding:
     return einop_rule("mk,kn->mn", op_schema, linearity=False)
 
+
 @register_prop_rule("aten.addmm.default")
 def addmm_rules(op_schema: OpSchema) -> OutputSharding:
     input_spec, mat1_spec, mat2_spec = op_schema.args_spec

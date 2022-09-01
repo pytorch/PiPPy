@@ -98,25 +98,17 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         input_tensor = torch.randn(
             (8, 4), device=self.device_type, requires_grad=True
         )
-        dtensor = DTensor.from_local(
-            input_tensor, device_mesh, spec
-        )
+        dtensor = DTensor.from_local(input_tensor, device_mesh, spec)
         # Mutiplication with a scalar.
         dt = torch.mul(dtensor, 8.0)
         expected = torch.mul(input_tensor, 8.0)
         self.assertEqual(input_tensor, dtensor.to_local())
         self.assertEqual(expected, dt.to_local())
-        
+
         # Mutiplication with a matrix.
-        input_tensor = torch.randn(
-            (8, 4), device=self.device_type
-        )
-        dtensor = DTensor.from_local(
-            input_tensor, device_mesh, spec
-        )
-        other_tensor = torch.randn(
-            (8, 4), device=self.device_type
-        )
+        input_tensor = torch.randn((8, 4), device=self.device_type)
+        dtensor = DTensor.from_local(input_tensor, device_mesh, spec)
+        other_tensor = torch.randn((8, 4), device=self.device_type)
         other_dtensor = DTensor.from_local(
             other_tensor, device_mesh, [Shard(0)]
         )
