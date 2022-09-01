@@ -152,7 +152,7 @@ class DistMatrixOpsTest(DistTensorTestBase):
             batch_2_placements: Sequence[Placement],
             beta: int,
             alpha: int,
-            sharding_dim: int
+            #sharding_dim: int
         ) -> None:
             tensor_dt = DTensor.from_local(tensor, device_mesh, tensor_placements)
             batch_1_dt = DTensor.from_local(batch_1, device_mesh, batch_1_placements)
@@ -160,45 +160,44 @@ class DistMatrixOpsTest(DistTensorTestBase):
             new_dt = torch.baddbmm(
                 tensor_dt, batch_1_dt, batch_2_dt, beta=0.0, alpha=0.5
             )
-            self.assertTrue(new_dt.placements[0].is_shard(dim=sharding_dim))
+            #self.assertTrue(new_dt.placements[0].is_shard(dim=sharding_dim))
             self.assertEqual(new_dt.to_local(), local_result)
 
         test_comb(
             shard0_spec, shard0_spec, shard0_spec,
-            beta=0.8, alpha=0.5, sharding_dim=0
+            beta=0.8, alpha=0.5
         )
 
         test_comb(
-            shard2_spec, shard2_spec, shard2_spec,
-            beta=0.0, alpha=0.5, sharding_dim=0
+            shard0_spec, shard0_spec, shard0_spec,
+            beta=0.0, alpha=0.5
         )
 
-        # sharding on non-batching dim raises exception:
-        # Two different input dims cannot sharded across the same mesh dim
         with self.assertRaises(Exception):
             test_comb(
                 shard1_spec, shard1_spec, shard1_spec,
-                beta=0.8, alpha=0.5, sharding_dim=1
+                beta=0.8, alpha=0.5
             )
 
         with self.assertRaises(Exception):
             test_comb(
                 shard2_spec, shard2_spec, shard2_spec,
-                beta=0.8, alpha=0.5, sharding_dim=2
-            )
-
-        with self.assertRaises(Exception):
-            test_comb(
-                shard0_spec, shard0_spec, shard0_spec,
-                beta=0.0, alpha=0.5, sharding_dim=1
+                beta=0.8, alpha=0.5
             )
 
         with self.assertRaises(Exception):
             test_comb(
                 shard1_spec, shard1_spec, shard1_spec,
-                beta=0.0, alpha=0.5, sharding_dim=2
+                beta=0.0, alpha=0.5
             )
 
+        with self.assertRaises(Exception):
+            test_comb(
+                shard2_spec, shard2_spec, shard2_spec,
+                beta=0.0, alpha=0.5
+            )
+
+        # TODO: add more tests - what cases do we want to support?
         # TODO: test with replicate
 
     @with_comms
@@ -212,28 +211,25 @@ class DistMatrixOpsTest(DistTensorTestBase):
         def test_placement_comb(
             placements1: Sequence[Placement],
             placements2: Sequence[Placement],
-            sharding_dim: int
+            #sharding_dim: int
         ) -> None:
             input_dt = DTensor.from_local(input, device_mesh, placements1)
             mat_2_dt = DTensor.from_local(mat_2, device_mesh, placements2)
             new_dt = torch.bmm(input_dt, mat_2_dt)
-            self.assertTrue(new_dt.placements[0].is_shard(dim=sharding_dim))
+            #self.assertTrue(new_dt.placements[0].is_shard(dim=sharding_dim))
             self.assertEqual(new_dt.to_local(), local_result)
 
         shard0_spec = [Shard(0)]
         shard1_spec = [Shard(1)]
         shard2_spec = [Shard(2)]
 
-        test_placement_comb(shard0_spec, shard0_spec, 0)
-
-        # sharding on non-batching dim raises exception:
-        # Two different input dims cannot sharded across the same mesh dim
-        with self.assertRaises(Exception):
-            test_placement_comb(shard1_spec, shard1_spec, 1)
+        test_placement_comb(shard0_spec, shard0_spec)
+        test_placement_comb(shard2_spec, shard1_spec)
 
         with self.assertRaises(Exception):
-            test_placement_comb(shard2_spec, shard2_spec, 2)
+            test_placement_comb(shard1_spec, shard2_spec)
 
+        # TODO: add more tests - what cases do we want to support?
 
 if __name__ == "__main__":
     run_tests()
