@@ -1,7 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 # mypy: ignore-errors
 import tempfile
-from typing import Any, Dict
+from typing import Any
 
 import torch
 import torch.distributed as dist
@@ -18,7 +18,7 @@ from checkpoint import (
 
 from .common_utils import DistTensorTestBase, with_comms
 
-CHECKPOINT_DIR = ""
+CHECKPOINT_DIR = None
 
 
 class MyModule(torch.nn.Module):
@@ -27,7 +27,9 @@ class MyModule(torch.nn.Module):
     ) -> None:
         super().__init__()
         self.param = torch.nn.Parameter(
-            torch.arange(start=rank * 4, end=rank * 4 + 4, step=1, dtype=torch.float32)
+            torch.arange(
+                start=rank * 4, end=rank * 4 + 4, step=1, dtype=torch.float32
+            )
         )
         self._extra_state = extra_state
         self._extra_state_tensor = extra_state_tensor
@@ -48,15 +50,15 @@ class MyModule(torch.nn.Module):
     def extra_state_tensor(self, new_extra_state_tensor: torch.Tensor) -> None:
         self._extra_state_tensor = new_extra_state_tensor
 
-    def get_extra_state(self) -> Dict[str, Any]:
+    def get_extra_state(self) -> Any:
         return {
             "extra_state": self._extra_state,
             "extra_state_tensor": self._extra_state_tensor,
         }
 
-    def set_extra_state(self, extra_state_dict: Dict[str, Any]) -> None:
-        self._extra_state = extra_state_dict["extra_state"]
-        self._extra_state_tensor = extra_state_dict["extra_state_tensor"]
+    def set_extra_state(self, state: Any) -> None:
+        self._extra_state = state["extra_state"]
+        self._extra_state_tensor = state["extra_state_tensor"]
 
 
 class TestProcessGroupAwarePlanner(DistTensorTestBase):
@@ -103,7 +105,8 @@ class TestProcessGroupAwarePlanner(DistTensorTestBase):
                 state_dict=state_dict,
                 storage_writer=cp.FileSystemWriter(path=CHECKPOINT_DIR),
                 planner=ProcessGroupAwareSavePlanner(),
-            )
+            )  # pyre-ignore[16]
+            # TODO: clean up #pyre-ignore once the new save_state_dict is merged into pytorch.
 
         model = MyModule(
             rank=100,
@@ -138,7 +141,9 @@ class TestProcessGroupAwarePlanner(DistTensorTestBase):
                 state_dict=state_dict,
                 storage_reader=cp.FileSystemReader(path=CHECKPOINT_DIR),
                 planner=ProcessGroupAwareLoadPlanner(),
-            )
+            )  # pyre-ignore[16]
+            # TODO: clean up #pyre-ignore once the new load_state_dict is merged into pytorch.
+
             model.load_state_dict(state_dict)
 
         tensor_dict = {

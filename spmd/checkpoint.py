@@ -57,7 +57,9 @@ class ProcessGroupAwareSavePlanner(DefaultSavePlanner):
         Rename all keys of sharded tensors from sub-process groups by prefixing it
         with a PG specific string.
         """
-        self.state_dict: Dict[str, Any] = create_state_dict_copy(state_dict)
+        self.state_dict: Dict[str, Any] = create_state_dict_copy(
+            state_dict
+        )  # pyre-ignore[16]
         super().init(self.state_dict, is_coordinator)
 
 
@@ -76,8 +78,10 @@ class ProcessGroupAwareLoadPlanner(DefaultLoadPlanner):
         Rename all keys of sharded tensors from sub-process groups by prefixing it
         with a PG specific string.
         """
-        self.original_state_dict: Dict[str, Any] = state_dict
-        self.state_dict: Dict[str, Any] = create_state_dict_copy(state_dict)
+        self.original_state_dict: Dict[str, Any] = state_dict  # pyre-ignore[16]
+        self.state_dict: Dict[str, Any] = create_state_dict_copy(
+            state_dict
+        )  # pyre-ignore[16]
         super().init(self.state_dict, metadata, is_coordinator)
 
     def load_bytes(self, read_item: ReadItem, value: io.BytesIO) -> None:
@@ -85,4 +89,6 @@ class ProcessGroupAwareLoadPlanner(DefaultLoadPlanner):
         This method makes sure that the non sharded_tensor value of the original_state_dict
         also gets loaded properly.
         """
-        self.original_state_dict[read_item.dest_index.fqn] = torch.load(value)
+        self.original_state_dict[read_item.dest_index.fqn] = torch.load(
+            value
+        )  # pyre-ignore[16]
