@@ -21,7 +21,7 @@ def get_ranks(pg: ProcessGroup) -> List[int]:
     """
     Return an array of global ranks for a given process group.
     """
-    return [c10d._get_global_rank(pg, i) for i in range(pg.size())]
+    return [c10d.get_global_rank(pg, i) for i in range(pg.size())]
 
 
 def create_state_dict_copy(state_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -57,9 +57,11 @@ class ProcessGroupAwareSavePlanner(DefaultSavePlanner):
         Rename all keys of sharded tensors from sub-process groups by prefixing it
         with a PG specific string.
         """
-        self.state_dict: Dict[str, Any] = create_state_dict_copy(
+        self.state_dict: Dict[
+            str, Any
+        ] = create_state_dict_copy(  # pyre-ignore[16]
             state_dict
-        )  # pyre-ignore[16]
+        )
         super().init(self.state_dict, is_coordinator)
 
 
@@ -79,9 +81,11 @@ class ProcessGroupAwareLoadPlanner(DefaultLoadPlanner):
         with a PG specific string.
         """
         self.original_state_dict: Dict[str, Any] = state_dict  # pyre-ignore[16]
-        self.state_dict: Dict[str, Any] = create_state_dict_copy(
+        self.state_dict: Dict[
+            str, Any
+        ] = create_state_dict_copy(  # pyre-ignore[16]
             state_dict
-        )  # pyre-ignore[16]
+        )
         super().init(self.state_dict, metadata, is_coordinator)
 
     def load_bytes(self, read_item: ReadItem, value: io.BytesIO) -> None:
@@ -89,6 +93,8 @@ class ProcessGroupAwareLoadPlanner(DefaultLoadPlanner):
         This method makes sure that the non sharded_tensor value of the original_state_dict
         also gets loaded properly.
         """
-        self.original_state_dict[read_item.dest_index.fqn] = torch.load(
+        self.original_state_dict[
+            read_item.dest_index.fqn
+        ] = torch.load(  # pyre-ignore[16]
             value
-        )  # pyre-ignore[16]
+        )
