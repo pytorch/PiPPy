@@ -6,7 +6,7 @@ from spmd.test._utils import (  # type: ignore
     with_comms,
     TEST_GPU_NUM,
 )
-from spmd import DeviceMesh, DTensor
+from spmd import DeviceMesh, DTensor, distribute_tensor
 from spmd.tensor.placement_types import Shard, Replicate, _Partial
 from torch.distributed.distributed_c10d import ReduceOp
 from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
@@ -94,12 +94,12 @@ class DistElementwiseOpsTest(DistTensorTestBase):
     def test_mul(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         torch.manual_seed(self.rank)
-        spec = [Replicate()]
+        spec = [Shard(0)]
         input_tensor = torch.randn(
-            (2, 4), device=self.device_type, requires_grad=True
+            (8, 4), device=self.device_type, requires_grad=True
         )
-        dtensor = DTensor(
-            input_tensor, device_mesh, spec, requires_grad=input_tensor.requires_grad
+        dtensor = DTensor.from_local(
+            input_tensor, device_mesh, spec
         )
         # Mutiplication with a scalar.
         dt = torch.mul(dtensor, 8.0)
@@ -108,14 +108,24 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         self.assertEqual(expected, dt.to_local())
         
         # Mutiplication with a matrix.
+        input_tensor = torch.randn(
+            (8, 4), device=self.device_type
+        )
+        dtensor = DTensor.from_local(
+            input_tensor, device_mesh, spec
+        )
         other_tensor = torch.randn(
-            (2, 4), device=self.device_type, requires_grad=True
+            (8, 4), device=self.device_type
         )
-        other_dtensor = DTensor(
-            other_tensor, device_mesh, [Replicate()], requires_grad=input_tensor.requires_grad
+        other_dtensor = DTensor.from_local(
+            other_tensor, device_mesh, [Shard(0)]
         )
-        dt = torch.mul(dtensor, other_dtensor)
-        expected = torch.mul(input_tensor, other_tensor)
+        output_tensor = torch.randn((8, 4), device=self.device_type)
+        output_dtensor = DTensor.from_local(
+            output_tensor, device_mesh, [Shard(0)]
+        )
+        dt = torch.mul(dtensor, other_dtensor, out=output_dtensor)
+        expected = torch.mul(input_tensor, other_tensor, out=output_tensor)
         self.assertEqual(input_tensor, dtensor.to_local())
         self.assertEqual(expected, dt.to_local())
 
