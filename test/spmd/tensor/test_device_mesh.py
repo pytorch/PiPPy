@@ -149,13 +149,31 @@ class DeviceMeshTest(DistTensorTestBase):
 
         if len(dim_groups) > 0:
             # dim_groups is not a list
-            self.assertRaises(RuntimeError, DeviceMesh, self.device_type, [[0, 1], [2, 3]], dim_groups=dim_groups[0])
+            self.assertRaises(
+                RuntimeError,
+                DeviceMesh,
+                self.device_type,
+                [[0, 1], [2, 3]],
+                dim_groups=dim_groups[0],
+            )
 
             # dim_groups is a list, but not a list of ProcessGroup
-            self.assertRaises(RuntimeError, DeviceMesh, self.device_type, [[0, 1], [2, 3]], dim_groups=[dim_groups[0], "dummy"])
+            self.assertRaises(
+                RuntimeError,
+                DeviceMesh,
+                self.device_type,
+                [[0, 1], [2, 3]],
+                dim_groups=[dim_groups[0], "dummy"],
+            )
 
             # dim_groups has incorrect length
-            self.assertRaises(RuntimeError, DeviceMesh, self.device_type, [[0, 1], [2, 3]], dim_groups=[dim_groups[0]])
+            self.assertRaises(
+                RuntimeError,
+                DeviceMesh,
+                self.device_type,
+                [[0, 1], [2, 3]],
+                dim_groups=[dim_groups[0]],
+            )
 
     @with_comms
     def test_device_mesh_nd(self):

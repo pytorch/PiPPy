@@ -144,7 +144,9 @@ class DeviceMesh(object):
             # if user hand creating dimension based groups
             # we just take it and use it for communication
             if not isinstance(dim_groups, list):
-                raise RuntimeError("dim_groups expected to be Optional[List[ProcessGroup]]")
+                raise RuntimeError(
+                    "dim_groups expected to be Optional[List[ProcessGroup]]"
+                )
 
             for group in dim_groups:
                 if not isinstance(group, ProcessGroup):
