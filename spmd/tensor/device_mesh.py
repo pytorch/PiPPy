@@ -5,11 +5,11 @@ import torch
 from torch.distributed.distributed_c10d import (
     get_rank,
     get_world_size,
+    get_global_rank,
     ReduceOp,
     GroupMember,
     scatter,
     _get_default_group,
-    get_global_rank,
     _reduce_scatter_base,
     new_group,
     ProcessGroup,
