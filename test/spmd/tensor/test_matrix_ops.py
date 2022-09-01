@@ -11,6 +11,8 @@ from spmd.test.common_utils import (  # type: ignore
 from spmd import distribute_tensor, DeviceMesh
 from spmd.tensor.placement_types import Placement, Shard, Replicate, _Partial
 from typing import Sequence, cast
+import itertools
+import functools
 
 
 class DistMatrixOpsTest(DistTensorTestBase):
@@ -129,6 +131,8 @@ class DistMatrixOpsTest(DistTensorTestBase):
         self.assertEqual(tranposed_mat2.size(), torch.Size([12, 8]))
         self.assertEqual(tranposed_mat2.placements, shard_spec)
 
+    # PyTorch on cpu seems having issue on baddbmm:
+    # https://github.com/pytorch/pytorch/issues/80588
     # TODO: Need to investigate why test failed in CPU for baddbmm.
     @with_comms
     @skip_if_lt_x_gpu(TEST_GPU_NUM)
@@ -152,7 +156,6 @@ class DistMatrixOpsTest(DistTensorTestBase):
             batch_2_placements: Sequence[Placement],
             beta: int,
             alpha: int,
-            #sharding_dim: int
         ) -> None:
             tensor_dt = DTensor.from_local(tensor, device_mesh, tensor_placements)
             batch_1_dt = DTensor.from_local(batch_1, device_mesh, batch_1_placements)
@@ -160,12 +163,11 @@ class DistMatrixOpsTest(DistTensorTestBase):
             new_dt = torch.baddbmm(
                 tensor_dt, batch_1_dt, batch_2_dt, beta=0.0, alpha=0.5
             )
-            #self.assertTrue(new_dt.placements[0].is_shard(dim=sharding_dim))
             self.assertEqual(new_dt.to_local(), local_result)
 
         test_comb(
             shard0_spec, shard0_spec, shard0_spec,
-            beta=0.8, alpha=0.5
+            beta=0.0, alpha=0.5
         )
 
         test_comb(
@@ -211,23 +213,66 @@ class DistMatrixOpsTest(DistTensorTestBase):
         def test_placement_comb(
             placements1: Sequence[Placement],
             placements2: Sequence[Placement],
-            #sharding_dim: int
         ) -> None:
             input_dt = DTensor.from_local(input, device_mesh, placements1)
             mat_2_dt = DTensor.from_local(mat_2, device_mesh, placements2)
             new_dt = torch.bmm(input_dt, mat_2_dt)
-            #self.assertTrue(new_dt.placements[0].is_shard(dim=sharding_dim))
             self.assertEqual(new_dt.to_local(), local_result)
 
-        shard0_spec = [Shard(0)]
-        shard1_spec = [Shard(1)]
-        shard2_spec = [Shard(2)]
 
-        test_placement_comb(shard0_spec, shard0_spec)
-        test_placement_comb(shard2_spec, shard1_spec)
+        assertionErrorFormat = \
+            "Test failed! AssertionError: Result tensors not equal! Spec: {0} {1}."
+        runtimeErrorFormat = \
+            "Test failed! RuntimeError: \"{2}\"! Spec: {0} {1}."
+        shard0_spec = Shard(0)
+        shard1_spec = Shard(1)
+        shard2_spec = Shard(2)
+        shard_specs = [shard0_spec, shard1_spec, shard2_spec]
+        shard_specs_comb = itertools.product(shard_specs, shard_specs)
+        passlist = [
+            [shard0_spec, shard0_spec],
+            [shard2_spec, shard1_spec],
+        ]
 
-        with self.assertRaises(Exception):
-            test_placement_comb(shard1_spec, shard2_spec)
+        def placementEqual(
+            p1: Placement, p2: Placement) -> bool:
+            if (p1.is_shard() and p2.is_shard()):
+                return p1.dim == p2.dim
+            elif (p1.is_replicate() and p2.is_replicate()):
+                return True
+            elif (p1.is_partial() and p2.is_partial()):
+                return True
+            else:
+                return False
+
+        def specEqual(
+            s1: Sequence[Placement], s2: Sequence[Placement]) -> bool:
+            if (len(s1) != len(s2)):
+                return False
+            else:
+                boolSeq = map(lambda t: placementEqual(t[0], t[1]), zip(s1, s2))
+                return functools.reduce(lambda x, y: x and y, boolSeq, True)
+
+        def specInSeq(
+            s: Sequence[Placement], l: Sequence[Sequence[Placement]]) -> bool:
+            boolSeq = map(lambda r: specEqual(s, r), l)
+            return functools.reduce(lambda x, y: x or y, boolSeq, False)
+
+        # tests that currently pass
+        for spec in passlist:
+            test_placement_comb([spec[0]], [spec[1]])
+
+        # TODO: support these tests
+        shard_specs_comb = [spec for spec in shard_specs_comb if not specInSeq(spec, passlist)]
+        for spec in shard_specs_comb:
+            try:
+                test_placement_comb([spec[0]], [spec[1]])
+            except AssertionError:
+                print(assertionErrorFormat.format(spec[0], spec[1]))
+            except RuntimeError as e:
+                print(runtimeErrorFormat.format(spec[0], spec[1], str(e)))
+            else:
+                print(f"Test passed! Spec: {spec[0]} {spec[1]}")
 
         # TODO: add more tests - what cases do we want to support?
 
