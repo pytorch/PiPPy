@@ -157,46 +157,42 @@ class DistMatrixOpsTest(DistTensorTestBase):
             beta: int,
             alpha: int,
         ) -> None:
-            tensor_dt = DTensor.from_local(tensor, device_mesh, tensor_placements)
-            batch_1_dt = DTensor.from_local(batch_1, device_mesh, batch_1_placements)
-            batch_2_dt = DTensor.from_local(batch_2, device_mesh, batch_2_placements)
+            tensor_dt = DTensor.from_local(
+                tensor, device_mesh, tensor_placements
+            )
+            batch_1_dt = DTensor.from_local(
+                batch_1, device_mesh, batch_1_placements
+            )
+            batch_2_dt = DTensor.from_local(
+                batch_2, device_mesh, batch_2_placements
+            )
             new_dt = torch.baddbmm(
                 tensor_dt, batch_1_dt, batch_2_dt, beta=0.0, alpha=0.5
             )
             self.assertEqual(new_dt.to_local(), local_result)
 
-        test_comb(
-            shard0_spec, shard0_spec, shard0_spec,
-            beta=0.0, alpha=0.5
-        )
+        test_comb(shard0_spec, shard0_spec, shard0_spec, beta=0.0, alpha=0.5)
 
-        test_comb(
-            shard0_spec, shard0_spec, shard0_spec,
-            beta=0.0, alpha=0.5
-        )
+        test_comb(shard0_spec, shard0_spec, shard0_spec, beta=0.0, alpha=0.5)
 
         with self.assertRaises(Exception):
             test_comb(
-                shard1_spec, shard1_spec, shard1_spec,
-                beta=0.8, alpha=0.5
+                shard1_spec, shard1_spec, shard1_spec, beta=0.8, alpha=0.5
             )
 
         with self.assertRaises(Exception):
             test_comb(
-                shard2_spec, shard2_spec, shard2_spec,
-                beta=0.8, alpha=0.5
+                shard2_spec, shard2_spec, shard2_spec, beta=0.8, alpha=0.5
             )
 
         with self.assertRaises(Exception):
             test_comb(
-                shard1_spec, shard1_spec, shard1_spec,
-                beta=0.0, alpha=0.5
+                shard1_spec, shard1_spec, shard1_spec, beta=0.0, alpha=0.5
             )
 
         with self.assertRaises(Exception):
             test_comb(
-                shard2_spec, shard2_spec, shard2_spec,
-                beta=0.0, alpha=0.5
+                shard2_spec, shard2_spec, shard2_spec, beta=0.0, alpha=0.5
             )
 
         # TODO: add more tests - what cases do we want to support?
@@ -219,11 +215,9 @@ class DistMatrixOpsTest(DistTensorTestBase):
             new_dt = torch.bmm(input_dt, mat_2_dt)
             self.assertEqual(new_dt.to_local(), local_result)
 
-
-        assertionErrorFormat = \
-            "Test failed! AssertionError: Result tensors not equal! Spec: {0} {1}."
-        runtimeErrorFormat = \
-            "Test failed! RuntimeError: \"{2}\"! Spec: {0} {1}."
+        assertionErrorFormat = "Test failed! AssertionError: \
+            Result tensors not equal! Spec: {0} {1}."
+        runtimeErrorFormat = 'Test failed! RuntimeError: "{2}"! Spec: {0} {1}.'
         shard0_spec = Shard(0)
         shard1_spec = Shard(1)
         shard2_spec = Shard(2)
@@ -234,27 +228,26 @@ class DistMatrixOpsTest(DistTensorTestBase):
             [shard2_spec, shard1_spec],
         ]
 
-        def placementEqual(
-            p1: Placement, p2: Placement) -> bool:
-            if (p1.is_shard() and p2.is_shard()):
+        def placementEqual(p1: Placement, p2: Placement) -> bool:
+            if p1.is_shard() and p2.is_shard():
                 return p1.dim == p2.dim
-            elif (p1.is_replicate() and p2.is_replicate()):
+            elif p1.is_replicate() and p2.is_replicate():
                 return True
-            elif (p1.is_partial() and p2.is_partial()):
+            elif p1.is_partial() and p2.is_partial():
                 return True
             else:
                 return False
 
-        def specEqual(
-            s1: Sequence[Placement], s2: Sequence[Placement]) -> bool:
-            if (len(s1) != len(s2)):
+        def specEqual(s1: Sequence[Placement], s2: Sequence[Placement]) -> bool:
+            if len(s1) != len(s2):
                 return False
             else:
                 boolSeq = map(lambda t: placementEqual(t[0], t[1]), zip(s1, s2))
                 return functools.reduce(lambda x, y: x and y, boolSeq, True)
 
         def specInSeq(
-            s: Sequence[Placement], l: Sequence[Sequence[Placement]]) -> bool:
+            s: Sequence[Placement], l: Sequence[Sequence[Placement]]
+        ) -> bool:
             boolSeq = map(lambda r: specEqual(s, r), l)
             return functools.reduce(lambda x, y: x or y, boolSeq, False)
 
@@ -263,7 +256,9 @@ class DistMatrixOpsTest(DistTensorTestBase):
             test_placement_comb([spec[0]], [spec[1]])
 
         # TODO: support these tests
-        shard_specs_comb = [spec for spec in shard_specs_comb if not specInSeq(spec, passlist)]
+        shard_specs_comb = [
+            spec for spec in shard_specs_comb if not specInSeq(spec, passlist)
+        ]
         for spec in shard_specs_comb:
             try:
                 test_placement_comb([spec[0]], [spec[1]])
@@ -275,6 +270,7 @@ class DistMatrixOpsTest(DistTensorTestBase):
                 print(f"Test passed! Spec: {spec[0]} {spec[1]}")
 
         # TODO: add more tests - what cases do we want to support?
+
 
 if __name__ == "__main__":
     run_tests()

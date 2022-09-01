@@ -49,15 +49,19 @@ def addmm_rules(op_schema: OpSchema) -> OutputSharding:
 def transpose_rule(op_schema: OpSchema) -> OutputSharding:
     return einop_rule("ij->ji", op_schema)
 
+
 @register_prop_rule("aten.bmm.default")
 def bmm_rules(op_schema: OpSchema) -> OutputSharding:
     return einop_rule("bmk,bkn->bmn", op_schema, linearity=False)
 
+
 @register_prop_rule("aten.baddbmm.default")
 def baddbmm_rules(op_schema: OpSchema) -> OutputSharding:
     input_spec, mat1_spec, mat2_spec = op_schema.args_spec
-    bmm_output_spec = bmm_rules(OpSchema((mat1_spec, mat2_spec), {})).output_spec
-    if (bmm_output_spec is None):
+    bmm_output_spec = bmm_rules(
+        OpSchema((mat1_spec, mat2_spec), {})
+    ).output_spec
+    if bmm_output_spec is None:
         # TODO: add suggestion
         return OutputSharding(None)
 
