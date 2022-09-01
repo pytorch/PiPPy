@@ -201,7 +201,6 @@ class DistMatrixOpsTest(DistTensorTestBase):
                 if not specInSeq(spec, passlist)
             ]
             for spec in shard_specs_comb:
-                print(spec)
                 with self.assertRaises(Exception):
                     test_placement_comb(
                         [spec[0]], [spec[1]], [spec[2]], beta, alpha
@@ -254,7 +253,7 @@ class DistMatrixOpsTest(DistTensorTestBase):
             with self.assertRaises(Exception):
                 test_placement_comb([spec[0]], [spec[1]])
 
-        # TODO: add more tests - what cases do we want to support?
+        # TODO: test with replicate
 
 
 if __name__ == "__main__":
