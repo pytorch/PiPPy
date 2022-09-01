@@ -40,13 +40,6 @@ def distribute_module(
     if device_mesh is None:
         device_mesh = get_global_device_mesh()
 
-    # set this to true on demand, to avoid inplace update the parameter directly
-    # This is purely for nn.Module API parameter replacement BC reason
-    overwrite_on_conversion = (
-        torch.__future__.get_overwrite_module_params_on_conversion()
-    )
-    torch.__future__.set_overwrite_module_params_on_conversion(True)
-
     def replicate_module_params_buffers(m: nn.Module, mesh: DeviceMesh) -> None:
         # This function loop over the immediate module parameters and
         # buffers, replicate all non DTensor params/buffers to DTensor
@@ -90,8 +83,4 @@ def distribute_module(
             lambda mod, inputs, outputs: output_fn(outputs)  # type: ignore
         )
 
-    # restore the overwrite_on_conversion state
-    torch.__future__.set_overwrite_module_params_on_conversion(
-        overwrite_on_conversion
-    )
     return module
