@@ -15,7 +15,7 @@ from spmd.checkpoint import (
     ProcessGroupAwareLoadPlanner,
 )
 
-from .common_utils import DistTensorTestBase, with_comms
+from spmd.testing.common_utils import DistTensorTestBase, with_comms
 
 CHECKPOINT_DIR = ""
 
