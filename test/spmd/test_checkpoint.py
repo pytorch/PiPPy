@@ -10,12 +10,17 @@ from torch.distributed.fsdp.fully_sharded_data_parallel import (
 )
 from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
 from torch.testing._internal.common_utils import run_tests
+from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 from spmd.checkpoint import (
     ProcessGroupAwareSavePlanner,
     ProcessGroupAwareLoadPlanner,
 )
 
-from spmd.testing.common_utils import DistTensorTestBase, with_comms
+from spmd.testing.common_utils import (
+    DistTensorTestBase,
+    with_comms,
+    TEST_GPU_NUM,
+)
 
 CHECKPOINT_DIR = ""
 
@@ -64,6 +69,7 @@ class MyModule(torch.nn.Module):
 
 class TestProcessGroupAwarePlanner(DistTensorTestBase):
     @with_comms
+    @skip_if_lt_x_gpu(TEST_GPU_NUM)
     def test_process_group_aware_planner(self) -> None:
 
         model = MyModule(
