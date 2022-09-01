@@ -85,8 +85,5 @@ class ProcessGroupAwareLoadPlanner(DefaultLoadPlanner):
         This method makes sure that the non sharded_tensor value of the original_state_dict
         also gets loaded properly.
         """
-        self.original_state_dict[
-            read_item.dest_index.fqn
-        ] = torch.load(  # pyre-ignore[16]
-            value
-        )
+        fqn: str = read_item.dest_index.fqn
+        self.original_state_dict[fqn] = torch.load(value)  # pyre-ignore[16]
