@@ -20,7 +20,7 @@ concurrency:
 jobs:
 
   pytest_tests:
-    runs-on: linux.12xlarge
+    runs-on: linux.2xlarge
     strategy:
       matrix:
         python-version: ["3.9"]
@@ -39,3 +39,80 @@ jobs:
       - name: Test with pytest
         run: |
           pytest --shard-id=${{ matrix.shard }} --num-shards=4 --cov=spmd test/spmd/
+
+  pytest_tests_gpu:
+    runs-on: linux.g4dn.12xlarge.nvidia.gpu
+    strategy:
+      matrix:
+        shard: ["0", "1", "2", "3"]
+    env:
+      DOCKER_IMAGE: gingerhugo/cuda-11.3-python-3.9:v1.0.2
+      SPMD_ROOT: /PiPPy
+      VERBOSE: "0"
+      OMP_NUM_THREADS: "1"
+      SHARD: ${{ matrix.shard }}
+
+    steps:
+      - name: Clean working directory
+        shell: bash
+        run: |
+          sudo rm -rf /home/ec2-user/actions-runner/_work/PiPPy/PiPPy/* || true
+      - uses: actions/checkout@v2
+      - name: Clean up previous CUDA driver installations
+        shell: bash
+        run: |
+          set -x
+          yum list installed | grep nvidia || true
+          yum list installed | grep cuda || true
+          sudo yum remove -y cuda || true
+          sudo yum remove -y cuda-drivers || true
+          sudo yum remove -y "*nvidia*" || true
+      - name: Setup SSH (Click me for login details)
+        uses: pytorch/pytorch/.github/actions/setup-ssh@master
+        with:
+          github-secret: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install nvidia driver, nvidia-docker runtime, set GPU_FLAG
+        run: |
+          bash .github/workflows/install_nvidia_utils_linux.sh || true
+          echo "GPU_FLAG=--gpus all" >> "${GITHUB_ENV}"
+      - name: Pull Docker image
+        run: |
+          retry () {
+              "$@"  || (sleep 1 && "$@") || (sleep 2 && "$@")
+          }
+          retry docker pull "${DOCKER_IMAGE}"
+      - name: Test docker run
+        run: |
+          set -x
+          # shellcheck disable=SC2086,SC2090
+          container_name=$(docker run \
+            --gpus all \
+            --shm-size=1g --ulimit memlock=-1 \
+            -e VERBOSE \
+            -e OMP_NUM_THREADS \
+            -e SHARD \
+            --tty \
+            --detach \
+            -v "$(pwd):${SPMD_ROOT}" \
+            -w "${SPMD_ROOT}" \
+            "${DOCKER_IMAGE}"
+          )
+          # Run GPU tests and return error signal from docker
+          docker exec -t -w "${SPMD_ROOT}" "${container_name}" bash -c "bash .github/workflows/spmd_gpu_tests.sh; exit \$?"
+      - name: Chown workspace
+        if: always()
+        run: |
+          # Ensure the working directory gets chowned back to the current user
+          docker run --rm -v "$(pwd):${SPMD_ROOT}" -w "${SPMD_ROOT}" "${DOCKER_IMAGE}" chown -R "$(id -u):$(id -g)" .
+      - name: Hold runner for 2 hours or until ssh sessions have drained
+        shell: bash
+        if: inputs.skip-wait-ssh == ''
+        run: .github/workflows/wait_for_ssh_to_drain.sh
+      - name: Kill containers, clean up images
+        shell: bash
+        run: |
+          # ignore expansion of "docker ps -q" since it could be empty
+          # shellcheck disable=SC2046
+          docker stop $(docker ps -q) || true
+          # Prune all of the docker images
+          docker system prune -af

@@ -22,7 +22,7 @@ concurrency:
 jobs:
 
   pytest_tests:
-    runs-on: linux.12xlarge
+    runs-on: linux.4xlarge
     strategy:
       matrix:
         python-version: ["3.7", "3.8", "3.9"]
@@ -73,7 +73,7 @@ jobs:
           pytest --shard-id=${{ matrix.shard }} --num-shards=4 -k 'HFModelsForwardBackwardTest' -sv --cov=pippy test/hf_test.py
 
   min_gpt_test:
-    runs-on: linux.12xlarge
+    runs-on: linux.4xlarge
     strategy:
       matrix:
         python-version: ["3.7", "3.8", "3.9"]
@@ -95,7 +95,7 @@ jobs:
         run: python test/min_gpt_tracing.py
 
   integration_test_cpu:
-    runs-on: linux.12xlarge
+    runs-on: linux.4xlarge
     strategy:
       matrix:
         python-version: ["3.7", "3.8", "3.9"]
@@ -199,6 +199,7 @@ jobs:
           # shellcheck disable=SC2086,SC2090
           container_name=$(docker run \
             --gpus all \
+            --shm-size=1g --ulimit memlock=-1 \
             -e VERBOSE \
             -e OMP_NUM_THREADS \
             -e REPLICATE \
