@@ -58,8 +58,8 @@ class MyModule(torch.nn.Module):
     def set_extra_state(
         self, state: Dict[str, Union[int, torch._tensor.Tensor]]
     ) -> None:
-        self._extra_state = state["extra_state"]
-        self._extra_state_tensor = state["extra_state_tensor"]
+        self._extra_state = state["extra_state"]  # pyre-ignore[8]
+        self._extra_state_tensor = state["extra_state_tensor"]  # pyre-ignore[8]
 
 
 class TestProcessGroupAwarePlanner(DistTensorTestBase):
