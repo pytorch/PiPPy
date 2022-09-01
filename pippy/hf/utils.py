@@ -28,23 +28,14 @@ import pippy.hf.t5 as t5
 from pippy import PipelineDriverFillDrain
 from pippy.IR import MultiUseParameterConfig, Pipe
 from pippy.microbatch import CustomReducer
+from pippy.utils import PiPPyRunArguments
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class PiPPyTrainingArguments(TrainingArguments):
-    dp_group_size: int = field(
-        default=-1, metadata={"help": "DP group size."}
-    )
-
-    pp_group_size: int = field(
-        default=-1, metadata={"help": "Pipeline group size."}
-    )
-
-    rank: int = field(
-        default=int(os.getenv("RANK", -1)), metadata={"help": "Rank."}
-    )
+class PiPPyTrainingArguments(PiPPyRunArguments, TrainingArguments):
+    # Additional arguments for PiPPy based HuggingFace training
 
     driver_index: int = field(
         default=-1, metadata={"help": "Index of current pipeline driver in all pipeline drivers."}
@@ -52,35 +43,6 @@ class PiPPyTrainingArguments(TrainingArguments):
 
     local_driver_index: int = field(
         default=-1, metadata={"help": "Index of current pipeline driver in local pipeline drivers."}
-    )
-
-    master_addr: str = field(
-        default=os.getenv('MASTER_ADDR', 'localhost'), metadata={"help": "Master address."},
-    )
-
-    master_port: str = field(
-        default=os.getenv('MASTER_PORT', '29500'), metadata={"help": "Master port."},
-    )
-
-    exclude_master: int = field(
-        default=0, metadata={"help": "Exclude master.", "choices": [0, 1]},
-    )
-
-    # TODO: use `no_cuda` instead?
-    cuda: int = field(
-        default=int(torch.cuda.is_available()), metadata={"help": "Exclude master.", "choices": [0, 1]},
-    )
-
-    chunks: Optional[int] = field(
-        default=None, metadata={"help": "Number of Chunks."}
-    )
-
-    record_mem_dumps: int = field(
-        default=0, metadata={"help": "Record memory dumps flag."}
-    )
-
-    checkpoint: int = field(
-        default=1, metadata={"help": "Checkpoint flag."}
     )
 
     _device: Optional[torch.device] = None

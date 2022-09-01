@@ -2,6 +2,8 @@
 import os
 import socket
 import logging
+from dataclasses import dataclass, field
+from typing import Optional
 
 import torch
 import torch.multiprocessing as mp
@@ -30,25 +32,73 @@ def tp_transports():
     return ["shm", "uv"] if has_efa() else None
 
 
-def run_pippy(run_master, args, *extra_args):
-    if not hasattr(args, 'world_size'):
-        assert hasattr(args, 'pp_group_size')
-        args.dp_group_size = args.dp_group_size if hasattr(args, 'dp_group_size') else 1
-    else:
-        if not hasattr(args, 'dp_group_size'):
-            args.pp_group_size = args.pp_group_size if hasattr(args, 'pp_group_size') else args.world_size
-            assert args.world_size % args.pp_group_size == 0
-            args.dp_group_size = args.world_size // args.pp_group_size
-        elif not hasattr(args, 'pp_group_size'):
-            args.dp_group_size = args.dp_group_size if hasattr(args, 'dp_group_size') else 1
-            assert args.world_size % args.dp_group_size == 0
-            args.pp_group_size = args.world_size // args.dp_group_size
-        else:
-            pass
-            # TODO: doesn't work for PiPPyTrainingArguments
-            # assert args.world_size == args.dp_group_size * args.pp_group_size
+@dataclass
+class PiPPyRunArguments:
+    # General arguments for `run_pippy()`
+
+    user_world_size: int = field(
+        default=int(os.getenv("WORLD_SIZE", -1)), metadata={"help": "Total number of ranks."}
+    )
+
+    dp_group_size: int = field(
+        default=-1, metadata={"help": "DP group size."}
+    )
+
+    pp_group_size: int = field(
+        default=-1, metadata={"help": "Pipeline group size."}
+    )
+
+    rank: int = field(
+        default=int(os.getenv("RANK", -1)), metadata={"help": "Rank."}
+    )
+
+    master_addr: str = field(
+        default=os.getenv('MASTER_ADDR', 'localhost'), metadata={"help": "Master address."},
+    )
+
+    master_port: str = field(
+        default=os.getenv('MASTER_PORT', '29500'), metadata={"help": "Master port."},
+    )
+
+    exclude_master: int = field(
+        default=0, metadata={"help": "Exclude master.", "choices": [0, 1]},
+    )
+
+    # TODO: use `no_cuda` instead?
+    cuda: int = field(
+        default=int(torch.cuda.is_available()), metadata={"help": "Exclude master.", "choices": [0, 1]},
+    )
+
+    chunks: Optional[int] = field(
+        default=None, metadata={"help": "Number of Chunks."}
+    )
+
+    record_mem_dumps: int = field(
+        default=0, metadata={"help": "Record memory dumps flag."}
+    )
+
+    checkpoint: int = field(
+        default=1, metadata={"help": "Checkpoint flag."}
+    )
+
+
+def run_pippy(run_master, args : PiPPyRunArguments, *extra_args):
+    # Check group size arguments
+    insufficient_arg_msg = "Please specify at least two of WORLD_SIZE, pp_group_size and dp_group_size"
+
+    if args.user_world_size == -1:
+        assert args.pp_group_size > 0 and args.dp_group_size > 0, insufficient_arg_msg
+        args.user_world_size = args.dp_group_size * args.pp_group_size
+    elif args.dp_group_size == -1:
+        assert args.pp_group_size > 0, insufficient_arg_msg
+        args.dp_group_size = args.user_world_size // args.pp_group_size
+    elif args.pp_group_size == -1:
+        args.pp_group_size = args.user_world_size // args.dp_group_size
 
     actual_world_size = args.dp_group_size * args.pp_group_size
+    assert actual_world_size > 0 and actual_world_size <= args.user_world_size, \
+        "Invalid combination of WORLD_SIZE, pp_group_size and dp_group_size"
+
     print(f'[PiPPy] World size: {actual_world_size}, '
           f'DP group size: {args.dp_group_size}, '
           f'PP group size: {args.pp_group_size}')
