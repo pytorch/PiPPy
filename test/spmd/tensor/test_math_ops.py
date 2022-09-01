@@ -5,7 +5,10 @@ from spmd.tensor.dispatch import OpSchema
 
 from spmd.tensor.ops.math_ops import einop_rule, reduction_rule
 from spmd.tensor.placement_types import DTensorSpec, Replicate
-from spmd.test._utils import DistTensorTestBase, with_comms  # type: ignore
+from spmd.testing.common_utils import (  # type: ignore
+    DistTensorTestBase,
+    with_comms,
+)
 from spmd import distribute_tensor, DeviceMesh, Shard
 
 

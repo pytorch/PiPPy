@@ -14,19 +14,37 @@ def default_prop_rule(op_schema: OpSchema) -> OutputSharding:
     return OutputSharding(op_schema.args_spec[0])
 
 
+# some tensor ops should not support shard, i.e. local_scalar_dense
+# shouldn't work for shard as it requires numel == 1
+def no_shard_prop_rule(op_schema: OpSchema) -> OutputSharding:
+    # by default prop the first arg spec
+    tensor_spec = op_schema.args_spec[0]
+    for placement in tensor_spec.placements:
+        if placement.is_shard():
+            return OutputSharding(
+                None,
+                failed_reason=f"Op does not support input placements "
+                f"with `Shard`, but found placements: "
+                f"{tensor_spec.placements}",
+            )
+    # otherwise default prop the first arg spec
+    return OutputSharding(tensor_spec)
+
+
 default_prop_ops = [
+    "aten._to_copy.default",
+    "aten.clone.default",
+    "aten.copy_.default",
+    "aten.detach.default",
     "aten.is_same_size.default",
     "aten.ones_like.default",
-    "aten.detach.default",
-    "aten.clone.default",
+    "aten.new_empty_strided.default",
 ]
+
+no_shard_prop_ops = ["aten._local_scalar_dense.default"]
+
 for op in default_prop_ops:
     DTensor._op_to_rules[op] = default_prop_rule
 
-# @register_impl("aten.expand.default")
-# def dist_expand(types, args=(), kwargs=None):
-#     self_tensor = args[0]
-#     device_mesh = self_tensor.device_mesh
-
-#     new_local_tensor = torch.ones_like(self_tensor.to_local())
-#     return DTensor.from_local(new_local_tensor, device_mesh, self_tensor.placements)
+for op in no_shard_prop_ops:
+    DTensor._op_to_rules[op] = no_shard_prop_rule

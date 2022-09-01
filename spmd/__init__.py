@@ -72,10 +72,7 @@ def distribute_tensor(
             raise RuntimeError("Not supported!")
 
     return DTensor(
-        tensor,
-        device_mesh,
-        placements,
-        requires_grad=tensor.requires_grad,
+        tensor, device_mesh, placements, requires_grad=tensor.requires_grad
     )
 
 
