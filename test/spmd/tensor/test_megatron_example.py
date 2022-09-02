@@ -1,13 +1,21 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
+import torch.nn as nn
 import torch.distributed as dist
 import functools
 from torch.testing._internal.common_utils import run_tests
-from spmd.test.common_utils import (  # type: ignore
+from spmd.testing.common_utils import (  # type: ignore
     DistTensorTestBase,
     with_comms,
 )
-from spmd import distribute_tensor, DeviceMesh, DTensor, Shard, Replicate
+from spmd import (
+    distribute_module,
+    distribute_tensor,
+    DeviceMesh,
+    DTensor,
+    Shard,
+    Replicate,
+)
 
 
 class SimpleModel(torch.nn.Module):
@@ -19,31 +27,6 @@ class SimpleModel(torch.nn.Module):
 
     def forward(self, x):
         return self.net2(self.relu(self.net1(x)))
-
-
-def _aggregate_local_tensor(module: torch.nn.Module) -> torch.nn.Module:
-    def hook_func(_module, _input, output):
-        if isinstance(output, DTensor):
-            replica_placement = [Replicate()]
-            return (
-                output.redistribute(output.device_mesh, replica_placement)
-                .contiguous()
-                .to_local()
-            )
-
-    module.register_forward_hook(hook_func)
-    return module
-
-
-def _replicate_input_tensor(
-    module: torch.nn.Module, device_mesh, replica_placement
-) -> torch.nn.Module:
-    def hook_func(_, input):
-        if not isinstance(input[0], DTensor):
-            return DTensor(input[0], device_mesh, replica_placement)
-
-    module.register_forward_pre_hook(hook_func)
-    return module
 
 
 def _gradient_hook(param, grad):
@@ -61,23 +44,56 @@ def shard_module(m, device_type):
     col_wise_sharding = [Shard(0)]
     row_wise_sharding = [Shard(1)]
     replicate = [Replicate()]
-    m.net1.weight = torch.nn.Parameter(
-        distribute_tensor(m.net1.weight, device_mesh, col_wise_sharding)
+
+    def shard_params(name, module):
+        if isinstance(module, nn.Linear):
+            if name == "net1":
+                sharded_weight = nn.Parameter(
+                    distribute_tensor(
+                        module.weight, device_mesh, col_wise_sharding
+                    )
+                )
+                sharded_bias = nn.Parameter(
+                    distribute_tensor(
+                        module.bias, device_mesh, col_wise_sharding
+                    )
+                )
+                module.register_parameter("weight", sharded_weight)
+                module.register_parameter("bias", sharded_bias)
+                module.weight.register_hook(
+                    functools.partial(_gradient_hook, module.weight)
+                )
+            elif name == "net2":
+                sharded_weight = nn.Parameter(
+                    distribute_tensor(
+                        module.weight, device_mesh, row_wise_sharding
+                    )
+                )
+                replicated_bias = nn.Parameter(
+                    distribute_tensor(module.bias, device_mesh, replicate)
+                )
+                module.register_parameter("weight", sharded_weight)
+                module.register_parameter("bias", replicated_bias)
+
+    def replicate_input(inputs):
+        return DTensor.from_local(inputs[0], device_mesh, replicate)
+
+    def aggregate_output(outputs):
+        assert isinstance(outputs, DTensor)
+        return (
+            outputs.redistribute(outputs.device_mesh, replicate)
+            .contiguous()
+            .to_local()
+        )
+
+    dist_mod = distribute_module(
+        m,
+        device_mesh,
+        partition_fn=shard_params,
+        input_fn=replicate_input,
+        output_fn=aggregate_output,
     )
-    m.net2.weight = torch.nn.Parameter(
-        distribute_tensor(m.net2.weight, device_mesh, row_wise_sharding)
-    )
-    m.net1.bias = torch.nn.Parameter(
-        distribute_tensor(m.net1.bias, device_mesh, col_wise_sharding)
-    )
-    m.net2.bias = torch.nn.Parameter(
-        distribute_tensor(m.net2.bias, device_mesh, replicate)
-    )
-    m = _replicate_input_tensor(m, device_mesh, replicate)
-    m.net2 = _aggregate_local_tensor(m.net2)
-    m.net1.weight.register_hook(
-        functools.partial(_gradient_hook, m.net1.weight)
-    )
+    return dist_mod
 
 
 class DistTensorMegatronTest(DistTensorTestBase):
@@ -91,7 +107,7 @@ class DistTensorMegatronTest(DistTensorTestBase):
         model = SimpleModel(self.device_type)
         torch.manual_seed(5)
         model_tp = SimpleModel(self.device_type)
-        shard_module(model_tp, self.device_type)
+        model_tp = shard_module(model_tp, self.device_type)
 
         output = model(inp)
         output_tp = model_tp(inp)
