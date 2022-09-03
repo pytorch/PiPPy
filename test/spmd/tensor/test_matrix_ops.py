@@ -140,9 +140,9 @@ class DistMatrixOpsTest(DistTensorTestBase):
         # If beta is 0, input tensor will be ignored
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         torch.manual_seed(self.rank)
-        tensor = torch.rand(3, 5, 6, device=self.device_type)
-        batch_1 = torch.rand(3, 5, 8, device=self.device_type)
-        batch_2 = torch.rand(3, 8, 6, device=self.device_type)
+        tensor = torch.rand(4, 4, 8, device=self.device_type)
+        batch_1 = torch.rand(4, 4, 8, device=self.device_type)
+        batch_2 = torch.rand(4, 8, 8, device=self.device_type)
 
         def test_placement_comb(
             tensor_placements: Sequence[Placement],
@@ -151,18 +151,21 @@ class DistMatrixOpsTest(DistTensorTestBase):
             beta: int,
             alpha: int,
         ) -> None:
-            tensor_dt = DTensor.from_local(
+            tensor_dt = distribute_tensor(
                 tensor, device_mesh, tensor_placements
             )
-            batch_1_dt = DTensor.from_local(
+            batch_1_dt = distribute_tensor(
                 batch_1, device_mesh, batch_1_placements
             )
-            batch_2_dt = DTensor.from_local(
+            batch_2_dt = distribute_tensor(
                 batch_2, device_mesh, batch_2_placements
             )
-            new_dt = torch.baddbmm(
+            new_dt = cast(DTensor, torch.baddbmm(
                 tensor_dt, batch_1_dt, batch_2_dt, beta=0.0, alpha=0.5
-            )
+            )).redistribute(device_mesh, [Replicate()])
+            assert not torch.isnan(local_result).any()
+            assert not torch.isnan(new_dt.to_local()).any()
+            print(torch.eq(new_dt.to_local(), local_result))
             self.assertEqual(new_dt.to_local(), local_result)
 
         shard0_spec = Shard(0)
@@ -197,7 +200,7 @@ class DistMatrixOpsTest(DistTensorTestBase):
                         [spec[0]], [spec[1]], [spec[2]], beta, alpha
                     )
                 except Exception as e:
-                    print(str(e))
+                    print(f"Params [{spec[0]}, {spec[1]}, {spec[2]}, {beta}, {alpha}]: {str(e)}")
 
             # TODO: support these tests
             shard_specs_comb = [
@@ -217,17 +220,18 @@ class DistMatrixOpsTest(DistTensorTestBase):
     def test_sharded_bmm(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         torch.manual_seed(self.rank)
-        input = torch.rand(3, 5, 8, device=self.device_type)
-        mat_2 = torch.rand(3, 8, 6, device=self.device_type)
+        input = torch.rand(4, 1, 4, device=self.device_type)
+        mat_2 = torch.rand(4, 4, 1, device=self.device_type)
         local_result = torch.bmm(input, mat_2)
 
         def test_placement_comb(
             placements1: Sequence[Placement],
             placements2: Sequence[Placement],
         ) -> None:
-            input_dt = DTensor.from_local(input, device_mesh, placements1)
-            mat_2_dt = DTensor.from_local(mat_2, device_mesh, placements2)
-            new_dt = torch.bmm(input_dt, mat_2_dt)
+            input_dt = distribute_tensor(input, device_mesh, placements1)
+            mat_2_dt = distribute_tensor(mat_2, device_mesh, placements2)
+            new_dt = cast(DTensor, torch.bmm(input_dt, mat_2_dt)).redistribute(device_mesh, [Replicate()])
+            print(new_dt.to_local())
             self.assertEqual(new_dt.to_local(), local_result)
 
         shard0_spec = Shard(0)
@@ -237,7 +241,7 @@ class DistMatrixOpsTest(DistTensorTestBase):
         shard_specs_comb = list(itertools.product(shard_specs, shard_specs))
         passlist = [
             [shard0_spec, shard0_spec],
-            [shard2_spec, shard1_spec],
+            #[shard2_spec, shard1_spec],
         ]
 
         def specInSeq(
@@ -245,6 +249,10 @@ class DistMatrixOpsTest(DistTensorTestBase):
         ) -> bool:
             boolSeq = map(lambda r: list(s) == list(r), l)
             return functools.reduce(lambda x, y: x or y, boolSeq, False)
+
+        # input tensors:
+        print(input)
+        print(mat_2)
 
         # tests that currently pass
         for spec in passlist:
