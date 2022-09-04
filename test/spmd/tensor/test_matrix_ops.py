@@ -12,7 +12,6 @@ from spmd import distribute_tensor, DeviceMesh
 from spmd.tensor.placement_types import Placement, Shard, Replicate, _Partial
 from typing import Sequence, cast
 import itertools
-import functools
 
 
 class DistMatrixOpsTest(DistTensorTestBase):
@@ -131,15 +130,9 @@ class DistMatrixOpsTest(DistTensorTestBase):
         self.assertEqual(tranposed_mat2.size(), torch.Size([12, 8]))
         self.assertEqual(tranposed_mat2.placements, shard_spec)
 
-    # PyTorch on cpu seems having issue on baddbmm:
-    # https://github.com/pytorch/pytorch/issues/80588
-    # TODO: Need to investigate why test failed in CPU for baddbmm.
     @with_comms
-    @skip_if_lt_x_gpu(TEST_GPU_NUM)
     def test_sharded_baddbmm(self):
-        # If beta is 0, input tensor will be ignored
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
-        torch.manual_seed(self.rank)
         tensor = torch.rand(4, 4, 8, device=self.device_type)
         batch_1 = torch.rand(4, 4, 8, device=self.device_type)
         batch_2 = torch.rand(4, 8, 8, device=self.device_type)
@@ -160,12 +153,14 @@ class DistMatrixOpsTest(DistTensorTestBase):
             batch_2_dt = distribute_tensor(
                 batch_2, device_mesh, batch_2_placements
             )
-            new_dt = cast(DTensor, torch.baddbmm(
-                tensor_dt, batch_1_dt, batch_2_dt, beta=0.0, alpha=0.5
-            )).redistribute(device_mesh, [Replicate()])
+            new_dt = cast(
+                DTensor,
+                torch.baddbmm(
+                    tensor_dt, batch_1_dt, batch_2_dt, beta=beta, alpha=alpha
+                ),
+            ).redistribute(device_mesh, [Replicate()])
             assert not torch.isnan(local_result).any()
             assert not torch.isnan(new_dt.to_local()).any()
-            print(torch.eq(new_dt.to_local(), local_result))
             self.assertEqual(new_dt.to_local(), local_result)
 
         shard0_spec = Shard(0)
@@ -176,18 +171,13 @@ class DistMatrixOpsTest(DistTensorTestBase):
             itertools.product(shard_specs, shard_specs, shard_specs)
         )
         passlist = [
-            [shard0_spec, shard0_spec, shard0_spec],
+            (shard0_spec, shard0_spec, shard0_spec),
         ]
+        # If beta is 0, input tensor will be ignored
         numeric_params_comb = [
             (0.0, 0.5),  # zero-beta
             (0.8, 0.5),  # non-zero-beta
         ]
-
-        def specInSeq(
-            s: Sequence[Placement], l: Sequence[Sequence[Placement]]
-        ) -> bool:
-            boolSeq = map(lambda r: list(s) == list(r), l)
-            return functools.reduce(lambda x, y: x or y, boolSeq, False)
 
         for beta, alpha in numeric_params_comb:
             local_result = torch.baddbmm(
@@ -195,18 +185,14 @@ class DistMatrixOpsTest(DistTensorTestBase):
             )
             # tests that currently pass
             for spec in passlist:
-                try:
-                    test_placement_comb(
-                        [spec[0]], [spec[1]], [spec[2]], beta, alpha
-                    )
-                except Exception as e:
-                    print(f"Params [{spec[0]}, {spec[1]}, {spec[2]}, {beta}, {alpha}]: {str(e)}")
+                test_placement_comb(
+                    [spec[0]], [spec[1]], [spec[2]], beta, alpha
+                )
 
             # TODO: support these tests
+            # TODO: test with replicate
             shard_specs_comb = [
-                spec
-                for spec in shard_specs_comb
-                if not specInSeq(spec, passlist)
+                spec for spec in shard_specs_comb if spec not in passlist
             ]
             for spec in shard_specs_comb:
                 with self.assertRaises(Exception):
@@ -214,14 +200,11 @@ class DistMatrixOpsTest(DistTensorTestBase):
                         [spec[0]], [spec[1]], [spec[2]], beta, alpha
                     )
 
-        # TODO: test with replicate
-
     @with_comms
     def test_sharded_bmm(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
-        torch.manual_seed(self.rank)
-        input = torch.rand(4, 1, 4, device=self.device_type)
-        mat_2 = torch.rand(4, 4, 1, device=self.device_type)
+        input = torch.rand(4, 8, 4, device=self.device_type)
+        mat_2 = torch.rand(4, 4, 8, device=self.device_type)
         local_result = torch.bmm(input, mat_2)
 
         def test_placement_comb(
@@ -230,8 +213,9 @@ class DistMatrixOpsTest(DistTensorTestBase):
         ) -> None:
             input_dt = distribute_tensor(input, device_mesh, placements1)
             mat_2_dt = distribute_tensor(mat_2, device_mesh, placements2)
-            new_dt = cast(DTensor, torch.bmm(input_dt, mat_2_dt)).redistribute(device_mesh, [Replicate()])
-            print(new_dt.to_local())
+            new_dt = cast(DTensor, torch.bmm(input_dt, mat_2_dt)).redistribute(
+                device_mesh, [Replicate()]
+            )
             self.assertEqual(new_dt.to_local(), local_result)
 
         shard0_spec = Shard(0)
@@ -240,33 +224,22 @@ class DistMatrixOpsTest(DistTensorTestBase):
         shard_specs = [shard0_spec, shard1_spec, shard2_spec]
         shard_specs_comb = list(itertools.product(shard_specs, shard_specs))
         passlist = [
-            [shard0_spec, shard0_spec],
-            #[shard2_spec, shard1_spec],
+            (shard0_spec, shard0_spec),
+            (shard2_spec, shard1_spec),
         ]
-
-        def specInSeq(
-            s: Sequence[Placement], l: Sequence[Sequence[Placement]]
-        ) -> bool:
-            boolSeq = map(lambda r: list(s) == list(r), l)
-            return functools.reduce(lambda x, y: x or y, boolSeq, False)
-
-        # input tensors:
-        print(input)
-        print(mat_2)
 
         # tests that currently pass
         for spec in passlist:
             test_placement_comb([spec[0]], [spec[1]])
 
         # TODO: support these tests
+        # TODO: test with replicate
         shard_specs_comb = [
-            spec for spec in shard_specs_comb if not specInSeq(spec, passlist)
+            spec for spec in shard_specs_comb if spec not in passlist
         ]
         for spec in shard_specs_comb:
             with self.assertRaises(Exception):
                 test_placement_comb([spec[0]], [spec[1]])
-
-        # TODO: test with replicate
 
 
 if __name__ == "__main__":
