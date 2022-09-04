@@ -130,7 +130,9 @@ class DistMatrixOpsTest(DistTensorTestBase):
         self.assertEqual(tranposed_mat2.size(), torch.Size([12, 8]))
         self.assertEqual(tranposed_mat2.placements, shard_spec)
 
+    # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
     @with_comms
+    @skip_if_lt_x_gpu(TEST_GPU_NUM)
     def test_sharded_baddbmm(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         tensor = torch.rand(4, 4, 8, device=self.device_type)
