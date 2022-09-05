@@ -1,4 +1,4 @@
 # Python dependencies required for release
 --pre
 --find-links https://download.pytorch.org/whl/nightly/cu113/torch_nightly.html
-torch>=1.13.0.dev20220904
+torch
