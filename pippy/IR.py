@@ -120,6 +120,7 @@ def _insert_stage_symbolic_backward(g : pippy.fx.Graph, output_loss_value_spec):
 
     with g.inserting_before(output_node):
         barrier_tokens = []
+        last_grads = None
 
         for node in reversed(g.nodes):
             if node not in live_nodes:
@@ -156,6 +157,7 @@ def _insert_stage_symbolic_backward(g : pippy.fx.Graph, output_loss_value_spec):
                 grad_call_proxy = pippy.fx.Proxy(grad_call)
                 grads, barrier_token = grad_call_proxy[0].node, grad_call_proxy[1].node
                 barrier_tokens.append(barrier_token)
+                last_grads = grads
 
                 input_nodes = list(node.all_input_nodes)
                 grads_proxy = pippy.fx.Proxy(grads)
@@ -168,7 +170,7 @@ def _insert_stage_symbolic_backward(g : pippy.fx.Graph, output_loss_value_spec):
         # guaranteed that all backwards jobs for that micro-batch have been executed.
         # When all micro-batch pipeline outputs are ready, gradients have been fully
         # computed and synchronized and the optimizer step can be applied.
-        barrier_call = g.call_function(sync_barrier, (output_node.args[0], barrier_tokens))
+        barrier_call = g.call_function(sync_barrier, (output_node.args[0], barrier_tokens, last_grads))
         output_node.args = (barrier_call,)
 
     return g
@@ -375,6 +377,7 @@ class Pipe(torch.nn.Module):
         self.executor : DetachExecutor = DetachExecutor(self.split_gm)
         self.num_stages : int = num_stages
         self.has_loss_and_backwards = has_loss_and_backward
+        self.last_grads = None
 
         for node in split_gm.graph.nodes:
             assert (node.op in {'call_module', 'placeholder', 'output'} or
@@ -457,7 +460,12 @@ class Pipe(torch.nn.Module):
             ba.apply_defaults()
             executor_args = ba.arguments.values()
 
-        return self.executor.run(*executor_args)
+        res = self.executor.run(*executor_args)
+
+        if self.has_loss_and_backwards:
+            res, self.last_grads = res
+
+        return res
 
     def remap_qualname(self, qualname):
         # TODO: annoying
@@ -491,6 +499,7 @@ class Pipe(torch.nn.Module):
                 found_idxs.setdefault(node.meta['stage_idx'])
                 num_stages += 1
 
+        # this assert will fail if a split point is inserted before the first layer, which creates empty first submodule
         assert all(i in found_idxs for i in range(num_stages))
 
         return num_stages
