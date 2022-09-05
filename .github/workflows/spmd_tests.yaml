@@ -35,7 +35,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install pytest-shard numpy
           if [ -f spmd/requirements_dev.txt ]; then pip install -r spmd/requirements_dev.txt; fi
-          if [ -f spmd/requirements.txt ]; then pip install -r spmd/requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
+          if [ -f spmd/requirements.txt ]; then pip install -r spmd/requirements.txt; fi
       - name: Test with pytest
         run: |
           pytest --shard-id=${{ matrix.shard }} --num-shards=4 --cov=spmd test/spmd/
