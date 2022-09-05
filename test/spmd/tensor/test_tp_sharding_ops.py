@@ -4,10 +4,8 @@ from torch.testing._internal.common_utils import run_tests
 from spmd.testing.common_utils import (  # type: ignore
     DistTensorTestBase,
     with_comms,
-    TEST_GPU_NUM,
 )
 from spmd import DeviceMesh, DTensor, Shard, Replicate, distribute_tensor
-from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 
 
 class TPShardingOpsTest(DistTensorTestBase):

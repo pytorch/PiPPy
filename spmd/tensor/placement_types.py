@@ -40,7 +40,7 @@ class Replicate(Placement):
 @dataclass
 class _Partial(Placement):
     # partial placement with reduce op
-    reduce_op: c10d.ReduceOp = c10d.ReduceOp.SUM
+    reduce_op: c10d.ReduceOp = c10d.ReduceOp.SUM  # type: ignore
 
 
 # used internally to propagate the placements

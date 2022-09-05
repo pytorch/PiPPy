@@ -10,7 +10,7 @@ from spmd.testing.common_utils import (  # type: ignore
 )
 from spmd import distribute_tensor, DeviceMesh
 from spmd.tensor.placement_types import Placement, Shard, Replicate, _Partial
-from typing import Sequence, cast
+from typing import List, cast
 import itertools
 
 
@@ -84,7 +84,7 @@ class DistMatrixOpsTest(DistTensorTestBase):
         local_res = torch.mm(t1, t2)
 
         def test_placement_comb(
-            placements1: Sequence[Placement], placements2: Sequence[Placement]
+            placements1: List[Placement], placements2: List[Placement]
         ) -> None:
             dt1 = distribute_tensor(t1, device_mesh, placements1)
             dt2 = distribute_tensor(t2, device_mesh, placements2)
@@ -140,9 +140,9 @@ class DistMatrixOpsTest(DistTensorTestBase):
         batch_2 = torch.rand(4, 8, 8, device=self.device_type)
 
         def test_placement_comb(
-            tensor_placements: Sequence[Placement],
-            batch_1_placements: Sequence[Placement],
-            batch_2_placements: Sequence[Placement],
+            tensor_placements: List[Placement],
+            batch_1_placements: List[Placement],
+            batch_2_placements: List[Placement],
             beta: int,
             alpha: int,
         ) -> None:
@@ -210,8 +210,8 @@ class DistMatrixOpsTest(DistTensorTestBase):
         local_result = torch.bmm(input, mat_2)
 
         def test_placement_comb(
-            placements1: Sequence[Placement],
-            placements2: Sequence[Placement],
+            placements1: List[Placement],
+            placements2: List[Placement],
         ) -> None:
             input_dt = distribute_tensor(input, device_mesh, placements1)
             mat_2_dt = distribute_tensor(mat_2, device_mesh, placements2)
