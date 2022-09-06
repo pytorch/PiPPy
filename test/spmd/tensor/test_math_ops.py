@@ -143,12 +143,12 @@ class DistMathOpsTest(DistTensorTestBase):
         with self.assertRaisesRegex(RuntimeError, "across the same mesh dim!"):
             einop_rule("mk,kn->mn", OpSchema((mat1_spec, mat2_spec), {}))
 
-        mat1, mat2 = [0, -1], [-1, -1]
+        mat1, mat2 = [0, -1], [1, -1]
         mat1_spec = DTensorSpec.from_dim_map(mesh, mat1, [])
         mat2_spec = DTensorSpec.from_dim_map(mesh, mat2, [])
 
         with self.assertRaisesRegex(
-            AssertionError, "sharded two different ways:"
+            RuntimeError, "sharded two different ways:"
         ):
             einop_rule("ij,ij->ij", OpSchema((mat1_spec, mat2_spec), {}))
 

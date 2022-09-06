@@ -1,5 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import List, Dict, cast
+from typing import List, Dict, Tuple, cast
 from spmd.tensor.api import DTensor
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.placement_types import _Partial, DTensorSpec
@@ -15,6 +15,27 @@ def _gen_spec_with_pending_sum(
     ]
     return DTensorSpec(
         spec.mesh, new_placements, shape=spec.shape, ndim=spec.ndim
+    )
+
+
+def _gen_reshard_suggestions(
+    input_dims: List[str],
+    input_specs: Tuple[DTensorSpec, ...],
+    dim_to_sharding: Dict[str, int],
+    pending_sum: List[int],
+) -> OutputSharding:
+    suggested_arg_specs: List[DTensorSpec] = []
+    for input_dim, input_spec in zip(input_dims, input_specs):
+        dim_map = [dim_to_sharding[dim] for dim in input_dim]
+        suggested_arg_specs.append(
+            DTensorSpec.from_dim_map(
+                mesh=input_spec.mesh, dim_map=dim_map, sums=pending_sum
+            )
+        )
+    return OutputSharding(
+        None,
+        schema_suggestions=[OpSchema(tuple(suggested_arg_specs), {})],
+        failed_reason="Input placements op sharding propagation failed, need to reshard!",
     )
 
 
@@ -43,6 +64,7 @@ def einop_rule(
     dim_to_sharding: Dict[str, int] = {}
     pending_sums: List[int] = []
     seen_shardings = {}
+    needs_reshard = False
     # partial_linearity means if the op support linearity, and there exist
     # partial placements, all placements on the mesh dim should be partial
     partial_linearity = True
@@ -83,6 +105,23 @@ def einop_rule(
             failed_reason="Input placements does not satisfy linearity property of the op!",
         )
 
+    def merge_sharding(dim: str, a: int, b: int) -> int:
+        # merge the sharding of inputs if it's able to merge, i.e. we can merge
+        # replicate and shard to shard, but this will trigger an reshard operation
+        if a != b:
+            if a == -1 or b == -1:
+                # rehsard the replicate to match the sharded one
+                nonlocal needs_reshard
+                needs_reshard = True
+                return a if a != -1 else b
+            else:
+                # TODO: further merge the sharding properly (i.e. reshard one input to replicate)
+                raise RuntimeError(
+                    f"{equation}: dim {dim} sharded two different ways: {a} and {b}"
+                )
+        else:
+            return a
+
     for input_dim, input_spec in zip(input_dims, input_specs):
         for dim, mesh_dim in zip(input_dim, input_spec.dim_map):
             if (
@@ -99,11 +138,17 @@ def einop_rule(
             if dim not in dim_to_sharding:
                 dim_to_sharding[dim] = mesh_dim
             else:
-                # TODO: merge the sharding properly, if cann't be merged, return suggestion
-                assert (
-                    dim_to_sharding[dim] == mesh_dim
-                ), f"{equation}: dim {dim} sharded two different ways: {mesh_dim} and {dim_to_sharding[dim]}"
+                dim_to_sharding[dim] = merge_sharding(
+                    dim, dim_to_sharding[dim], mesh_dim
+                )
 
+    if needs_reshard:
+        # TODO: merge this logic with partial linearity checks
+        return _gen_reshard_suggestions(
+            input_dims, input_specs, dim_to_sharding, pending_sums
+        )
+
+    # if no need to reshard, we directly generate the output sharding
     for dim, shard_on_mesh in dim_to_sharding.items():
         if dim not in output_dims[0] and shard_on_mesh != -1:
             pending_sums.append(shard_on_mesh)

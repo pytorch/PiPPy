@@ -58,16 +58,28 @@ def bmm_rules(op_schema: OpSchema) -> OutputSharding:
 @register_prop_rule("aten.baddbmm.default")
 def baddbmm_rules(op_schema: OpSchema) -> OutputSharding:
     input_spec, mat1_spec, mat2_spec = op_schema.args_spec
-    bmm_output_spec = bmm_rules(
-        OpSchema((mat1_spec, mat2_spec), {})
-    ).output_spec
-    if bmm_output_spec is None:
-        # TODO: add suggestion
-        return OutputSharding(None)
+    bmm_output_sharding = bmm_rules(OpSchema((mat1_spec, mat2_spec), {}))
+    if bmm_output_sharding.output_spec is None:
+        # TODO: add more suggestions
+        if bmm_output_sharding.schema_suggestions is not None:
+            input_suggestion = bmm_output_sharding.schema_suggestions[0]
+            # reconstruct baddbmm output sharding
+            bmm_output_sharding.schema_suggestions[0] = OpSchema(
+                args_schema=(
+                    input_spec,
+                    input_suggestion.args_schema[0],
+                    input_suggestion.args_schema[1],
+                ),
+                kwargs_schema=op_schema.kwargs_schema,
+            )
+            return bmm_output_sharding
+        else:
+            return OutputSharding(None)
 
     # run point wise rule on input + (bmm_out) with linearity
     output_sharding = pointwise_rule(
-        OpSchema((input_spec, bmm_output_spec), {}), linearity=True
+        OpSchema((input_spec, bmm_output_sharding.output_spec), {}),
+        linearity=True,
     )
     # if propagation failed, edit the schema suggestion from pointwise rules
     # to return baddbmm suggestion instead as it's a chained suggestion.
