@@ -162,7 +162,7 @@ class DeviceMesh(object):
             else:
                 if len(dim_groups) != 0:
                     raise RuntimeError(
-                        f"length of dim_groups ({len(dim_groups)}) expected to be equal to 0"
+                        f"length of dim_groups ({len(dim_groups)}) expected to be equal to 0 on rank {self.get_rank()} for mesh {self.mesh}"
                     )
 
             self._dim_groups = dim_groups
