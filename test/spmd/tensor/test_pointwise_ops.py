@@ -96,9 +96,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         torch.manual_seed(self.rank)
         shard_spec = [Shard(0)]
         input_size = (8, 4)
-        input_tensor = torch.randn(
-            *input_size, device=self.device_type
-        )
+        input_tensor = torch.randn(*input_size, device=self.device_type)
         dtensor = DTensor.from_local(input_tensor, device_mesh, shard_spec)
 
         other_tensor = torch.randn(*input_size, device=self.device_type)
