@@ -140,7 +140,7 @@ def operator_dispatch(
         output_sharding = sharding_prop_func(op_schema)
 
         # step 2. if can't get output_spec from sharding
-        # propagation (i.e. no ruls apply for input
+        # propagation (i.e. no rules apply for input
         # placements), we do auto redistribute on inputs
         # to get an eligble input, which we will pick a
         # target schema base on the redistribute cost

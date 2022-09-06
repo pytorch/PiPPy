@@ -26,6 +26,7 @@ from spmd import DeviceMesh, distribute_tensor, Shard, Replicate
 from spmd.tensor.api import DTensor
 from spmd.tensor.placement_types import Placement
 
+
 # default GPU test size/world size
 TEST_GPU_NUM = 4
 
