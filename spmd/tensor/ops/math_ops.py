@@ -1,5 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import List, Dict, cast
+from typing import List, Dict, Tuple, cast
 from spmd.tensor.api import DTensor
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.placement_types import _Partial, DTensorSpec
@@ -20,11 +20,11 @@ def _gen_spec_with_pending_sum(
 
 def _gen_reshard_suggestions(
     input_dims: List[str],
-    input_specs: List[DTensorSpec],
+    input_specs: Tuple[DTensorSpec, ...],
     dim_to_sharding: Dict[str, int],
     pending_sum: List[int],
-):
-    suggested_arg_specs = []
+) -> OutputSharding:
+    suggested_arg_specs: List[DTensorSpec] = []
     for input_dim, input_spec in zip(input_dims, input_specs):
         dim_map = [dim_to_sharding[dim] for dim in input_dim]
         suggested_arg_specs.append(
@@ -34,7 +34,7 @@ def _gen_reshard_suggestions(
         )
     return OutputSharding(
         None,
-        schema_suggestions=[OpSchema(suggested_arg_specs, {})],
+        schema_suggestions=[OpSchema(tuple(suggested_arg_specs), {})],
         failed_reason="Input placements op sharding propagation failed, need to reshard!",
     )
 
@@ -105,7 +105,7 @@ def einop_rule(
             failed_reason="Input placements does not satisfy linearity property of the op!",
         )
 
-    def merge_sharding(dim, a, b):
+    def merge_sharding(dim: str, a: int, b: int) -> int:
         # merge the sharding of inputs if it's able to merge, i.e. we can merge
         # replicate and shard to shard, but this will trigger an reshard operation
         if a != b:
