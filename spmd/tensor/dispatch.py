@@ -20,9 +20,10 @@ from spmd.tensor.utils import (
 
 
 """
-If set to true, __DEBUG_STRICT will fail when an op doesn't have a sharding rule registered.
+If _ENABLE_FALLBACK set to False, dispatch will fail when an op doesn't
+have a sharding rule registered.
 """
-_DEBUG_STRICT = False
+_ENABLE_FALLBACK = False
 
 
 @dataclass
@@ -101,9 +102,7 @@ def _reshape_alias(
 
 _CURRENT_DECOMPOSITION_TABLE: Dict[
     Callable[..., object], Callable[..., object]
-] = {
-    torch.ops.aten._reshape_alias.default: _reshape_alias,
-}
+] = {torch.ops.aten._reshape_alias.default: _reshape_alias}
 
 
 def operator_dispatch(
@@ -132,10 +131,7 @@ def operator_dispatch(
     args_schema = tree_map(unwrap_schema, args)
     kwargs_schema = tree_map(unwrap_schema, kwargs)
 
-    op_schema = OpSchema(
-        args_schema,
-        kwargs_schema,
-    )
+    op_schema = OpSchema(args_schema, kwargs_schema)
     sharding_prop_func = op_to_rules.get(op_key, None)
 
     # step 1. there's sharding propagation rule, run
@@ -144,7 +140,7 @@ def operator_dispatch(
         output_sharding = sharding_prop_func(op_schema)
 
         # step 2. if can't get output_spec from sharding
-        # propagation (i.e. no ruls apply for input
+        # propagation (i.e. no rules apply for input
         # placements), we do auto redistribute on inputs
         # to get an eligble input, which we will pick a
         # target schema base on the redistribute cost
@@ -186,10 +182,7 @@ def operator_dispatch(
         # run local op computation with potentially modified args/kwargs
         local_tensor_args = cast(Tuple[object, ...], local_tensor_args)
         local_tensor_kwargs = cast(Dict[str, object], local_tensor_kwargs)
-        local_results = op_call(
-            *local_tensor_args,
-            **local_tensor_kwargs,
-        )
+        local_results = op_call(*local_tensor_args, **local_tensor_kwargs)
 
         if schema_kind == SchemaKind.inplace:
             # inplace op should return self instead of re-wrapping
@@ -218,7 +211,7 @@ def operator_dispatch(
         # local tensor compute, this is wront currently
         # we will change the behavior to reshard to full
         # replicate and do the computatation
-        if _DEBUG_STRICT:
+        if not _ENABLE_FALLBACK:
             raise NotImplementedError(
                 f"Operator {op_key} does not have a DistributedTensor rule registered."
             )
@@ -229,8 +222,5 @@ def operator_dispatch(
         else:
             tensor_args = tree_map(unwrap_local_tensor, args)
             tensor_kwargs = tree_map(unwrap_local_tensor, kwargs)
-            local_results = op_call(
-                *tensor_args,
-                **tensor_kwargs,
-            )
+            local_results = op_call(*tensor_args, **tensor_kwargs)
             return wrap(local_results, op_schema.args_spec[0])

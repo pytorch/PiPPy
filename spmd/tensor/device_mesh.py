@@ -5,11 +5,11 @@ import torch
 from torch.distributed.distributed_c10d import (
     get_rank,
     get_world_size,
+    get_global_rank,
     ReduceOp,
     GroupMember,
     scatter,
     _get_default_group,
-    _get_global_rank,
     _reduce_scatter_base,
     new_group,
     ProcessGroup,
@@ -271,7 +271,7 @@ class DeviceMesh(object):
         # src need to be global rank
         src_for_dim = 0
         if dim_group is not GroupMember.WORLD:
-            src_for_dim = _get_global_rank(dim_group, 0)
+            src_for_dim = get_global_rank(dim_group, 0)
         tensor = torch.empty_like(to_scatter[0])
         if src_for_dim == get_rank():
             scatter(
@@ -290,7 +290,7 @@ class DeviceMesh(object):
         # src need to be global rank
         src_for_dim = 0
         if dim_group is not GroupMember.WORLD:
-            src_for_dim = _get_global_rank(dim_group, 0)
+            src_for_dim = get_global_rank(dim_group, 0)
 
         return broadcast(tensor.contiguous(), src=src_for_dim, group=dim_group)
 
@@ -330,7 +330,7 @@ class DeviceMesh(object):
     def all_reduce(
         self,
         tensor: torch.Tensor,
-        op: ReduceOp = ReduceOp.SUM,
+        op: ReduceOp = ReduceOp.SUM,  # type: ignore
         mesh_dim: int = 0,
     ):
         dim_group = self._dim_groups[mesh_dim]
@@ -341,7 +341,7 @@ class DeviceMesh(object):
         self,
         output: torch.Tensor,
         input: torch.Tensor,
-        op: ReduceOp = ReduceOp.SUM,
+        op: ReduceOp = ReduceOp.SUM,  # type: ignore
         mesh_dim: int = 0,
     ):
         # NOTE: two caveats:

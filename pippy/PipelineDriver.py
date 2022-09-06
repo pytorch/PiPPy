@@ -942,6 +942,7 @@ class PipelineDriverBase(torch.nn.Module):
             assert len(self.all_ranks) == self.world_size, "Explicitly specified ranks must match world_size"
         else:
             self.all_ranks = list(range(self.world_size))
+        logging.info(f'[root] Creating pipeline driver with {self.world_size} workers: {self.all_ranks}')
 
         class ExecutorDescriptor:
             name : str

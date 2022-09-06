@@ -48,3 +48,54 @@ def addmm_rules(op_schema: OpSchema) -> OutputSharding:
 @register_prop_rule("aten.t.default")
 def transpose_rule(op_schema: OpSchema) -> OutputSharding:
     return einop_rule("ij->ji", op_schema)
+
+
+@register_prop_rule("aten.bmm.default")
+def bmm_rules(op_schema: OpSchema) -> OutputSharding:
+    return einop_rule("bmk,bkn->bmn", op_schema, linearity=False)
+
+
+@register_prop_rule("aten.baddbmm.default")
+def baddbmm_rules(op_schema: OpSchema) -> OutputSharding:
+    input_spec, mat1_spec, mat2_spec = op_schema.args_spec
+    bmm_output_sharding = bmm_rules(OpSchema((mat1_spec, mat2_spec), {}))
+    if bmm_output_sharding.output_spec is None:
+        # TODO: add more suggestions
+        if bmm_output_sharding.schema_suggestions is not None:
+            input_suggestion = bmm_output_sharding.schema_suggestions[0]
+            # reconstruct baddbmm output sharding
+            bmm_output_sharding.schema_suggestions[0] = OpSchema(
+                args_schema=(
+                    input_spec,
+                    input_suggestion.args_schema[0],
+                    input_suggestion.args_schema[1],
+                ),
+                kwargs_schema=op_schema.kwargs_schema,
+            )
+            return bmm_output_sharding
+        else:
+            return OutputSharding(None)
+
+    # run point wise rule on input + (bmm_out) with linearity
+    output_sharding = pointwise_rule(
+        OpSchema((input_spec, bmm_output_sharding.output_spec), {}),
+        linearity=True,
+    )
+    # if propagation failed, edit the schema suggestion from pointwise rules
+    # to return baddbmm suggestion instead as it's a chained suggestion.
+    if (
+        output_sharding.output_spec is None
+        and output_sharding.schema_suggestions is not None
+    ):
+        pointwise_suggestion = output_sharding.schema_suggestions[0]
+        assert output_sharding.schema_suggestions is not None
+        output_sharding.schema_suggestions[0] = OpSchema(
+            args_schema=(
+                pointwise_suggestion.args_schema[0],
+                mat1_spec,
+                mat2_spec,
+            ),
+            kwargs_schema=op_schema.kwargs_schema,
+        )
+
+    return output_sharding
