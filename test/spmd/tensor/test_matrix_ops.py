@@ -168,12 +168,22 @@ class DistMatrixOpsTest(DistTensorTestBase):
         shard0_spec = Shard(0)
         shard1_spec = Shard(1)
         shard2_spec = Shard(2)
-        shard_specs = [shard0_spec, shard1_spec, shard2_spec]
+        replica_spec = Replicate()
+        shard_specs = [shard0_spec, shard1_spec, shard2_spec, replica_spec]
         shard_specs_comb = list(
             itertools.product(shard_specs, shard_specs, shard_specs)
         )
         passlist = [
             (shard0_spec, shard0_spec, shard0_spec),
+            (shard0_spec, shard0_spec, replica_spec),
+            (shard1_spec, shard1_spec, replica_spec),
+            (shard0_spec, replica_spec, shard0_spec),
+            (shard2_spec, replica_spec, shard2_spec),
+            (replica_spec, shard0_spec, shard0_spec),
+            (replica_spec, shard1_spec, replica_spec),
+            (replica_spec, shard2_spec, shard1_spec),
+            (replica_spec, replica_spec, shard2_spec),
+            (replica_spec, replica_spec, replica_spec),
         ]
         # If beta is 0, input tensor will be ignored
         numeric_params_comb = [
@@ -203,7 +213,7 @@ class DistMatrixOpsTest(DistTensorTestBase):
                     )
 
     @with_comms
-    def test_sharded_bmm(self):
+    def test_bmm(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         input = torch.rand(4, 8, 4, device=self.device_type)
         mat_2 = torch.rand(4, 4, 8, device=self.device_type)
@@ -223,11 +233,21 @@ class DistMatrixOpsTest(DistTensorTestBase):
         shard0_spec = Shard(0)
         shard1_spec = Shard(1)
         shard2_spec = Shard(2)
-        shard_specs = [shard0_spec, shard1_spec, shard2_spec]
-        shard_specs_comb = list(itertools.product(shard_specs, shard_specs))
+        replica_spec = Replicate()
+        placement_specs = [shard0_spec, shard1_spec, shard2_spec, replica_spec]
+        shard_specs_comb = list(
+            itertools.product(placement_specs, placement_specs)
+        )
         passlist = [
             (shard0_spec, shard0_spec),
+            (shard0_spec, replica_spec),
+            (shard1_spec, replica_spec),
+            (shard2_spec, replica_spec),
+            (replica_spec, shard0_spec),
+            (replica_spec, shard1_spec),
+            (replica_spec, shard2_spec),
             (shard2_spec, shard1_spec),
+            (replica_spec, replica_spec),
         ]
 
         # tests that currently pass
@@ -235,7 +255,6 @@ class DistMatrixOpsTest(DistTensorTestBase):
             test_placement_comb([spec[0]], [spec[1]])
 
         # TODO: support these tests
-        # TODO: test with replicate
         shard_specs_comb = [
             spec for spec in shard_specs_comb if spec not in passlist
         ]
