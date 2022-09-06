@@ -5,11 +5,11 @@ import torch
 from torch.distributed.distributed_c10d import (
     get_rank,
     get_world_size,
+    get_global_rank,
     ReduceOp,
     GroupMember,
     scatter,
     _get_default_group,
-    get_global_rank,
     _reduce_scatter_base,
     new_group,
     ProcessGroup,
@@ -311,7 +311,7 @@ class DeviceMesh(object):
     def all_reduce(
         self,
         tensor: torch.Tensor,
-        op: ReduceOp = ReduceOp.SUM,
+        op: ReduceOp = ReduceOp.SUM,  # type: ignore
         mesh_dim: int = 0,
     ):
         dim_group = self._dim_groups[mesh_dim]
@@ -322,7 +322,7 @@ class DeviceMesh(object):
         self,
         output: torch.Tensor,
         input: torch.Tensor,
-        op: ReduceOp = ReduceOp.SUM,
+        op: ReduceOp = ReduceOp.SUM,  # type: ignore
         mesh_dim: int = 0,
     ):
         # NOTE: two caveats:

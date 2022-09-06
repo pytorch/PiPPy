@@ -4,8 +4,8 @@ import torch
 from torch.distributed.distributed_c10d import (
     ProcessGroup,
     new_group,
-    get_world_size,
     get_global_rank,
+    get_world_size,
 )
 from torch.testing._internal.common_utils import run_tests
 from spmd.testing.common_utils import (  # type: ignore
