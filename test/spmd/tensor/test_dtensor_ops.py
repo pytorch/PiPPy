@@ -602,7 +602,6 @@ dtensor_fails = {
     xfail("take_along_dim"),
     xfail("take"),
     xfail("tan"),
-    xfail("tanh"),
     xfail("tensor_split"),
     xfail("tensordot"),
     xfail("to_sparse"),
