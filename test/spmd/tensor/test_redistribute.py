@@ -171,7 +171,12 @@ class RedistributeTest(DistTensorTestBase):
         # replicate to partial on sub groups
         local_tensor = torch.randn(12, 3, device=self.device_type)
         subgroup = new_group(ranks=[1, 3])
-        device_mesh = DeviceMesh(self.device_type, [1, 3], dim_groups=subgroup)
+        if self.rank == 1 or self.rank == 3:
+            device_mesh = DeviceMesh(
+                self.device_type, [1, 3], dim_groups=[subgroup]
+            )
+        else:
+            device_mesh = DeviceMesh(self.device_type, [1, 3], dim_groups=[])
         # 1) test replicate -> partial on subgroup
         replica_tensor = DTensor(
             local_tensor,

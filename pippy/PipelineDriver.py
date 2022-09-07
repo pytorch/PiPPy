@@ -1204,9 +1204,9 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
         if target is operator.getitem and isinstance(args[0], ValueReference):
             stage_id = args[0].stage_id
             num_users = len(users)
-            if (not torch.is_grad_enabled() or
-                    args[0].unique_key == "noop" or
-                    num_users == 0):
+            if not torch.is_grad_enabled() and args[0].unique_key == "noop":
+                return ValueReference(stage_id, "noop")
+            elif num_users == 0:
                 # TODO: investigate why there are getitem calls with 0 users
                 return ValueReference(stage_id, "noop")
             else:
