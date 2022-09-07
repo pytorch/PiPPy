@@ -126,6 +126,10 @@ def operator_dispatch(
     func_schema = FunctionSchema.parse(str(op_call._schema))
     schema_kind = func_schema.kind()
 
+    # unwrap the args/kwargs schema
+    args_schema = tree_map(unwrap_schema, args)
+    kwargs_schema = tree_map(unwrap_schema, kwargs)
+
     op_schema = OpSchema(args_schema, kwargs_schema)
 
     if _DEBUG_VERBOSE and torch.distributed.get_rank() == 0:
@@ -139,10 +143,6 @@ def operator_dispatch(
     if op_key in custom_dispatch_ops:
         # dispatch to user defined custom distributed tensor ops
         return custom_dispatch_ops[op_key](*args, **kwargs)
-
-    # unwrap the args/kwargs schema
-    args_schema = tree_map(unwrap_schema, args)
-    kwargs_schema = tree_map(unwrap_schema, kwargs)
 
     sharding_prop_func = op_to_rules.get(op_key, None)
 
