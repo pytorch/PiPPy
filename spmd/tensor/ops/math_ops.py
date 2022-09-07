@@ -6,18 +6,6 @@ from spmd.tensor.placement_types import _Partial, DTensorSpec
 from spmd.tensor.ops.utils import as_list
 
 
-def _gen_spec_with_pending_sum(
-    spec: DTensorSpec, pending_sum: List[int]
-) -> DTensorSpec:
-    new_placements = [
-        placement if i not in pending_sum else _Partial()
-        for i, placement in enumerate(spec.placements)
-    ]
-    return DTensorSpec(
-        spec.mesh, new_placements, shape=spec.shape, ndim=spec.ndim
-    )
-
-
 def _gen_reshard_suggestions(
     input_dims: List[str],
     input_specs: Tuple[DTensorSpec, ...],
@@ -62,48 +50,11 @@ def einop_rule(
     output_dim = output_dims[0]
 
     dim_to_sharding: Dict[str, int] = {}
-    pending_sums: List[int] = []
+    # record pending sum, key is mesh dimension, value is pending sum
+    # counter across input specs
+    pending_sums_counter: Dict[int, int] = {}
     seen_shardings = {}
     needs_reshard = False
-    # partial_linearity means if the op support linearity, and there exist
-    # partial placements, all placements on the mesh dim should be partial
-    partial_linearity = True
-
-    # deal with partial placements, throw if it's not linearity op
-    for mesh_dim in range(input_specs[0].mesh.ndim):
-        for idx, spec in enumerate(input_specs):
-            if spec.placements[mesh_dim].is_partial():
-                if not linearity:
-                    raise RuntimeError(
-                        "Cannot do generic op on a tensor with partial sums"
-                    )
-                elif mesh_dim not in pending_sums and idx != 0:
-                    # If the first input mesh dim is not partial
-                    # then it does not conform with partial linearity
-                    # property (all input mesh dim should be partial)
-                    partial_linearity = False
-                elif idx == 0:
-                    seen_shardings[mesh_dim] = "+"
-                # update pending sum list
-                pending_sums.append(mesh_dim)
-            else:
-                if mesh_dim in pending_sums:
-                    # fail if there's already pending sum on mesh dim!
-                    partial_linearity = False
-
-    if linearity and not partial_linearity:
-        # it's a op that support linearity, but failed on partial linearity check
-        # we fail the sharding propagation with suggestion to make all inputs
-        # be partial on the corresponding mesh dim
-        new_arg_specs = tuple(
-            _gen_spec_with_pending_sum(spec, pending_sums)
-            for spec in input_specs
-        )
-        return OutputSharding(
-            None,
-            schema_suggestions=[OpSchema(new_arg_specs, {})],
-            failed_reason="Input placements does not satisfy linearity property of the op!",
-        )
 
     def merge_sharding(dim: str, a: int, b: int) -> int:
         # merge the sharding of inputs if it's able to merge, i.e. we can merge
@@ -123,6 +74,17 @@ def einop_rule(
             return a
 
     for input_dim, input_spec in zip(input_dims, input_specs):
+        # deal with partial sums
+        input_sums = input_spec.sums
+        for sum_dim in input_sums:
+            if sum_dim not in pending_sums_counter:
+                seen_shardings[sum_dim] = "+"
+            # update pending sum counter for pending sum mesh
+            # dimension with the occurance from each input
+            pending_sums_counter[sum_dim] = (
+                pending_sums_counter.get(sum_dim, 0) + 1
+            )
+
         for dim, mesh_dim in zip(input_dim, input_spec.dim_map):
             if (
                 mesh_dim in seen_shardings
@@ -142,6 +104,18 @@ def einop_rule(
                     dim, dim_to_sharding[dim], mesh_dim
                 )
 
+    if pending_sums_counter and not linearity:
+        raise RuntimeError("Cannot do generic op on a tensor with partial sums")
+    else:
+        # It's a op that support linearity, but not all input arguments are partial
+        # we fail the sharding propagation with suggestion to make all inputs be
+        # partial on the corresponding mesh dim (all inputs should be partial for
+        # the mesh dims in order to execute locally and delay the sum reduction)
+        for value in pending_sums_counter.values():
+            if value != len(input_specs):
+                needs_reshard = True
+
+    pending_sums = list(pending_sums_counter.keys())
     if needs_reshard:
         # TODO: merge this logic with partial linearity checks
         return _gen_reshard_suggestions(
