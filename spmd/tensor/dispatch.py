@@ -133,9 +133,14 @@ def operator_dispatch(
     op_schema = OpSchema(args_schema, kwargs_schema)
 
     if _DEBUG_VERBOSE and torch.distributed.get_rank() == 0:
-        print(f'{op_call}({op_schema})')
-        local_shapes =  tree_map(lambda t: t.to_local().shape if isinstance(t, torch.Tensor) else None, args)
-        print(f'    local shapes: {local_shapes}')
+        print(f"{op_call}({op_schema})")
+        local_shapes = tree_map(
+            lambda t: t.to_local().shape
+            if isinstance(t, torch.Tensor)
+            else None,
+            args,
+        )
+        print(f"    local shapes: {local_shapes}")
 
     op_key = str(op_call)
     # STEP 0. See if threre're user defined custom aten operator
