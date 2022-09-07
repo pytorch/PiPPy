@@ -140,6 +140,45 @@ class DeviceMeshTest(DistTensorTestBase):
         self.assertEqual(dist_tensor.to_local().device.type, self.device_type)
 
     @with_comms
+    def test_device_mesh_dim_groups_error(self):
+        # construct a two dimension subgroups
+        dim_groups = []
+        expected_ranks_by_dim = [[[0, 2], [1, 3]], [[0, 1], [2, 3]]]
+        for dim_group_ranks in expected_ranks_by_dim:
+            for subgroup_ranks in dim_group_ranks:
+                subgroup = new_group(ranks=subgroup_ranks)
+                if self.rank in subgroup_ranks:
+                    dim_groups.append(subgroup)
+
+        if len(dim_groups) > 0:
+            # dim_groups is not a list
+            self.assertRaises(
+                RuntimeError,
+                DeviceMesh,
+                self.device_type,
+                [[0, 1], [2, 3]],
+                dim_groups=dim_groups[0],
+            )
+
+            # dim_groups is a list, but not a list of ProcessGroup
+            self.assertRaises(
+                RuntimeError,
+                DeviceMesh,
+                self.device_type,
+                [[0, 1], [2, 3]],
+                dim_groups=[dim_groups[0], "dummy"],
+            )
+
+            # dim_groups has incorrect length
+            self.assertRaises(
+                RuntimeError,
+                DeviceMesh,
+                self.device_type,
+                [[0, 1], [2, 3]],
+                dim_groups=[dim_groups[0]],
+            )
+
+    @with_comms
     def test_device_mesh_nd(self):
         # construct a cuda device mesh
         mesh_tensor = torch.arange(8).reshape(2, 2, 2)
