@@ -487,7 +487,6 @@ dtensor_fails = {
     xfail("nn.functional.softplus"),
     xfail("nn.functional.softshrink"),
     xfail("nn.functional.softsign"),
-    xfail("nn.functional.tanhshrink"),
     xfail("nn.functional.threshold"),
     xfail("nn.functional.triplet_margin_loss"),
     xfail("nn.functional.triplet_margin_with_distance_loss"),
