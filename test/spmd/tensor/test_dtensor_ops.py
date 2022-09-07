@@ -696,11 +696,11 @@ def run_dtensor_crossref(test_case, func, args, kwargs):
                     # for cross-ref testing, as some tests may be looking at
                     # errors
                     dtensor_rs = func(*dtensor_args, **dtensor_kwargs)
-                    # try:
-                    #     dtensor_rs.to_local().sum().backward()
-                    # except Exception as e:
-                    #     if torch.distributed.get_rank() == 0:
-                    #         print(f"failed to run BW: {resolve_name(func)}, with (*{args}, **{kwargs})")
+                    try:
+                        dtensor_rs.to_local().sum().backward()
+                    except Exception as e:
+                        if torch.distributed.get_rank() == 0:
+                            print(f"failed to run BW: {resolve_name(func)}, with (*{args}, **{kwargs})")
                     assert_ref_dtensor_equal(test_case, dtensor_rs, rs)
                 else:
                     raise RuntimeError(
