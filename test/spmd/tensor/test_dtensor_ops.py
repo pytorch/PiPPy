@@ -669,9 +669,12 @@ dtensor_fails = {
 }
 
 
+skip_bw = [None, "torch.isfinite"]
+
+
 def run_dtensor_crossref(test_case, func, args, kwargs):
     run_bw = False
-    if hasattr(args[0], "requires_grad"):
+    if hasattr(args[0], "requires_grad") and resolve_name(func) not in skip_bw:
         args[0].requires_grad = True
         run_bw = True
 
@@ -703,6 +706,7 @@ def run_dtensor_crossref(test_case, func, args, kwargs):
                         if run_bw:
                             dtensor_rs.to_local().sum().backward()
                     except Exception as e:
+                        # TODO(anj): Remove this guard exception after gaining more confidence.
                         if torch.distributed.get_rank() == 0:
                             print(
                                 f"failed to run BW: {resolve_name(func)}, {func}, {str(e)})"
