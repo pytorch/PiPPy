@@ -13,13 +13,10 @@ from spmd.tensor.ops.math_ops import einop_rule
 #     "frexp",  # multiple output pointwise op, need to add support
 #     "gradient",  #  need investigation on this op
 #     "imag",  # complex data type only
-#     "mul",
-#     "multiply",
 #     "quantized_batch_norm",
 #     "quantized_max_pool1d",
 #     "quantized_max_pool2d",
 #     "real",  # complex data type only
-#     "tanh",
 # ]
 
 pointwise_ops = [
