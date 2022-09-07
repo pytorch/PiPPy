@@ -27,7 +27,7 @@ _ENABLE_FALLBACK = False
 
 
 """
-Print information ops input and output sharding for debugging purposes.
+Print information on ops input shape and sharding for debugging purposes.
 """
 _DEBUG_VERBOSE = False
 
@@ -136,7 +136,7 @@ def operator_dispatch(
         print(f"{op_call}({op_schema})")
         local_shapes = tree_map(
             lambda t: t.to_local().shape
-            if isinstance(t, torch.Tensor)
+            if isinstance(t, spmd_tensor.DTensor)
             else None,
             args,
         )
