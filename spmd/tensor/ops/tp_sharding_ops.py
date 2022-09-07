@@ -10,33 +10,9 @@ from spmd.tensor.ops.utils import unwrap_single_placement, register_impl
 """
 The ops below were quickly hacked and needed to be polished down the road.
 Although they come with unit tests already, the logic is directly borrowed
-from ShardedTensor. We need to also make it work for all placement types 
+from ShardedTensor. We need to also make it work for all placement types
 of DTensor and all corner cases for sharded distributed tensor.
 """
-
-
-@register_impl("aten.baddbmm.default")
-def dist_baddbmm(
-    self: DTensor,
-    batch1: DTensor,
-    batch2: DTensor,
-    beta: float = 1.0,
-    alpha: float = 1.0,
-) -> DTensor:
-    local_input, local_batch1, local_batch2 = pytree.tree_map(
-        unwrap_local_tensor, (self, batch1, batch2)
-    )
-    local_tensor = torch.ops.aten.baddbmm(
-        local_input, local_batch1, local_batch2, beta=beta, alpha=alpha
-    )
-    return DTensor(local_tensor, self.device_mesh, self.placements)
-
-
-@register_impl("aten.bmm.default")
-def dist_bmm(self: DTensor, mat2: DTensor) -> DTensor:
-    local_input, local_mat2 = pytree.tree_map(unwrap_local_tensor, (self, mat2))
-    local_tensor = torch.ops.aten.bmm(local_input, local_mat2)
-    return DTensor(local_tensor, self.device_mesh, self.placements)
 
 
 @register_impl("aten._softmax.default")

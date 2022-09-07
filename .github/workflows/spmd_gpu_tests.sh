@@ -17,9 +17,9 @@ pip3 --version
 # Install dependencies
 # Turn off progress bar to save logs
 pip3 install --upgrade pip
-if [ -f requirements.txt ]; then pip3 install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cu113/torch_nightly.html; fi
+pip3 install --pre torch --extra-index-url https://download.pytorch.org/whl/nightly/cu113
 
-# Install pippy
+# Install spmd
 python3 spmd/setup.py install
 
 set -ex

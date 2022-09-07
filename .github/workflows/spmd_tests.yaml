@@ -47,7 +47,7 @@ jobs:
         shard: ["0", "1", "2", "3"]
     env:
       DOCKER_IMAGE: gingerhugo/cuda-11.3-python-3.9:v1.0.2
-      SPMD_ROOT: /PiPPy
+      SPMD_ROOT: /tau
       VERBOSE: "0"
       OMP_NUM_THREADS: "1"
       SHARD: ${{ matrix.shard }}
@@ -56,7 +56,7 @@ jobs:
       - name: Clean working directory
         shell: bash
         run: |
-          sudo rm -rf /home/ec2-user/actions-runner/_work/PiPPy/PiPPy/* || true
+          sudo rm -rf /home/ec2-user/actions-runner/_work/tau/tau/* || true
       - uses: actions/checkout@v2
       - name: Clean up previous CUDA driver installations
         shell: bash

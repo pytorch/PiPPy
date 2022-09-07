@@ -232,6 +232,7 @@ pointwise_ops = [
     "aten.mul.Scalar",
     "aten.mul_.Scalar",
     "aten.mul.Tensor",
+    "aten.mul.out",
     "aten.mul_.Tensor",
     "aten.mvlgamma.default",
     "aten.mvlgamma_.default",
@@ -316,6 +317,9 @@ pointwise_ops = [
     "aten.tan.default",
     "aten.tan_.default",
     "aten.tan.out",
+    "aten.tanh.default",
+    "aten.tanh_.default",
+    "aten.tanh.out",
     "aten.trunc.default",
     "aten.trunc_.default",
     "aten.trunc.out",
@@ -330,6 +334,7 @@ pointwise_ops = [
 
     # backward point-wise ops
     "aten.threshold_backward.default",
+    "aten.gelu_backward.default",
 ]
 
 

@@ -1,13 +1,11 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 from torch.testing._internal.common_utils import run_tests
-from spmd.test.common_utils import (  # type: ignore
+from spmd.testing.common_utils import (  # type: ignore
     DistTensorTestBase,
     with_comms,
-    TEST_GPU_NUM,
 )
 from spmd import DeviceMesh, DTensor, Shard, Replicate, distribute_tensor
-from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 
 
 class TPShardingOpsTest(DistTensorTestBase):
@@ -37,42 +35,6 @@ class TPShardingOpsTest(DistTensorTestBase):
         new_dt = dist_tensor.transpose(1, 2)
         self.assertTrue(new_dt.placements[0].is_shard(dim=0))
         self.assertEqual(new_dt.to_local(), tensor.transpose(1, 2))
-
-    # TODO: Need to investigate why test failed in CPU for baddbmm.
-    @with_comms
-    @skip_if_lt_x_gpu(TEST_GPU_NUM)
-    def test_sharded_baddbmm(self):
-        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
-        torch.manual_seed(self.rank)
-        tensor = torch.rand(3, 5, 6, device=self.device_type)
-        batch_1 = torch.rand(3, 5, 8, device=self.device_type)
-        batch_2 = torch.rand(3, 8, 6, device=self.device_type)
-        local_result = torch.baddbmm(
-            tensor, batch_1, batch_2, beta=0.0, alpha=0.5
-        )
-        sharding = [Shard(0)]
-        tensor_dt = DTensor.from_local(tensor, device_mesh, sharding)
-        batch_1_dt = DTensor.from_local(batch_1, device_mesh, sharding)
-        batch_2_dt = DTensor.from_local(batch_2, device_mesh, sharding)
-        new_dt = torch.baddbmm(
-            tensor_dt, batch_1_dt, batch_2_dt, beta=0.0, alpha=0.5
-        )
-        self.assertTrue(new_dt.placements[0].is_shard(dim=0))
-        self.assertEqual(new_dt.to_local(), local_result)
-
-    @with_comms
-    def test_sharded_bmm(self):
-        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
-        torch.manual_seed(self.rank)
-        input = torch.rand(3, 5, 8, device=self.device_type)
-        mat_2 = torch.rand(3, 8, 6, device=self.device_type)
-        local_result = torch.bmm(input, mat_2)
-        sharding = [Shard(0)]
-        input_dt = DTensor.from_local(input, device_mesh, sharding)
-        mat_2_dt = DTensor.from_local(mat_2, device_mesh, sharding)
-        new_dt = torch.bmm(input_dt, mat_2_dt)
-        self.assertTrue(new_dt.placements[0].is_shard(dim=0))
-        self.assertEqual(new_dt.to_local(), local_result)
 
     @with_comms
     def test_sharded_softmax(self):

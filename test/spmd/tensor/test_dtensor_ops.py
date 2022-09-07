@@ -22,8 +22,8 @@ import torch.testing._internal.common_methods_invocations as common_ops
 from torch.testing._internal.common_methods_invocations import DecorateInfo
 
 from spmd import DeviceMesh, Replicate
-from spmd.test.dtensor_lagging_op_db import dtensor_lagging_op_db
-from spmd.test.common_utils import (
+from spmd.testing.dtensor_lagging_op_db import dtensor_lagging_op_db
+from spmd.testing.common_utils import (
     DistTensorTestBase,
     TEST_SKIPS,
     DTensorConverter,
@@ -251,7 +251,6 @@ dtensor_fails = {
     xfail("index_put"),
     xfail("index_reduce"),
     xfail("index_select"),
-    xfail("inner"),
     xfail("isfinite"),
     xfail("isin"),
     xfail("isinf"),
@@ -436,7 +435,6 @@ dtensor_fails = {
     xfail("nn.functional.soft_margin_loss"),
     xfail("nn.functional.softplus"),
     xfail("nn.functional.softshrink"),
-    xfail("nn.functional.tanhshrink"),
     xfail("nn.functional.threshold"),
     xfail("nn.functional.triplet_margin_loss"),
     xfail("nn.functional.triplet_margin_with_distance_loss"),
@@ -528,7 +526,6 @@ dtensor_fails = {
     xfail("t"),
     xfail("take_along_dim"),
     xfail("take"),
-    xfail("tanh"),
     xfail("tensor_split"),
     xfail("tensordot"),
     xfail("to_sparse"),
