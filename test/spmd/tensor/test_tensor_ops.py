@@ -95,6 +95,29 @@ class DistTensorOpsTest(DistTensorTestBase):
         ones_expected = torch.ones(4, 8)
         self.assertEqual(ones_expected, ones_like_dt.to_local())
 
+    @with_comms
+    def test_softmax(self):
+        device_mesh = DeviceMesh(
+            self.device_type, list(range(self.world_size))
+        )
+        input = torch.rand(8, 12, 16, device=self.device_type)
+        shard0_spec = Shard(0)
+        shard1_spec = Shard(1)
+        shard2_spec = Shard(2)
+        replica_spec = Replicate()
+        input_dt = distribute_tensor(input, device_mesh, [shard0_spec])
+
+        # TODO: add batching on dim 1, 2, and -1 (replicate) cases
+        for softmax_dim in [1, 2, -1]:
+            local_result = torch.nn.functional.softmax(
+                input, dim=softmax_dim, dtype=torch.float32
+            )
+            new_dt = torch.nn.functional.softmax(
+                input_dt, dim=softmax_dim, dtype=torch.float32
+            )
+            self.assertTrue(new_dt.placements[0].is_shard(dim=0))
+            new_dt = new_dt.redistribute(device_mesh, [replica_spec])
+            self.assertEqual(new_dt.to_local(), local_result)
 
 if __name__ == "__main__":
     run_tests()

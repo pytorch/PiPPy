@@ -15,11 +15,6 @@ of DTensor and all corner cases for sharded distributed tensor.
 """
 
 
-@register_impl("aten._softmax.default")
-def dist_softmax(self: DTensor, dim: int, half_to_float: bool) -> DTensor:
-    local_input = pytree.tree_map(unwrap_local_tensor, (self))
-    local_tensor = local_input.softmax(dim=dim)
-    return DTensor(local_tensor, self.device_mesh, self.placements)
 
 
 @register_impl("aten.cat.default")

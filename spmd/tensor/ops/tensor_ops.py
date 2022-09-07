@@ -39,6 +39,7 @@ default_prop_ops = [
     "aten.is_same_size.default",
     "aten.ones_like.default",
     "aten.new_empty_strided.default",
+    "aten._softmax.default",
 ]
 
 no_shard_prop_ops = ["aten._local_scalar_dense.default"]
