@@ -100,24 +100,47 @@ class DistTensorOpsTest(DistTensorTestBase):
         device_mesh = DeviceMesh(
             self.device_type, list(range(self.world_size))
         )
-        input = torch.rand(8, 12, 16, device=self.device_type)
+        x = torch.rand(8, 12, 16, device=self.device_type)
         shard0_spec = Shard(0)
         shard1_spec = Shard(1)
         shard2_spec = Shard(2)
         replica_spec = Replicate()
-        input_dt = distribute_tensor(input, device_mesh, [shard0_spec])
+        dist_x = distribute_tensor(x, device_mesh, [shard0_spec])
 
-        # TODO: add batching on dim 1, 2, and -1 (replicate) cases
+        # TODO: add batching on dim 1, 2, and -1 (last dim) cases
         for softmax_dim in [1, 2, -1]:
-            local_result = torch.nn.functional.softmax(
-                input, dim=softmax_dim, dtype=torch.float32
+            local_y = torch.nn.functional.softmax(
+                x, dim=softmax_dim, dtype=torch.float32
             )
-            new_dt = torch.nn.functional.softmax(
-                input_dt, dim=softmax_dim, dtype=torch.float32
+            dist_y = torch.nn.functional.softmax(
+                dist_x, dim=softmax_dim, dtype=torch.float32
             )
-            self.assertTrue(new_dt.placements[0].is_shard(dim=0))
-            new_dt = new_dt.redistribute(device_mesh, [replica_spec])
-            self.assertEqual(new_dt.to_local(), local_result)
+            self.assertTrue(dist_y.placements[0].is_shard(dim=0))
+            dist_y = dist_y.redistribute(device_mesh, [replica_spec])
+            self.assertEqual(dist_y.to_local(), local_y)
+
+    @with_comms
+    def test_softmax_with_bwd(self):
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        x = torch.rand(8, 12, 16, device=self.device_type, requires_grad=True)
+        self.assertTrue(x.requires_grad)
+        local_y = x.softmax(dim=-1)
+        local_y.sum().backward()
+
+        shard0_spec = Shard(0)
+        dist_x = distribute_tensor(x, device_mesh, [shard0_spec])
+        self.assertTrue(dist_x.requires_grad)
+
+        dist_y = dist_x.softmax(dim=-1)
+        self.assertTrue(dist_y.placements[0].is_shard(dim=0))
+        dist_y_grad = torch.ones_like(dist_y)
+        # sum().backward() on dist_y has issue:
+        # dist_y.sum().backward(dist_y_grad)
+        # RuntimeError: Mismatch in shape: grad_output[0] has a shape of torch.Size([8, 12, 16]) and output[0] has a shape of torch.Size([]).
+        dist_y.backward(dist_y_grad)
+        self.assertIsNotNone(dist_x.grad)
+        local_x_grad = dist_x.grad.redistribute(device_mesh, [Replicate()]).to_local()
+        self.assertEqual(local_x_grad, x.grad)
 
 if __name__ == "__main__":
     run_tests()

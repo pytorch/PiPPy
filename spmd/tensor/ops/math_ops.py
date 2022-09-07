@@ -201,3 +201,11 @@ reduction_ops = [
 
 for reduction_op in reduction_ops:
     DTensor._op_to_rules[reduction_op] = reduction_rule
+
+@register_prop_rule("aten._softmax.default")
+def softmax_rule(op_schema: OpSchema) -> OutputSharding:
+    if ():
+        raise RuntimeError(
+            "Cannot run softmax on batch dim!"
+        )
+    #return OutputSharding(op_schema.args_spec[0])
