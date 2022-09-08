@@ -154,15 +154,23 @@ def pointwise_rule(
         ij,j->ij - broadcasted addition
     """
     alphabet = "abcdefghijklmnopqrstuvwxyz"
-    # handle the case of broadcasting, find the max_dim first
-    # TODO: handle the "broadcasting to a common shape case"
-    # TODO: handle inplace op properly without run propagation
+    # find the max_dim first in case we need to broadcasting
     input_specs = op_schema.args_spec
     max_dim = max(input.ndim for input in input_specs)
     dimchars = []
     for input in input_specs:
         start_dim = max_dim - input.ndim
         p = alphabet[start_dim:max_dim]
+        # handle the "broadcasting to a common shape case"
+        # see https://pytorch.org/docs/stable/notes/broadcasting.html
+        # If any of the dimensions is singleton dimension (i.e. 1).
+        # we mark the dim char as a special "1" to distinguish with
+        # the non-singleton dimension, so that sharding propagation
+        # should just ignore the singleton dimension.
+        for i, dim_length in enumerate(input.shape):
+            if dim_length == 1:
+                # mark singleton dim char as a special "1" in einop rule
+                p = p[:i] + "1" + p[i + 1 :]
         dimchars.append(p)
     out_dimchars = alphabet[:max_dim]
     fmt = f"{','.join(p for p in dimchars)}->{out_dimchars}"

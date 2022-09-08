@@ -1,4 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+import torch
 from typing import List, Dict, Tuple, cast
 from spmd.tensor.api import DTensor
 from spmd.tensor.dispatch import OpSchema, OutputSharding
@@ -29,7 +30,10 @@ def _gen_reshard_suggestions(
         dim_map = [dim_to_sharding[dim] for dim in input_dim]
         suggested_arg_specs.append(
             DTensorSpec.from_dim_map(
-                mesh=input_spec.mesh, dim_map=dim_map, sums=pending_sum
+                mesh=input_spec.mesh,
+                dim_map=dim_map,
+                sums=pending_sum,
+                shape=input_spec.shape,
             )
         )
     return OutputSharding(
@@ -62,6 +66,7 @@ def einop_rule(
     output_dim = output_dims[0]
 
     dim_to_sharding: Dict[str, int] = {}
+    dim_to_size: Dict[str, int] = {}
     pending_sums: List[int] = []
     seen_shardings = {}
     needs_reshard = False
@@ -123,7 +128,9 @@ def einop_rule(
             return a
 
     for input_dim, input_spec in zip(input_dims, input_specs):
-        for dim, mesh_dim in zip(input_dim, input_spec.dim_map):
+        for idx, (dim, mesh_dim) in enumerate(
+            zip(input_dim, input_spec.dim_map)
+        ):
             if (
                 mesh_dim in seen_shardings
                 and mesh_dim != -1
@@ -137,10 +144,12 @@ def einop_rule(
             seen_shardings[mesh_dim] = dim
             if dim not in dim_to_sharding:
                 dim_to_sharding[dim] = mesh_dim
+                dim_to_size[dim] = input_spec.shape[idx]
             else:
                 dim_to_sharding[dim] = merge_sharding(
                     dim, dim_to_sharding[dim], mesh_dim
                 )
+                assert dim_to_size[dim] == input_spec.shape[idx]
 
     if needs_reshard:
         # TODO: merge this logic with partial linearity checks
@@ -158,6 +167,7 @@ def einop_rule(
             input_specs[0].mesh,
             [dim_to_sharding[dim] for dim in output_dim],
             pending_sums,
+            shape=torch.Size([dim_to_size[dim] for dim in output_dim]),
         )
     )
 

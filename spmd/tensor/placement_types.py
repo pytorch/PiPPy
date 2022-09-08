@@ -48,24 +48,19 @@ class _Partial(Placement):
 class DTensorSpec(object):
     mesh: DeviceMesh
     placements: Sequence[Placement]
-    # ndim of the current dist tensor, if only pass in shape, this
-    # field will be updated to len(shape), if not pass in shape, must
-    # pass in ndim
-    ndim: int = -1
     # shape of the current dist tensor, this will be set upon
     # construction of the DTensor, prop rule could read it, and
-    # don't need to set in output spec when calculate the output
+    # would need to set in output spec when calculate the output
     # sharding
-    shape: Optional[torch.Size] = None
+    shape: torch.Size
+    # ndim of the current dist tensor, if passed in, this would be
+    # validated with shape, if not passed in, will be generated from
+    # the shape
+    ndim: int = -1
 
     def __post_init__(self) -> None:
         if self.ndim == -1:
-            if self.shape is not None:
-                self.ndim = len(self.shape)
-            else:
-                raise RuntimeError("must either pass in shape or pass in ndim!")
-        elif self.shape is not None:
-            assert self.ndim == len(self.shape), "shape and ndim is different!"
+            self.ndim = len(self.shape)
 
     @property
     def dim_map(self) -> List[int]:
@@ -117,7 +112,7 @@ class DTensorSpec(object):
         mesh: DeviceMesh,
         dim_map: List[int],
         sums: List[int],
-        shape: Optional[torch.Size] = None,
+        shape: torch.Size,
     ) -> "DTensorSpec":
         """
         Construct a DTensorSpec from dim_map list and pending sum.
@@ -128,7 +123,7 @@ class DTensorSpec(object):
                 tensor dimension, see `dim_map` property doc for details
             sums (List[int]): a list of integer that represents the dist tensor have
                 pending sum on which device mesh dimension.
-            shape (torch.Size, optional): shape of the DTensor associated with this spec.
+            shape (torch.Size): shape of the DTensor associated with this spec.
 
         Return:
             a class:`DTensorSpec` object
