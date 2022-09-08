@@ -1,4 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+from typing import Dict
 from spmd.tensor.api import DTensor
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.ops.math_ops import einop_rule
@@ -145,6 +146,10 @@ pointwise_ops = [
 ]
 
 
+def _replace_char_in_str(string: str, new_char: str, idx: int) -> str:
+    return string[:idx] + new_char + string[idx + 1 :]
+
+
 def pointwise_rule(
     op_schema: OpSchema, linearity: bool = False
 ) -> OutputSharding:
@@ -158,6 +163,7 @@ def pointwise_rule(
     input_specs = op_schema.args_spec
     max_dim = max(input.ndim for input in input_specs)
     dimchars = []
+    dimchar_singleton_counter: Dict[str, int] = {}
     for input in input_specs:
         start_dim = max_dim - input.ndim
         p = alphabet[start_dim:max_dim]
@@ -171,11 +177,20 @@ def pointwise_rule(
             for i, dim_length in enumerate(input.shape):
                 if dim_length == 1:
                     # mark singleton dim char as a special "1" in einop rule
-                    p = p[:i] + "1" + p[i + 1 :]
+                    dimchar_singleton_counter[p[i]] = (
+                        dimchar_singleton_counter.get(p[i], 0) + 1
+                    )
+                    p = _replace_char_in_str(p, "1", i)
         dimchars.append(p)
     out_dimchars = alphabet[:max_dim]
+    for output_dim_idx in range(len(out_dimchars)):
+        out_dimchar = out_dimchars[output_dim_idx]
+        if dimchar_singleton_counter.get(out_dimchar, 0) == len(input_specs):
+            out_dimchars = _replace_char_in_str(
+                out_dimchars, "1", output_dim_idx
+            )
+
     fmt = f"{','.join(p for p in dimchars)}->{out_dimchars}"
-    print(f">>>> fmt: {fmt}")
     return einop_rule(fmt, op_schema, linearity=linearity)
 
 
