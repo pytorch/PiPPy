@@ -142,6 +142,10 @@ pointwise_ops = [
     "aten.mul_.Tensor",
     "aten.ne.Scalar",
     "aten.tanh.default",
+    "aten.tanh_backward.default",
+    "aten.sgn.default",
+    "aten.neg.default",
+    "aten._softmax_backward_data.default",
 ]
 
 

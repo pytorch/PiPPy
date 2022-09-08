@@ -390,7 +390,6 @@ dtensor_fails = {
     xfail("narrow"),
     xfail("native_layer_norm"),
     xfail("ne"),
-    xfail("neg"),
     xfail("new_empty"),
     xfail("new_empty_strided"),
     xfail("new_full"),
@@ -482,7 +481,6 @@ dtensor_fails = {
     xfail("nn.functional.silu"),
     xfail("nn.functional.smooth_l1_loss"),
     xfail("nn.functional.soft_margin_loss"),
-    xfail("nn.functional.softmin", "with_dtype"),
     xfail("nn.functional.softplus"),
     xfail("nn.functional.softshrink"),
     xfail("nn.functional.softsign"),
@@ -544,7 +542,6 @@ dtensor_fails = {
     xfail("searchsorted"),
     xfail("select"),
     xfail("select_scatter"),
-    xfail("sgn"),
     xfail("sign"),
     xfail("signbit"),
     xfail("sin"),
@@ -667,7 +664,22 @@ dtensor_fails = {
 }
 
 
+# Add a list of ops that are currently failing BW pass
+skip_bw = [
+    None,  # corresponds to the transpose ops 'H' and 'T'
+    "torch.isfinite",
+    "torch.eq",
+    "torch.isnan",
+    "torch.conj_physical",
+]
+
+
 def run_dtensor_crossref(test_case, func, args, kwargs):
+    run_bw = False
+    if hasattr(args[0], "requires_grad") and resolve_name(func) not in skip_bw:
+        args[0].requires_grad = True
+        run_bw = True
+
     to_dtensor = DTensorConverter(test_case.mesh, args, kwargs)
 
     # TODO: also handle cases where func raise an exception
@@ -692,6 +704,15 @@ def run_dtensor_crossref(test_case, func, args, kwargs):
                     # for cross-ref testing, as some tests may be looking at
                     # errors
                     dtensor_rs = func(*dtensor_args, **dtensor_kwargs)
+                    try:
+                        if run_bw:
+                            dtensor_rs.to_local().sum().backward()
+                    except Exception as e:
+                        # TODO(anj): Remove this guard exception after gaining more confidence.
+                        if torch.distributed.get_rank() == 0:
+                            print(
+                                f"failed to run BW: {resolve_name(func)}, {func}, {str(e)})"
+                            )
                     assert_ref_dtensor_equal(test_case, dtensor_rs, rs)
                 else:
                     raise RuntimeError(
