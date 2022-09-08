@@ -286,6 +286,7 @@ dtensor_fails = {
     xfail("index_select"),
     xfail("isfinite"),
     xfail("isin"),
+    xfail("isnan"),
     xfail("isneginf"),
     xfail("isposinf"),
     xfail("kron"),
