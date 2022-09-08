@@ -145,6 +145,7 @@ pointwise_ops = [
     "aten.tanh_backward.default",
     "aten.sgn.default",
     "aten.neg.default",
+    "aten._softmax_backward_data.default",
 ]
 
 

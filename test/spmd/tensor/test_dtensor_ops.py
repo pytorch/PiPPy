@@ -287,7 +287,6 @@ dtensor_fails = {
     xfail("isfinite"),
     xfail("isin"),
     xfail("isinf"),
-    xfail("isnan"),
     xfail("isneginf"),
     xfail("isposinf"),
     xfail("kron"),
@@ -390,7 +389,6 @@ dtensor_fails = {
     xfail("narrow"),
     xfail("native_layer_norm"),
     xfail("ne"),
-    xfail("neg"),
     xfail("new_empty"),
     xfail("new_empty_strided"),
     xfail("new_full"),
@@ -482,7 +480,6 @@ dtensor_fails = {
     xfail("nn.functional.silu"),
     xfail("nn.functional.smooth_l1_loss"),
     xfail("nn.functional.soft_margin_loss"),
-    xfail("nn.functional.softmin", "with_dtype"),
     xfail("nn.functional.softplus"),
     xfail("nn.functional.softshrink"),
     xfail("nn.functional.softsign"),
@@ -671,6 +668,9 @@ dtensor_fails = {
 skip_bw = [
     None,  # corresponds to the transpose ops 'H' and 'T'
     "torch.isfinite",
+    "torch.eq",
+    "torch.isnan",
+    "torch.conj_physical",
 ]
 
 
