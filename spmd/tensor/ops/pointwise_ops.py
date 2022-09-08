@@ -183,6 +183,8 @@ def pointwise_rule(
                     p = _replace_char_in_str(p, "1", i)
         dimchars.append(p)
     out_dimchars = alphabet[:max_dim]
+    # check if we replace the all inputs dim char with singleton dimension,
+    # if we replace all inputs, we also need to replace the output dimension.
     for output_dim_idx in range(len(out_dimchars)):
         out_dimchar = out_dimchars[output_dim_idx]
         if dimchar_singleton_counter.get(out_dimchar, 0) == len(input_specs):
