@@ -3,7 +3,7 @@ from typing import List, Dict, Tuple, cast
 from spmd.tensor.api import DTensor
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.placement_types import _Partial, DTensorSpec
-from spmd.tensor.ops.utils import as_list
+from spmd.tensor.ops.utils import as_list, register_prop_rule
 
 
 def _gen_spec_with_pending_sum(
@@ -204,8 +204,16 @@ for reduction_op in reduction_ops:
 
 @register_prop_rule("aten._softmax.default")
 def softmax_rule(op_schema: OpSchema) -> OutputSharding:
-    if ():
+    #print(type(op_schema.args_schema[0]))
+    dim_map = op_schema.args_schema[0].dim_map
+    softmax_dim = op_schema.args_schema[1] # Is it better to put it into kwargs? e.g. op_schema.kwargs_schema['dim']
+    #print(f"{softmax_dim}, {dim_map}")
+    if (softmax_dim < len(dim_map) and dim_map[softmax_dim] >= 0):
         raise RuntimeError(
             "Cannot run softmax on batch dim!"
         )
-    #return OutputSharding(op_schema.args_spec[0])
+    return OutputSharding(op_schema.args_spec[0])
+
+@register_prop_rule("aten._softmax_backward_data.default")
+def softmax_bwd_rule(op_schema: OpSchema) -> OutputSharding:
+    return OutputSharding(op_schema.args_spec[0])
