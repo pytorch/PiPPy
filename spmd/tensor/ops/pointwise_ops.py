@@ -1,4 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+from typing import Dict
 from spmd.tensor.api import DTensor
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.ops.math_ops import einop_rule
@@ -149,6 +150,10 @@ pointwise_ops = [
 ]
 
 
+def _replace_char_in_str(string: str, new_char: str, idx: int) -> str:
+    return string[:idx] + new_char + string[idx + 1 :]
+
+
 def pointwise_rule(
     op_schema: OpSchema, linearity: bool = False
 ) -> OutputSharding:
@@ -158,17 +163,39 @@ def pointwise_rule(
         ij,j->ij - broadcasted addition
     """
     alphabet = "abcdefghijklmnopqrstuvwxyz"
-    # handle the case of broadcasting, find the max_dim first
-    # TODO: handle the "broadcasting to a common shape case"
-    # TODO: handle inplace op properly without run propagation
+    # find the max_dim first in case we need to broadcasting
     input_specs = op_schema.args_spec
     max_dim = max(input.ndim for input in input_specs)
     dimchars = []
+    dimchar_singleton_counter: Dict[str, int] = {}
     for input in input_specs:
         start_dim = max_dim - input.ndim
         p = alphabet[start_dim:max_dim]
+        # handle the "broadcasting to a common shape case"
+        # see https://pytorch.org/docs/stable/notes/broadcasting.html
+        # If any of the dimensions is singleton dimension (i.e. 1).
+        # we mark the dim char as a special "1" to distinguish with
+        # the non-singleton dimension, so that sharding propagation
+        # should just ignore the singleton dimension.
+        if len(input_specs) > 1:
+            for i, dim_length in enumerate(input.shape):
+                if dim_length == 1:
+                    # mark singleton dim char as a special "1" in einop rule
+                    dimchar_singleton_counter[p[i]] = (
+                        dimchar_singleton_counter.get(p[i], 0) + 1
+                    )
+                    p = _replace_char_in_str(p, "1", i)
         dimchars.append(p)
     out_dimchars = alphabet[:max_dim]
+    # check if we replace the all inputs dim char with singleton dimension,
+    # if we replace all inputs, we also need to replace the output dimension.
+    for output_dim_idx in range(len(out_dimchars)):
+        out_dimchar = out_dimchars[output_dim_idx]
+        if dimchar_singleton_counter.get(out_dimchar, 0) == len(input_specs):
+            out_dimchars = _replace_char_in_str(
+                out_dimchars, "1", output_dim_idx
+            )
+
     fmt = f"{','.join(p for p in dimchars)}->{out_dimchars}"
     return einop_rule(fmt, op_schema, linearity=linearity)
 
