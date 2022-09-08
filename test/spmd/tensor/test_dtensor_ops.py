@@ -486,7 +486,6 @@ dtensor_fails = {
     xfail("nn.functional.softplus"),
     xfail("nn.functional.softshrink"),
     xfail("nn.functional.softsign"),
-    xfail("nn.functional.tanhshrink"),
     xfail("nn.functional.threshold"),
     xfail("nn.functional.triplet_margin_loss"),
     xfail("nn.functional.triplet_margin_with_distance_loss"),
@@ -545,7 +544,6 @@ dtensor_fails = {
     xfail("searchsorted"),
     xfail("select"),
     xfail("select_scatter"),
-    xfail("sgn"),
     xfail("sign"),
     xfail("signbit"),
     xfail("sin"),
@@ -673,8 +671,6 @@ dtensor_fails = {
 skip_bw = [
     None,  # corresponds to the transpose ops 'H' and 'T'
     "torch.isfinite",
-    "torch.nn.functional.tanhshrink",  # CPU ops only
-    "torch.sgn",  # CPU ops only
 ]
 
 
