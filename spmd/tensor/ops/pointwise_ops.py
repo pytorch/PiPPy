@@ -329,7 +329,6 @@ pointwise_ops = [
     "aten.xlogy.OutTensor",
     "aten.xlogy.OutScalar_Self",
     "aten.xlogy_.OutScalar_Other",
-
     # backward point-wise ops
     "aten.threshold_backward.default",
     "aten.gelu_backward.default",
