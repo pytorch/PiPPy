@@ -202,17 +202,18 @@ reduction_ops = [
 for reduction_op in reduction_ops:
     DTensor._op_to_rules[reduction_op] = reduction_rule
 
+
 @register_prop_rule("aten._softmax.default")
 def softmax_rule(op_schema: OpSchema) -> OutputSharding:
-    #print(type(op_schema.args_schema[0]))
-    dim_map = op_schema.args_schema[0].dim_map
-    softmax_dim = op_schema.args_schema[1] # Is it better to put it into kwargs? e.g. op_schema.kwargs_schema['dim']
-    #print(f"{softmax_dim}, {dim_map}")
-    if (softmax_dim < len(dim_map) and dim_map[softmax_dim] >= 0):
-        raise RuntimeError(
-            "Cannot run softmax on batch dim!"
-        )
+    dim_map = cast(DTensorSpec, op_schema.args_schema[0]).dim_map
+    softmax_dim = cast(
+        int, op_schema.args_schema[1]
+    )  # Is it better to put it into kwargs? e.g. op_schema.kwargs_schema['dim']
+    # print(f"{softmax_dim}, {dim_map}")
+    if softmax_dim < len(dim_map) and dim_map[softmax_dim] >= 0:
+        raise RuntimeError("Cannot run softmax on batch dim!")
     return OutputSharding(op_schema.args_spec[0])
+
 
 @register_prop_rule("aten._softmax_backward_data.default")
 def softmax_bwd_rule(op_schema: OpSchema) -> OutputSharding:

@@ -15,8 +15,6 @@ of DTensor and all corner cases for sharded distributed tensor.
 """
 
 
-
-
 @register_impl("aten.cat.default")
 def dist_cat(tensor_list: List[DTensor], dim: int = 0) -> DTensor:
     local_inputs = pytree.tree_map(unwrap_local_tensor, tensor_list)

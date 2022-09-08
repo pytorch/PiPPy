@@ -97,29 +97,31 @@ class DistTensorOpsTest(DistTensorTestBase):
 
     @with_comms
     def test_softmax(self):
-        device_mesh = DeviceMesh(
-            self.device_type, list(range(self.world_size))
-        )
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         x = torch.rand(8, 12, 16, device=self.device_type)
 
-        dims = range(3) # used to convert -1 to the actual dim
+        dims = range(3)  # used to convert -1 to the actual dim
         for softmax_dim in range(-1, 3):
             local_y = torch.nn.functional.softmax(
                 x, dim=softmax_dim, dtype=torch.float32
             )
             for batch_dim in range(-1, 3):
                 dist_x = distribute_tensor(x, device_mesh, [Shard(batch_dim)])
-                if (dims[batch_dim] == dims[softmax_dim]):
+                if dims[batch_dim] == dims[softmax_dim]:
                     with self.assertRaises(Exception):
                         dist_y = torch.nn.functional.softmax(
                             dist_x, dim=softmax_dim, dtype=torch.float32
                         )
                 else:
-                    local_y_copy = distribute_tensor(local_y, device_mesh, [Shard(batch_dim)]).to_local()
+                    local_y_copy = distribute_tensor(
+                        local_y, device_mesh, [Shard(batch_dim)]
+                    ).to_local()
                     dist_y = torch.nn.functional.softmax(
                         dist_x, dim=softmax_dim, dtype=torch.float32
                     )
-                    self.assertTrue(dist_y.placements[0].is_shard(dim=batch_dim))
+                    self.assertTrue(
+                        dist_y.placements[0].is_shard(dim=batch_dim)
+                    )
                     self.assertEqual(dist_y.to_local(), local_y_copy)
         # TODO: add 2D mesh case?
 
@@ -142,8 +144,11 @@ class DistTensorOpsTest(DistTensorTestBase):
         # RuntimeError: Mismatch in shape: grad_output[0] has a shape of torch.Size([8, 12, 16]) and output[0] has a shape of torch.Size([]).
         dist_y.sum().backward()
         self.assertIsNotNone(dist_x.grad)
-        local_x_grad = dist_x.grad.redistribute(device_mesh, [Replicate()]).to_local()
+        local_x_grad = dist_x.grad.redistribute(
+            device_mesh, [Replicate()]
+        ).to_local()
         self.assertEqual(local_x_grad, x.grad)
+
 
 if __name__ == "__main__":
     run_tests()
