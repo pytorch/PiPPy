@@ -139,10 +139,9 @@ class DistTensorOpsTest(DistTensorTestBase):
 
         dist_y = dist_x.softmax(dim=-1)
         self.assertTrue(dist_y.placements[0].is_shard(dim=0))
-        # sum().backward() on dist_y has issue:
-        # dist_y.sum().backward(dist_y_grad)
-        # RuntimeError: Mismatch in shape: grad_output[0] has a shape of torch.Size([8, 12, 16]) and output[0] has a shape of torch.Size([]).
-        dist_y.sum().backward()
+        s = dist_y.sum()
+        self.assertIsNone(dist_x.grad)
+        s.backward() # RuntimeError: Expected tensor for argument #1 'grad' to have same size as tensor for argument #2 'output'; but [8, 12, 16] does not equal [2, 12, 16] (while checking arguments for softmax_backward)
         self.assertIsNotNone(dist_x.grad)
         local_x_grad = dist_x.grad.redistribute(
             device_mesh, [Replicate()]
