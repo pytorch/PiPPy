@@ -118,7 +118,8 @@ def redistribute_spmd_tensor(
             num_chunks = device_mesh.size(dim=i)
             assert (
                 input.size(shard_dim) % num_chunks == 0
-            ), "Only support chunk sharding evenly now"
+            ), f"Only support chunk sharding evenly now. (When sharding tensor of shape {input.shape} on dim={shard_dim} into {num_chunks} shards.)"
+
             chunk_size = (
                 local_tensor.size(shard_dim) // num_chunks
             )  # this may already be sharded on a differernt mesh dimension
