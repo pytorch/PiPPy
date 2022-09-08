@@ -167,13 +167,15 @@ def pointwise_rule(
         # we mark the dim char as a special "1" to distinguish with
         # the non-singleton dimension, so that sharding propagation
         # should just ignore the singleton dimension.
-        for i, dim_length in enumerate(input.shape):
-            if dim_length == 1:
-                # mark singleton dim char as a special "1" in einop rule
-                p = p[:i] + "1" + p[i + 1 :]
+        if len(input_specs) > 1:
+            for i, dim_length in enumerate(input.shape):
+                if dim_length == 1:
+                    # mark singleton dim char as a special "1" in einop rule
+                    p = p[:i] + "1" + p[i + 1 :]
         dimchars.append(p)
     out_dimchars = alphabet[:max_dim]
     fmt = f"{','.join(p for p in dimchars)}->{out_dimchars}"
+    print(f">>>> fmt: {fmt}")
     return einop_rule(fmt, op_schema, linearity=linearity)
 
 
