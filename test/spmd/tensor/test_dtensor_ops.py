@@ -676,11 +676,6 @@ skip_bw = [
 
 
 def run_dtensor_crossref(test_case, func, args, kwargs):
-    run_bw = False
-    if hasattr(args[0], "requires_grad") and resolve_name(func) not in skip_bw:
-        args[0].requires_grad = True
-        run_bw = True
-
     to_dtensor = DTensorConverter(test_case.mesh, args, kwargs)
 
     # TODO: also handle cases where func raise an exception
@@ -706,7 +701,7 @@ def run_dtensor_crossref(test_case, func, args, kwargs):
                     # errors
                     dtensor_rs = func(*dtensor_args, **dtensor_kwargs)
                     try:
-                        if run_bw:
+                        if resolve_name(func) not in skip_bw:
                             dtensor_rs.to_local().sum().backward()
                     except Exception as e:
                         # TODO(anj): Remove this guard exception after gaining more confidence.
@@ -765,7 +760,7 @@ class TestDTensorOps(DistTensorTestBase):
 
         # test each op with dist tensor inputs and normal inputs
         def test():
-            samples = op.sample_inputs(DEVICE_TYPE, dtype, requires_grad=False)
+            samples = op.sample_inputs(DEVICE_TYPE, dtype, requires_grad=True)
             for sample_input in samples:
                 args = [sample_input.input] + list(sample_input.args)
                 kwargs = sample_input.kwargs
