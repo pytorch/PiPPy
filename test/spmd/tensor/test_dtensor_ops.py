@@ -669,7 +669,13 @@ dtensor_fails = {
 }
 
 
-skip_bw = [None, "torch.isfinite"]
+# Add a list of ops that are currently failing BW pass
+skip_bw = [
+    None,  # corresponds to the transpose ops 'H' and 'T'
+    "torch.isfinite",
+    "torch.nn.functional.tanhshrink",  # CPU ops only
+    "torch.sgn",  # CPU ops only
+]
 
 
 def run_dtensor_crossref(test_case, func, args, kwargs):
