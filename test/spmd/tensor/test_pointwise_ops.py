@@ -6,8 +6,11 @@ from spmd.testing.common_utils import (  # type: ignore
     with_comms,
     TEST_GPU_NUM,
 )
+from spmd.tensor.dispatch import OpSchema
+
+from spmd.tensor.ops.pointwise_ops import pointwise_rule
 from spmd import DeviceMesh, DTensor
-from spmd.tensor.placement_types import Shard, Replicate, _Partial
+from spmd.tensor.placement_types import Shard, Replicate, _Partial, DTensorSpec
 from torch.distributed.distributed_c10d import ReduceOp
 from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 
@@ -112,6 +115,31 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         expected = torch.mul(input_tensor, other_tensor, out=output_tensor)
         self.assertEqual(input_tensor, dtensor.to_local())
         self.assertEqual(expected, dt.to_local())
+
+    @with_comms
+    def test_pointwise_rules_suggestion(self):
+        mesh = DeviceMesh(self.device_type, torch.arange(self.world_size))
+
+        # propagate point-wise sharding
+        inp1, inp2 = [-1, -1], [-1, 0]
+        mat1_spec = DTensorSpec.from_dim_map(
+            mesh, inp1, [], shape=torch.Size([8, 4])
+        )
+        mat2_spec = DTensorSpec.from_dim_map(
+            mesh, inp2, [], shape=torch.Size([8, 4])
+        )
+        # adding a positional argument -1 to arg schema
+        output_sharding = pointwise_rule(
+            OpSchema((mat1_spec, mat2_spec, -1), {})
+        )
+        self.assertIsNone(output_sharding.output_spec)
+        self.assertIsNotNone(output_sharding.schema_suggestions)
+
+        # ensure that the suggestion from pointwise rules still have
+        # the positional args that are not DTensorSpec
+        schema_suggestion = output_sharding.schema_suggestions[0]
+        self.assertEqual(len(schema_suggestion.args_schema), 3)
+        self.assertEqual(schema_suggestion.args_schema[2], -1)
 
 
 if __name__ == "__main__":

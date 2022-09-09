@@ -1,7 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import Dict
+from typing import Dict, List
 from spmd.tensor.api import DTensor
-from spmd.tensor.dispatch import OpSchema, OutputSharding
+from spmd.tensor.dispatch import OpSchema, OutputSharding, DTensorSpec
 from spmd.tensor.ops.math_ops import einop_rule
 
 # leave the remaining pointwise_ops list here for convenience,
@@ -341,6 +341,22 @@ def _replace_char_in_str(string: str, new_char: str, idx: int) -> str:
     return string[:idx] + new_char + string[idx + 1 :]
 
 
+def _inplace_rewrap_schema_suggestion(
+    suggestion: OpSchema, input_schema: OpSchema
+) -> None:
+    suggestion_args_spec = suggestion.args_spec
+    new_arg_schema: List[object] = []
+    idx_of_args_spec = 0
+    for arg in input_schema.args_schema:
+        if isinstance(arg, DTensorSpec):
+            new_arg_schema.append(suggestion_args_spec[idx_of_args_spec])
+            idx_of_args_spec += 1
+        else:
+            new_arg_schema.append(arg)
+    suggestion.args_schema = tuple(new_arg_schema)
+    suggestion.kwargs_schema = input_schema.kwargs_schema
+
+
 def pointwise_rule(
     op_schema: OpSchema, linearity: bool = False
 ) -> OutputSharding:
@@ -384,7 +400,18 @@ def pointwise_rule(
             )
 
     fmt = f"{','.join(p for p in dimchars)}->{out_dimchars}"
-    return einop_rule(fmt, op_schema, linearity=linearity)
+    einop_schema = OpSchema(input_specs, {})
+    output_sharding = einop_rule(fmt, einop_schema, linearity=linearity)
+    if (
+        output_sharding.output_spec is None
+        and output_sharding.schema_suggestions is not None
+    ):
+        # sharding propagation failed, with reshard suggetion only have tensor specs,
+        # we will need to include back all non-tensor args/kwargs
+        suggested_schema = output_sharding.schema_suggestions[0]
+        _inplace_rewrap_schema_suggestion(suggested_schema, op_schema)
+
+    return output_sharding
 
 
 for op in pointwise_ops:
