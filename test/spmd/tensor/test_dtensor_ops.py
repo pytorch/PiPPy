@@ -550,7 +550,6 @@ dtensor_fails = {
     xfail("vsplit"),
     xfail("vstack"),
     xfail("where"),
-    xfail("zero_"),
     xfail("zeros_like"),
     # ops inside this might even fail without dtensor
     # tests, as we rescale op db common test size factor (i.e. L, M, S)
