@@ -7,7 +7,7 @@ import unittest
 import warnings
 
 from torch.overrides import resolve_name
-from torch.utils._pytree import tree_flatten
+from torch.utils._pytree import tree_flatten, tree_map
 from torch.testing._internal.common_utils import (
     suppress_warnings,
     TEST_WITH_ASAN,
@@ -21,7 +21,7 @@ from torch.testing._internal.common_device_type import (
 import torch.testing._internal.common_methods_invocations as common_ops
 from torch.testing._internal.common_methods_invocations import DecorateInfo
 
-from spmd import DeviceMesh, Replicate
+from spmd import DTensor, DeviceMesh, Replicate
 from spmd.testing.dtensor_lagging_op_db import dtensor_lagging_op_db
 from spmd.testing.common_utils import (
     DistTensorTestBase,
@@ -43,7 +43,6 @@ common_ops.XS = 2
 
 
 def assert_ref_dtensor_equal(test_case, dtensor_rs, rs):
-    mesh = test_case.mesh
     flat_dtensor_rs, _ = tree_flatten(dtensor_rs)
     flat_rs, _ = tree_flatten(rs)
     test_case.assertEqual(len(flat_dtensor_rs), len(flat_rs))
@@ -66,7 +65,7 @@ def assert_ref_dtensor_equal(test_case, dtensor_rs, rs):
             f"dtensor requires_grad: {dtensor_r.requires_grad}",
         )
 
-        test_case.assertEqual(dtensor_rs.to_local(), r)
+        test_case.assertEqual(dtensor_r.to_local(), r)
 
 
 # Copied from functorch
@@ -677,6 +676,11 @@ def run_dtensor_crossref(test_case, func, args, kwargs):
     # TODO: also handle cases where func raise an exception
     rs = func(*args, **kwargs)
 
+    def to_replicate(e: object) -> object:
+        return e.redistribute(
+                test_case.mesh, test_case.mesh.ndim * [Replicate()]
+            ) if isinstance(e, DTensor) else e
+
     try:
         # Suppress warnings, this doesn't matter for test_meta.py
         # but it does matter if you want to use this decorator
@@ -698,12 +702,14 @@ def run_dtensor_crossref(test_case, func, args, kwargs):
                     dtensor_rs = func(*dtensor_args, **dtensor_kwargs)
 
                     # redistribute/all_gather the results to compare with normal output
-                    dtensor_rs = dtensor_rs.redistribute(
-                        test_case.mesh, test_case.mesh.ndim * [Replicate()]
-                    )
+                    dtensor_rs = tree_map(to_replicate, dtensor_rs)
                     try:
                         if resolve_name(func) not in skip_bw:
-                            dtensor_rs.to_local().sum().backward()
+                            if isinstance(dtensor_rs, DTensor):
+                                dtensor_rs.to_local().sum().backward()
+                            elif isinstance(dtensor_rs, tuple):
+                                dtensor_rs[0].to_local().sum().backward()
+
                     except Exception as e:
                         # TODO(anj): Remove this guard exception after gaining more confidence.
                         if torch.distributed.get_rank() == 0:
