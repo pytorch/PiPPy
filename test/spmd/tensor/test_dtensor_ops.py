@@ -66,11 +66,7 @@ def assert_ref_dtensor_equal(test_case, dtensor_rs, rs):
             f"dtensor requires_grad: {dtensor_r.requires_grad}",
         )
 
-        # redistribute/all_gather the results to compare with normal output
-        full_out = dtensor_r.redistribute(
-            mesh, mesh.ndim * [Replicate()]
-        ).to_local()
-        test_case.assertEqual(full_out, r)
+        test_case.assertEqual(dtensor_rs.to_local(), r)
 
 
 # Copied from functorch
@@ -700,6 +696,11 @@ def run_dtensor_crossref(test_case, func, args, kwargs):
                     # for cross-ref testing, as some tests may be looking at
                     # errors
                     dtensor_rs = func(*dtensor_args, **dtensor_kwargs)
+
+                    # redistribute/all_gather the results to compare with normal output
+                    dtensor_rs = dtensor_rs.redistribute(
+                        test_case.mesh, test_case.mesh.ndim * [Replicate()]
+                    )
                     try:
                         if resolve_name(func) not in skip_bw:
                             dtensor_rs.to_local().sum().backward()
