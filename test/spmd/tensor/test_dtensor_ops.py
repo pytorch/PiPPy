@@ -677,9 +677,11 @@ def run_dtensor_crossref(test_case, func, args, kwargs):
     rs = func(*args, **kwargs)
 
     def to_replicate(e: object) -> object:
-        return e.redistribute(
-                test_case.mesh, test_case.mesh.ndim * [Replicate()]
-            ) if isinstance(e, DTensor) else e
+        return (
+            e.redistribute(test_case.mesh, test_case.mesh.ndim * [Replicate()])
+            if isinstance(e, DTensor)
+            else e
+        )
 
     try:
         # Suppress warnings, this doesn't matter for test_meta.py
