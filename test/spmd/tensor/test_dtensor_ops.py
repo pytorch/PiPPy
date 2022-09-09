@@ -7,7 +7,7 @@ import unittest
 import warnings
 
 from torch.overrides import resolve_name
-from torch.utils._pytree import tree_flatten
+from torch.utils._pytree import tree_flatten, tree_map
 from torch.testing._internal.common_utils import (
     suppress_warnings,
     TEST_WITH_ASAN,
@@ -21,7 +21,7 @@ from torch.testing._internal.common_device_type import (
 import torch.testing._internal.common_methods_invocations as common_ops
 from torch.testing._internal.common_methods_invocations import DecorateInfo
 
-from spmd import DeviceMesh, Replicate
+from spmd import DTensor, DeviceMesh, Replicate
 from spmd.testing.dtensor_lagging_op_db import dtensor_lagging_op_db
 from spmd.testing.common_utils import (
     DistTensorTestBase,
@@ -43,7 +43,6 @@ common_ops.XS = 2
 
 
 def assert_ref_dtensor_equal(test_case, dtensor_rs, rs):
-    mesh = test_case.mesh
     flat_dtensor_rs, _ = tree_flatten(dtensor_rs)
     flat_rs, _ = tree_flatten(rs)
     test_case.assertEqual(len(flat_dtensor_rs), len(flat_rs))
@@ -66,11 +65,7 @@ def assert_ref_dtensor_equal(test_case, dtensor_rs, rs):
             f"dtensor requires_grad: {dtensor_r.requires_grad}",
         )
 
-        # redistribute/all_gather the results to compare with normal output
-        full_out = dtensor_r.redistribute(
-            mesh, mesh.ndim * [Replicate()]
-        ).to_local()
-        test_case.assertEqual(full_out, r)
+        test_case.assertEqual(dtensor_r.to_local(), r)
 
 
 # Copied from functorch
@@ -129,9 +124,6 @@ dtensor_fails = {
     # we need to remove many of them from list once op
     # get full support with varying sharding specs
     xfail("__getitem__"),
-    xfail("__rdiv__"),
-    xfail("__rmod__"),
-    xfail("__rpow__"),
     xfail("__rsub__"),
     xfail("_masked.amax"),
     xfail("_masked.amin"),
@@ -148,8 +140,6 @@ dtensor_fails = {
     xfail("_masked.softmin"),
     xfail("_masked.softmax"),
     xfail("_masked.sum"),
-    xfail("acos"),
-    xfail("acosh"),
     xfail("add"),
     xfail("addbmm"),
     xfail("addcdiv"),
@@ -161,7 +151,6 @@ dtensor_fails = {
     xfail("amax"),
     xfail("amin"),
     xfail("aminmax"),
-    xfail("angle"),
     xfail("any"),
     xfail("arange"),
     xfail("argmax"),
@@ -169,11 +158,6 @@ dtensor_fails = {
     xfail("argsort"),
     xfail("as_strided"),
     xfail("as_strided_scatter"),
-    xfail("asin"),
-    xfail("asinh"),
-    xfail("atan2"),
-    xfail("atan"),
-    xfail("atanh"),
     xfail("baddbmm"),
     xfail("bernoulli"),
     xfail("block_diag"),
@@ -183,7 +167,6 @@ dtensor_fails = {
     xfail("cat"),
     xfail("cartesian_prod"),
     xfail("cdist"),
-    xfail("ceil"),
     xfail("cholesky"),
     xfail("cholesky_inverse"),
     xfail("cholesky_solve"),
@@ -197,8 +180,6 @@ dtensor_fails = {
     xfail("constant_pad_nd"),
     xfail("copysign"),
     xfail("corrcoef"),
-    xfail("cos"),
-    xfail("cosh"),
     xfail("count_nonzero"),
     xfail("cov"),
     xfail("cross"),
@@ -206,18 +187,13 @@ dtensor_fails = {
     xfail("cummin"),
     xfail("cumsum"),
     xfail("cumulative_trapezoid"),
-    xfail("deg2rad"),
     xfail("diag"),
     xfail("diag_embed"),
     xfail("diagflat"),
     xfail("diagonal"),
     xfail("diagonal_scatter"),
     xfail("diff"),
-    xfail("digamma"),
     xfail("dist"),
-    xfail("div", "floor_rounding"),
-    xfail("div", "no_rounding_mode"),
-    xfail("div", "trunc_rounding"),
     xfail("dot"),
     xfail("dsplit"),
     xfail("dstack"),
@@ -227,12 +203,6 @@ dtensor_fails = {
     xfail("empty_like"),
     xfail("eq"),
     xfail("equal"),
-    xfail("erf"),
-    xfail("erfc"),
-    xfail("erfinv"),
-    xfail("exp2"),
-    xfail("exp"),
-    xfail("expm1"),
     xfail("eye"),
     xfail("fft.fft2"),
     xfail("fft.fft"),
@@ -249,18 +219,13 @@ dtensor_fails = {
     xfail("fft.rfft2"),
     xfail("fft.rfft"),
     xfail("fft.rfftn"),
-    xfail("fill"),
     xfail("flatten"),
     xfail("flip"),
     xfail("fliplr"),
     xfail("flipud"),
-    xfail("float_power"),
-    xfail("floor"),
     xfail("floor_divide"),
     xfail("fmax"),
     xfail("fmin"),
-    xfail("fmod"),
-    xfail("frac"),
     xfail("frexp"),
     xfail("full_like"),
     xfail("gather"),
@@ -274,10 +239,6 @@ dtensor_fails = {
     xfail("histogramdd"),
     xfail("hsplit"),
     xfail("hstack"),
-    xfail("hypot"),
-    xfail("i0"),
-    xfail("igamma"),
-    xfail("igammac"),
     xfail("index_add"),
     xfail("index_copy"),
     xfail("index_fill"),
@@ -292,9 +253,7 @@ dtensor_fails = {
     xfail("isposinf"),
     xfail("kron"),
     xfail("kthvalue"),
-    xfail("ldexp"),
     xfail("lerp"),
-    xfail("lgamma"),
     xfail("linalg.cholesky"),
     xfail("linalg.cholesky_ex"),
     xfail("linalg.cond"),
@@ -339,21 +298,13 @@ dtensor_fails = {
     xfail("linalg.vecdot"),
     xfail("linalg.vector_norm"),
     xfail("linspace"),
-    xfail("log10"),
-    xfail("log1p"),
-    xfail("log2"),
-    xfail("log"),
     xfail("log_softmax"),
     xfail("log_softmax", "dtype"),
     xfail("logaddexp2"),
     xfail("logaddexp"),
     xfail("logcumsumexp"),
     xfail("logdet"),
-    xfail("logical_and"),
     xfail("logical_not"),
-    xfail("logical_or"),
-    xfail("logical_xor"),
-    xfail("logit"),
     xfail("logspace"),
     xfail("logsumexp"),
     xfail("lt"),
@@ -379,10 +330,6 @@ dtensor_fails = {
     xfail("msort"),
     xfail("multinomial"),
     xfail("mv"),
-    xfail("mvlgamma", "mvlgamma_p_1"),
-    xfail("mvlgamma", "mvlgamma_p_3"),
-    xfail("mvlgamma", "mvlgamma_p_5"),
-    xfail("nan_to_num"),
     xfail("nanmean"),
     xfail("nanmedian"),
     xfail("nanquantile"),
@@ -395,7 +342,6 @@ dtensor_fails = {
     xfail("new_full"),
     xfail("new_ones"),
     xfail("new_zeros"),
-    xfail("nextafter"),
     xfail("transpose"),
     xfail("nn.functional.adaptive_avg_pool1d"),
     xfail("nn.functional.adaptive_avg_pool2d"),
@@ -483,7 +429,6 @@ dtensor_fails = {
     xfail("nn.functional.soft_margin_loss"),
     xfail("nn.functional.softplus"),
     xfail("nn.functional.softshrink"),
-    xfail("nn.functional.softsign"),
     xfail("nn.functional.threshold"),
     xfail("nn.functional.triplet_margin_loss"),
     xfail("nn.functional.triplet_margin_with_distance_loss"),
@@ -502,12 +447,6 @@ dtensor_fails = {
     xfail("pca_lowrank"),
     xfail("pinverse"),
     xfail("polar"),
-    xfail("polygamma", "polygamma_n_0"),
-    xfail("polygamma", "polygamma_n_1"),
-    xfail("polygamma", "polygamma_n_2"),
-    xfail("polygamma", "polygamma_n_3"),
-    xfail("polygamma", "polygamma_n_4"),
-    xfail("pow"),
     xfail("put"),
     xfail("qr"),
     xfail("quantile"),
@@ -516,8 +455,6 @@ dtensor_fails = {
     xfail("randint_like"),
     xfail("randn_like"),
     xfail("ravel"),
-    xfail("reciprocal"),
-    xfail("remainder"),
     xfail("renorm"),
     xfail("repeat_interleave"),
     xfail("reshape_as"),
@@ -526,11 +463,6 @@ dtensor_fails = {
     xfail("resize_as_"),
     xfail("roll"),
     xfail("rot90"),
-    xfail("round"),
-    xfail("round", "decimals_0"),
-    xfail("round", "decimals_3"),
-    xfail("round", "decimals_neg_3"),
-    xfail("rsqrt"),
     xfail("rsub"),
     xfail("scatter_add"),
     xfail("scatter"),
@@ -542,11 +474,7 @@ dtensor_fails = {
     xfail("searchsorted"),
     xfail("select"),
     xfail("select_scatter"),
-    xfail("sign"),
     xfail("signbit"),
-    xfail("sin"),
-    xfail("sinc"),
-    xfail("sinh"),
     xfail("slice_scatter"),
     xfail("sort"),
     xfail("sparse.sampled_addmm"),
@@ -570,9 +498,7 @@ dtensor_fails = {
     xfail("special.modified_bessel_i1"),
     xfail("special.modified_bessel_k0"),
     xfail("special.modified_bessel_k1"),
-    xfail("special.ndtr"),
     xfail("special.ndtri"),
-    xfail("special.polygamma", "special_polygamma_n_0"),
     xfail("special.scaled_modified_bessel_k0"),
     xfail("special.scaled_modified_bessel_k1"),
     xfail("special.spherical_bessel_j0"),
@@ -581,8 +507,6 @@ dtensor_fails = {
     xfail("split"),
     xfail("split", "list_args"),
     xfail("split_with_sizes"),
-    xfail("sqrt"),
-    xfail("square"),
     xfail("squeeze"),
     xfail("stack"),
     xfail("std"),
@@ -596,7 +520,6 @@ dtensor_fails = {
     xfail("t"),
     xfail("take_along_dim"),
     xfail("take"),
-    xfail("tan"),
     xfail("tensor_split"),
     xfail("tensordot"),
     xfail("to_sparse"),
@@ -607,8 +530,6 @@ dtensor_fails = {
     xfail("triangular_solve"),
     xfail("tril"),
     xfail("triu"),
-    xfail("true_divide"),
-    xfail("trunc"),
     xfail("unbind"),
     xfail("unfold"),
     xfail("unflatten"),
@@ -623,8 +544,6 @@ dtensor_fails = {
     xfail("vsplit"),
     xfail("vstack"),
     xfail("where"),
-    xfail("xlogy"),
-    xfail("zero_"),
     xfail("zeros_like"),
     # ops inside this might even fail without dtensor
     # tests, as we rescale op db common test size factor (i.e. L, M, S)
@@ -675,15 +594,17 @@ skip_bw = [
 
 
 def run_dtensor_crossref(test_case, func, args, kwargs):
-    run_bw = False
-    if hasattr(args[0], "requires_grad") and resolve_name(func) not in skip_bw:
-        args[0].requires_grad = True
-        run_bw = True
-
     to_dtensor = DTensorConverter(test_case.mesh, args, kwargs)
 
     # TODO: also handle cases where func raise an exception
     rs = func(*args, **kwargs)
+
+    def to_replicate(e: object) -> object:
+        return (
+            e.redistribute(test_case.mesh, test_case.mesh.ndim * [Replicate()])
+            if isinstance(e, DTensor)
+            else e
+        )
 
     try:
         # Suppress warnings, this doesn't matter for test_meta.py
@@ -704,9 +625,16 @@ def run_dtensor_crossref(test_case, func, args, kwargs):
                     # for cross-ref testing, as some tests may be looking at
                     # errors
                     dtensor_rs = func(*dtensor_args, **dtensor_kwargs)
+
+                    # redistribute/all_gather the results to compare with normal output
+                    dtensor_rs = tree_map(to_replicate, dtensor_rs)
                     try:
-                        if run_bw:
-                            dtensor_rs.to_local().sum().backward()
+                        if resolve_name(func) not in skip_bw:
+                            if isinstance(dtensor_rs, DTensor):
+                                dtensor_rs.to_local().sum().backward()
+                            elif isinstance(dtensor_rs, tuple):
+                                dtensor_rs[0].to_local().sum().backward()
+
                     except Exception as e:
                         # TODO(anj): Remove this guard exception after gaining more confidence.
                         if torch.distributed.get_rank() == 0:
@@ -764,7 +692,7 @@ class TestDTensorOps(DistTensorTestBase):
 
         # test each op with dist tensor inputs and normal inputs
         def test():
-            samples = op.sample_inputs(DEVICE_TYPE, dtype, requires_grad=False)
+            samples = op.sample_inputs(DEVICE_TYPE, dtype, requires_grad=True)
             for sample_input in samples:
                 args = [sample_input.input] + list(sample_input.args)
                 kwargs = sample_input.kwargs
