@@ -2,6 +2,10 @@
 from spmd.tensor.api import DTensor
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.ops.math_ops import einop_rule
+from spmd.tensor.ops.utils import register_prop_rule
+from typing import cast
+from spmd.tensor.placement_types import DTensorSpec
+import torch.utils._pytree as pytree
 
 # leave the pointwise_ops list here for convenience,
 # it might not be a complete list.
@@ -145,7 +149,6 @@ pointwise_ops = [
     "aten.tanh_backward.default",
     "aten.sgn.default",
     "aten.neg.default",
-    "aten._softmax_backward_data.default",
 ]
 
 
@@ -175,3 +178,17 @@ def pointwise_rule(
 
 for op in pointwise_ops:
     DTensor._op_to_rules[op] = pointwise_rule
+
+@register_prop_rule("aten._softmax_backward_data.default")
+def softmax_bwd_rule(op_schema: OpSchema) -> OutputSharding:
+    if (len(op_schema.args_schema) != len(op_schema.args_spec)):
+        ops_dim_map = pytree.tree_map(
+            lambda spec: cast(DTensorSpec, spec).dim_map, op_schema.args_spec
+        )
+        softmax_dim = cast(
+            int, op_schema.args_schema[len(op_schema.args_spec)]
+        )
+        ops_dim_map = list(zip(*ops_dim_map))
+        if softmax_dim < len(ops_dim_map) and 0 in ops_dim_map[softmax_dim]:
+            raise RuntimeError("Cannot run softmax on batch dim!")
+    return pointwise_rule(op_schema)

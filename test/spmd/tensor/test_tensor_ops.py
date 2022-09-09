@@ -137,16 +137,14 @@ class DistTensorOpsTest(DistTensorTestBase):
         dist_x = distribute_tensor(x, device_mesh, [shard0_spec])
         self.assertTrue(dist_x.requires_grad)
 
-        dist_y = dist_x.softmax(dim=-1)
-        self.assertTrue(dist_y.placements[0].is_shard(dim=0))
-        s = dist_y.sum()
+        dist_softmax = dist_x.softmax(dim=-1)
+        dist_sum = dist_softmax.sum()
+        dist_sum = dist_sum.redistribute(device_mesh, [Replicate()])
         self.assertIsNone(dist_x.grad)
-        s.backward() # RuntimeError: Expected tensor for argument #1 'grad' to have same size as tensor for argument #2 'output'; but [8, 12, 16] does not equal [2, 12, 16] (while checking arguments for softmax_backward)
+        dist_sum.backward()
         self.assertIsNotNone(dist_x.grad)
-        local_x_grad = dist_x.grad.redistribute(
-            device_mesh, [Replicate()]
-        ).to_local()
-        self.assertEqual(local_x_grad, x.grad)
+        local_x_grad_copy = distribute_tensor(x.grad, device_mesh, [shard0_spec]).to_local()
+        self.assertEqual(dist_x.grad.to_local(), local_x_grad_copy)
 
 
 if __name__ == "__main__":
