@@ -36,9 +36,14 @@ default_prop_ops = [
     "aten.clone.default",
     "aten.copy_.default",
     "aten.detach.default",
+    "aten.empty_like.default",
+    "aten.fill_.Scalar",
+    "aten.full_like.default",
     "aten.is_same_size.default",
-    "aten.ones_like.default",
     "aten.new_empty_strided.default",
+    "aten.ones_like.default",
+    "aten.zero_.default",
+    "aten.zeros_like.default",
 ]
 
 no_shard_prop_ops = ["aten._local_scalar_dense.default"]

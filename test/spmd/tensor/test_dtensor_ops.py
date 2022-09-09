@@ -224,7 +224,6 @@ dtensor_fails = {
     xfail("fft.rfft2"),
     xfail("fft.rfft"),
     xfail("fft.rfftn"),
-    xfail("fill"),
     xfail("flatten"),
     xfail("flip"),
     xfail("fliplr"),
@@ -550,7 +549,6 @@ dtensor_fails = {
     xfail("vsplit"),
     xfail("vstack"),
     xfail("where"),
-    xfail("zero_"),
     xfail("zeros_like"),
     # ops inside this might even fail without dtensor
     # tests, as we rescale op db common test size factor (i.e. L, M, S)
