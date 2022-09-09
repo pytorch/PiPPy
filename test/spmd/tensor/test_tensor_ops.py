@@ -96,15 +96,27 @@ class DistTensorOpsTest(DistTensorTestBase):
         self.assertEqual((4, 8), empty_like_dt.to_local().shape)
 
     @with_comms
+    def test_fill_inplace(self):
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        shard_spec = [Shard(0)]
+
+        input_tensor = torch.randn(4, 8, requires_grad=True)
+        dist_tensor = DTensor.from_local(input_tensor, device_mesh, shard_spec)
+        full_like_dt = torch.fill_(dist_tensor, 42.0)
+        full_expected = torch.full((4, 8), 42.0)
+        self.assertEqual(full_expected, full_like_dt.to_local())
+        self.assertEqual(full_expected, dist_tensor.to_local())
+
+    @with_comms
     def test_full_like(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
 
         input_tensor = torch.randn(4, 8, requires_grad=True)
         dist_tensor = DTensor.from_local(input_tensor, device_mesh, shard_spec)
-        zeros_like_dt = torch.full_like(dist_tensor, 42.)
-        zeros_expected = torch.full((4, 8), 42.)
-        self.assertEqual(zeros_expected, zeros_like_dt.to_local())
+        full_like_dt = torch.full_like(dist_tensor, 42.0)
+        full_expected = torch.full((4, 8), 42.0)
+        self.assertEqual(full_expected, full_like_dt.to_local())
 
     @with_comms
     def test_ones_like(self):
@@ -116,6 +128,18 @@ class DistTensorOpsTest(DistTensorTestBase):
         ones_like_dt = torch.ones_like(dist_tensor)
         ones_expected = torch.ones(4, 8)
         self.assertEqual(ones_expected, ones_like_dt.to_local())
+
+    @with_comms
+    def test_zero_inplace(self):
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        shard_spec = [Shard(0)]
+
+        input_tensor = torch.randn(4, 8, requires_grad=True)
+        dist_tensor = DTensor.from_local(input_tensor, device_mesh, shard_spec)
+        zeros_like_dt = torch.zero_(dist_tensor)
+        zeros_expected = torch.zeros(4, 8)
+        self.assertEqual(zeros_expected, zeros_like_dt.to_local())
+        self.assertEqual(zeros_expected, dist_tensor.to_local())
 
     @with_comms
     def test_zeros_like(self):

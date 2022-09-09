@@ -37,10 +37,12 @@ default_prop_ops = [
     "aten.copy_.default",
     "aten.detach.default",
     "aten.empty_like.default",
+    "aten.fill_.Scalar",
     "aten.full_like.default",
     "aten.is_same_size.default",
     "aten.new_empty_strided.default",
     "aten.ones_like.default",
+    "aten.zero_.default",
     "aten.zeros_like.default",
 ]
 
