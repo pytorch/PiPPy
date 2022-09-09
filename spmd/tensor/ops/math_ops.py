@@ -3,7 +3,7 @@ import torch
 from typing import List, Dict, Tuple, cast
 from spmd.tensor.api import DTensor
 from spmd.tensor.dispatch import OpSchema, OutputSharding
-from spmd.tensor.placement_types import _Partial, DTensorSpec
+from spmd.tensor.placement_types import _Partial, DTensorSpec, Replicate
 from spmd.tensor.ops.utils import as_list, register_prop_rule
 
 
@@ -215,11 +215,21 @@ for reduction_op in reduction_ops:
 
 @register_prop_rule("aten._softmax.default")
 def softmax_rule(op_schema: OpSchema) -> OutputSharding:
-    if (len(op_schema.args_schema) != len(op_schema.args_spec)):
-        dim_map = cast(DTensorSpec, op_schema.args_schema[0]).dim_map
-        softmax_dim = cast(
-            int, op_schema.args_schema[len(op_schema.args_spec)]
-        )  # Is it better to put it into kwargs? e.g. op_schema.kwargs_schema['dim']
-        if softmax_dim < len(dim_map) and dim_map[softmax_dim] >= 0:
-            raise RuntimeError("Cannot run softmax on batch dim!")
-    return OutputSharding(op_schema.args_spec[0])
+    input_spec = cast(DTensorSpec, op_schema.args_spec[0])
+    dim_map = input_spec.dim_map
+    softmax_dim = cast(
+        int, op_schema.args_schema[len(op_schema.args_spec)]
+    )  # Is it better to put it into kwargs? e.g. op_schema.kwargs_schema['dim']
+    output_spec = op_schema.args_spec[0]
+    schema_suggestion = None
+    failed_reason = None
+    if softmax_dim < len(dim_map) and dim_map[softmax_dim] >= 0:
+        # suggest replicating the input tensor
+        print(f"({softmax_dim},{dim_map},{dim_map[softmax_dim]})")
+        output_spec = None
+        # taken from _inplace_rewrap_schema_suggestion
+        new_arg_schema: List[object] = [DTensorSpec(input_spec.mesh, [Replicate()], input_spec.shape, ndim=input_spec.ndim)]
+        new_arg_schema += op_schema.args_schema[1:]
+        schema_suggestion = [OpSchema(tuple(new_arg_schema), op_schema.kwargs_schema)]
+        failed_reason = "Cannot run _softmax on batch dim, need to replicate the tensor."
+    return OutputSharding(output_spec, schema_suggestion, failed_reason)
