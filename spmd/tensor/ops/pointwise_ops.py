@@ -433,35 +433,6 @@ def softmax_bwd_rule(op_schema: OpSchema) -> OutputSharding:
             int, op_schema.args_schema[len(op_schema.args_spec)]
         )
         ops_dim_map = list(zip(*ops_dim_map))
-        if softmax_dim
-    @with_comms
-    def test_softmax(self):
-        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
-        x = torch.rand(8, 12, 16, device=self.device_type)
-
-        dims = range(3)  # used to convert -1 to the actual dim
-        for softmax_dim in range(-1, 3):
-            local_y = torch.nn.functional.softmax(
-                x, dim=softmax_dim, dtype=torch.float32
-            )
-            for batch_dim in range(-1, 3):
-                dist_x = distribute_tensor(x, device_mesh, [Shard(batch_dim)])
-                if dims[batch_dim] == dims[softmax_dim]:
-                    with self.assertRaises(Exception):
-                        dist_y = torch.nn.functional.softmax(
-                            dist_x, dim=softmax_dim, dtype=torch.float32
-                        )
-                else:
-                    local_y_copy = distribute_tensor(
-                        local_y, device_mesh, [Shard(batch_dim)]
-                    ).to_local()
-                    dist_y = torch.nn.functional.softmax(
-                        dist_x, dim=softmax_dim, dtype=torch.float32
-                    )
-                    self.assertTrue(
-                        dist_y.placements[0].is_shard(dim=batch_dim)
-                    )
-                    self.assertEqual(dist_y.to_local(), local_y_copy)
-        # TODO: add 2D mesh case? len(ops_dim_map) and 0 in ops_dim_map[softmax_dim]:
+        if softmax_dim < len(ops_dim_map) and 0 in ops_dim_map[softmax_dim]:
             raise RuntimeError("Cannot run softmax on batch dim!")
     return pointwise_rule(op_schema)
