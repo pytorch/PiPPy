@@ -224,7 +224,6 @@ dtensor_fails = {
     xfail("fft.rfft2"),
     xfail("fft.rfft"),
     xfail("fft.rfftn"),
-    xfail("fill"),
     xfail("flatten"),
     xfail("flip"),
     xfail("fliplr"),
