@@ -3,7 +3,12 @@ import torch
 from typing import List, Dict, Tuple, cast
 from spmd.tensor.api import DTensor
 from spmd.tensor.dispatch import OpSchema, OutputSharding
-from spmd.tensor.placement_types import _Partial, DTensorSpec, Replicate
+from spmd.tensor.placement_types import (
+    _Partial,
+    DTensorSpec,
+    Replicate,
+    OutputSpecType,
+)
 from spmd.tensor.ops.utils import as_list, register_prop_rule
 
 
@@ -220,7 +225,7 @@ def softmax_rule(op_schema: OpSchema) -> OutputSharding:
     softmax_dim = cast(
         int, op_schema.args_schema[len(op_schema.args_spec)]
     )  # Is it better to put it into kwargs? e.g. op_schema.kwargs_schema['dim']
-    output_spec = op_schema.args_spec[0]
+    output_spec: OutputSpecType = op_schema.args_spec[0]
     schema_suggestion = None
     failed_reason = None
     if softmax_dim < len(dim_map) and dim_map[softmax_dim] >= 0:

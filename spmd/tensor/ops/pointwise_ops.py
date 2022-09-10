@@ -1,7 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 from typing import Dict, List
 from spmd.tensor.api import DTensor
-from spmd.tensor.dispatch import OpSchema, OutputSharding, DTensorSpec
+from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.ops.math_ops import einop_rule
 from spmd.tensor.ops.utils import register_prop_rule
 from typing import cast
