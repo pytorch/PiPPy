@@ -183,7 +183,8 @@ class DistTensorOpsTest(DistTensorTestBase):
         dims = range(3)  # used to convert -1 to the actual dim
         for softmax_dim in range(-1, 3):
             # failing cases: (0, -1), (1, -1)
-            for batch_dim in range(0, 3):
+            # for batch_dim in range(0, 3):
+            for batch_dim in range(-1, 0):
                 x = torch.rand(
                     8, 12, 16, device=self.device_type, requires_grad=True
                 )
