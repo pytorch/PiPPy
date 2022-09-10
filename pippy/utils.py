@@ -8,12 +8,14 @@ import logging
 # 1. Needed to work around the issue of RPC not automatically pinning spawned worker threads to CUDA device of the main
 # thread
 # 2. Must be done before `import torch` at which point CUDA context may be created
-if ('CUDA_VISIBLE_DEVICES' not in os.environ                        # not set
-        or len(os.getenv('CUDA_VISIBLE_DEVICES').split(',')) > 1):  # or set to all devices
+cuda_devices_str = os.getenv('CUDA_VISIBLE_DEVICES')
+if (cuda_devices_str is None                        # not set
+        or len(cuda_devices_str.split(',')) > 1):   # or set to all devices
     # If launchers like Torchrun sets `LOCAL_RANK`, we would use this information
-    if 'LOCAL_RANK' in os.environ:
-        os.environ['CUDA_VISIBLE_DEVICES'] = os.getenv('LOCAL_RANK')
-        print(f"Pinning local process {os.getenv('LOCAL_RANK')} to gpu {os.getenv('CUDA_VISIBLE_DEVICES')}")
+    local_rank_str = os.getenv('LOCAL_RANK')
+    if local_rank_str is not None:
+        os.environ['CUDA_VISIBLE_DEVICES'] = local_rank_str
+        print(f"Pinning local process {local_rank_str} to gpu {os.getenv('CUDA_VISIBLE_DEVICES')}")
 
 import torch
 import torch.multiprocessing as mp
