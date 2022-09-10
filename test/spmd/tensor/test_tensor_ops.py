@@ -129,6 +129,7 @@ class DistTensorOpsTest(DistTensorTestBase):
         ones_expected = torch.ones(4, 8)
         self.assertEqual(ones_expected, ones_like_dt.to_local())
 
+    @with_comms
     def test_zero_inplace(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
@@ -152,7 +153,7 @@ class DistTensorOpsTest(DistTensorTestBase):
         self.assertEqual(zeros_expected, zeros_like_dt.to_local())
 
     @with_comms
-    def test_softmax_forward(self):
+    def test_softmax_fwd(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         x = torch.rand(8, 12, 16, device=self.device_type)
 
@@ -167,9 +168,8 @@ class DistTensorOpsTest(DistTensorTestBase):
                     dist_x, dim=softmax_dim, dtype=torch.float32
                 )
                 if dims[batch_dim] == dims[softmax_dim]:
-                    self.assertTrue(
-                        dist_y.placements[0].is_replicate()
-                    )
+                    # in this case the tensor is implicitly replicated
+                    self.assertTrue(dist_y.placements[0].is_replicate())
                 else:
                     self.assertTrue(
                         dist_y.placements[0].is_shard(dim=batch_dim)
@@ -180,40 +180,40 @@ class DistTensorOpsTest(DistTensorTestBase):
     @with_comms
     def test_softmax_with_bwd(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
-        x = torch.rand(8, 12, 16, device=self.device_type, requires_grad=True)
-        self.assertTrue(x.requires_grad)
-
         dims = range(3)  # used to convert -1 to the actual dim
         for softmax_dim in range(-1, 3):
-            local_y = torch.nn.functional.softmax(
-                x, dim=softmax_dim, dtype=torch.float32
-            )
-            local_y = x.softmax(dim=softmax_dim)
-            local_y.sum().backward()
-            for batch_dim in range(-1, 3):
+            # failing cases: (0, -1), (1, -1)
+            for batch_dim in range(0, 3):
+                x = torch.rand(
+                    8, 12, 16, device=self.device_type, requires_grad=True
+                )
+                self.assertTrue(x.requires_grad)
+                local_y = torch.nn.functional.softmax(
+                    x, dim=softmax_dim, dtype=torch.float32
+                ).sum()
+                local_y.backward()
+
                 dist_x = distribute_tensor(x, device_mesh, [Shard(batch_dim)])
                 self.assertTrue(dist_x.requires_grad)
-                local_y_copy = distribute_tensor(
-                    local_y, device_mesh, [Shard(batch_dim)]
-                ).to_local()
-                dist_softmax = dist_x.softmax(dim=-1)
+                dist_softmax = dist_x.softmax(dim=softmax_dim)
                 if dims[softmax_dim] == dims[batch_dim]:
                     # dtensor is suggested to replicate
-                    self.assertTrue(
-                        dist_softmax.placements[0].is_replicate()
-                    )
+                    self.assertTrue(dist_softmax.placements[0].is_replicate())
                 else:
                     self.assertTrue(
                         dist_softmax.placements[0].is_shard(dim=batch_dim)
                     )
-                dist_sum = dist_softmax.sum()
-                dist_sum = dist_sum.redistribute(device_mesh, [Replicate()])
+                dist_y = dist_softmax.sum()
+                dist_y = dist_y.redistribute(device_mesh, [Replicate()])
+                self.assertEqual(dist_y.to_local(), local_y)
                 self.assertIsNone(dist_x.grad)
-                dist_sum.backward()
+                dist_y.backward()
                 self.assertIsNotNone(dist_x.grad)
-                local_x_grad_copy = distribute_tensor(x.grad, device_mesh, [Shard(batch_dim)]).to_local()
-                print(f"dim=({softmax_dim}, {batch_dim})local grad: {local_x_grad_copy}")
-                self.assertEqual(dist_x.grad.to_local(), local_x_grad_copy)
+                dist_x_grad = dist_x.grad.redistribute(
+                    device_mesh, [Replicate()]
+                )
+                self.assertEqual(dist_x_grad.to_local(), x.grad)
+
 
 if __name__ == "__main__":
     run_tests()

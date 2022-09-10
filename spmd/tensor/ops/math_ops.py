@@ -215,7 +215,7 @@ for reduction_op in reduction_ops:
 
 @register_prop_rule("aten._softmax.default")
 def softmax_rule(op_schema: OpSchema) -> OutputSharding:
-    input_spec = cast(DTensorSpec, op_schema.args_spec[0])
+    input_spec = op_schema.args_spec[0]
     dim_map = input_spec.dim_map
     softmax_dim = cast(
         int, op_schema.args_schema[len(op_schema.args_spec)]
@@ -225,11 +225,21 @@ def softmax_rule(op_schema: OpSchema) -> OutputSharding:
     failed_reason = None
     if softmax_dim < len(dim_map) and dim_map[softmax_dim] >= 0:
         # suggest replicating the input tensor
-        print(f"({softmax_dim},{dim_map},{dim_map[softmax_dim]})")
         output_spec = None
         # taken from _inplace_rewrap_schema_suggestion
-        new_arg_schema: List[object] = [DTensorSpec(input_spec.mesh, [Replicate()], input_spec.shape, ndim=input_spec.ndim)]
+        new_arg_schema: List[object] = [
+            DTensorSpec(
+                input_spec.mesh,
+                [Replicate()],
+                input_spec.shape,
+                ndim=input_spec.ndim,
+            )
+        ]
         new_arg_schema += op_schema.args_schema[1:]
-        schema_suggestion = [OpSchema(tuple(new_arg_schema), op_schema.kwargs_schema)]
-        failed_reason = "Cannot run _softmax on batch dim, need to replicate the tensor."
+        schema_suggestion = [
+            OpSchema(tuple(new_arg_schema), op_schema.kwargs_schema)
+        ]
+        failed_reason = (
+            "Cannot run _softmax on batch dim, need to replicate the tensor."
+        )
     return OutputSharding(output_spec, schema_suggestion, failed_reason)
