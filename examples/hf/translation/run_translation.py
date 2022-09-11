@@ -25,6 +25,9 @@ import types
 from dataclasses import dataclass, field
 from typing import Optional
 
+# Run before `import torch` to pin CUDA devices first
+from pippy import run_pippy
+
 import datasets
 import numpy as np
 import torch
@@ -50,7 +53,6 @@ from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
-from pippy import run_pippy
 from pippy.hf import PiPPySeq2SeqTrainingArguments, PiPPySeq2SeqTrainer, wrap
 from pippy.microbatch import TensorChunkSpec, CustomReducer
 
