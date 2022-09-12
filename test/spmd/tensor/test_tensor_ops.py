@@ -197,6 +197,8 @@ class DistTensorOpsTest(DistTensorTestBase):
             self.assertEqual(res_cpu, res_gpu.to(device="cpu"))
             res_cpu.sum().backward()
             res_gpu.sum().backward()
+            self.assertIsNotNone(tensor_cpu.grad)
+            self.assertIsNotNone(tensor_gpu.grad)
             self.assertEqual(tensor_cpu.grad, tensor_gpu.grad.to(device="cpu"))
 
         # DTensor
@@ -220,7 +222,7 @@ class DistTensorOpsTest(DistTensorTestBase):
                 dist_y_gpu.sum().redistribute(gpu_mesh, [Replicate()]).backward()
                 self.assertIsNotNone(dist_x_cpu.grad)
                 self.assertIsNotNone(dist_x_gpu.grad)
-                self.assertEqual(dist_x_cpu.to_local(), dist_x_gpu.to_local().to(device="cpu"))
+                self.assertEqual(dist_x_cpu.grad.to_local(), dist_x_gpu.grad.to_local().to(device="cpu"))
 
 
     @with_comms
