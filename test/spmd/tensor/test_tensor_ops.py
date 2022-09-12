@@ -4,8 +4,11 @@ from torch.testing._internal.common_utils import run_tests
 from spmd.testing.common_utils import (  # type: ignore
     DistTensorTestBase,
     with_comms,
+    TEST_GPU_NUM,
 )
 from spmd import distribute_tensor, DeviceMesh, DTensor, Shard, Replicate
+from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
+import itertools
 
 
 class DistTensorOpsTest(DistTensorTestBase):
@@ -178,7 +181,52 @@ class DistTensorOpsTest(DistTensorTestBase):
                 self.assertEqual(dist_y.to_local(), local_y)
 
     @with_comms
+    @skip_if_lt_x_gpu(TEST_GPU_NUM)
+    def test_softmax_cpu_gpu_discrepancy(self):
+        softmax_dims = [-1, 0, 1, 2]
+        # torch.tensor
+        for softmax_dim in softmax_dims:
+            tensor_cpu = torch.rand(8, 12, 16, device="cpu", requires_grad=True)
+            tensor_gpu = tensor_cpu.to(device="gpu")
+            res_cpu = torch.nn.functional.softmax(
+                tensor_cpu, dim=softmax_dim, dtype=torch.float32
+            )
+            res_gpu = torch.nn.functional.softmax(
+                tensor_gpu, dim=softmax_dim, dtype=torch.float32
+            )
+            self.assertEqual(res_cpu, res_gpu.to(device="cpu"))
+            res_cpu.sum().backward()
+            res_gpu.sum().backward()
+            self.assertEqual(tensor_cpu.grad, tensor_gpu.grad.to(device="cpu"))
+
+        # DTensor
+        shard_dims = [-1, 0, 1, 2]
+        args_list = list(
+            itertools.product(softmax_dims, shard_dims)
+        )
+        fail_list = []
+        cpu_mesh = DeviceMesh("cpu", list(range(self.world_size)))
+        gpu_mesh = DeviceMesh("cuda", list(range(self.world_size)))
+        for softmax_dim, shard_dim in args_list:
+            if (softmax_dim, shard_dim) not in fail_list:
+                tensor_cpu = torch.rand(8, 12, 16, device="cpu", requires_grad=True)
+                tensor_gpu = tensor_cpu.to(device="gpu")
+                dist_x_cpu = distribute_tensor(tensor_cpu, cpu_mesh, [Shard(shard_dim)])
+                dist_x_gpu = distribute_tensor(tensor_gpu, gpu_mesh, [Shard(shard_dim)])
+                dist_y_cpu = tensor_cpu.softmax(dim=softmax_dim)
+                dist_y_gpu = tensor_gpu.softmax(dim=softmax_dim)
+                self.assertTrue(dist_y_cpu.to_local(), dist_y_gpu.to_local().to(device="cpu"))
+                dist_y_cpu.sum().redistribute(cpu_mesh, [Replicate()]).backward()
+                dist_y_gpu.sum().redistribute(gpu_mesh, [Replicate()]).backward()
+                self.assertIsNotNone(dist_x_cpu.grad)
+                self.assertIsNotNone(dist_x_gpu.grad)
+                self.assertEqual(dist_x_cpu.to_local(), dist_x_gpu.to_local().to(device="cpu"))
+
+
+    @with_comms
+    @skip_if_lt_x_gpu(TEST_GPU_NUM)
     def test_softmax_with_bwd(self):
+        # test on CPU now has problem. See test_softmax_bwd_cpu_discrepancy
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         dims = range(3)  # used to convert -1 to the actual dim
         # failing cases: (0, -1), (1, -1)
