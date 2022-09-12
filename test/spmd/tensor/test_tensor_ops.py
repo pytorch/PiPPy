@@ -202,35 +202,11 @@ class DistTensorOpsTest(DistTensorTestBase):
             self.assertIsNotNone(tensor_gpu.grad)
             self.assertEqual(tensor_cpu.grad, tensor_gpu.grad.to(device="cpu"))
 
-        # DTensor
-        shard_dims = [-1, 0, 1, 2]
-        args_list = list(
-            itertools.product(softmax_dims, shard_dims)
-        )
-        fail_list = []
-        cpu_mesh = DeviceMesh("cpu", list(range(self.world_size)))
-        gpu_mesh = DeviceMesh("cuda", list(range(self.world_size)))
-        for softmax_dim, shard_dim in args_list:
-            if (softmax_dim, shard_dim) not in fail_list:
-                tensor_cpu = torch.rand(8, 12, 16, device="cpu", requires_grad=True)
-                tensor_gpu = tensor_cpu.clone().detach().requires_grad_(True).cuda()
-                tensor_gpu.retain_grad()
-                dist_x_cpu = distribute_tensor(tensor_cpu, cpu_mesh, [Shard(shard_dim)])
-                dist_x_gpu = distribute_tensor(tensor_gpu, gpu_mesh, [Shard(shard_dim)])
-                dist_y_cpu = tensor_cpu.softmax(dim=softmax_dim)
-                dist_y_gpu = tensor_gpu.softmax(dim=softmax_dim)
-                self.assertTrue(dist_y_cpu.to_local(), dist_y_gpu.to_local().to(device="cpu"))
-                dist_y_cpu.sum().redistribute(cpu_mesh, [Replicate()]).backward()
-                dist_y_gpu.sum().redistribute(gpu_mesh, [Replicate()]).backward()
-                self.assertIsNotNone(dist_x_cpu.grad)
-                self.assertIsNotNone(dist_x_gpu.grad)
-                self.assertEqual(dist_x_cpu.grad.to_local(), dist_x_gpu.grad.to_local().to(device="cpu"))
-
 
     @with_comms
     @skip_if_lt_x_gpu(TEST_GPU_NUM)
     def test_softmax_with_bwd(self):
-        # test on CPU now has problem. See test_softmax_bwd_cpu_discrepancy
+        # test on CPU now has problem. See test_softmax_cpu_gpu_discrepancy
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         dims = range(3)  # used to convert -1 to the actual dim
         # failing cases: (0, -1), (1, -1)
