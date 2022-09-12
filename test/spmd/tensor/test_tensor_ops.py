@@ -188,6 +188,8 @@ class DistTensorOpsTest(DistTensorTestBase):
         for softmax_dim in softmax_dims:
             tensor_cpu = torch.rand(8, 12, 16, device="cpu", requires_grad=True)
             tensor_gpu = tensor_cpu.clone().detach().requires_grad_(True).cuda()
+            self.assertIsNotNone(tensor_cpu.grad)
+            self.assertIsNotNone(tensor_gpu.grad)
             res_cpu = torch.nn.functional.softmax(
                 tensor_cpu, dim=softmax_dim, dtype=torch.float32
             )
@@ -195,8 +197,10 @@ class DistTensorOpsTest(DistTensorTestBase):
                 tensor_gpu, dim=softmax_dim, dtype=torch.float32
             )
             self.assertEqual(res_cpu, res_gpu.to(device="cpu"))
-            res_cpu.sum().backward()
-            res_gpu.sum().backward()
+            res_cpu = res_cpu.sum()
+            res_cpu.backward()
+            res_gpu = res_gpu.sum()
+            res_gpu.backward()
             self.assertIsNotNone(tensor_cpu.grad)
             self.assertIsNotNone(tensor_gpu.grad)
             self.assertEqual(tensor_cpu.grad, tensor_gpu.grad.to(device="cpu"))
