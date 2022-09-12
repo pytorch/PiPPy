@@ -181,12 +181,24 @@ class DistTensorOpsTest(DistTensorTestBase):
     def test_softmax_with_bwd(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         dims = range(3)  # used to convert -1 to the actual dim
-        for softmax_dim in range(-1, 3):
-            # failing cases: (0, -1), (1, -1)
+        # failing cases: (0, -1), (1, -1)
+        # for softmax_dim in range(-1, 3):
             # for batch_dim in range(0, 3):
-            for batch_dim in range(-1, 0):
+        pass_list = [
+            (-1, -1),
+            (-1, 2),
+        ]
+        fail_list = [
+            (0, -1),
+            (1, -1),
+        ]
+        test_list = [
+            (0, -1),
+        ]
+        for i in range(1):
+            for softmax_dim, batch_dim in test_list:
                 x = torch.rand(
-                    8, 12, 16, device=self.device_type, requires_grad=True
+                    2, 2, 4, device=self.device_type, requires_grad=True
                 )
                 self.assertTrue(x.requires_grad)
                 local_y = torch.nn.functional.softmax(
@@ -206,6 +218,7 @@ class DistTensorOpsTest(DistTensorTestBase):
                     )
                 dist_y = dist_softmax.sum()
                 dist_y = dist_y.redistribute(device_mesh, [Replicate()])
+                print(f"dist sum={dist_y.to_local()}\nlocal sum={local_y}")
                 self.assertEqual(dist_y.to_local(), local_y)
                 self.assertIsNone(dist_x.grad)
                 dist_y.backward()
@@ -213,6 +226,7 @@ class DistTensorOpsTest(DistTensorTestBase):
                 dist_x_grad = dist_x.grad.redistribute(
                     device_mesh, [Replicate()]
                 )
+                print(f"dist_grad={dist_x_grad.to_local()}\nlocal_grad={x.grad}")
                 self.assertEqual(dist_x_grad.to_local(), x.grad)
 
 
