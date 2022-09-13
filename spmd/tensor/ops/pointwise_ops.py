@@ -3,7 +3,6 @@ from typing import Dict, List
 from spmd.tensor.api import DTensor
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.ops.math_ops import einop_rule
-from typing import cast
 from spmd.tensor.placement_types import DTensorSpec
 
 # leave the remaining pointwise_ops list here for convenience,
