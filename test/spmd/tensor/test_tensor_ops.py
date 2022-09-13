@@ -197,7 +197,6 @@ class DistTensorOpsTest(DistTensorTestBase):
                 torch.cuda.device_count() >= TEST_GPU_NUM
                 or params not in fail_on_cpu_list
             ):
-                print(f"{params}")
                 softmax_dim, shard_dim = params
                 x = torch.rand(
                     8, 12, 16, device=self.device_type, requires_grad=True
