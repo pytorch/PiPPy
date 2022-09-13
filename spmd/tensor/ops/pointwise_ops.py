@@ -3,10 +3,8 @@ from typing import Dict, List
 from spmd.tensor.api import DTensor
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.ops.math_ops import einop_rule
-from spmd.tensor.ops.utils import register_prop_rule
 from typing import cast
-from spmd.tensor.placement_types import DTensorSpec, Replicate
-import torch.utils._pytree as pytree
+from spmd.tensor.placement_types import DTensorSpec
 
 # leave the remaining pointwise_ops list here for convenience,
 # Below ops are some pointwise ops that are yet to be supported,
@@ -419,28 +417,3 @@ def pointwise_rule(
 
 for op in pointwise_ops:
     DTensor._op_to_rules[op] = pointwise_rule
-
-
-@register_prop_rule("aten._softmax_backward_data.default")
-def softmax_bwd_rule(op_schema: OpSchema) -> OutputSharding:
-    input_specs = cast(List[DTensorSpec], op_schema.args_spec)
-    ops_dim_map = pytree.tree_map(lambda spec: spec.dim_map, input_specs)
-    softmax_dim = cast(int, op_schema.args_schema[len(op_schema.args_spec)])
-    ops_dim_map = list(zip(*ops_dim_map))
-    if softmax_dim < len(ops_dim_map) and 0 in ops_dim_map[softmax_dim]:
-        schema_suggestion = OpSchema(
-            tuple(
-                pytree.tree_map(
-                    lambda spec: DTensorSpec(
-                        spec.mesh, [Replicate()], spec.shape, ndim=spec.ndim
-                    ),
-                    input_specs,
-                )
-            ),
-            {},
-        )
-        failed_reason = "Cannot run _softmax_backward_data on batch dim, need to replicate the tensor."
-        _inplace_rewrap_schema_suggestion(schema_suggestion, op_schema)
-        return OutputSharding(None, [schema_suggestion], failed_reason)
-    else:
-        return pointwise_rule(op_schema)

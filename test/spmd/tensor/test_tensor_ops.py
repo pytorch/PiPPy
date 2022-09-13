@@ -204,7 +204,7 @@ class DistTensorOpsTest(DistTensorTestBase):
 
 
     @with_comms
-    @skip_if_lt_x_gpu(TEST_GPU_NUM)
+    #@skip_if_lt_x_gpu(TEST_GPU_NUM)
     def test_softmax_with_bwd(self):
         # test on CPU now has problem. See test_softmax_cpu_gpu_discrepancy
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
@@ -235,39 +235,38 @@ class DistTensorOpsTest(DistTensorTestBase):
         test_list = [
             (0, -1),
         ]
-        for i in range(1):
-            for softmax_dim, batch_dim in test_list:
-                x = torch.rand(
-                    4, 4, 4, device=self.device_type, requires_grad=True
-                )
-                self.assertTrue(x.requires_grad)
-                local_y = torch.nn.functional.softmax(
-                    x, dim=softmax_dim, dtype=torch.float32
-                ).sum()
-                local_y.backward()
+        for softmax_dim, batch_dim in pass_list:
+            x = torch.rand(
+                8, 12, 16, device=self.device_type, requires_grad=True
+            )
+            self.assertTrue(x.requires_grad)
+            local_y = torch.nn.functional.softmax(
+                x, dim=softmax_dim, dtype=torch.float32
+            ).sum()
+            local_y.backward()
 
-                dist_x = distribute_tensor(x, device_mesh, [Shard(batch_dim)])
-                self.assertTrue(dist_x.requires_grad)
-                dist_softmax = dist_x.softmax(dim=softmax_dim)
-                if dims[softmax_dim] == dims[batch_dim]:
-                    # dtensor is suggested to replicate
-                    self.assertTrue(dist_softmax.placements[0].is_replicate())
-                else:
-                    self.assertTrue(
-                        dist_softmax.placements[0].is_shard(dim=batch_dim)
-                    )
-                dist_y = dist_softmax.sum()
-                dist_y = dist_y.redistribute(device_mesh, [Replicate()])
-                #print(f"dist sum={dist_y.to_local()}\nlocal sum={local_y}")
-                self.assertEqual(dist_y.to_local(), local_y)
-                self.assertIsNone(dist_x.grad)
-                dist_y.backward()
-                self.assertIsNotNone(dist_x.grad)
-                dist_x_grad = dist_x.grad.redistribute(
-                    device_mesh, [Replicate()]
+            dist_x = distribute_tensor(x, device_mesh, [Shard(batch_dim)])
+            self.assertTrue(dist_x.requires_grad)
+            dist_softmax = dist_x.softmax(dim=softmax_dim)
+            if dims[softmax_dim] == dims[batch_dim]:
+                # dtensor is suggested to replicate
+                self.assertTrue(dist_softmax.placements[0].is_replicate())
+            else:
+                self.assertTrue(
+                    dist_softmax.placements[0].is_shard(dim=batch_dim)
                 )
-                print(f"dist_grad={dist_x_grad.to_local()}\nlocal_grad={x.grad}")
-                #self.assertEqual(dist_x_grad.to_local(), x.grad)
+            dist_y = dist_softmax.sum()
+            dist_y = dist_y.redistribute(device_mesh, [Replicate()])
+            #print(f"dist sum={dist_y.to_local()}\nlocal sum={local_y}")
+            self.assertEqual(dist_y.to_local(), local_y)
+            self.assertIsNone(dist_x.grad)
+            dist_y.backward()
+            self.assertIsNotNone(dist_x.grad)
+            dist_x_grad = dist_x.grad.redistribute(
+                device_mesh, [Replicate()]
+            )
+            #print(f"dist_grad={dist_x_grad.to_local()}\nlocal_grad={x.grad}")
+            self.assertEqual(dist_x_grad.to_local(), x.grad)
 
 
 if __name__ == "__main__":
