@@ -267,16 +267,19 @@ class DeviceMesh(object):
         Returns:
             A :class:`torch.Tensor` object
         """
-        # CommTensor does not change earger mode behavior. During tracing, it
-        # makes sure communication result is properly waited before subsequent
-        # read operations.
-        to_scatter = [CommTensor(tensor.contiguous()) for tensor in scatter_list]
+        to_scatter = [tensor.contiguous() for tensor in scatter_list]
         dim_group = self._dim_groups[mesh_dim]
         # src need to be global rank
         src_for_dim = 0
         if dim_group is not GroupMember.WORLD:
             src_for_dim = get_global_rank(dim_group, 0)
         tensor = torch.empty_like(to_scatter[0])
+        # CommTensor does not change earger mode behavior. During tracing, it
+        # makes sure communication result is properly waited before subsequent
+        # read operations.
+        # N.B.: intentionally wrapping with CommTensor after the above empty_like
+        # to avoid unnecessarily propagate CommTensor to output `tensor`
+        to_scatter = [CommTensor(t) for t in to_scatter]
         if src_for_dim == get_rank():
             scatter(
                 tensor,
