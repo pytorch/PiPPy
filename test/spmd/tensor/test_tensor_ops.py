@@ -202,31 +202,30 @@ class DistTensorOpsTest(DistTensorTestBase):
             self.assertIsNotNone(tensor_gpu.grad)
             self.assertEqual(tensor_cpu.grad, tensor_gpu.grad.to(device="cpu"))
 
-
     @with_comms
-    #@skip_if_lt_x_gpu(TEST_GPU_NUM)
+    # @skip_if_lt_x_gpu(TEST_GPU_NUM)
     def test_softmax_with_bwd(self):
         # test on CPU now has problem. See test_softmax_cpu_gpu_discrepancy
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         dims = range(3)  # used to convert -1 to the actual dim
         # failing cases: (0, -1), (1, -1)
         # for softmax_dim in range(-1, 3):
-            # for batch_dim in range(0, 3):
+        # for batch_dim in range(0, 3):
         pass_list = [
-            (-1, -1), # auto replicate
+            (-1, -1),  # auto replicate
             (-1, 0),
             (-1, 1),
-            (-1, 2), # auto replicate
-            (0, 0), # auto replicate
+            (-1, 2),  # auto replicate
+            (0, 0),  # auto replicate
             (0, 1),
             (0, 2),
             (1, 0),
             (1, 1),
             (1, 2),
-            (2, -1), # auto replicate
+            (2, -1),  # auto replicate
             (2, 0),
             (2, 1),
-            (2, 2), # auto replicate
+            (2, 2),  # auto replicate
         ]
         fail_list = [
             (0, -1),
@@ -257,15 +256,13 @@ class DistTensorOpsTest(DistTensorTestBase):
                 )
             dist_y = dist_softmax.sum()
             dist_y = dist_y.redistribute(device_mesh, [Replicate()])
-            #print(f"dist sum={dist_y.to_local()}\nlocal sum={local_y}")
+            # print(f"dist sum={dist_y.to_local()}\nlocal sum={local_y}")
             self.assertEqual(dist_y.to_local(), local_y)
             self.assertIsNone(dist_x.grad)
             dist_y.backward()
             self.assertIsNotNone(dist_x.grad)
-            dist_x_grad = dist_x.grad.redistribute(
-                device_mesh, [Replicate()]
-            )
-            #print(f"dist_grad={dist_x_grad.to_local()}\nlocal_grad={x.grad}")
+            dist_x_grad = dist_x.grad.redistribute(device_mesh, [Replicate()])
+            # print(f"dist_grad={dist_x_grad.to_local()}\nlocal_grad={x.grad}")
             self.assertEqual(dist_x_grad.to_local(), x.grad)
 
 

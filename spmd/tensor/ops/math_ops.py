@@ -11,6 +11,7 @@ from spmd.tensor.placement_types import (
 )
 from spmd.tensor.ops.utils import as_list, register_prop_rule
 
+
 def _gen_spec_with_pending_sum(
     spec: DTensorSpec, pending_sum: List[int]
 ) -> DTensorSpec:
@@ -221,9 +222,7 @@ for reduction_op in reduction_ops:
 def softmax_rule(op_schema: OpSchema) -> OutputSharding:
     input_spec = op_schema.args_spec[0]
     dim_map = input_spec.dim_map
-    softmax_dim = cast(
-        int, op_schema.args_schema[len(op_schema.args_spec)]
-    )
+    softmax_dim = cast(int, op_schema.args_schema[len(op_schema.args_spec)])
     output_spec: OutputSpecType = op_schema.args_spec[0]
     schema_suggestion = None
     failed_reason = None
@@ -251,17 +250,32 @@ def softmax_rule(op_schema: OpSchema) -> OutputSharding:
 
 @register_prop_rule("aten._softmax_backward_data.default")
 def softmax_bwd_rule(op_schema: OpSchema) -> OutputSharding:
+    from spmd.tensor.ops.pointwise_ops import (
+        pointwise_rule,
+        _inplace_rewrap_schema_suggestion,
+    )
+
     grad_out_spec, out_spec, softmax_dim, _ = op_schema.args_schema
-    ops_dim_map = [spec.dim_map for spec in [grad_out_spec, out_spec]]
+    input_specs = [
+        cast(DTensorSpec, spec) for spec in [grad_out_spec, out_spec]
+    ]
+    softmax_dim = cast(int, softmax_dim)
+    ops_dim_map = [spec.dim_map for spec in input_specs]
     ops_dim_map = list(zip(*ops_dim_map))
     if softmax_dim < len(ops_dim_map) and 0 in ops_dim_map[softmax_dim]:
         schema_suggestion = OpSchema(
-            tuple([DTensorSpec(spec.mesh, [Replicate()], spec.shape, ndim=spec.ndim) for spec in input_specs]),
+            tuple(
+                [
+                    DTensorSpec(
+                        spec.mesh, [Replicate()], spec.shape, ndim=spec.ndim
+                    )
+                    for spec in input_specs
+                ]
+            ),
             {},
         )
         failed_reason = "Cannot run _softmax_backward_data on batch dim, need to replicate the tensor."
         _inplace_rewrap_schema_suggestion(schema_suggestion, op_schema)
         return OutputSharding(None, [schema_suggestion], failed_reason)
     else:
-        from spmd.tensor.ops.pointwise_ops import pointwise_rule
         return pointwise_rule(op_schema)
