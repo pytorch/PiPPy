@@ -2,7 +2,7 @@
 import torch
 from typing import List, Dict, Tuple, cast
 from spmd.tensor.dispatch import OpSchema, OutputSharding
-from spmd.tensor.placement_types import _Partial, DTensorSpec
+from spmd.tensor.placement_types import DTensorSpec
 from spmd.tensor.ops.utils import as_list
 
 
@@ -25,6 +25,7 @@ def _inplace_rewrap_schema_suggestion(
     suggestion.args_schema = tuple(new_arg_schema)
     suggestion.kwargs_schema = input_schema.kwargs_schema
 
+
 def _gen_reshard_suggestions(
     input_dims: List[str],
     input_specs: Tuple[DTensorSpec, ...],
@@ -36,7 +37,10 @@ def _gen_reshard_suggestions(
         dim_map = [dim_to_sharding[dim] for dim in input_dim]
         suggested_arg_specs.append(
             DTensorSpec.from_dim_map(
-                mesh=input_spec.mesh, dim_map=dim_map, sums=pending_sum
+                mesh=input_spec.mesh,
+                dim_map=dim_map,
+                sums=pending_sum,
+                shape=input_spec.shape,
             )
         )
     return OutputSharding(
@@ -69,6 +73,7 @@ def einop_rule(
     output_dim = output_dims[0]
 
     dim_to_sharding: Dict[str, int] = {}
+    dim_to_size: Dict[str, int] = {}
     # record pending sum, key is mesh dimension, value is pending sum
     # counter across input specs
     pending_sums_counter: Dict[int, int] = {}
@@ -104,7 +109,9 @@ def einop_rule(
                 pending_sums_counter.get(sum_dim, 0) + 1
             )
 
-        for dim, mesh_dim in zip(input_dim, input_spec.dim_map):
+        for idx, (dim, mesh_dim) in enumerate(
+            zip(input_dim, input_spec.dim_map)
+        ):
             if (
                 mesh_dim in seen_shardings
                 and mesh_dim != -1
@@ -118,10 +125,12 @@ def einop_rule(
             seen_shardings[mesh_dim] = dim
             if dim not in dim_to_sharding:
                 dim_to_sharding[dim] = mesh_dim
+                dim_to_size[dim] = input_spec.shape[idx]
             else:
                 dim_to_sharding[dim] = merge_sharding(
                     dim, dim_to_sharding[dim], mesh_dim
                 )
+                assert dim_to_size[dim] == input_spec.shape[idx]
 
     if pending_sums_counter and not linearity:
         raise RuntimeError("Cannot do generic op on a tensor with partial sums")
@@ -136,7 +145,6 @@ def einop_rule(
 
     pending_sums = list(pending_sums_counter.keys())
     if needs_reshard:
-        # TODO: merge this logic with partial linearity checks
         return _gen_reshard_suggestions(
             input_dims, input_specs, dim_to_sharding, pending_sums
         )
@@ -151,8 +159,10 @@ def einop_rule(
             input_specs[0].mesh,
             [dim_to_sharding[dim] for dim in output_dim],
             pending_sums,
+            shape=torch.Size([dim_to_size[dim] for dim in output_dim]),
         )
     )
+
 
 def pointwise_rule(
     op_schema: OpSchema, linearity: bool = False

@@ -169,9 +169,11 @@ class DistMatrixOpsTest(DistTensorTestBase):
                 ),
             ).redistribute(device_mesh, [Replicate()])
             dist_local_res = dist_res.to_local()
+            if torch.distributed.get_rank() == 0:
+                print(f">>> dist_local_res: {dist_local_res}, local res: {local_result}")
             # assert not torch.isnan(local_result).any()
             # assert not torch.isnan(dist_local_res).any()
-            self.assertEqual(dist_local_res, local_result)
+            self.assertEqual(dist_local_res.detach(), local_result.detach())
 
             # test backward
             # grad_dist_res = torch.ones_like(dist_res)
@@ -222,15 +224,20 @@ class DistMatrixOpsTest(DistTensorTestBase):
                 )
 
             # TODO: support these tests
-            shard_specs_comb = [
-                spec for spec in shard_specs_comb if spec not in passlist
-            ]
-            for spec in shard_specs_comb:
-                print(f">>>> try failing spec: {spec}")
-                with self.assertRaises(Exception):
-                    test_placement_comb(
-                        [spec[0]], [spec[1]], [spec[2]], beta, alpha, batch_1.grad
-                    )
+            # shard_specs_comb = [
+            #     spec for spec in shard_specs_comb if spec not in passlist
+            # ]
+            # for spec in shard_specs_comb:
+            #     print(f">>>> try failing spec: {spec}")
+            #     with self.assertRaises(Exception):
+            #         test_placement_comb(
+            #             [spec[0]],
+            #             [spec[1]],
+            #             [spec[2]],
+            #             beta,
+            #             alpha,
+            #             batch_1.grad,
+            #         )
 
     @with_comms
     def test_bmm(self):
