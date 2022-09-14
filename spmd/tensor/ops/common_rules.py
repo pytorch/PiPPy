@@ -190,6 +190,7 @@ def einop_rule(
         )
     )
 
+
 def pointwise_rule(
     op_schema: OpSchema, linearity: bool = False
 ) -> OutputSharding:
@@ -246,6 +247,7 @@ def pointwise_rule(
 
     return output_sharding
 
+
 def reduction_rule(op_schema: OpSchema) -> OutputSharding:
     """
     Propagate the sharding for reduction operations. Examples:
@@ -274,4 +276,3 @@ def reduction_rule(op_schema: OpSchema) -> OutputSharding:
 
     fmt = f"{input_chars}->{out_dimchars}"
     return einop_rule(fmt, op_schema)
-
