@@ -552,7 +552,6 @@ dtensor_fails = {
     skip("argwhere"),
     skip("cumprod"),
     skip("__rmatmul__"),
-    skip("softmax"),
     skip("meshgrid", "list_of_tensors"),
     skip("meshgrid", "variadic_tensors"),
     skip("nn.functional.softmin"),

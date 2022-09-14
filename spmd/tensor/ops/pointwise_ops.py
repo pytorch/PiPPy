@@ -1,8 +1,9 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 from typing import Dict, List
 from spmd.tensor.api import DTensor
-from spmd.tensor.dispatch import OpSchema, OutputSharding, DTensorSpec
+from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.ops.math_ops import einop_rule
+from spmd.tensor.placement_types import DTensorSpec
 
 # leave the remaining pointwise_ops list here for convenience,
 # Below ops are some pointwise ops that are yet to be supported,
@@ -333,7 +334,6 @@ pointwise_ops = [
     "aten.threshold_backward.default",
     "aten.gelu_backward.default",
     "aten.tanh_backward.default",
-    "aten._softmax_backward_data.default",
 ]
 
 
