@@ -1,9 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import Dict, List
 from spmd.tensor.api import DTensor
-from spmd.tensor.dispatch import OpSchema, OutputSharding
-from spmd.tensor.ops.math_ops import einop_rule
-from spmd.tensor.placement_types import DTensorSpec
+from spmd.tensor.ops.common_rules import pointwise_rule
 
 # leave the remaining pointwise_ops list here for convenience,
 # Below ops are some pointwise ops that are yet to be supported,
@@ -335,84 +332,6 @@ pointwise_ops = [
     "aten.gelu_backward.default",
     "aten.tanh_backward.default",
 ]
-
-
-def _replace_char_in_str(string: str, new_char: str, idx: int) -> str:
-    return string[:idx] + new_char + string[idx + 1 :]
-
-
-def _inplace_rewrap_schema_suggestion(
-    suggestion: OpSchema, input_schema: OpSchema
-) -> None:
-    suggestion_args_spec = suggestion.args_spec
-    new_arg_schema: List[object] = []
-    idx_of_args_spec = 0
-    for arg in input_schema.args_schema:
-        if isinstance(arg, DTensorSpec):
-            new_arg_schema.append(suggestion_args_spec[idx_of_args_spec])
-            idx_of_args_spec += 1
-        else:
-            new_arg_schema.append(arg)
-    suggestion.args_schema = tuple(new_arg_schema)
-    suggestion.kwargs_schema = input_schema.kwargs_schema
-
-
-def pointwise_rule(
-    op_schema: OpSchema, linearity: bool = False
-) -> OutputSharding:
-    """
-    Propagate the sharding for pointwise operations. Examples:
-        ij,ij->ij - addition/mul
-        ij,j->ij - broadcasted addition
-    """
-    alphabet = "abcdefghijklmnopqrstuvwxyz"
-    # find the max_dim first in case we need to broadcasting
-    input_specs = op_schema.args_spec
-    max_dim = max(input.ndim for input in input_specs)
-    dimchars = []
-    dimchar_singleton_counter: Dict[str, int] = {}
-    for input in input_specs:
-        start_dim = max_dim - input.ndim
-        p = alphabet[start_dim:max_dim]
-        # handle the "broadcasting to a common shape case"
-        # see https://pytorch.org/docs/stable/notes/broadcasting.html
-        # If any of the dimensions is singleton dimension (i.e. 1).
-        # we mark the dim char as a special "1" to distinguish with
-        # the non-singleton dimension, so that sharding propagation
-        # should just ignore the singleton dimension.
-        if len(input_specs) > 1:
-            for i, dim_length in enumerate(input.shape):
-                if dim_length == 1:
-                    # mark singleton dim char as a special "1" in einop rule
-                    dimchar_singleton_counter[p[i]] = (
-                        dimchar_singleton_counter.get(p[i], 0) + 1
-                    )
-                    p = _replace_char_in_str(p, "1", i)
-        dimchars.append(p)
-    out_dimchars = alphabet[:max_dim]
-    # check if we replace the all inputs dim char with singleton dimension,
-    # if we replace all inputs, we also need to replace the output dimension.
-    for output_dim_idx in range(len(out_dimchars)):
-        out_dimchar = out_dimchars[output_dim_idx]
-        if dimchar_singleton_counter.get(out_dimchar, 0) == len(input_specs):
-            out_dimchars = _replace_char_in_str(
-                out_dimchars, "1", output_dim_idx
-            )
-
-    fmt = f"{','.join(p for p in dimchars)}->{out_dimchars}"
-    einop_schema = OpSchema(input_specs, {})
-    output_sharding = einop_rule(fmt, einop_schema, linearity=linearity)
-    if (
-        output_sharding.output_spec is None
-        and output_sharding.schema_suggestions is not None
-    ):
-        # sharding propagation failed, with reshard suggetion only have tensor specs,
-        # we will need to include back all non-tensor args/kwargs
-        suggested_schema = output_sharding.schema_suggestions[0]
-        _inplace_rewrap_schema_suggestion(suggested_schema, op_schema)
-
-    return output_sharding
-
 
 for op in pointwise_ops:
     DTensor._op_to_rules[op] = pointwise_rule
