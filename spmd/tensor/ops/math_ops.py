@@ -256,21 +256,28 @@ def softmax_bwd_rule(op_schema: OpSchema) -> OutputSharding:
     )
 
     grad_out_spec, out_spec, softmax_dim, _ = op_schema.args_schema
-    input_specs = [
-        cast(DTensorSpec, spec) for spec in [grad_out_spec, out_spec]
-    ]
+    grad_out_spec = cast(DTensorSpec, grad_out_spec)
+    out_spec = cast(DTensorSpec, out_spec)
     softmax_dim = cast(int, softmax_dim)
-    ops_dim_map = [spec.dim_map for spec in input_specs]
-    ops_dim_map = list(zip(*ops_dim_map))
-    if softmax_dim < len(ops_dim_map) and 0 in ops_dim_map[softmax_dim]:
+    grad_out_dim_map = grad_out_spec.dim_map
+    out_dim_map = out_spec.dim_map
+    if softmax_dim < len(grad_out_dim_map) and (
+        grad_out_dim_map[softmax_dim] >= 0 or out_dim_map[softmax_dim] >= 0
+    ):
         schema_suggestion = OpSchema(
-            tuple(
-                [
-                    DTensorSpec(
-                        spec.mesh, [Replicate()], spec.shape, ndim=spec.ndim
-                    )
-                    for spec in input_specs
-                ]
+            (
+                DTensorSpec(
+                    grad_out_spec.mesh,
+                    [Replicate()],
+                    grad_out_spec.shape,
+                    ndim=grad_out_spec.ndim,
+                ),
+                DTensorSpec(
+                    out_spec.mesh,
+                    [Replicate()],
+                    out_spec.shape,
+                    ndim=out_spec.ndim,
+                ),
             ),
             {},
         )
