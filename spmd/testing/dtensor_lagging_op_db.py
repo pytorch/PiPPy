@@ -147,7 +147,6 @@ _dtensor_lagging_meta = {
     ("double", ""),
     ("dsplit", ""),
     ("dstack", ""),
-    ("eig", ""),
     ("einsum", ""),
     ("empty", ""),
     ("empty_like", ""),

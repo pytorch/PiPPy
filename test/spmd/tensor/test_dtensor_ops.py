@@ -197,7 +197,6 @@ dtensor_fails = {
     xfail("dot"),
     xfail("dsplit"),
     xfail("dstack"),
-    xfail("eig"),
     xfail("einsum"),
     xfail("empty"),
     xfail("empty_like"),
