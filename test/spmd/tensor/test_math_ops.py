@@ -3,7 +3,7 @@ import torch
 from torch.testing._internal.common_utils import run_tests
 from spmd.tensor.dispatch import OpSchema
 
-from spmd.tensor.ops.math_ops import einop_rule, reduction_rule
+from spmd.tensor.ops.common_rules import einop_rule, reduction_rule
 from spmd.tensor.placement_types import DTensorSpec, Replicate
 from spmd.testing.common_utils import (  # type: ignore
     DistTensorTestBase,
