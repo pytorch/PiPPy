@@ -37,25 +37,6 @@ class TPShardingOpsTest(DistTensorTestBase):
         self.assertEqual(new_dt.to_local(), tensor.transpose(1, 2))
 
     @with_comms
-    def test_sharded_softmax(self):
-        for softmax_dim in [1, 2, -1]:
-            device_mesh = DeviceMesh(
-                self.device_type, list(range(self.world_size))
-            )
-            torch.manual_seed(self.rank)
-            input = torch.rand(15, 27, 16, device=self.device_type)
-            local_result = torch.nn.functional.softmax(
-                input, dim=softmax_dim, dtype=torch.float32
-            )
-            sharding = [Shard(0)]
-            input_dt = DTensor.from_local(input, device_mesh, sharding)
-            new_dt = torch.nn.functional.softmax(
-                input_dt, dim=softmax_dim, dtype=torch.float32
-            )
-            self.assertTrue(new_dt.placements[0].is_shard(dim=0))
-            self.assertEqual(new_dt.to_local(), local_result)
-
-    @with_comms
     def test_sharded_permute(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         torch.manual_seed(self.rank)

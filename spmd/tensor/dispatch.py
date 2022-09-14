@@ -26,6 +26,12 @@ have a sharding rule registered.
 _ENABLE_FALLBACK = False
 
 
+"""
+Print information on ops input shape and sharding for debugging purposes.
+"""
+_DEBUG_VERBOSE = False
+
+
 @dataclass
 class OpSchema(object):
     """
@@ -120,6 +126,22 @@ def operator_dispatch(
     func_schema = FunctionSchema.parse(str(op_call._schema))
     schema_kind = func_schema.kind()
 
+    # unwrap the args/kwargs schema
+    args_schema = tree_map(unwrap_schema, args)
+    kwargs_schema = tree_map(unwrap_schema, kwargs)
+
+    op_schema = OpSchema(args_schema, kwargs_schema)
+
+    if _DEBUG_VERBOSE and torch.distributed.get_rank() == 0:
+        print(f"{op_call}({op_schema})")
+        local_shapes = tree_map(
+            lambda t: t.to_local().shape
+            if isinstance(t, spmd_tensor.DTensor)
+            else None,
+            args,
+        )
+        print(f"    local shapes: {local_shapes}")
+
     op_key = str(op_call)
     # STEP 0. See if threre're user defined custom aten operator
     # implementations. Custom operators take the highest priority
@@ -127,11 +149,6 @@ def operator_dispatch(
         # dispatch to user defined custom distributed tensor ops
         return custom_dispatch_ops[op_key](*args, **kwargs)
 
-    # unwrap the args/kwargs schema
-    args_schema = tree_map(unwrap_schema, args)
-    kwargs_schema = tree_map(unwrap_schema, kwargs)
-
-    op_schema = OpSchema(args_schema, kwargs_schema)
     sharding_prop_func = op_to_rules.get(op_key, None)
 
     # step 1. there's sharding propagation rule, run
