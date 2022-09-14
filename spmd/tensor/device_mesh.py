@@ -305,7 +305,9 @@ class DeviceMesh(object):
         # CommTensor does not change earger mode behavior. During tracing, it
         # makes sure communication result is properly waited before subsequent
         # read operations.
-        return broadcast(CommTensor(tensor.contiguous()), src=src_for_dim, group=dim_group)
+        return broadcast(
+            CommTensor(tensor.contiguous()), src=src_for_dim, group=dim_group
+        )
 
     # pyre-fixme[3]: Return type must be annotated.
     def all_gather(self, tensor: torch.Tensor, mesh_dim: int = 0):
