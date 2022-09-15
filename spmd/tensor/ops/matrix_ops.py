@@ -33,10 +33,12 @@ def _update_schema_suggestion_for_addmm(
             suggestion.args_schema[1],
         )
 
-    output_sharding.schema_suggestions[0] = OpSchema(
-        args_schema=args_schema,
-        kwargs_schema=kwargs_schema,
-    )
+    output_sharding.schema_suggestions = [
+        OpSchema(
+            args_schema=args_schema,
+            kwargs_schema=kwargs_schema,
+        )
+    ]
     return output_sharding
 
 
