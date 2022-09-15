@@ -16,6 +16,7 @@ def _update_schema_suggestion_for_addmm(
     # 1. pointwise add sharding input suggestion
     # 2. mm sharding input suggestion
     # inplace update schema suggestion to return addmm suggestion
+    assert output_sharding.schema_suggestions is not None
     suggestion = output_sharding.schema_suggestions[0]
     if pointwise_add_update:
         # update with pointwise suggestion
