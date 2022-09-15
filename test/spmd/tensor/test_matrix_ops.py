@@ -132,7 +132,7 @@ class DistMatrixOpsTest(DistTensorTestBase):
 
     # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
     @with_comms
-    # @skip_if_lt_x_gpu(TEST_GPU_NUM)
+    @skip_if_lt_x_gpu(TEST_GPU_NUM)
     def test_baddbmm(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         tensor = torch.rand(
@@ -169,13 +169,11 @@ class DistMatrixOpsTest(DistTensorTestBase):
                 ),
             ).redistribute(device_mesh, [Replicate()])
             dist_local_res = dist_res.to_local()
-            if torch.distributed.get_rank() == 0:
-                print(f">>> dist_local_res: {dist_local_res}, local res: {local_result}")
-            # assert not torch.isnan(local_result).any()
-            # assert not torch.isnan(dist_local_res).any()
+            assert not torch.isnan(local_result).any()
+            assert not torch.isnan(dist_local_res).any()
             self.assertEqual(dist_local_res.detach(), local_result.detach())
 
-            # test backward
+            # TODO: add test backward
             # grad_dist_res = torch.ones_like(dist_res)
             # dist_res.backward(grad_dist_res)
             # self.assertIsNotNone(batch_1_dt.grad)
@@ -218,26 +216,24 @@ class DistMatrixOpsTest(DistTensorTestBase):
             local_result.backward(grad_local_res)
             # tests that currently pass
             for spec in passlist:
-                print(f">>>> try passing spec: {spec}")
                 test_placement_comb(
                     [spec[0]], [spec[1]], [spec[2]], beta, alpha, batch_1.grad
                 )
 
             # TODO: support these tests
-            # shard_specs_comb = [
-            #     spec for spec in shard_specs_comb if spec not in passlist
-            # ]
-            # for spec in shard_specs_comb:
-            #     print(f">>>> try failing spec: {spec}")
-            #     with self.assertRaises(Exception):
-            #         test_placement_comb(
-            #             [spec[0]],
-            #             [spec[1]],
-            #             [spec[2]],
-            #             beta,
-            #             alpha,
-            #             batch_1.grad,
-            #         )
+            shard_specs_comb = [
+                spec for spec in shard_specs_comb if spec not in passlist
+            ]
+            for spec in shard_specs_comb:
+                with self.assertRaises(Exception):
+                    test_placement_comb(
+                        [spec[0]],
+                        [spec[1]],
+                        [spec[2]],
+                        beta,
+                        alpha,
+                        batch_1.grad,
+                    )
 
     @with_comms
     def test_bmm(self):
