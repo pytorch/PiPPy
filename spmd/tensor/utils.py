@@ -3,6 +3,8 @@
 import torch
 from typing import Union, Dict, Tuple
 from torch.utils._pytree import tree_flatten, tree_unflatten
+from torch.distributed._spmd.comm_tensor import _get_tracer
+from torch.fx.experimental.proxy_tensor import get_proxy
 
 import spmd.tensor.api as spmd_tensor
 from spmd.tensor.placement_types import DTensorSpec, OutputSpecType
@@ -54,11 +56,17 @@ def wrap(res: object, spec: OutputSpecType) -> object:
         return res
 
 
+def _local_tensor(dt):
+    return dt._local_tensor
+
+
 def pack_args_kwargs_with_local_tensor(
     args: ArgKwargsType,
     args_schema: ArgKwargsType,
     redistribute_with_schema: bool = False,
 ) -> ArgKwargsType:
+    tracers = [_get_tracer(r) for r in tree_flatten(args)[0]]
+
     flatten_args, args_tree_spec = tree_flatten(args)
     flatten_args_schema, _ = tree_flatten(args_schema)
 
@@ -71,6 +79,17 @@ def pack_args_kwargs_with_local_tensor(
                 )
 
             # reuse the schema list and update it with local tensor
-            flatten_args_schema[i] = arg._local_tensor
+            if not any(tracers):
+                # eager mode
+                flatten_args_schema[i] = arg._local_tensor
+            else:
+                tracer = [t for t in tracers if t is not None][0]
+                flatten_args_schema[i] = tracer.create_proxy(
+                    "call_function",
+                    _local_tensor,
+                    (get_proxy(arg).proxy,),
+                    {},
+                    name="local_tensor",
+                )
 
     return tree_unflatten(flatten_args_schema, args_tree_spec)

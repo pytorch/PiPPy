@@ -3,7 +3,8 @@ from dataclasses import dataclass
 from typing import List, Callable, Dict, Tuple, Optional, cast
 
 import torch
-from torch.utils._pytree import tree_map
+from torch.distributed._spmd.comm_tensor import _get_tracer
+from torch.utils._pytree import tree_flatten, tree_map
 from torchgen.model import (  # pyre-ignore[21]: Undefined import
     FunctionSchema,
     SchemaKind,
@@ -220,7 +221,13 @@ def operator_dispatch(
                 out_dts.append(out_dt)
             return tuple(out_dts) if len(out_dts) > 1 else out_dts[0]
         else:
-            return wrap(local_results, output_sharding.output_spec)
+            if not any(
+                [_get_tracer(r) for r in tree_flatten(local_results)[0]]
+            ):
+                # eager mode
+                return wrap(local_results, output_sharding.output_spec)
+            else:
+                return local_results
 
     else:
         # step 3. If there's not even one sharding rule
