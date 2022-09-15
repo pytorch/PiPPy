@@ -1,13 +1,17 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 # implement matrix related ops for distributed tensor
+from typing import Tuple, Dict
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.ops.common_rules import einop_rule, pointwise_rule
 from spmd.tensor.ops.utils import register_prop_rule
 
 
 def _update_schema_suggestion_for_addmm(
-    output_sharding, args_schema, kwargs_schema, pointwise_add_update=True
-):
+    output_sharding: OutputSharding,
+    args_schema: Tuple[object, ...],
+    kwargs_schema: Dict[str, object],
+    pointwise_add_update: bool = True,
+) -> OutputSharding:
     # schema suggestion coming from output sharding could be:
     # 1. pointwise add sharding input suggestion
     # 2. mm sharding input suggestion

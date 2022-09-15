@@ -262,7 +262,8 @@ class DistMatrixOpsTest(DistTensorTestBase):
             grad_dist_res = torch.ones_like(dist_res)
             dist_res.backward(grad_dist_res)
             self.assertIsNotNone(mat1_dt.grad)
-            mat1_grad_local = mat1_dt.grad.redistribute(
+            mat1_dt_grad = cast(DTensor, mat1_dt.grad)
+            mat1_grad_local = mat1_dt_grad.redistribute(
                 device_mesh, [Replicate()]
             ).to_local()
             self.assertEqual(mat1_grad_local, mat1.grad)
