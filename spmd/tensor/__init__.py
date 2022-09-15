@@ -52,17 +52,15 @@ def distribute_tensor(
             assert (
                 shard_dim <= tensor.ndim
             ), f"Sharding dim {shard_dim} greater than tensor ndim {tensor.ndim}"
-            # TODO: handle uneven shard sizes
             num_chunks = device_mesh.size(dim=idx)
+            # TODO: handle uneven shard sizes
             assert tensor.size(shard_dim) % num_chunks == 0, (
                 f"Only support chunk sharding evenly now, but tensor got "
                 f"dimension {shard_dim} of size {tensor.size(shard_dim)}, "
                 f"which does not divide number of shards {num_chunks}."
             )
-            chunk_size = tensor.size(shard_dim) // num_chunks
-            tensor_list = list(tensor.chunk(num_chunks, dim=shard_dim))
-            scatter_shape = list(tensor.size())
-            scatter_shape[shard_dim] = chunk_size
+
+            tensor_list = list(tensor.tensor_split(num_chunks, dim=shard_dim))
             local_tensor = device_mesh.scatter(tensor_list, mesh_dim=idx)
             # scatter call could not return a tensor with correct requires_grad
             # field, as ProcessGroupNCCL refuse to take a tensor with requires_grad
@@ -72,7 +70,9 @@ def distribute_tensor(
         elif placement.is_replicate():
             tensor = device_mesh.broadcast(tensor, mesh_dim=idx)
         else:
-            raise RuntimeError("Not supported!")
+            raise RuntimeError(
+                f"Trying to distribute tensor with unsupported placements {placement} on device mesh dimension {idx}!"
+            )
 
     return DTensor(
         tensor,

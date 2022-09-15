@@ -2,7 +2,7 @@
 from typing import Dict, List, Tuple, cast
 
 import torch
-import spmd.tensor.api as spmd_tensor
+import spmd.tensor.api as dtensor
 from spmd.tensor.placement_types import Placement, _Partial, Shard, Replicate
 from spmd.tensor.device_mesh import DeviceMesh
 
@@ -67,11 +67,11 @@ def _decompose_reshard(val: List[_PlacementItem]) -> List[_PlacementItem]:
     return output
 
 
-def redistribute_spmd_tensor(
-    input: "spmd_tensor.DTensor",
+def redistribute_dtensor(
+    input: "dtensor.DTensor",
     device_mesh: DeviceMesh,
     placements: List[Placement],
-) -> "spmd_tensor.DTensor":
+) -> "dtensor.DTensor":
     current_placements = input.placements
     local_tensor = input.to_local()
     if input.device_mesh != device_mesh:
@@ -100,53 +100,57 @@ def redistribute_spmd_tensor(
                 )
             elif current.is_shard():
                 assert current.is_shard()
-                # for shard, all_gather all shards and return a tensor that is replicated on the previously sharded dimension
+                # for shard, all_gather all shards and return a tensor that
+                # is replicated on the previously sharded dimension
                 shard_spec = cast(Shard, current)
                 new_size = list(local_tensor.size())
                 new_size[shard_spec.dim] *= device_mesh.size(
                     i
                 )  # only works for evenly sharded tensors
-                # TODO: merge all_gather and all_gather_base call
-                gathered_list = device_mesh.all_gather(
+                # TODO: support uneven sharding
+                output_tensor = torch.empty(
+                    new_size,
+                    dtype=local_tensor.dtype,
+                    layout=local_tensor.layout,
+                    device=local_tensor.device,
+                )
+
+                new_local_tensor = device_mesh.all_gather(
+                    output_tensor,
                     local_tensor,
                     mesh_dim=i,
+                    tensor_dim=shard_spec.dim,
                 )
-                new_local_tensor = torch.cat(gathered_list, dim=shard_spec.dim)
         elif target.is_shard():
             # Case 2: target is Shard
-            shard_dim = target.dim  # type: ignore
+            target_dim = target.dim  # type: ignore
             num_chunks = device_mesh.size(dim=i)
-            assert (
-                input.size(shard_dim) % num_chunks == 0
-            ), f"Only support chunk sharding evenly now. (When sharding tensor of shape {input.shape} on dim={shard_dim} into {num_chunks} shards.)"
-
             chunk_size = (
-                local_tensor.size(shard_dim) // num_chunks
+                local_tensor.size(target_dim) // num_chunks
             )  # this may already be sharded on a differernt mesh dimension
             my_rank = device_mesh.get_coordinate_on_dim(dim=i)
             assert (
                 my_rank is not None
-            ), "Rank is not part of the mesh"  # TODO: figure out behavior here
+            ), f"Rank: {device_mesh.get_rank()} is not part of the mesh!"  # TODO: figure out behavior here
             if current.is_partial():
                 # reduce scatter the current tensors
-                new_tensor_size = list(local_tensor.size())
-                new_tensor_size[shard_dim] = chunk_size
-                new_local_tensor = torch.empty(
-                    new_tensor_size,
-                    device=local_tensor.device,
-                    dtype=input.dtype,
+                new_local_tensor = device_mesh.reduce_scatter(
+                    local_tensor, mesh_dim=i, tensor_dim=target_dim
                 )
-                new_local_tensor = device_mesh.reduce_scatter_base(
-                    new_local_tensor, local_tensor, mesh_dim=i
+            elif current.is_replicate():
+                # slice/narrow the tensor to corresponding local shard then return shard tensor
+                new_local_tensor = local_tensor.narrow(
+                    target_dim, my_rank * chunk_size, chunk_size
                 )
             else:
-                assert current.is_replicate()
-                # slice/narrow the tensor to corresponding local shard then return shard tensor
-                # TODO: support multi dim redistribute require to not use get_rank, as it would
-                # get global_rank and in the case of multidim mesh it's not correct!
-                new_local_tensor = local_tensor.narrow(
-                    shard_dim, my_rank * chunk_size, chunk_size
-                )
+                assert current.is_shard()
+                shard_spec = cast(Shard, current)
+                if shard_spec.dim != target_dim:
+                    # TODO: enable this with all_to_all
+                    raise NotImplementedError(
+                        "Changing sharding dim is not supported yet!"
+                    )
+
         elif target.is_partial():
             if current.is_replicate():
                 # For replicate -> partial, we zero out all other ranks of the current mesh dim
@@ -166,7 +170,7 @@ def redistribute_spmd_tensor(
 
     assert new_local_tensor is not None, "redistribute failed!"
 
-    return spmd_tensor.DTensor(
+    return dtensor.DTensor(
         new_local_tensor,
         device_mesh,
         placements,
@@ -179,16 +183,16 @@ class Redistribute(torch.autograd.Function):
     def forward(  # type: ignore
         # pyre-fixme[2]: Parameter must be annotated.
         ctx,
-        input: "spmd_tensor.DTensor",
+        input: "dtensor.DTensor",
         device_mesh: DeviceMesh,
         placements: List[Placement],
     ):
         ctx.previous_placement = input.placements
         ctx.previous_device_mesh = input.device_mesh
-        return redistribute_spmd_tensor(input, device_mesh, placements)
+        return redistribute_dtensor(input, device_mesh, placements)
 
     @staticmethod
-    def backward(ctx, grad_output: "spmd_tensor.DTensor"):  # type: ignore
+    def backward(ctx, grad_output: "dtensor.DTensor"):  # type: ignore
         previous_placement = ctx.previous_placement
         previous_device_mesh = ctx.previous_device_mesh
         # When we run backward pass of redistribute (i.e. manual redistribute from
@@ -211,7 +215,7 @@ class Redistribute(torch.autograd.Function):
                 target_placements.append(target)
 
         return (
-            redistribute_spmd_tensor(
+            redistribute_dtensor(
                 grad_output, previous_device_mesh, target_placements
             ),
             None,
