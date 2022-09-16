@@ -9,8 +9,8 @@ import torch
 import torch.autograd.profiler_legacy
 
 import pippy.fx
+import pippy.ModelSplit
 from pippy import run_pippy
-from pippy.ModelSplit import split_on_size_threshold
 from pippy.IR import MultiUseParameterConfig, Pipe
 from pippy.PipelineDriver import PipelineDriverBase, PipelineDriverFillDrain, PipelineDriver1F1B, \
     PipelineDriverInterleaved1F1B
@@ -54,15 +54,12 @@ def run_master(_, args):
             x = torch.mm(x, self.mm_param)
             skip_connection = x
             x = torch.relu(x)
-            #pipe_split()
             x = torch.mm(x, self.mm_param) + self.buffer[:x.shape[0]]
             x = self.lin(x)
-            #pipe_split()
             x = torch.relu(x)
             x = x + skip_connection
             x = torch.mm(x, self.mm_param2)
             x = self.lin(x)
-            #pipe_split()
             x = torch.relu(x)
             return {'out': x}
 
@@ -73,7 +70,7 @@ def run_master(_, args):
 
     # Auto-split based on size threshold
     threshold = 300000
-    gm, nstages = split_on_size_threshold(ec, threshold)
+    gm, nstages = pippy.ModelSplit.split_on_size_threshold(ec, threshold)
     print(f'Model is split into {nstages} stages')
 
     print(f'\n======= GraphModule after Auto-split =======')
@@ -89,7 +86,7 @@ def run_master(_, args):
     kwargs_chunk_spec: Dict = {}
     output_chunk_spec = {'out': TensorChunkSpec(0)}
 
-    pipe_driver: PipelineDriverBase = schedules[args.schedule](ec_pipe, 5, args_chunk_spec, kwargs_chunk_spec,
+    pipe_driver: PipelineDriverBase = schedules[args.schedule](ec_pipe, nstages, args_chunk_spec, kwargs_chunk_spec,
                                                                output_chunk_spec,
                                                                args.world_size,
                                                                _debug_mask_minibatches=True,
@@ -112,7 +109,7 @@ def run_master(_, args):
 
     # # Profiling runs
     with torch.autograd.profiler_legacy.profile(enabled=PROFILING_ENABLED) as prof:
-        pipe_driver.chunks = 5
+        pipe_driver.chunks = nstages
         out = pipe_driver(ec_input)
         ref_out = ec_pipe(ec_input)
         print(f'profiling run completed {torch.sum(out["out"])} ref {torch.sum(ref_out["out"])}')
