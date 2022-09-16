@@ -1,6 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import argparse
-from itertools import accumulate
 import logging
 import os
 import unittest
@@ -11,7 +10,7 @@ import torch.autograd.profiler_legacy
 
 import pippy.fx
 from pippy import run_pippy
-from pippy.ModelSplit import auto_split_based_on_size_threshold
+from pippy.ModelSplit import split_on_size_threshold
 from pippy.IR import MultiUseParameterConfig, Pipe
 from pippy.PipelineDriver import PipelineDriverBase, PipelineDriverFillDrain, PipelineDriver1F1B, \
     PipelineDriverInterleaved1F1B
@@ -74,17 +73,15 @@ def run_master(_, args):
 
     # Auto-split based on size threshold
     threshold = 300000
-    gm = auto_split_based_on_size_threshold(ec, threshold)
+    gm, nstages = split_on_size_threshold(ec, threshold)
+    print(f'Model is split into {nstages} stages')
 
     print(f'\n======= GraphModule after Auto-split =======')
     print(gm)
 
     ec_pipe = Pipe.from_tracing(gm, MULTI_USE_PARAM_CONFIG)
 
-    print('\n======= Pipe for Auto-split GraphModule =======')
-    print(ec_pipe.split_gm)
-
-    print('\n======= Child module after Auto-split =======')
+    print('\n======= Child modules =======')
     for submod in ec_pipe.split_gm.children():
         print(submod)
     
