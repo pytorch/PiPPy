@@ -88,11 +88,10 @@ class DistMatrixOpsTest(DistTensorTestBase):
         ) -> None:
             dt1 = distribute_tensor(t1, device_mesh, placements1)
             dt2 = distribute_tensor(t2, device_mesh, placements2)
-            dist_res: DTensor = cast(DTensor, torch.mm(dt1, dt2))
-            self.assertEqual(
-                dist_res.redistribute(device_mesh, replica_spec).to_local(),
-                local_res,
+            dist_res: DTensor = cast(DTensor, torch.mm(dt1, dt2)).redistribute(
+                device_mesh, replica_spec
             )
+            self.assertEqual(dist_res.to_local(), local_res)
             # backward
             grad_dist_res = torch.ones_like(dist_res)
             dist_res.backward(grad_dist_res)
@@ -100,21 +99,14 @@ class DistMatrixOpsTest(DistTensorTestBase):
 
         test_placement_comb(replica_spec, replica_spec)
         test_placement_comb(shard0_spec, replica_spec)
+        test_placement_comb(shard1_spec, replica_spec)
         test_placement_comb(replica_spec, shard1_spec)
-
-        # TODO: support (shard1, shard0) -> [partial]
-        with self.assertRaises(Exception):
-            test_placement_comb(shard1_spec, shard0_spec)
+        test_placement_comb(shard1_spec, shard0_spec)
+        test_placement_comb(replica_spec, shard0_spec)
 
         # TODO: support (shard0, shard1) -> [shard0, shard1]
         with self.assertRaises(Exception):
             test_placement_comb(shard0_spec, shard1_spec)
-
-        with self.assertRaises(Exception):
-            test_placement_comb(replica_spec, shard0_spec)
-
-        with self.assertRaises(Exception):
-            test_placement_comb(shard1_spec, replica_spec)
 
     @with_comms
     def test_t(self):

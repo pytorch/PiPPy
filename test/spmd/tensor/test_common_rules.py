@@ -153,9 +153,16 @@ class CommonRulesTest(DistTensorTestBase):
         mat2_spec = DTensorSpec.from_dim_map(
             mesh, mat2, [], shape=torch.Size([4, 8])
         )
-        # if not turn on linearity, partial sum should trigger error
-        with self.assertRaisesRegex(RuntimeError, "Cannot do generic op"):
-            einop_rule("mk,kn->mn", OpSchema((mat1_spec, mat2_spec), {}))
+        # if not turn on linearity, partial sum is not eligible to propagate, we return
+        # suggestion to reshard inputs with no partial sum (i.e. all_reduce one input)
+        output_sharding = einop_rule(
+            "mk,kn->mn", OpSchema((mat1_spec, mat2_spec), {})
+        )
+        self.assertIsNone(output_sharding.output_spec)
+        suggestions = output_sharding.schema_suggestions
+        self.assertIsNotNone(suggestions)
+        suggested_spec = suggestions[0].args_schema[0]
+        self.assertFalse(suggested_spec.placements[1].is_partial())
 
         # einop prop with linearity on mm, should give back suggestion
         # on converting placements to partial

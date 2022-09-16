@@ -133,7 +133,11 @@ def einop_rule(
                 assert dim_to_size[dim] == input_spec.shape[idx]
 
     if pending_sums_counter and not linearity:
-        raise RuntimeError("Cannot do generic op on a tensor with partial sums")
+        # return reshard suggestion with no pending sum, because we already properly
+        # merge the sharding, this reshard suggestion is legit to use
+        return _gen_reshard_suggestions(
+            input_dims, input_specs, dim_to_sharding, []
+        )
     else:
         # It's a op that support linearity, but not all input arguments are partial
         # we fail the sharding propagation with suggestion to make all inputs be
