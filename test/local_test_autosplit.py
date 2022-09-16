@@ -78,8 +78,8 @@ def run_master(_, args):
 
     ec_pipe = Pipe.from_tracing(gm, MULTI_USE_PARAM_CONFIG)
 
-    print('\n======= Child modules =======')
-    for submod in ec_pipe.split_gm.children():
+    for i, submod in enumerate(ec_pipe.split_gm.children()):
+        print(f'\n======= Child module {i} =======')
         print(submod)
     
     args_chunk_spec = (TensorChunkSpec(0),)
