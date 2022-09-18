@@ -163,7 +163,6 @@ dtensor_fails = {
     xfail("block_diag"),
     xfail("bmm"),
     xfail("broadcast_shapes"),
-    xfail("bucketize"),
     xfail("cat"),
     xfail("cartesian_prod"),
     xfail("cdist"),
@@ -582,10 +581,11 @@ dtensor_fails = {
 # Add a list of ops that are currently failing BW pass
 skip_bw = [
     None,  # corresponds to the transpose ops 'H' and 'T'
-    "torch.isfinite",
-    "torch.eq",
-    "torch.isnan",
+    "torch.bucketize",
     "torch.conj_physical",
+    "torch.eq",
+    "torch.isfinite",
+    "torch.isnan",
 ]
 
 
