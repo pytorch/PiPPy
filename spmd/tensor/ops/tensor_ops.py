@@ -56,7 +56,6 @@ default_prop_ops = [
     "aten.detach.default",
     "aten.is_same_size.default",
     "aten.new_empty_strided.default",
-    "aten.zeros_like.default",
 ]
 
 create_like_ops = [
@@ -65,6 +64,7 @@ create_like_ops = [
     "aten.full_like.default",
     "aten.ones_like.default",
     "aten.zero_.default",
+    "aten.zeros_like.default",
 ]
 
 no_shard_prop_ops = ["aten._local_scalar_dense.default"]
