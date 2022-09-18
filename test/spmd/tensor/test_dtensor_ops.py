@@ -543,7 +543,6 @@ dtensor_fails = {
     xfail("vsplit"),
     xfail("vstack"),
     xfail("where"),
-    xfail("zeros_like"),
     # ops inside this might even fail without dtensor
     # tests, as we rescale op db common test size factor (i.e. L, M, S)
     # which triggered the orignal function run failures with input
@@ -575,7 +574,6 @@ dtensor_fails = {
     skip("_masked.var"),
     skip("_masked.std"),
     skip("_masked.normalize"),
-    skip("ones_like"),
     skip("prod"),
     skip("segment_reduce", "lengths"),
     skip("segment_reduce", "offsets"),
