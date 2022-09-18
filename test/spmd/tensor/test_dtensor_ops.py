@@ -535,7 +535,6 @@ dtensor_fails = {
     xfail("view_as_complex"),
     xfail("view_as"),
     xfail("view"),  # view related op only works with certain sharding dims
-    xfail("vsplit"),
     xfail("vstack"),
     xfail("where"),
     # ops inside this might even fail without dtensor
