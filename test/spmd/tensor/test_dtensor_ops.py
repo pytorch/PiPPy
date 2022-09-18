@@ -226,7 +226,6 @@ dtensor_fails = {
     xfail("fmax"),
     xfail("fmin"),
     xfail("frexp"),
-    xfail("full_like"),
     xfail("gather"),
     xfail("ge"),
     xfail("geqrf"),
