@@ -153,7 +153,14 @@ def operator_dispatch(
     # step 1. there's sharding propagation rule, run
     # sharding propagation to get output sharding
     if sharding_prop_func is not None:
-        output_sharding = sharding_prop_func(op_schema)
+        try:
+            output_sharding = sharding_prop_func(op_schema)
+        except Exception as e:
+            raise RuntimeError(
+                f"Sharding propagation failed on op {op_key}.\n"
+                f"Input schema: {op_schema}.\n"
+                f"Error: {e}"
+            )
 
         # step 2. if can't get output_spec from sharding
         # propagation (i.e. no rules apply for input
