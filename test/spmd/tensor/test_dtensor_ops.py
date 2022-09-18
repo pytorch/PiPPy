@@ -470,7 +470,6 @@ dtensor_fails = {
     xfail("select"),
     xfail("select_scatter"),
     xfail("signbit"),
-    xfail("slice_scatter"),
     xfail("sort"),
     xfail("sparse.sampled_addmm"),
     xfail("special.airy_ai"),
