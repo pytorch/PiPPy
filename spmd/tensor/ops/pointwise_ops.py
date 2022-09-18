@@ -169,6 +169,7 @@ pointwise_ops = [
     "aten.frac.out",
     "aten.frac_.default",
     "aten.ge.Scalar",
+    "aten.ge.Tensor",
     "aten.gelu.default",
     "aten.gt.Scalar",
     "aten.gt.Tensor",
