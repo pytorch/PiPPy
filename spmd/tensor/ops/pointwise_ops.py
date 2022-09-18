@@ -1,6 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 from spmd.tensor.api import DTensor
-from spmd.tensor.ops.common_rules import pointwise_rule
+from spmd.tensor.ops.common_rules import linear_pointwise_rule, pointwise_rule
 
 # leave the remaining pointwise_ops list here for convenience,
 # Below ops are some pointwise ops that are yet to be supported,
@@ -17,6 +17,13 @@ from spmd.tensor.ops.common_rules import pointwise_rule
 #     "quantized_max_pool2d",
 #     "real",  # complex data type only
 # ]
+
+
+linear_pointwise_ops = [
+    "aten.div.Scalar",  # this op is linear on the first argument, and the second argument is scalar, so it fits as a linear op.
+    "aten.to.dtype",
+]
+
 
 pointwise_ops = [
     "aten.abs.default",
@@ -332,6 +339,11 @@ pointwise_ops = [
     "aten.gelu_backward.default",
     "aten.tanh_backward.default",
 ]
+
+
+for op in linear_pointwise_ops:
+    DTensor._op_to_rules[op] = linear_pointwise_rule
+
 
 for op in pointwise_ops:
     DTensor._op_to_rules[op] = pointwise_rule
