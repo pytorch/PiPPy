@@ -1,6 +1,16 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from spmd.tensor.api import DTensor
+import torch
+from spmd.tensor.api import (
+    DTensor,
+    DTensorSpec,
+    Placement,
+    Replicate,
+    Shard,
+    _Partial,
+)
 from spmd.tensor.dispatch import OpSchema, OutputSharding
+from spmd.tensor.ops.utils import register_prop_rule
+from typing import Sequence
 
 
 # NOTE: the default propagation rule should apply for
@@ -53,3 +63,163 @@ for op in default_prop_ops:
 
 for op in no_shard_prop_ops:
     DTensor._op_to_rules[op] = no_shard_prop_rule
+
+
+def unshard_tensor_dim(
+    placements: Sequence[Placement], dim: int
+) -> Sequence[Placement]:
+    """Disallow the given tensor dimension to be sharded"""
+    return tuple(
+        p if (not isinstance(p, Shard) or p.dim != dim) else Replicate()
+        for p in placements
+    )
+
+
+def _prop_all_but_dim(
+    op_schema: OpSchema, dim: int, out_shape: torch.Size
+) -> OutputSharding:
+    """
+    Considering an op that takes its input as first argument, forwards all shardings
+    except for the given dimension.
+    """
+    input_spec = op_schema.args_schema[0]
+    assert isinstance(input_spec, DTensorSpec)
+
+    output_placements = unshard_tensor_dim(input_spec.placements, dim=dim)
+    output_spec = DTensorSpec(
+        mesh=input_spec.mesh,
+        placements=output_placements,
+        shape=out_shape,
+        ndim=input_spec.ndim,
+    )
+
+    if input_spec.placements == output_placements:
+        out = OutputSharding(output_spec=output_spec)
+    else:
+        suggested_input_spec = DTensorSpec(
+            mesh=input_spec.mesh,
+            placements=output_placements,
+            ndim=input_spec.ndim,
+            shape=input_spec.shape,
+        )
+        out = OutputSharding(
+            output_spec=None,
+            schema_suggestions=[
+                OpSchema(
+                    args_schema=(suggested_input_spec,)
+                    + op_schema.args_schema[1:],
+                    kwargs_schema=op_schema.kwargs_schema,
+                ),
+            ],
+        )
+    return out
+
+
+@register_prop_rule("aten.slice.Tensor")
+def prop_slice(op_schema: OpSchema) -> OutputSharding:
+    """NOTE: can be further optimized (right now it replicates before slicing on a sharded dimension)"""
+    defaults = (None, 0, None, None, 1)
+    input_spec, dim, start, end, step = (
+        op_schema.args_schema + defaults[len(op_schema.args_schema) :]
+    )
+    assert isinstance(input_spec, DTensorSpec)
+    assert isinstance(dim, int)
+    assert start is None or isinstance(start, int)
+    assert end is None or isinstance(end, int)
+    assert isinstance(step, int)
+
+    # normalize arguments
+    if dim < 0:
+        dim += input_spec.ndim
+    if start is None:
+        start = 0
+    if step is None:
+        step = 1
+    if end is None or end > input_spec.shape[dim]:
+        end = input_spec.shape[dim]
+    if end < 0:
+        end += input_spec.shape[dim]
+    if end > input_spec.shape[dim]:
+        end = input_spec.shape[dim]
+
+    if start == 0 and end == input_spec.shape[dim] and step == 1:
+        return OutputSharding(output_spec=input_spec)
+
+    # shape propagation
+    slice_len = (end - start + step - 1) // step
+    out_shape = torch.Size(
+        tuple(input_spec.shape[0:dim])
+        + (slice_len,)
+        + tuple(input_spec.shape[dim + 1 :])
+    )
+
+    return _prop_all_but_dim(op_schema, dim=dim, out_shape=out_shape)
+
+
+@register_prop_rule("aten.slice_scatter.default")
+def prop_slice_scatter(op_schema: OpSchema) -> OutputSharding:
+    # 1. number of dimensions in input and src need to match.
+    # 2. number of elements on all non-dim need to match between input and src.
+    # 3. numer of elements in src in dim need to match the slice size.
+    # Given the above:
+    # - We suggest for src to follow the sharding of input, except on the scatter dimension,
+    #   where our best bet for now is to make them replicated as a fall-back.
+    #   TODO: Ideally we'd like to make sure the output is re-sharded afterwards to keep input sharding.
+
+    defaults = (None, None, 0, None, None, 1)
+    input, src, dim, start, end, step = (
+        op_schema.args_schema + defaults[len(op_schema.args_schema) :]
+    )
+    assert isinstance(input, DTensorSpec)
+    assert isinstance(src, DTensorSpec)
+    assert isinstance(dim, int)
+
+    if dim < 0:
+        dim += input.ndim
+
+    # first, we keep the input sharding, except for the input dimension
+    # also, we cannot allow partial sum anymore.
+    input_suggestion = tuple(
+        Replicate()
+        if isinstance(p, _Partial) or (isinstance(p, Shard) and p.dim == dim)
+        else p
+        for p in input.placements
+    )
+
+    if input_suggestion == tuple(input.placements) and src.placements == tuple(
+        input.placements
+    ):
+        # if our sharding is correct, the output sharding will be the same as the input.
+        return OutputSharding(
+            output_spec=DTensorSpec(
+                mesh=input.mesh,
+                placements=input.placements,
+                shape=input.shape,
+                ndim=input.ndim,
+            )
+        )
+    else:
+        # otherwise, return the suggestion.
+        return OutputSharding(
+            output_spec=None,
+            schema_suggestions=[
+                OpSchema(
+                    args_schema=(
+                        DTensorSpec(
+                            mesh=input.mesh,
+                            placements=input_suggestion,
+                            shape=input.shape,
+                            ndim=input.ndim,
+                        ),
+                        DTensorSpec(
+                            mesh=src.mesh,
+                            placements=input_suggestion,
+                            shape=src.shape,
+                            ndim=src.ndim,
+                        ),
+                    )
+                    + op_schema.args_schema[2:],
+                    kwargs_schema=op_schema.kwargs_schema,
+                )
+            ],
+        )
