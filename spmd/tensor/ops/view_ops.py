@@ -390,6 +390,14 @@ def dim_transpose(ndim: int, dim1: int, dim2: int) -> DimMap:
     return tuple(dimmap)
 
 
+def dim_squeeze(shape: Shape, dim: Optional[int] = None) -> DimMap:
+    return tuple(
+        InputDim(i)
+        for i, s in enumerate(shape)
+        if s > 1 or (dim is not None and i != dim)
+    )
+
+
 def dim_unsqueeze(ndim: int, dim: int) -> DimMap:
     dims = tuple(InputDim(i) for i in range(ndim))
     if dim < 0:
@@ -442,6 +450,9 @@ ops: Dict[Callable[..., torch.Tensor], Op] = {
     ),
     torch.unsqueeze: Op(
         dim_map=lambda input, dim: dim_unsqueeze(input.ndim, dim)
+    ),
+    torch.squeeze: Op(
+        dim_map=lambda input, dim=None: dim_squeeze(input.shape, dim)
     ),
     Tensor.view: Op(
         dim_map=lambda input, *shape: view_groups(input.shape, shape),
@@ -599,6 +610,8 @@ def register_prop_rule_map(
         return OutputSharding(output_spec=output_dtensor_spec)
 
 
+register_prop_rule_map("aten.squeeze.default", torch.squeeze)
+register_prop_rule_map("aten.squeeze.dim", torch.squeeze)
 register_prop_rule_map("aten.view.default", Tensor.view)
 register_prop_rule_map("aten.view.SymInt", Tensor.view)
 register_prop_rule_map("aten.unsqueeze.default", torch.unsqueeze)
