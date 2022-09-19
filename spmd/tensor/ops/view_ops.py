@@ -444,15 +444,15 @@ ops: Dict[Callable[..., torch.Tensor], Op] = {
         dim_map=lambda input, shape: view_groups(input.shape, shape),
         shape_argnum=1,
     ),
+    torch.squeeze: Op(
+        dim_map=lambda input, dim=None: dim_squeeze(input.shape, dim)
+    ),
     torch.tile: Op(dim_map=lambda input, dims: dim_tile(input.ndim, dims)),
     torch.transpose: Op(
         dim_map=lambda input, dim0, dim1: dim_transpose(input.ndim, dim0, dim1)
     ),
     torch.unsqueeze: Op(
         dim_map=lambda input, dim: dim_unsqueeze(input.ndim, dim)
-    ),
-    torch.squeeze: Op(
-        dim_map=lambda input, dim=None: dim_squeeze(input.shape, dim)
     ),
     Tensor.view: Op(
         dim_map=lambda input, *shape: view_groups(input.shape, shape),
