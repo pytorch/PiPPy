@@ -1,5 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import Dict, List, Tuple, cast
+from typing import Dict, List, Sequence, Tuple, cast
 
 import torch
 import spmd.tensor.api as spmd_tensor
@@ -133,7 +133,7 @@ def _redistribute_with_local_tensor(
                 new_local_tensor = torch.empty(
                     new_tensor_size,
                     device=local_tensor.device,
-                    dtype=input.dtype,
+                    dtype=local_tensor.dtype,
                 )
                 new_local_tensor = device_mesh.reduce_scatter_base(
                     new_local_tensor, local_tensor, mesh_dim=i
@@ -171,7 +171,7 @@ def _redistribute_with_local_tensor(
 def redistribute_spmd_tensor(
     input: "spmd_tensor.DTensor",
     device_mesh: DeviceMesh,
-    placements: List[Placement],
+    placements: Sequence[Placement],
 ) -> "spmd_tensor.DTensor":
     if input.device_mesh != device_mesh:
         # TODO: alltoall reshuffling to change device_mesh if they are not the same

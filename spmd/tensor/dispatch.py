@@ -111,7 +111,12 @@ _CURRENT_DECOMPOSITION_TABLE: Dict[
 ] = {torch.ops.aten._reshape_alias.default: _reshape_alias}
 
 
-def prepare_schema(sharding_prop_func, args, kwargs):
+def prepare_schema(
+    op_call: torch._ops.OpOverload,
+    sharding_prop_func: Callable[[OpSchema], OutputSharding],
+    args: Tuple[object, ...],
+    kwargs: Dict[str, object],
+) -> Tuple[OpSchema, OpSchema, bool, OutputSharding]:
     # unwrap the args/kwargs schema
     args_schema = tree_map(unwrap_schema, args)
     kwargs_schema = tree_map(unwrap_schema, kwargs)
@@ -133,15 +138,15 @@ def prepare_schema(sharding_prop_func, args, kwargs):
             target_schema = output_sharding.schema_suggestions[0]
             # run sharding propagation again with target schema
             output_sharding = sharding_prop_func(target_schema)
-            return target_schema, True, output_sharding
+            return op_schema, target_schema, True, output_sharding
         else:
             raise RuntimeError(
-                f"Sharding propagation failed on op {op_key}!"
+                f"Sharding propagation failed on op {str(op_call)}!"
                 f"Input schema: {op_schema}."
                 f"Failed reason: {output_sharding.failed_reason}"
             )
     else:
-        return op_schema, False, output_sharding
+        return op_schema, op_schema, False, output_sharding
 
 
 def operator_dispatch(
@@ -157,6 +162,18 @@ def operator_dispatch(
 
     op_key = str(op_call)
 
+    # STEP 0. See if threre're user defined custom aten operator
+    # implementations. Custom operators take the highest priority
+    if op_key in custom_dispatch_ops:
+        # dispatch to user defined custom distributed tensor ops
+        return custom_dispatch_ops[op_key](*args, **kwargs)
+
+    sharding_prop_func = op_to_rules.get(op_key, None)
+
+    op_schema, target_schema, redistribute, output_sharding = prepare_schema(
+        op_call, sharding_prop_func, args, kwargs
+    )
+
     if _DEBUG_VERBOSE and torch.distributed.get_rank() == 0:
         print(f"{op_call}({op_schema})")
         local_shapes = tree_map(
@@ -166,14 +183,6 @@ def operator_dispatch(
             args,
         )
         print(f"    local shapes: {local_shapes}")
-
-    # STEP 0. See if threre're user defined custom aten operator
-    # implementations. Custom operators take the highest priority
-    if op_key in custom_dispatch_ops:
-        # dispatch to user defined custom distributed tensor ops
-        return custom_dispatch_ops[op_key](*args, **kwargs)
-
-    sharding_prop_func = op_to_rules.get(op_key, None)
 
     if sharding_prop_func is None:
         # step 1. If there's not even one sharding rule
@@ -197,10 +206,6 @@ def operator_dispatch(
 
     # step 2. there's sharding propagation rule, run
     # sharding propagation to get output sharding
-
-    target_schema, redistribute, output_sharding = prepare_schema(
-        sharding_prop_func, args, kwargs
-    )
 
     local_tensor_args = pack_args_kwargs_with_local_tensor(
         args,
