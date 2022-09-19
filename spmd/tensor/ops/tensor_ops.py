@@ -65,7 +65,6 @@ for op in no_shard_prop_ops:
     DTensor._op_to_rules[op] = no_shard_prop_rule
 
 
-<<<<<<< HEAD
 @register_prop_rule("aten.bucketize.Tensor")
 def prop_bucketize(op_schema: OpSchema) -> OutputSharding:
     """
@@ -99,8 +98,6 @@ def prop_bucketize(op_schema: OpSchema) -> OutputSharding:
         )
 
 
-=======
->>>>>>> e1f4c100be49c46ace9eb6e852a0b8a87fd3d066
 def unshard_tensor_dim(
     placements: Sequence[Placement], dim: int
 ) -> Sequence[Placement]:
