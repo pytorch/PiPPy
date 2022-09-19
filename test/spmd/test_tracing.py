@@ -1,14 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
-from torch.distributed.distributed_c10d import (
-    get_global_rank,
-    get_world_size,
-)
-from torch.fx.experimental.proxy_tensor import (
-    get_proxy_slots,
-    make_fx,
-    proxy_slot,
-)
+from torch.distributed.distributed_c10d import get_global_rank, get_world_size
+from torch.fx.experimental.proxy_tensor import make_fx, proxy_slot
 from torch.testing._internal.common_utils import run_tests
 from torch.distributed._spmd.comm_tensor import _get_tracer
 from torch.utils._pytree import tree_flatten, tree_map
@@ -27,7 +20,6 @@ from spmd.tensor import (
 )
 from spmd.tensor.dispatch import operator_dispatch, prepare_inputs
 
-import copy
 from functools import partial
 from typing import Any, Callable, Dict, List, Sequence, Tuple
 
@@ -230,7 +222,7 @@ class TraceDistTensorTest(DistTensorTestBase):
         traced_f = make_fx(f)(x, y)
 
         # map intermediate tensors in traced graph to DTensor objects
-        node_to_obj: Dict[torch.fx.Node, DTensor] = {}
+        node_to_obj: Dict[torch.fx.Node, object] = {}
 
         # map place holder to real input DTensor objects
         def name_to_input(name):
@@ -238,7 +230,7 @@ class TraceDistTensorTest(DistTensorTestBase):
 
         # map local op node in traced_f to its corresponding subgraph of
         # DTensor ops.
-        replacements: Dict[torch.fx.Node, torch.fx.Graph] = {}
+        replacements: Dict[torch.fx.Node, torch.fx.GraphModule] = {}
 
         def remap_arg(arg):
             if isinstance(arg, torch.fx.Node):
@@ -273,12 +265,8 @@ class TraceDistTensorTest(DistTensorTestBase):
                 node_to_obj[node] = out
 
                 # get DTensor specs for inputs and outputs
-                sharding_prop_func = DTensor._op_to_rules.get(
-                    str(node.target), None
-                )
-                assert sharding_prop_func is not None
                 target_schema, redistribute, output_sharding = prepare_inputs(
-                    sharding_prop_func,
+                    node.target,
                     args,
                     kwargs,
                     DTensor._op_to_rules,
@@ -299,10 +287,10 @@ class TraceDistTensorTest(DistTensorTestBase):
                 for i, arg in enumerate(flatten_args):
                     if isinstance(arg, DTensor) and redistribute:
                         specs[arg._local_tensor] = (
-                            e.size(),
+                            arg.size(),
                             flatten_args_schema[i].mesh,
-                            e.placements,
-                            target_spec.placements,
+                            arg.placements,
+                            flatten_args_schema[i].placements,
                         )
 
                 dispatch = partial(
