@@ -327,7 +327,6 @@ dtensor_fails = {
     xfail("nanmedian"),
     xfail("nanquantile"),
     xfail("nansum"),
-    xfail("narrow"),
     xfail("native_layer_norm"),
     xfail("ne"),
     xfail("new_empty"),

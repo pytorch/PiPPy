@@ -196,8 +196,6 @@ def prop_slice(op_schema: OpSchema) -> OutputSharding:
         end = input_spec.shape[dim]
     if end < 0:
         end += input_spec.shape[dim]
-    if end > input_spec.shape[dim]:
-        end = input_spec.shape[dim]
 
     if start == 0 and end == input_spec.shape[dim] and step == 1:
         return OutputSharding(output_spec=input_spec)
