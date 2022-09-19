@@ -163,7 +163,6 @@ dtensor_fails = {
     xfail("block_diag"),
     xfail("bmm"),
     xfail("broadcast_shapes"),
-    xfail("bucketize"),
     xfail("cat"),
     xfail("cartesian_prod"),
     xfail("cdist"),
@@ -226,7 +225,6 @@ dtensor_fails = {
     xfail("fmax"),
     xfail("fmin"),
     xfail("frexp"),
-    xfail("full_like"),
     xfail("gather"),
     xfail("geqrf"),
     xfail("gradient"),
@@ -541,7 +539,6 @@ dtensor_fails = {
     xfail("vsplit"),
     xfail("vstack"),
     xfail("where"),
-    xfail("zeros_like"),
     # ops inside this might even fail without dtensor
     # tests, as we rescale op db common test size factor (i.e. L, M, S)
     # which triggered the orignal function run failures with input
@@ -573,7 +570,6 @@ dtensor_fails = {
     skip("_masked.var"),
     skip("_masked.std"),
     skip("_masked.normalize"),
-    skip("ones_like"),
     skip("prod"),
     skip("segment_reduce", "lengths"),
     skip("segment_reduce", "offsets"),
@@ -583,10 +579,11 @@ dtensor_fails = {
 # Add a list of ops that are currently failing BW pass
 skip_bw = [
     None,  # corresponds to the transpose ops 'H' and 'T'
-    "torch.isfinite",
-    "torch.eq",
-    "torch.isnan",
+    "torch.bucketize",
     "torch.conj_physical",
+    "torch.eq",
+    "torch.isfinite",
+    "torch.isnan",
 ]
 
 
@@ -622,6 +619,16 @@ def run_dtensor_crossref(test_case, func, args, kwargs):
                     # for cross-ref testing, as some tests may be looking at
                     # errors
                     dtensor_rs = func(*dtensor_args, **dtensor_kwargs)
+
+                    # we need to skip tests containing tensors of zero elmeents for now.
+                    # see issue: https://github.com/pytorch/tau/issues/470
+                    # TODO remove this once issue above fixed.
+                    flat_args, _ = tree_flatten(dtensor_rs)
+                    if any(
+                        isinstance(e, torch.Tensor) and e.numel() == 0
+                        for e in flat_args
+                    ):
+                        continue
 
                     # redistribute/all_gather the results to compare with normal output
                     dtensor_rs = tree_map(to_replicate, dtensor_rs)
