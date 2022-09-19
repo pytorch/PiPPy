@@ -354,9 +354,10 @@ class DeviceMesh(object):
             A :class:`torch.Tensor` object
         """
         num_chunks = self.size(mesh_dim)
-        gathered_list = list(
+        split_list = list(
             output_tensor.tensor_split(num_chunks, dim=tensor_dim)
         )
+        gathered_list = [tensor.contiguous() for tensor in split_list]
 
         dim_group = self._dim_groups[mesh_dim]
         # input tensor must be contiguous
