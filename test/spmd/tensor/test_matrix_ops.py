@@ -10,7 +10,7 @@ from spmd.testing.common_utils import (  # type: ignore
 )
 from spmd import distribute_tensor, DeviceMesh
 from spmd.tensor.placement_types import Placement, Shard, Replicate, _Partial
-from typing import List, cast
+from typing import List, Optional, cast
 import itertools
 
 
@@ -88,11 +88,10 @@ class DistMatrixOpsTest(DistTensorTestBase):
         ) -> None:
             dt1 = distribute_tensor(t1, device_mesh, placements1)
             dt2 = distribute_tensor(t2, device_mesh, placements2)
-            dist_res: DTensor = cast(DTensor, torch.mm(dt1, dt2))
-            self.assertEqual(
-                dist_res.redistribute(device_mesh, replica_spec).to_local(),
-                local_res,
+            dist_res: DTensor = cast(DTensor, torch.mm(dt1, dt2)).redistribute(
+                device_mesh, replica_spec
             )
+            self.assertEqual(dist_res.to_local(), local_res)
             # backward
             grad_dist_res = torch.ones_like(dist_res)
             dist_res.backward(grad_dist_res)
@@ -100,21 +99,14 @@ class DistMatrixOpsTest(DistTensorTestBase):
 
         test_placement_comb(replica_spec, replica_spec)
         test_placement_comb(shard0_spec, replica_spec)
+        test_placement_comb(shard1_spec, replica_spec)
         test_placement_comb(replica_spec, shard1_spec)
-
-        # TODO: support (shard1, shard0) -> [partial]
-        with self.assertRaises(Exception):
-            test_placement_comb(shard1_spec, shard0_spec)
+        test_placement_comb(shard1_spec, shard0_spec)
+        test_placement_comb(replica_spec, shard0_spec)
 
         # TODO: support (shard0, shard1) -> [shard0, shard1]
         with self.assertRaises(Exception):
             test_placement_comb(shard0_spec, shard1_spec)
-
-        with self.assertRaises(Exception):
-            test_placement_comb(replica_spec, shard0_spec)
-
-        with self.assertRaises(Exception):
-            test_placement_comb(shard1_spec, replica_spec)
 
     @with_comms
     def test_t(self):
@@ -133,11 +125,17 @@ class DistMatrixOpsTest(DistTensorTestBase):
     # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
     @with_comms
     @skip_if_lt_x_gpu(TEST_GPU_NUM)
-    def test_sharded_baddbmm(self):
+    def test_baddbmm(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
-        tensor = torch.rand(4, 4, 8, device=self.device_type)
-        batch_1 = torch.rand(4, 4, 8, device=self.device_type)
-        batch_2 = torch.rand(4, 8, 8, device=self.device_type)
+        tensor = torch.rand(
+            4, 4, 8, device=self.device_type, requires_grad=True
+        )
+        batch_1 = torch.rand(
+            4, 4, 8, device=self.device_type, requires_grad=True
+        )
+        batch_2 = torch.rand(
+            4, 8, 8, device=self.device_type, requires_grad=True
+        )
 
         def test_placement_comb(
             tensor_placements: List[Placement],
@@ -145,6 +143,7 @@ class DistMatrixOpsTest(DistTensorTestBase):
             batch_2_placements: List[Placement],
             beta: int,
             alpha: int,
+            batch_1_grad: Optional[torch.Tensor],
         ) -> None:
             tensor_dt = distribute_tensor(
                 tensor, device_mesh, tensor_placements
@@ -155,15 +154,25 @@ class DistMatrixOpsTest(DistTensorTestBase):
             batch_2_dt = distribute_tensor(
                 batch_2, device_mesh, batch_2_placements
             )
-            new_dt = cast(
+            dist_res = cast(
                 DTensor,
                 torch.baddbmm(
                     tensor_dt, batch_1_dt, batch_2_dt, beta=beta, alpha=alpha
                 ),
             ).redistribute(device_mesh, [Replicate()])
+            dist_local_res = dist_res.to_local()
             assert not torch.isnan(local_result).any()
-            assert not torch.isnan(new_dt.to_local()).any()
-            self.assertEqual(new_dt.to_local(), local_result)
+            assert not torch.isnan(dist_local_res).any()
+            self.assertEqual(dist_local_res.detach(), local_result.detach())
+
+            # TODO: add test backward
+            # grad_dist_res = torch.ones_like(dist_res)
+            # dist_res.backward(grad_dist_res)
+            # self.assertIsNotNone(batch_1_dt.grad)
+            # batch_1_grad_local = batch_1_dt.grad.redistribute(
+            #     device_mesh, [Replicate()]
+            # ).to_local()
+            # self.assertEqual(batch_1_grad_local, batch_1_grad)
 
         shard0_spec = Shard(0)
         shard1_spec = Shard(1)
@@ -195,40 +204,61 @@ class DistMatrixOpsTest(DistTensorTestBase):
             local_result = torch.baddbmm(
                 tensor, batch_1, batch_2, beta=beta, alpha=alpha
             )
+            grad_local_res = torch.ones_like(local_result)
+            local_result.backward(grad_local_res)
             # tests that currently pass
             for spec in passlist:
                 test_placement_comb(
-                    [spec[0]], [spec[1]], [spec[2]], beta, alpha
+                    [spec[0]], [spec[1]], [spec[2]], beta, alpha, batch_1.grad
                 )
 
             # TODO: support these tests
-            # TODO: test with replicate
             shard_specs_comb = [
                 spec for spec in shard_specs_comb if spec not in passlist
             ]
             for spec in shard_specs_comb:
                 with self.assertRaises(Exception):
                     test_placement_comb(
-                        [spec[0]], [spec[1]], [spec[2]], beta, alpha
+                        [spec[0]],
+                        [spec[1]],
+                        [spec[2]],
+                        beta,
+                        alpha,
+                        batch_1.grad,
                     )
 
     @with_comms
     def test_bmm(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
-        input = torch.rand(4, 8, 4, device=self.device_type)
-        mat_2 = torch.rand(4, 4, 8, device=self.device_type)
-        local_result = torch.bmm(input, mat_2)
+        mat1 = torch.rand(4, 8, 4, device=self.device_type, requires_grad=True)
+        mat2 = torch.rand(4, 4, 8, device=self.device_type, requires_grad=True)
+        local_result = torch.bmm(mat1, mat2)
+        grad_local_res = torch.ones_like(local_result)
+        local_result.backward(grad_local_res)
 
         def test_placement_comb(
             placements1: List[Placement],
             placements2: List[Placement],
         ) -> None:
-            input_dt = distribute_tensor(input, device_mesh, placements1)
-            mat_2_dt = distribute_tensor(mat_2, device_mesh, placements2)
-            new_dt = cast(DTensor, torch.bmm(input_dt, mat_2_dt)).redistribute(
+            mat1_dt = distribute_tensor(mat1, device_mesh, placements1)
+            mat2_dt = distribute_tensor(mat2, device_mesh, placements2)
+            dist_res = cast(DTensor, torch.bmm(mat1_dt, mat2_dt)).redistribute(
                 device_mesh, [Replicate()]
             )
-            self.assertEqual(new_dt.to_local(), local_result)
+            dist_local_res = dist_res.to_local()
+            self.assertEqual(dist_local_res, local_result)
+
+            # test backward
+            # TODO: figure out (replicate, shard1) fail on backward
+            # it generates a different grad shape
+            grad_dist_res = torch.ones_like(dist_res)
+            dist_res.backward(grad_dist_res)
+            self.assertIsNotNone(mat1_dt.grad)
+            mat1_dt_grad = cast(DTensor, mat1_dt.grad)
+            mat1_grad_local = mat1_dt_grad.redistribute(
+                device_mesh, [Replicate()]
+            ).to_local()
+            self.assertEqual(mat1_grad_local, mat1.grad)
 
         shard0_spec = Shard(0)
         shard1_spec = Shard(1)
@@ -244,7 +274,6 @@ class DistMatrixOpsTest(DistTensorTestBase):
             (shard1_spec, replica_spec),
             (shard2_spec, replica_spec),
             (replica_spec, shard0_spec),
-            (replica_spec, shard1_spec),
             (replica_spec, shard2_spec),
             (shard2_spec, shard1_spec),
             (replica_spec, replica_spec),
