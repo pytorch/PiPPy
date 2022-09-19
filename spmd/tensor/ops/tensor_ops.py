@@ -24,6 +24,24 @@ def default_prop_rule(op_schema: OpSchema) -> OutputSharding:
     return OutputSharding(op_schema.args_spec[0])
 
 
+def prop_create_like(op_schema: OpSchema) -> OutputSharding:
+    # For operators that create tensors with same shape as input but
+    # with specific content that does not depend on the input, we
+    # can propagate Sharding, but we have to make sure we move from
+    # partial to replicated.
+    input_spec = op_schema.args_spec[0]
+    output_spec = DTensorSpec(
+        mesh=input_spec.mesh,
+        placements=tuple(
+            Replicate() if isinstance(p, _Partial) else p
+            for p in input_spec.placements
+        ),
+        ndim=input_spec.ndim,
+        shape=input_spec.shape,
+    )
+    return OutputSharding(output_spec=output_spec)
+
+
 # some tensor ops should not support shard, i.e. local_scalar_dense
 # shouldn't work for shard as it requires numel == 1
 def no_shard_prop_rule(op_schema: OpSchema) -> OutputSharding:
@@ -46,11 +64,14 @@ default_prop_ops = [
     "aten.clone.default",
     "aten.copy_.default",
     "aten.detach.default",
+    "aten.is_same_size.default",
+    "aten.new_empty_strided.default",
+]
+
+create_like_ops = [
     "aten.empty_like.default",
     "aten.fill_.Scalar",
     "aten.full_like.default",
-    "aten.is_same_size.default",
-    "aten.new_empty_strided.default",
     "aten.ones_like.default",
     "aten.zero_.default",
     "aten.zeros_like.default",
@@ -60,6 +81,9 @@ no_shard_prop_ops = ["aten._local_scalar_dense.default"]
 
 for op in default_prop_ops:
     DTensor._op_to_rules[op] = default_prop_rule
+
+for op in create_like_ops:
+    DTensor._op_to_rules[op] = prop_create_like
 
 for op in no_shard_prop_ops:
     DTensor._op_to_rules[op] = no_shard_prop_rule
