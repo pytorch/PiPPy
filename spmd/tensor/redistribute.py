@@ -72,8 +72,8 @@ def _redistribute_with_local_tensor(
     local_tensor: torch.Tensor,
     size: torch.Size,
     device_mesh: DeviceMesh,
-    current_placements: List[Placement],
-    target_placements: List[Placement],
+    current_placements: Sequence[Placement],
+    target_placements: Sequence[Placement],
 ) -> torch.Tensor:
     new_local_tensor = None
 
