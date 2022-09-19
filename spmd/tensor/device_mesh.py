@@ -95,19 +95,19 @@ class DeviceMesh(object):
             else torch.tensor(mesh, dtype=torch.int)
         )
         default_pg = _get_default_group()
-        backend_name = default_pg._get_backend_name()
+        self._backend = default_pg._get_backend_name()
         # TODO: if user want to pass pg_options, offer a way to do it
         # check default pg backend, should support device_type
         if device_type == "cpu":
             assert (
-                backend_name == "gloo"
-            ), f"ProcessGroup backend: {backend_name} not supporting CPU!"
+                self._backend == "gloo"
+            ), f"ProcessGroup backend: {self._backend} not supporting CPU!"
         elif device_type == "cuda":
-            if backend_name == "gloo":
+            if self._backend == "gloo":
                 warnings.warn(
                     "We recommend using nccl backend for cuda device type, gloo backend might only have partial support!"
                 )
-            assert backend_name == "gloo" or backend_name == "nccl"
+            assert self._backend == "gloo" or self._backend == "nccl"
         else:
             raise RuntimeError(
                 f"DeviceMesh only support cpu or cuda device type, but got {device_type}"
@@ -188,7 +188,7 @@ class DeviceMesh(object):
                     # pg or not, it's required that all ranks participate
                     # in subgroup construction
                     new_subgroup = new_group(
-                        ranks=subgroup_ranks, backend=backend_name
+                        ranks=subgroup_ranks, backend=self._backend
                     )
                     # only add to dim_groups if the current rank in the subgroup
                     if self.get_rank() in subgroup_ranks:
@@ -230,7 +230,7 @@ class DeviceMesh(object):
         return self.mesh.ndim
 
     def backend(self) -> str:
-        return _get_default_group()._get_backend_name()
+        return self._backend
 
     def get_rank(self) -> int:
         return get_rank()
@@ -271,34 +271,65 @@ class DeviceMesh(object):
         assert my_coordinate is not None
 
         num_chunks = self.size(mesh_dim)
-        # TODO: handle uneven shard sizes
-        assert tensor_to_scatter.size(tensor_dim) % num_chunks == 0, (
-            f"Only support chunk sharding evenly now, but tensor got "
-            f"dimension {tensor_dim} of size {tensor_to_scatter.size(tensor_dim)}, "
-            f"which does not divide number of shards {num_chunks}."
-        )
-
-        scatter_list = list(
-            tensor_to_scatter.tensor_split(num_chunks, dim=tensor_dim)
-        )
-        to_scatter = [tensor.contiguous() for tensor in scatter_list]
         dim_group = self._dim_groups[mesh_dim]
         # src need to be global rank
         src_for_dim = 0
         if dim_group is not GroupMember.WORLD:
             src_for_dim = get_global_rank(dim_group, 0)
 
-        tensor = torch.empty_like(to_scatter[my_coordinate])
-        if src_for_dim == get_rank():
-            scatter(
-                tensor,
-                scatter_list=to_scatter,
-                src=src_for_dim,
-                group=dim_group,
-            )
+        scatter_list = list(
+            tensor_to_scatter.tensor_split(num_chunks, dim=tensor_dim)
+        )
+        if self._backend == "gloo":
+            # gloo does not support uneven scattering, we need to resize tensor
+            # before really calling scatter, the first shape is always bigger
+            # TODO: remove this logic once ProcessGroupGloo suupport uneven list
+            scatter_shape = scatter_list[0].shape
+            my_rank_shape = scatter_list[my_coordinate].shape
+            to_scatter = []
+            for scatter_tensor in scatter_list:
+                scatter_tensor = scatter_tensor.contiguous()
+                if scatter_tensor.shape != scatter_shape:
+                    scatter_tensor.resize_(scatter_shape)
+                to_scatter.append(scatter_tensor)
+
+            tensor = torch.empty_like(to_scatter[my_coordinate])
+            if src_for_dim == get_rank():
+                scatter(
+                    tensor,
+                    scatter_list=to_scatter,
+                    src=src_for_dim,
+                    group=dim_group,
+                )
+            else:
+                scatter(
+                    tensor, scatter_list=None, src=src_for_dim, group=dim_group
+                )
+
+            # resize to uneven size if needed
+            if my_rank_shape != tensor.shape:
+                tensor.resize_(my_rank_shape)
+            return tensor
+        elif self._backend == "nccl":
+            to_scatter = [tensor.contiguous() for tensor in scatter_list]
+
+            tensor = torch.empty_like(to_scatter[my_coordinate])
+            if src_for_dim == get_rank():
+                scatter(
+                    tensor,
+                    scatter_list=to_scatter,
+                    src=src_for_dim,
+                    group=dim_group,
+                )
+            else:
+                scatter(
+                    tensor, scatter_list=None, src=src_for_dim, group=dim_group
+                )
+            return tensor
         else:
-            scatter(tensor, scatter_list=None, src=src_for_dim, group=dim_group)
-        return tensor
+            raise RuntimeError(
+                f"backend {self._backend} not supporting scatter!"
+            )
 
     def broadcast(
         self, tensor: torch.Tensor, mesh_dim: int = 0
@@ -425,16 +456,23 @@ class DeviceMesh(object):
         ), "Rank if not part of mesh"  # TODO: figure out behavior here
 
         num_chunks = self.size(mesh_dim)
-        if self.backend() == "nccl":
+        if self._backend == "nccl":
             # gathered_list = output_tensor.tensor_split(num_chunks, dim=tensor_dim)
             input_list = list(input.tensor_split(num_chunks, dim=tensor_dim))
             output = torch.empty_like(input_list[my_coordinate])
             dim_group = self._dim_groups[mesh_dim]
             reduce_scatter(output, input_list, op=op, group=dim_group)
             return output
-        else:
+        elif self._backend == "gloo":
             # it's gloo, which does not have reduce_scatter
             # we have to do all_reduce + scatter
+            # warnings.warn(
+            #     "ProcessGroupGloo does not support reduce_scatter, falling back with all reduce!"
+            # )
             reduced_tensor = self.all_reduce(input, op=op, mesh_dim=mesh_dim)
             chunks = reduced_tensor.tensor_split(num_chunks, dim=tensor_dim)
             return chunks[my_coordinate]
+        else:
+            raise RuntimeError(
+                f"backend {self._backend} not supporting scatter!"
+            )

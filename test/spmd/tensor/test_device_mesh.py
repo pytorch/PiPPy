@@ -264,6 +264,28 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
         self.assertEqual(local_tensor, chunked_list[self.rank])
 
     @with_comms
+    def test_scatter_uneven(self):
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        my_rank = device_mesh.get_rank()
+        tensor_to_split = torch.randn(
+            device_mesh.size() + 3, device_mesh.size() + 1
+        )
+
+        for shard_dim in range(tensor_to_split.ndim):
+            tensor_to_scatter = tensor_to_split.clone()
+            tensor_splitted_list = tensor_to_split.tensor_split(
+                device_mesh.size(), dim=shard_dim
+            )
+
+            scattered_tensor = device_mesh.scatter(
+                tensor_to_scatter, tensor_dim=shard_dim
+            )
+            self.assertEqual(
+                scattered_tensor.size(), tensor_splitted_list[my_rank].size()
+            )
+            self.assertEqual(scattered_tensor, tensor_splitted_list[my_rank])
+
+    @with_comms
     def test_all_gather_1d(self):
         mesh = DeviceMesh(self.device_type, torch.arange(self.world_size))
         dims_to_gather = [0, 1]
