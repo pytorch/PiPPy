@@ -146,7 +146,7 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
                 # recover tensor shape on the shard dim
                 tensor_shape[shard_dim] = local_dim_size * device_mesh.size(idx)
 
-                # recover tensor stride by modifying the stride that larger than
+                # recover tensor stride by modifying the stride that is larger than
                 # the current stride on the shard_dim
                 for i in range(len(tensor_stride)):
                     if tensor_stride[i] > tensor_stride[shard_dim]:

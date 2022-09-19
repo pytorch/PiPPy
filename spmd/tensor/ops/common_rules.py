@@ -96,10 +96,12 @@ def einop_rule(
                 )
         else:
             return a
-
+    # print(f"equation {equation} input_dims{input_dims} input_specs {input_specs}")
     for input_dim, input_spec in zip(input_dims, input_specs):
         # deal with partial sums
         input_sums = input_spec.sums
+        # print(f"input_dim {input_dim} input_spec {input_spec} input_sums {input_sums}")
+        
         for sum_dim in input_sums:
             if sum_dim not in pending_sums_counter:
                 seen_shardings[sum_dim] = "+"
@@ -131,7 +133,11 @@ def einop_rule(
                     dim, dim_to_sharding[dim], mesh_dim
                 )
                 assert dim_to_size[dim] == input_spec.shape[idx]
-
+    
+    # print(f"dim_to_sharding {dim_to_sharding}")
+    # print(f"pending_sums_counter {pending_sums_counter} pending_sums_counter.values() {pending_sums_counter.values()} len(input_specs) {len(input_specs)}")
+    # print(f"seen_shardings {seen_shardings}")
+    # print("\n\n")
     if pending_sums_counter and not linearity:
         # return reshard suggestion with no pending sum, because we already properly
         # merge the sharding, this reshard suggestion is legit to use

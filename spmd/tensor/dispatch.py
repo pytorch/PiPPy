@@ -17,7 +17,7 @@ from spmd.tensor.utils import (
     unwrap_schema,
     pack_args_kwargs_with_local_tensor,
 )
-
+import logging
 
 """
 If _ENABLE_FALLBACK set to False, dispatch will fail when an op doesn't
@@ -29,8 +29,8 @@ _ENABLE_FALLBACK = False
 """
 Print information on ops input shape and sharding for debugging purposes.
 """
-_DEBUG_VERBOSE = False
-
+# _DEBUG_VERBOSE = False
+log = logging.getLogger(__name__)
 
 @dataclass
 class OpSchema(object):
@@ -130,19 +130,20 @@ def operator_dispatch(
     kwargs_schema = tree_map(unwrap_schema, kwargs)
 
     op_schema = OpSchema(args_schema, kwargs_schema)
+    op_key = str(op_call)
 
-    if _DEBUG_VERBOSE and torch.distributed.get_rank() == 0:
-        print(f"{op_call}({op_schema})")
+    if torch.distributed.get_rank() == 0:
+        log.info(f"{op_key}({op_schema})")
         local_shapes = tree_map(
             lambda t: t.to_local().shape
             if isinstance(t, spmd_tensor.DTensor)
             else None,
             args,
         )
-        print(f"    local shapes: {local_shapes}")
+        log.info(f"local shapes: {local_shapes}")
 
-    op_key = str(op_call)
-    # STEP 0. See if threre're user defined custom aten operator
+
+    # STEP 0. See if there are user defined custom aten operator
     # implementations. Custom operators take the highest priority
     if op_key in custom_dispatch_ops:
         # dispatch to user defined custom distributed tensor ops
@@ -159,7 +160,7 @@ def operator_dispatch(
         # propagation (i.e. no rules apply for input
         # placements), we do auto redistribute on inputs
         # to get an eligble input, which we will pick a
-        # target schema base on the redistribute cost
+        # target schema based on the redistribute cost
         # TODO: implement full auto distribute with a
         # simple cost estimation model
         if output_sharding.output_spec is None:
@@ -224,7 +225,7 @@ def operator_dispatch(
     else:
         # step 3. If there's not even one sharding rule
         # implemented for the operator, we fall back to
-        # local tensor compute, this is wront currently
+        # local tensor compute, this is wrong currently
         # we will change the behavior to reshard to full
         # replicate and do the computatation
         if not _ENABLE_FALLBACK:

@@ -1,6 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import warnings
 from typing import List, Optional, Iterable, Sequence
+import logging
 import torch
 from torch.distributed.distributed_c10d import (
     get_rank,
@@ -22,6 +23,8 @@ from torch.distributed.nn.functional import (
     all_reduce,
     broadcast,
 )
+
+log = logging.getLogger(__name__)
 
 _global_device_mesh: Optional["DeviceMesh"] = None
 
@@ -172,6 +175,7 @@ class DeviceMesh(object):
             # if the mesh is the same as world_pg, we just append the default
             # pg to the first dim goups, as new_group cannot have the exact
             # same ranks as world
+            log.info(f"Single PG created for {world_size} on {self.mesh}")
             self._dim_groups.append(default_pg)
         else:
             # create sub pgs base on the mesh argument specified
@@ -202,6 +206,9 @@ class DeviceMesh(object):
                                 f"Each device mesh dimension should get only one process group, but got {self.get_rank} in {subgroup_ranks}!"
                             )
                         self._dim_groups.append(new_subgroup)
+                        log.info(f"New PG created for {subgroup_ranks} of size {len(subgroup_ranks)} on {self.mesh}")
+            
+            
 
     def __enter__(self) -> "DeviceMesh":
         # set global device_mesh to this instance
