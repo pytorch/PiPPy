@@ -67,6 +67,7 @@ def _decompose_reshard(val: List[_PlacementItem]) -> List[_PlacementItem]:
     return output
 
 
+# Intentionally expose this API to trace ops on local tensors
 def _redistribute_with_local_tensor(
     local_tensor: torch.Tensor,
     size: torch.Size,
