@@ -267,7 +267,7 @@ class DeviceMesh(object):
         Returns:
             A :class:`torch.Tensor` object
         """
-        # CommTensor does not change earger mode behavior. During tracing, it
+        # CommTensor does not change eager mode behavior. During tracing, it
         # makes sure communication result is properly waited before subsequent
         # read operations.
         to_scatter = [
@@ -302,7 +302,7 @@ class DeviceMesh(object):
         if dim_group is not GroupMember.WORLD:
             src_for_dim = get_global_rank(dim_group, 0)
 
-        # CommTensor does not change earger mode behavior. During tracing, it
+        # CommTensor does not change eager mode behavior. During tracing, it
         # makes sure communication result is properly waited before subsequent
         # read operations.
         return broadcast(
@@ -312,7 +312,7 @@ class DeviceMesh(object):
     # pyre-fixme[3]: Return type must be annotated.
     def all_gather(self, tensor: torch.Tensor, mesh_dim: int = 0):
         dim_group = self._dim_groups[mesh_dim]
-        # CommTensor does not change earger mode behavior. During tracing, it
+        # CommTensor does not change eager mode behavior. During tracing, it
         # makes sure communication result is properly waited before subsequent
         # read operations.
         return all_gather(CommTensor(tensor), group=dim_group)
@@ -352,7 +352,7 @@ class DeviceMesh(object):
         mesh_dim: int = 0,
     ):
         dim_group = self._dim_groups[mesh_dim]
-        # CommTensor does not change earger mode behavior. During tracing, it
+        # CommTensor does not change eager mode behavior. During tracing, it
         # makes sure communication result is properly waited before subsequent
         # read operations.
         return all_reduce(CommTensor(tensor), op=op, group=dim_group)
