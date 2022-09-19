@@ -117,10 +117,6 @@ def prepare_inputs(
     kwargs: Dict[str, object],
     op_to_rules: Dict[str, Callable[[OpSchema], OutputSharding]],
 ) -> Tuple[OpSchema, bool, Optional[OutputSharding]]:
-    # first we need to lift some private aten aliases to public calls
-    if op_call in _CURRENT_DECOMPOSITION_TABLE:
-        return _CURRENT_DECOMPOSITION_TABLE[op_call](*args, **kwargs)
-
     # unwrap the args/kwargs schema
     args_schema = tree_map(unwrap_schema, args)
     kwargs_schema = tree_map(unwrap_schema, kwargs)
@@ -152,7 +148,6 @@ def prepare_inputs(
             )
         else:
             return op_schema, False, None
-
 
     # step 2. there's sharding propagation rule, run
     # sharding propagation to get output sharding
@@ -200,7 +195,7 @@ def operator_dispatch(
     # implementations. Custom operators take the highest priority
     if str(op_call) in custom_dispatch_ops:
         # dispatch to user defined custom distributed tensor ops
-        return custom_dispatch_ops[op_key](*args, **kwargs)
+        return custom_dispatch_ops[str(op_call)](*args, **kwargs)
 
     target_schema, redistribute, output_sharding = prepare_inputs(
         op_call, args, kwargs, op_to_rules
