@@ -243,20 +243,25 @@ class DeviceMesh(object):
         return self._coordinate_on_dim[dim] if self._coordinate_on_dim else None
 
     def scatter(
-        self, scatter_list: List[torch.Tensor], mesh_dim: int = 0
+        self,
+        tensor_to_scatter: torch.Tensor,
+        mesh_dim: int = 0,
+        tensor_dim: int = 0,
     ) -> torch.Tensor:
         """
-        scatter the list of tensors to a device mesh dimension. We by default
+        scatter a big tensor to a device mesh dimension. We by default
         use the first rank of the mesh dimension as the source of truth, i.e
         for a 2d mesh [[0, 1], [2, 3]], if we scatter on mesh_dim = 1, we will
-        scatter the tensor list on rank 0 to rank 0/1, and tensor list on rank 2
-        to rank 2/3.
+        scatter the tensor splitted on rank 0 to rank 0/1, and tensor splitted
+        on rank 2 to rank 2/3.
 
         Args:
-            scatter_list (List[torch.Tensor]): list of tensors to scatter.
+            tensor_to_scatter (torch.Tensor): the tensor to be scattered.
             mesh_dim (int, optional): indicate which mesh dimension we want
                 to scatter on, we by default choose the first rank on the
                 mesh dimension as source of truth.
+            tensor_dim (int, optional): indicate which tensor dimension we want
+                to split the `tensor_to_scatter` before scattering.
 
         Returns:
             A :class:`torch.Tensor` object
@@ -265,6 +270,17 @@ class DeviceMesh(object):
         # TODO: what should happen if rank is not in the mesh?
         assert my_coordinate is not None
 
+        num_chunks = self.size(mesh_dim)
+        # TODO: handle uneven shard sizes
+        assert tensor_to_scatter.size(tensor_dim) % num_chunks == 0, (
+            f"Only support chunk sharding evenly now, but tensor got "
+            f"dimension {tensor_dim} of size {tensor_to_scatter.size(tensor_dim)}, "
+            f"which does not divide number of shards {num_chunks}."
+        )
+
+        scatter_list = list(
+            tensor_to_scatter.tensor_split(num_chunks, dim=tensor_dim)
+        )
         to_scatter = [tensor.contiguous() for tensor in scatter_list]
         dim_group = self._dim_groups[mesh_dim]
         # src need to be global rank
@@ -284,7 +300,9 @@ class DeviceMesh(object):
             scatter(tensor, scatter_list=None, src=src_for_dim, group=dim_group)
         return tensor
 
-    def broadcast(self, tensor: torch.Tensor, mesh_dim: int = 0) -> torch.Tensor:
+    def broadcast(
+        self, tensor: torch.Tensor, mesh_dim: int = 0
+    ) -> torch.Tensor:
         """
         broadcast the tensor to a device mesh dimension. We by default
         use the first rank of the mesh dimension as the source of truth, i.e
@@ -307,8 +325,7 @@ class DeviceMesh(object):
         if dim_group is not GroupMember.WORLD:
             src_for_dim = get_global_rank(dim_group, 0)
 
-        tensor = tensor.contiguous().clone()
-        broadcast(tensor, src=src_for_dim, group=dim_group)
+        broadcast(tensor.contiguous(), src=src_for_dim, group=dim_group)
         return tensor
 
     def all_gather(
@@ -358,6 +375,20 @@ class DeviceMesh(object):
         op: ReduceOp = ReduceOp.SUM,  # type: ignore
         mesh_dim: int = 0,
     ):
+        """
+        all_reduce the tensor on each rank on a device mesh dimension, and
+        return an output tensor on each rank after all_reduce.
+
+        Args:
+            input (torch.Tensor): tensor to be all_reduced on each rank.
+            op (:class:`torch.distributed.distributed_c10d.ReduceOp, optional):
+                the reduction op of all_reduce (i.e. ReduceOp.SUM)
+            mesh_dim (int, optional): indicate which mesh dimension we want
+                to reduce on.
+
+        Returns:
+            A :class:`torch.Tensor` object
+        """
         dim_group = self._dim_groups[mesh_dim]
         tensor = tensor.clone()
         all_reduce(tensor, op=op, group=dim_group)
@@ -376,12 +407,11 @@ class DeviceMesh(object):
         return an output tensor that's scattered to each rank after reduce.
 
         Args:
-            input (torch.Tensor): tensor to be gathered on each rank.
+            input (torch.Tensor): tensor to be reduced and scattered on each rank.
             op (:class:`torch.distributed.distributed_c10d.ReduceOp, optional):
-                the reduction op of reduce scatter (i.e. ReduceOp.SUM)
+                the reduction op of reduce_scatter (i.e. ReduceOp.SUM)
             mesh_dim (int, optional): indicate which mesh dimension we want
-                to scatter on, we by default choose the first rank on the
-                mesh dimension as source of truth.
+                to scatter on.
             tensor_dim (int, optional): indicate which tensor dimension we want
                 to scatter after the reduction.
 

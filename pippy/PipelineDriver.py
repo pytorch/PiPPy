@@ -551,16 +551,21 @@ class PipeStageExecutor(EventRecorder):
         # We assume the output value is on the same device as the stage's
         # module, and that all parameters in the module are on the same device
         # HACK: we assume the module has at least one parameter
+        found_device = True
         param = next(self.mod.parameters(), None)
-        if param is None:
-            logging.warning(f"Module of stage {self.stage_id} has 0 parameters, "
-                            f"cannot figure out device. Setting it to cpu")
-        else:
+        buffer = next(self.mod.buffers(), None)
+        if param is not None:
             device = param.device
+        elif buffer is not None:
+            device = buffer.device
+        else:
+            found_device = False
+            logging.warning(f"Module of stage {self.stage_id} has no parameter or buffer, "
+                            f"cannot figure out device. Setting it to cpu")
 
         # Future constructor does not accept CPU device, must set to None
         future: torch.futures.Future = torch.futures.Future(devices=None if
-                                                            param is None or device.type == 'cpu'
+                                                            not found_device or device.type == 'cpu'
                                                             else [device])
         # TODO: increase blocked_args_count for extra things like scheduling
         work_item = WorkItem(stage_id=self.stage_id, phase=phase, args=args, kwargs=kwargs, future=future,

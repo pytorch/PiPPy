@@ -120,8 +120,7 @@ def operator_dispatch(
 ) -> object:
     # first we need to lift some private aten aliases to public calls
     if op_call in _CURRENT_DECOMPOSITION_TABLE:
-        with torch.overrides.enable_reentrant_dispatch():
-            return _CURRENT_DECOMPOSITION_TABLE[op_call](*args, **kwargs)
+        return _CURRENT_DECOMPOSITION_TABLE[op_call](*args, **kwargs)
 
     func_schema = FunctionSchema.parse(str(op_call._schema))
     schema_kind = func_schema.kind()
