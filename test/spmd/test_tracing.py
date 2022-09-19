@@ -17,7 +17,6 @@ from typing import List
 
 
 class TraceDeviceMeshTestBase:
-
     def _test_tracing_all_reduce_nd(self, mesh_tensor):
         mesh = DeviceMesh(self.device_type, mesh_tensor)
         local_tensor = torch.ones(3, 3, device=self.device_type) * self.rank
@@ -127,7 +126,6 @@ class TraceDeviceMeshTestBase:
 
 
 class TraceDeviceMesh3DTest(DistTensorTestBase, TraceDeviceMeshTestBase):
-
     @property
     def world_size(self):
         return 8
@@ -150,7 +148,6 @@ class TraceDeviceMesh3DTest(DistTensorTestBase, TraceDeviceMeshTestBase):
 
 
 class TraceDeviceMesh2DTest(DistTensorTestBase, TraceDeviceMeshTestBase):
-
     @property
     def world_size(self):
         return 4
