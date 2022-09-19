@@ -11,7 +11,6 @@ from torch.fx.experimental.proxy_tensor import (
 )
 from torch.testing._internal.common_utils import run_tests
 from torch.distributed._spmd.comm_tensor import _get_tracer
-
 from torch.utils._pytree import tree_flatten, tree_map
 
 import spmd
@@ -20,9 +19,9 @@ from spmd.testing.common_utils import (  # type: ignore
     with_comms,
 )
 from spmd.tensor import (
-    _Partial,
     DTensor,
     DeviceMesh,
+    Placement,
     Replicate,
     Shard,
 )
@@ -30,7 +29,7 @@ from spmd.tensor.dispatch import operator_dispatch, prepare_inputs
 
 import copy
 from functools import partial
-from typing import List
+from typing import Any, Callable, Dict, List, Sequence, Tuple
 
 
 class TraceDeviceMeshTestBase:
@@ -187,28 +186,22 @@ class TraceDeviceMesh2DTest(DistTensorTestBase, TraceDeviceMeshTestBase):
 
 
 def _dispatch_with_local_tensors(
-    local_args=(),
-    op=None,
-    sizes_map={},
-    current_placements_map={},
-    target_mesh_map={},
-    target_placements_map={},
-    kwargs={},
-):
+    op: torch._ops.OpOverload,
+    local_args: Tuple[object, ...],
+    kwargs: Dict[str, object] = {},
+    specs: Dict[
+        torch.Tensor,
+        Tuple[torch.Size, DeviceMesh, Sequence[Placement], Sequence[Placement]],
+    ] = {},
+) -> Any:
     def redistribute(arg):
-        if arg in target_placements_map:
-            return _redistributed_with_local_tensor(
-                arg,
-                sizes_map[arg],
-                target_mesh_map[arg],
-                current_placements_map[arg],
-                target_placements_map[arg],
-            )
-        else:
-            return arg
+        return (
+            _redistributed_with_local_tensor(arg, *specs[arg])
+            if arg in specs
+            else arg
+        )
 
-    redistributed_args = tree_map(redistribute, local_args)
-    return op(*redistributed_args, **kwargs)
+    return op(*tree_map(redistribute, local_args), **kwargs)
 
 
 class TraceDistTensorTest(DistTensorTestBase):
@@ -216,7 +209,14 @@ class TraceDistTensorTest(DistTensorTestBase):
     def world_size(self):
         return 2
 
-    def _test_expand(self, xd, yd, f, mesh, out_spec):
+    def _test_expand(
+        self,
+        xd: DTensor,
+        yd: DTensor,
+        f: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
+        mesh: DeviceMesh,
+        out_placement: Sequence[Placement],
+    ):
         spmd.tensor.dispatch._ENABLE_FALLBACK = True
         # trace local graph
         x = xd.redistribute(
@@ -230,19 +230,21 @@ class TraceDistTensorTest(DistTensorTestBase):
         traced_f = make_fx(f)(x, y)
 
         # map intermediate tensors in traced graph to DTensor objects
-        node_to_obj = {}
+        node_to_obj: Dict[torch.fx.Node, DTensor] = {}
 
         # map place holder to real input DTensor objects
         def name_to_input(name):
             return xd if "x" in name else yd
 
-        replacements = {}
+        # map local op node in traced_f to its corresponding subgraph of
+        # DTensor ops.
+        replacements: Dict[torch.fx.Node, torch.fx.Graph] = {}
 
         def remap_arg(arg):
             if isinstance(arg, torch.fx.Node):
                 obj = node_to_obj[arg]
                 if _get_tracer(obj):
-                    # This is a shared arg, already has a tracer from last
+                    # This is a shared arg, already has a tracer from previous
                     # tracing. Delete the tracer.
                     del obj.__dict__[proxy_slot]
                 return obj
@@ -253,20 +255,24 @@ class TraceDistTensorTest(DistTensorTestBase):
         # dispatch implementation
         for node in traced_f.graph.nodes:
             if node.op == "placeholder":
+                # placeholder node maps to real DTensor
                 node_to_obj[node] = name_to_input(node.name)
             elif isinstance(node.target, torch._ops.OpOverload):
                 args = tree_map(remap_arg, node.args)
+                # kwargs in this set of tests are all constants
                 kwargs = node.kwargs
 
+                # run dispatch once to get the real DTensor output
                 out = operator_dispatch(
                     node.target,
                     args,
-                    kwargs,
+                    node.kwargs,  # kwargs in this set of tests are all constants
                     DTensor._op_to_rules,
                     DTensor._custom_dispatch_ops,
                 )
                 node_to_obj[node] = out
 
+                # get DTensor specs for inputs and outputs
                 sharding_prop_func = DTensor._op_to_rules.get(
                     str(node.target), None
                 )
@@ -278,42 +284,36 @@ class TraceDistTensorTest(DistTensorTestBase):
                     DTensor._op_to_rules,
                 )
 
-                sizes_map, current_placements_map = {}, {}
-
-                def unwrap_dt_info(e):
-                    nonlocal sizes_map, current_placements_map
-                    if isinstance(e, DTensor):
-                        sizes_map[e._local_tensor] = e.size()
-                        current_placements_map[e._local_tensor] = e.placements
-
                 flatten_args, args_tree_spec = tree_flatten(args)
                 flatten_args_schema, _ = tree_flatten(target_schema.args_schema)
 
-                target_mesh_map, target_placements_map = {}, {}
+                specs: Dict[
+                    torch.Tensor,
+                    Tuple[
+                        torch.Size,
+                        DeviceMesh,
+                        Sequence[Placement],
+                        Sequence[Placement],
+                    ],
+                ] = {}
                 for i, arg in enumerate(flatten_args):
-                    if isinstance(arg, DTensor):
-                        if redistribute:
-                            target_spec = flatten_args_schema[i]
-                            target_mesh_map[
-                                arg._local_tensor
-                            ] = target_spec.mesh
-                            target_placements_map = target_spec.placements
+                    if isinstance(arg, DTensor) and redistribute:
+                        specs[arg._local_tensor] = (
+                            e.size(),
+                            flatten_args_schema[i].mesh,
+                            e.placements,
+                            target_spec.placements,
+                        )
 
                 dispatch = partial(
                     _dispatch_with_local_tensors,
-                    op=node.target,
-                    sizes_map=sizes_map,
-                    current_placements_map=current_placements_map,
-                    target_mesh_map=target_mesh_map,
-                    target_placements_map=target_placements_map,
+                    node.target,
                     kwargs=kwargs,
+                    specs=specs,
                 )
 
                 def unwrap_local(e):
-                    if isinstance(e, DTensor):
-                        return e._local_tensor
-                    else:
-                        return e
+                    return e._local_tensor if isinstance(e, DTensor) else e
 
                 replacements[node] = make_fx(dispatch)(
                     tree_map(unwrap_local, args)
@@ -335,8 +335,7 @@ class TraceDistTensorTest(DistTensorTestBase):
             # local traced graph. It uses index-based accessing, which is
             # brittle, just for testing purpose.
             flatten_args, _ = tree_flatten(node.args)
-            i = 0
-            value_remap = {}
+            i, value_remap = 0, {}
             for dtn in traced_dispatch.graph.nodes:
                 if dtn.op == "placeholder":
                     value_remap[dtn] = flatten_args[i]
@@ -346,7 +345,8 @@ class TraceDistTensorTest(DistTensorTestBase):
             with traced_f.graph.inserting_before(node):
                 for dtn in traced_dispatch.graph.nodes:
                     if dtn.op == "placeholder":
-                        # do nothing, ignore placeholders.
+                        # do nothing, ignore placeholders, as it has already
+                        # been prepared in value_remap
                         pass
                     elif dtn.op == "output":
                         assert (
@@ -361,13 +361,20 @@ class TraceDistTensorTest(DistTensorTestBase):
         traced_f.graph.lint()
         traced_f.graph.eliminate_dead_code()
 
-        zd = DTensor(
-            traced_f(xd._local_tensor, yd._local_tensor), mesh, out_spec
+        zd = DTensor.from_local(
+            local_tensor=traced_f(xd._local_tensor, yd._local_tensor),
+            device_mesh=mesh,
+            placements=out_placement,
         )
 
         x.grad = None
         y.grad = None
-        self.assertEqual(z._local_tensor, f(x, y))
+        self.assertEqual(
+            zd.redistribute(
+                device_mesh=mesh, placements=[Replicate()]
+            )._local_tensor,
+            f(x, y),
+        )
 
     @with_comms
     def test_simple_expand_replicate_tensor(self):
@@ -377,8 +384,8 @@ class TraceDistTensorTest(DistTensorTestBase):
         mesh = DeviceMesh(self.device_type, torch.arange(2))
         xd = DTensor.from_local(torch.ones(10, 10), mesh, [Replicate()])
         yd = DTensor.from_local(torch.ones(10, 10), mesh, [Replicate()])
-        out_spec = [Replicate()]
-        self._test_expand(xd, yd, f, mesh, out_spec)
+        out_placement = [Replicate()]
+        self._test_expand(xd, yd, f, mesh, out_placement)
 
     @with_comms
     def test_simple_expand_shard_replicate_tensor(self):
@@ -389,8 +396,8 @@ class TraceDistTensorTest(DistTensorTestBase):
 
         xd = DTensor.from_local(torch.ones(10, 10), mesh, [Shard(0)])
         yd = DTensor.from_local(torch.ones(10, 10), mesh, [Replicate()])
-        out_spec = [Shard(0)]
-        self._test_expand(xd, yd, f, mesh, out_spec)
+        out_placement = [Shard(0)]
+        self._test_expand(xd, yd, f, mesh, out_placement)
 
     @with_comms
     def test_replicate_backward(self):
@@ -407,9 +414,8 @@ class TraceDistTensorTest(DistTensorTestBase):
         yd = DTensor.from_local(
             torch.ones(10, 10, requires_grad=True), mesh, [Replicate()]
         )
-        # y += y.grad makes y a partial, as y.grad is partial
-        out_spec = [_Partial()]
-        self._test_expand(xd, yd, f, mesh, out_spec)
+        out_placement = [Replicate()]
+        self._test_expand(xd, yd, f, mesh, out_placement)
 
 
 if __name__ == "__main__":
