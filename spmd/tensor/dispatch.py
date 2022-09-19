@@ -160,7 +160,7 @@ def operator_dispatch(
                 f"Sharding propagation failed on op {op_key}.\n"
                 f"Input schema: {op_schema}.\n"
                 f"Error: {e}"
-            )
+            ) from e
 
         # step 2. if can't get output_spec from sharding
         # propagation (i.e. no rules apply for input
