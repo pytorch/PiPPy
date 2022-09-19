@@ -53,7 +53,7 @@ class DistMathOpsTest(DistTensorTestBase):
             dist_x = distribute_tensor(x, device_mesh, [Shard(shard_dim)])
             if dims[shard_dim] == dims[softmax_dim]:
                 with self.assertRaisesRegex(
-                    Exception, "^Cannot run .* on sharding dimension!$"
+                    Exception, "Cannot run .* on sharding dimension!$"
                 ):
                     dist_y = torch.nn.functional.softmax(
                         dist_x, dim=softmax_dim, dtype=torch.float32
@@ -93,7 +93,7 @@ class DistMathOpsTest(DistTensorTestBase):
             self.assertTrue(dist_x.requires_grad)
             if dims[softmax_dim] == dims[shard_dim]:
                 with self.assertRaisesRegex(
-                    Exception, "^Cannot run .* on sharding dimension!$"
+                    Exception, "Cannot run .* on sharding dimension!$"
                 ):
                     dist_softmax = dist_x.softmax(dim=softmax_dim)
             else:
