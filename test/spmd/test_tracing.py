@@ -1,7 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 
-from torch.distributed._spmd.comm_tensor import CommTensor
 from torch.distributed.distributed_c10d import (
     get_global_rank,
     get_world_size,
@@ -37,8 +36,7 @@ class TraceDeviceMeshTest(DistTensorTestBase):
             ]
 
             def fn(tensor: torch.Tensor):
-                comm_tensor = CommTensor(tensor)
-                reduced_tensor = mesh.all_reduce(comm_tensor, mesh_dim=dim)
+                reduced_tensor = mesh.all_reduce(tensor, mesh_dim=dim)
                 # multiply with 1 to trigger wait on read during tracing.
                 return reduced_tensor * 1
 
@@ -66,8 +64,7 @@ class TraceDeviceMeshTest(DistTensorTestBase):
             ]
 
             def fn(tensor: torch.Tensor):
-                comm_tensor = CommTensor(tensor)
-                received_tensor = mesh.broadcast(comm_tensor, mesh_dim=dim)
+                received_tensor = mesh.broadcast(tensor, mesh_dim=dim)
                 # multiply with 1 to trigger wait on read during tracing.
                 return received_tensor * 1
 
@@ -98,8 +95,7 @@ class TraceDeviceMeshTest(DistTensorTestBase):
             ]
 
             def fn(tensors: List[torch.Tensor]):
-                comm_tensors = [CommTensor(t) for t in tensors]
-                received_tensor = mesh.scatter(comm_tensors, mesh_dim=dim)
+                received_tensor = mesh.scatter(tensors, mesh_dim=dim)
                 # multiply with 1 to trigger wait on read during tracing.
                 return received_tensor * 1
 
@@ -125,8 +121,7 @@ class TraceDeviceMeshTest(DistTensorTestBase):
             ]
 
             def fn(tensor: torch.Tensor):
-                comm_tensor = CommTensor(tensor)
-                gathered_tensors = mesh.all_gather(comm_tensor, mesh_dim=dim)
+                gathered_tensors = mesh.all_gather(tensor, mesh_dim=dim)
                 # multiply with 1 to trigger wait on read during tracing.
                 return [t * 1 for t in gathered_tensors]
 
