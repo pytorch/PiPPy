@@ -59,7 +59,8 @@ for op in no_shard_prop_ops:
 @register_prop_rule("aten.bucketize.Tensor")
 def prop_bucketize(op_schema: OpSchema) -> OutputSharding:
     """
-    Point-wise on the first input. Expect replicated for second input.
+    Point-wise on the first input (just propagate input sharding).
+    Expect replicated for second input.
     """
     input_schema, boundaries = op_schema.args_schema
     assert isinstance(input_schema, DTensorSpec)
