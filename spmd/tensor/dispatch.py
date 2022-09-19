@@ -1,8 +1,15 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 from dataclasses import dataclass
 from typing import List, Callable, Dict, Tuple, Optional, cast
-from torch.utils._pytree import tree_map
 
+import torch
+from torch.utils._pytree import tree_map
+from torchgen.model import (  # pyre-ignore[21]: Undefined import
+    FunctionSchema,
+    SchemaKind,
+)
+
+import spmd.tensor.api as spmd_tensor
 from spmd.tensor.placement_types import DTensorSpec, OutputSpecType
 from spmd.tensor.utils import (
     unwrap_local_tensor,
@@ -11,10 +18,18 @@ from spmd.tensor.utils import (
     pack_args_kwargs_with_local_tensor,
 )
 
+
 """
-If set to true, __DEBUG_STRICT will fail when an op doesn't have a sharding rule registered.
+If _ENABLE_FALLBACK set to False, dispatch will fail when an op doesn't
+have a sharding rule registered.
 """
-_DEBUG_STRICT = True
+_ENABLE_FALLBACK = False
+
+
+"""
+Print information on ops input shape and sharding for debugging purposes.
+"""
+_DEBUG_VERBOSE = False
 
 
 @dataclass
@@ -85,13 +100,46 @@ class OutputSharding:
     failed_reason: Optional[str] = None
 
 
+def _reshape_alias(
+    x: torch.Tensor, shape: Tuple[int, ...], strides: Tuple[int, ...]
+) -> torch.Tensor:
+    return torch.ops.aten.view(x, shape)
+
+
+_CURRENT_DECOMPOSITION_TABLE: Dict[
+    Callable[..., object], Callable[..., object]
+] = {torch.ops.aten._reshape_alias.default: _reshape_alias}
+
+
 def operator_dispatch(
-    op_call: Callable[..., object],
+    op_call: torch._ops.OpOverload,
     args: Tuple[object, ...],
     kwargs: Dict[str, object],
     op_to_rules: Dict[str, Callable[[OpSchema], OutputSharding]],
     custom_dispatch_ops: Dict[str, Callable[..., object]],
 ) -> object:
+    # first we need to lift some private aten aliases to public calls
+    if op_call in _CURRENT_DECOMPOSITION_TABLE:
+        return _CURRENT_DECOMPOSITION_TABLE[op_call](*args, **kwargs)
+
+    func_schema = FunctionSchema.parse(str(op_call._schema))
+    schema_kind = func_schema.kind()
+
+    # unwrap the args/kwargs schema
+    args_schema = tree_map(unwrap_schema, args)
+    kwargs_schema = tree_map(unwrap_schema, kwargs)
+
+    op_schema = OpSchema(args_schema, kwargs_schema)
+
+    if _DEBUG_VERBOSE and torch.distributed.get_rank() == 0:
+        print(f"{op_call}({op_schema})")
+        local_shapes = tree_map(
+            lambda t: t.to_local().shape
+            if isinstance(t, spmd_tensor.DTensor)
+            else None,
+            args,
+        )
+        print(f"    local shapes: {local_shapes}")
 
     op_key = str(op_call)
     # STEP 0. See if threre're user defined custom aten operator
@@ -100,14 +148,6 @@ def operator_dispatch(
         # dispatch to user defined custom distributed tensor ops
         return custom_dispatch_ops[op_key](*args, **kwargs)
 
-    # unwrap the args/kwargs schema
-    args_schema = tree_map(unwrap_schema, args)
-    kwargs_schema = tree_map(unwrap_schema, kwargs)
-
-    op_schema = OpSchema(
-        args_schema,
-        kwargs_schema,
-    )
     sharding_prop_func = op_to_rules.get(op_key, None)
 
     # step 1. there's sharding propagation rule, run
@@ -116,7 +156,7 @@ def operator_dispatch(
         output_sharding = sharding_prop_func(op_schema)
 
         # step 2. if can't get output_spec from sharding
-        # propagation (i.e. no ruls apply for input
+        # propagation (i.e. no rules apply for input
         # placements), we do auto redistribute on inputs
         # to get an eligble input, which we will pick a
         # target schema base on the redistribute cost
@@ -158,20 +198,37 @@ def operator_dispatch(
         # run local op computation with potentially modified args/kwargs
         local_tensor_args = cast(Tuple[object, ...], local_tensor_args)
         local_tensor_kwargs = cast(Dict[str, object], local_tensor_kwargs)
-        local_results = op_call(
-            *local_tensor_args,
-            **local_tensor_kwargs,
-        )
+        local_results = op_call(*local_tensor_args, **local_tensor_kwargs)
 
-        return wrap(local_results, output_sharding.output_spec)
+        if schema_kind == SchemaKind.inplace:
+            # inplace op should return self instead of re-wrapping
+            self = cast(spmd_tensor.DTensor, args[0])
+            self._spec = cast(DTensorSpec, output_sharding.output_spec)
+            return self
+        elif schema_kind == SchemaKind.out:
+            # out variant could possibly have multiple out args (i.e. lu_unpack.out)
+            output_specs = (
+                (output_sharding.output_spec,)
+                if not isinstance(output_sharding.output_spec, tuple)
+                else output_sharding.output_spec
+            )
+            out_dts = []
+            for i, out in enumerate(func_schema.arguments.out):
+                out_dt = cast(spmd_tensor.DTensor, kwargs[out.name])
+                out_dt._spec = cast(DTensorSpec, output_specs[i])
+                out_dts.append(out_dt)
+            return tuple(out_dts) if len(out_dts) > 1 else out_dts[0]
+        else:
+            return wrap(local_results, output_sharding.output_spec)
+
     else:
         # step 3. If there's not even one sharding rule
         # implemented for the operator, we fall back to
         # local tensor compute, this is wront currently
         # we will change the behavior to reshard to full
         # replicate and do the computatation
-        if _DEBUG_STRICT:
-            raise RuntimeError(
+        if not _ENABLE_FALLBACK:
+            raise NotImplementedError(
                 f"Operator {op_key} does not have a DistributedTensor rule registered."
             )
         # default to local tensor ops, this is wrong
@@ -181,8 +238,5 @@ def operator_dispatch(
         else:
             tensor_args = tree_map(unwrap_local_tensor, args)
             tensor_kwargs = tree_map(unwrap_local_tensor, kwargs)
-            local_results = op_call(
-                *tensor_args,
-                **tensor_kwargs,
-            )
+            local_results = op_call(*tensor_args, **tensor_kwargs)
             return wrap(local_results, op_schema.args_spec[0])

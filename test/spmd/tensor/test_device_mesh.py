@@ -4,11 +4,14 @@ import torch
 from torch.distributed.distributed_c10d import (
     ProcessGroup,
     new_group,
+    get_global_rank,
     get_world_size,
-    _get_global_rank,
 )
 from torch.testing._internal.common_utils import run_tests
-from spmd.test._utils import DistTensorTestBase, with_comms  # type: ignore
+from spmd.testing.common_utils import (  # type: ignore
+    DistTensorTestBase,
+    with_comms,
+)
 from spmd.tensor import DeviceMesh, DTensor, Shard, Replicate
 
 
@@ -71,7 +74,7 @@ class DeviceMeshTest(DistTensorTestBase):
             self.assertIsInstance(dim_group, ProcessGroup)
             self.assertEqual(dim_group_size, 2)
             global_ranks = [
-                _get_global_rank(dim_group, i) for i in range(dim_group_size)
+                get_global_rank(dim_group, i) for i in range(dim_group_size)
             ]
             current_rank_expected_group_ranks = (
                 dim_ranks[0] if self.rank in dim_ranks[0] else dim_ranks[1]
@@ -121,7 +124,7 @@ class DeviceMeshTest(DistTensorTestBase):
             self.assertIsInstance(dim_group, ProcessGroup)
             self.assertEqual(dim_group_size, 2)
             global_ranks = [
-                _get_global_rank(dim_group, i) for i in range(dim_group_size)
+                get_global_rank(dim_group, i) for i in range(dim_group_size)
             ]
             current_rank_expected_group_ranks = (
                 dim_ranks[0] if self.rank in dim_ranks[0] else dim_ranks[1]
@@ -135,6 +138,45 @@ class DeviceMeshTest(DistTensorTestBase):
         self.assertEqual(dist_tensor.size(), torch.Size([6, 6]))
         self.assertEqual(dist_tensor.device.type, self.device_type)
         self.assertEqual(dist_tensor.to_local().device.type, self.device_type)
+
+    @with_comms
+    def test_device_mesh_dim_groups_error(self):
+        # construct a two dimension subgroups
+        dim_groups = []
+        expected_ranks_by_dim = [[[0, 2], [1, 3]], [[0, 1], [2, 3]]]
+        for dim_group_ranks in expected_ranks_by_dim:
+            for subgroup_ranks in dim_group_ranks:
+                subgroup = new_group(ranks=subgroup_ranks)
+                if self.rank in subgroup_ranks:
+                    dim_groups.append(subgroup)
+
+        if len(dim_groups) > 0:
+            # dim_groups is not a list
+            self.assertRaises(
+                RuntimeError,
+                DeviceMesh,
+                self.device_type,
+                [[0, 1], [2, 3]],
+                dim_groups=dim_groups[0],
+            )
+
+            # dim_groups is a list, but not a list of ProcessGroup
+            self.assertRaises(
+                RuntimeError,
+                DeviceMesh,
+                self.device_type,
+                [[0, 1], [2, 3]],
+                dim_groups=[dim_groups[0], "dummy"],
+            )
+
+            # dim_groups has incorrect length
+            self.assertRaises(
+                RuntimeError,
+                DeviceMesh,
+                self.device_type,
+                [[0, 1], [2, 3]],
+                dim_groups=[dim_groups[0]],
+            )
 
     @with_comms
     def test_device_mesh_nd(self):
@@ -155,7 +197,7 @@ class DeviceMeshTest(DistTensorTestBase):
             self.assertIsInstance(dim_group, ProcessGroup)
             self.assertEqual(dim_group_size, 2)
             global_ranks = [
-                _get_global_rank(dim_group, i) for i in range(dim_group_size)
+                get_global_rank(dim_group, i) for i in range(dim_group_size)
             ]
             for ranks in dim_ranks:
                 if self.rank in ranks:
@@ -259,6 +301,75 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
         self.assertEqual(reduce_scattered_tensor, torch.ones(3, 3) * res_num)
 
     @with_comms
+    def test_all_gather_nd(self):
+        mesh_tensor = torch.arange(8).reshape(2, 2, 2)
+        mesh = DeviceMesh(self.device_type, mesh_tensor)
+        # each rank have its own tensor, all_gather gives a list
+        local_tensor = torch.ones(3, 3, device=self.device_type) * self.rank
+
+        dim_to_subgroups = mesh.get_dim_groups()
+        for dim, dim_group in enumerate(dim_to_subgroups):
+            dim_group_size = get_world_size(dim_group)
+            global_ranks = [
+                get_global_rank(dim_group, i) for i in range(dim_group_size)
+            ]
+            gathered_tensors = mesh.all_gather(local_tensor, mesh_dim=dim)
+            self.assertEqual(len(gathered_tensors), dim_group_size)
+            for idx, gathered_tensor in enumerate(gathered_tensors):
+                self.assertEqual(
+                    gathered_tensor, torch.ones(3, 3) * global_ranks[idx]
+                )
+
+    @with_comms
+    def test_all_gather_base_nd(self):
+        mesh_tensor = torch.arange(8).reshape(2, 2, 2)
+        mesh = DeviceMesh(self.device_type, mesh_tensor)
+        local_tensor = torch.ones(3, 3, device=self.device_type) * self.rank
+
+        dim_to_subgroups = mesh.get_dim_groups()
+        for dim, dim_group in enumerate(dim_to_subgroups):
+            dim_group_size = get_world_size(dim_group)
+            global_ranks = [
+                get_global_rank(dim_group, i) for i in range(dim_group_size)
+            ]
+            res_tensor = torch.empty(
+                dim_group_size * 3, 3, device=self.device_type
+            )
+            gathered_tensor = mesh.all_gather_base(
+                res_tensor, local_tensor, mesh_dim=dim
+            )
+            exp_tensor = torch.ones(3 * dim_group_size, 3)
+            for i in range(len(global_ranks)):
+                exp_tensor[i * 3 : (i + 1) * 3] = (
+                    torch.ones(3, 3) * global_ranks[i]
+                )
+            self.assertEqual(gathered_tensor, exp_tensor)
+
+    @with_comms
+    def test_reduce_scatter_base_nd(self):
+        mesh_tensor = torch.arange(8).reshape(2, 2, 2)
+        mesh = DeviceMesh(self.device_type, mesh_tensor)
+
+        dim_to_subgroups = mesh.get_dim_groups()
+        for dim, dim_group in enumerate(dim_to_subgroups):
+            dim_group_size = get_world_size(dim_group)
+            local_tensor = (
+                torch.ones(dim_group_size * 3, 3, device=self.device_type)
+                * self.rank
+            )
+            global_ranks = [
+                get_global_rank(dim_group, i) for i in range(dim_group_size)
+            ]
+            res_tensor = torch.empty(3, 3, device=self.device_type)
+            reduce_scattered_tensor = mesh.reduce_scatter_base(
+                res_tensor, local_tensor, mesh_dim=dim
+            )
+            res_num = torch.sum(torch.tensor(global_ranks))
+            self.assertEqual(
+                reduce_scattered_tensor, torch.ones(3, 3) * res_num
+            )
+
+    @with_comms
     def test_all_reduce_nd(self):
         mesh_tensor = torch.arange(8).reshape(2, 2, 2)
         mesh = DeviceMesh(self.device_type, mesh_tensor)
@@ -269,7 +380,7 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
         for dim, dim_group in enumerate(dim_to_subgroups):
             dim_group_size = get_world_size(dim_group)
             global_ranks = [
-                _get_global_rank(dim_group, i) for i in range(dim_group_size)
+                get_global_rank(dim_group, i) for i in range(dim_group_size)
             ]
             reduced_tensor = mesh.all_reduce(local_tensor, mesh_dim=dim)
             res_num = sum(global_ranks)
@@ -286,7 +397,7 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
         for dim, dim_group in enumerate(dim_to_subgroups):
             dim_group_size = get_world_size(dim_group)
             global_ranks = [
-                _get_global_rank(dim_group, i) for i in range(dim_group_size)
+                get_global_rank(dim_group, i) for i in range(dim_group_size)
             ]
             received_tensor = mesh.broadcast(local_tensor, mesh_dim=dim)
             res_num = global_ranks[0]
@@ -302,7 +413,7 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
         for dim, dim_group in enumerate(dim_to_subgroups):
             dim_group_size = get_world_size(dim_group)
             global_ranks = [
-                _get_global_rank(dim_group, i) for i in range(dim_group_size)
+                get_global_rank(dim_group, i) for i in range(dim_group_size)
             ]
             scattered_tensors = [
                 torch.ones(3, 3, device=self.device_type) * global_rank

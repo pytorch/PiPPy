@@ -6,12 +6,13 @@ on:
     - main
   pull_request:
     paths:
-      - '.github/**'
+      - '.github/workflows/pippy**'
       - 'pippy/**'
       - 'test/**'
       - '!test/spmd/**'
       - '!docs/**'
       - '!**.md'
+      - 'requirements.txt'
 
 concurrency:
   # Cancel CI on previous commit when a new commit is pushed to the same branch
@@ -21,7 +22,7 @@ concurrency:
 jobs:
 
   pytest_tests:
-    runs-on: linux.12xlarge
+    runs-on: linux.4xlarge
     strategy:
       matrix:
         python-version: ["3.7", "3.8", "3.9"]
@@ -43,7 +44,7 @@ jobs:
         run: |
           pytest --cov=pippy --ignore=test/hf_test.py --ignore=test/spmd/ --ignore=test/test_fx.py --ignore=test/test_fx_experimental.py --ignore=test/fx test/
 
-  hf_model_tests_forward:
+  hf_model_tests:
     runs-on: linux.12xlarge
     strategy:
       matrix:
@@ -64,40 +65,18 @@ jobs:
       - name: Install pippy
         run: "python setup.py install"
       # Single thread to avoid OOM
-      - name: Test with pytest
+      - name: Test forward only
         run: |
           pytest --shard-id=${{ matrix.shard }} --num-shards=4 -k 'not HFModelsForwardBackwardTest' -sv --cov=pippy test/hf_test.py
-
-  hf_model_tests_forward_backward:
-    runs-on: linux.24xlarge
-    strategy:
-      matrix:
-        python-version: ["3.7", "3.8", "3.9"]
-        shard: ["0", "1", "2", "3"]
-    container:
-      image: python:${{ matrix.python-version }}
-
-    steps:
-      - uses: actions/checkout@v2
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install flake8 pytest pytest-cov pytest-xdist pytest-shard numpy
-          if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
-      - name: Install pavel's huggingface fork
-        run: pip install git+https://github.com/huggingface/transformers.git@main sentencepiece six sacremoses
-      - name: Install pippy
-        run: "python setup.py install"
-      # Single thread to avoid OOM
-      - name: Test with pytest
+      - name: Test forward and backward
         run: |
           pytest --shard-id=${{ matrix.shard }} --num-shards=4 -k 'HFModelsForwardBackwardTest' -sv --cov=pippy test/hf_test.py
 
   min_gpt_test:
-    runs-on: linux.12xlarge
+    runs-on: linux.4xlarge
     strategy:
       matrix:
-        python-version: ["3.7", "3.8", "3.9"]
+        python-version: ["3.9"]
     container:
       image: python:${{ matrix.python-version }}
 
@@ -116,7 +95,7 @@ jobs:
         run: python test/min_gpt_tracing.py
 
   integration_test_cpu:
-    runs-on: linux.12xlarge
+    runs-on: linux.4xlarge
     strategy:
       matrix:
         python-version: ["3.7", "3.8", "3.9"]
@@ -148,16 +127,45 @@ jobs:
         run: python test/local_test_forward_backward.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
       - name: Run null_coalesce_accumulate integration test
         run: python test/local_test_null_coalesce_accumulate.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+      - name: Run PP + DDP test
+        run: python test/local_test_ddp.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
       - name: Run HF BERT forward-only integration test
         run: python test/local_test_forward_hf_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
       - name: Run HF GPT2 forward-only integration test
         run: python test/local_test_forward_hf_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
+      - name: Run visualizer test
+        run: python test/local_test_visualizer.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+
+  hf_example_tests:
+    runs-on: linux.12xlarge
+    strategy:
+      matrix:
+        python-version: ["3.9"]
+        replicate: ["0", "1"]
+        schedule: ["FillDrain", "1F1B"]
+    env:
+      VERBOSE: "0"
+      OMP_NUM_THREADS: "1"
+    container:
+      image: python:${{ matrix.python-version }}
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 pytest pytest-cov numpy datasets evaluate sklearn sacrebleu
+          if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
+      - name: Install pavel's huggingface fork
+        run: pip install git+https://github.com/huggingface/transformers.git@main sentencepiece six sacremoses
+      - name: Install pippy
+        run: "python setup.py install"
       - name: Run GPT2 example
         run: python examples/hf/gpt2/pippy_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: Run BERT example
         run: python examples/hf/bert/pippy_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: Run T5 example
-        run: python examples/hf/t5/pippy_t5.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
+        run: python examples/hf/t5/pippy_t5.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: "HF Causal Language Modeling: fine-tune GPT-2 on WikiText-2"
         run: python examples/hf/language-modeling/run_clm.py --dp_group_size=2 --pp_group_size=8 --model_name_or_path gpt2 --dataset_name wikitext --dataset_config_name wikitext-2-raw-v1 --per_device_train_batch_size 8 --per_device_eval_batch_size 8 --do_train --do_eval --output_dir /tmp/test-clm --max_steps=3 --overwrite_output_dir
       - name: "HF Masked Language Modeling: fine-tune RoBERTa on WikiText-2"
@@ -166,12 +174,10 @@ jobs:
         run: python examples/hf/text-classification/run_glue.py --dp_group_size=2 --pp_group_size=8 --model_name_or_path bert-base-cased --task_name mrpc --do_train --do_eval --max_seq_length 128 --per_device_train_batch_size 32 --learning_rate 2e-5 --num_train_epochs 3 --output_dir /tmp/mrpc/ --max_steps=3 --overwrite_output_dir
       - name: "HF Translation: fine-tune T5 model translation English to Romanian"
         run: >
-          python examples/hf/translation/run_translation.py --model_name_or_path t5-small --do_train --source_lang en --target_lang ro --source_prefix "translate English to Romanian: " --dataset_name wmt16 --dataset_config_name ro-en --output_dir /tmp/tst-translation --per_device_train_batch_size=8 --per_device_eval_batch_size=8 --overwrite_output_dir --predict_with_generate --max_steps=10  --dp_group_size=2 --pp_group_size=8
+          python examples/hf/translation/run_translation.py --model_name_or_path t5-small --do_train --source_lang en --target_lang ro --source_prefix "translate English to Romanian: " --dataset_name wmt16 --dataset_config_name ro-en --output_dir /tmp/tst-translation --per_device_train_batch_size=8 --per_device_eval_batch_size=8 --overwrite_output_dir --predict_with_generate --max_steps=10  --dp_group_size=1 --pp_group_size=8
       - name: "HF Translation: fine-tune BART model translation English to Romanian"
         run: >
           python examples/hf/translation/run_translation.py --model_name_or_path facebook/bart-base --do_train --source_lang en --target_lang ro --source_prefix "translate English to Romanian: " --dataset_name wmt16 --dataset_config_name ro-en --output_dir /tmp/tst-translation --per_device_train_batch_size=8 --per_device_eval_batch_size=8 --overwrite_output_dir --predict_with_generate --max_steps=10  --dp_group_size=2 --pp_group_size=8
-      - name: Run visualizer test
-        run: python test/local_test_visualizer.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
 
   integration_test_gpu:
     runs-on: linux.16xlarge.nvidia.gpu
@@ -218,6 +224,7 @@ jobs:
           # shellcheck disable=SC2086,SC2090
           container_name=$(docker run \
             --gpus all \
+            --shm-size=1g --ulimit memlock=-1 \
             -e VERBOSE \
             -e OMP_NUM_THREADS \
             -e REPLICATE \
@@ -229,7 +236,7 @@ jobs:
             "${DOCKER_IMAGE}"
           )
           # Run GPU tests and return error signal from docker
-          docker exec -t -w "${PIPPY_ROOT}" "${container_name}" bash -c "bash .github/workflows/gpu_tests.sh; exit \$?"
+          docker exec -t -w "${PIPPY_ROOT}" "${container_name}" bash -c "bash .github/workflows/pippy_gpu_tests.sh; exit \$?"
       - name: Chown workspace
         if: always()
         run: |
@@ -243,32 +250,6 @@ jobs:
           docker stop $(docker ps -q) || true
           # Prune all of the docker images
           docker system prune -af
-
-  ddp_test:
-    runs-on: linux.2xlarge
-    strategy:
-      matrix:
-        python-version: ["3.7", "3.8", "3.9"]
-        replicate: ["0", "1"]
-        schedule: ["FillDrain", "1F1B"]
-        verbose: ["0"]
-        checkpoint: [ "0", "1" ]
-    container:
-      image: python:${{ matrix.python-version }}
-
-    steps:
-      - uses: actions/checkout@v2
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install flake8 pytest pytest-cov numpy
-          if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
-      - name: Install pavel's huggingface fork
-        run: pip install git+https://github.com/huggingface/transformers.git@main sentencepiece six sacremoses
-      - name: Install pippy
-        run: "python setup.py install"
-      - name: Run PP + DDP test - Transmitted parameters
-        run: python test/local_test_ddp.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
 
   fx_test:
     runs-on: linux.2xlarge

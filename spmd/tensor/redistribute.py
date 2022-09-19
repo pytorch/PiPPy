@@ -106,24 +106,20 @@ def redistribute_spmd_tensor(
                 new_size[shard_spec.dim] *= device_mesh.size(
                     i
                 )  # only works for evenly sharded tensors
-                new_local_tensor = torch.empty(
-                    new_size, device=local_tensor.device, dtype=input.dtype
-                )
-                # NOTE: all_gather_base only works well when tensor
-                # sharded on a sequential list of devices
-                device_mesh.all_gather_base(
-                    new_local_tensor,
+                # TODO: merge all_gather and all_gather_base call
+                gathered_list = device_mesh.all_gather(
                     local_tensor,
                     mesh_dim=i,
-                    tensor_dim=shard_spec.dim,
                 )
+                new_local_tensor = torch.cat(gathered_list, dim=shard_spec.dim)
         elif target.is_shard():
             # Case 2: target is Shard
             shard_dim = target.dim  # type: ignore
             num_chunks = device_mesh.size(dim=i)
             assert (
                 input.size(shard_dim) % num_chunks == 0
-            ), "Only support chunk sharding evenly now"
+            ), f"Only support chunk sharding evenly now. (When sharding tensor of shape {input.shape} on dim={shard_dim} into {num_chunks} shards.)"
+
             chunk_size = (
                 local_tensor.size(shard_dim) // num_chunks
             )  # this may already be sharded on a differernt mesh dimension
@@ -155,8 +151,8 @@ def redistribute_spmd_tensor(
             if current.is_replicate():
                 # For replicate -> partial, we zero out all other ranks of the current mesh dim
                 # and leave only 1 rank have the data, to perform a "zero cost" reshard.
-                my_rank = device_mesh.get_rank()
-                if my_rank % device_mesh.size(0) != 0:
+                my_rank_on_mesh_dim = device_mesh.get_coordinate_on_dim(i)
+                if my_rank_on_mesh_dim is not None and my_rank_on_mesh_dim != 0:
                     new_local_tensor = local_tensor.zero_()
                 else:
                     new_local_tensor = local_tensor
@@ -216,9 +212,7 @@ class Redistribute(torch.autograd.Function):
 
         return (
             redistribute_spmd_tensor(
-                grad_output,
-                previous_device_mesh,
-                target_placements,
+                grad_output, previous_device_mesh, target_placements
             ),
             None,
             None,

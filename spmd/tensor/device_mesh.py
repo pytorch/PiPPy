@@ -5,11 +5,11 @@ import torch
 from torch.distributed.distributed_c10d import (
     get_rank,
     get_world_size,
+    get_global_rank,
     ReduceOp,
     GroupMember,
     scatter,
     _get_default_group,
-    _get_global_rank,
     _reduce_scatter_base,
     new_group,
     ProcessGroup,
@@ -143,9 +143,28 @@ class DeviceMesh(object):
         if dim_groups is not None:
             # if user hand creating dimension based groups
             # we just take it and use it for communication
-            # we assume user passing dim_gruops are legit
-            # TODO: add more checks to check the correctness
-            # of user passed in dim groups
+            if not isinstance(dim_groups, list):
+                raise RuntimeError(
+                    "dim_groups expected to be Optional[List[ProcessGroup]]"
+                )
+
+            for group in dim_groups:
+                if not isinstance(group, ProcessGroup):
+                    raise RuntimeError(
+                        f"found object in dim_groups that is not a ProcessGroup: {group}"
+                    )
+
+            if self.get_rank() in self.mesh:
+                if len(dim_groups) != self.mesh.ndim:
+                    raise RuntimeError(
+                        f"length of dim_groups ({len(dim_groups)}) expected to be equal to mesh.ndim ({self.mesh.ndim})"
+                    )
+            else:
+                if len(dim_groups) != 0:
+                    raise RuntimeError(
+                        f"length of dim_groups ({len(dim_groups)}) expected to be equal to 0 on rank {self.get_rank()} for mesh {self.mesh}"
+                    )
+
             self._dim_groups = dim_groups
             return
 
@@ -252,7 +271,7 @@ class DeviceMesh(object):
         # src need to be global rank
         src_for_dim = 0
         if dim_group is not GroupMember.WORLD:
-            src_for_dim = _get_global_rank(dim_group, 0)
+            src_for_dim = get_global_rank(dim_group, 0)
         tensor = torch.empty_like(to_scatter[0])
         if src_for_dim == get_rank():
             scatter(
@@ -271,7 +290,7 @@ class DeviceMesh(object):
         # src need to be global rank
         src_for_dim = 0
         if dim_group is not GroupMember.WORLD:
-            src_for_dim = _get_global_rank(dim_group, 0)
+            src_for_dim = get_global_rank(dim_group, 0)
 
         return broadcast(tensor.contiguous(), src=src_for_dim, group=dim_group)
 
@@ -311,7 +330,7 @@ class DeviceMesh(object):
     def all_reduce(
         self,
         tensor: torch.Tensor,
-        op: ReduceOp = ReduceOp.SUM,
+        op: ReduceOp = ReduceOp.SUM,  # type: ignore
         mesh_dim: int = 0,
     ):
         dim_group = self._dim_groups[mesh_dim]
@@ -322,7 +341,7 @@ class DeviceMesh(object):
         self,
         output: torch.Tensor,
         input: torch.Tensor,
-        op: ReduceOp = ReduceOp.SUM,
+        op: ReduceOp = ReduceOp.SUM,  # type: ignore
         mesh_dim: int = 0,
     ):
         # NOTE: two caveats:

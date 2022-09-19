@@ -2,17 +2,15 @@
 import argparse
 import logging
 import os
-import socket
 import unittest
 
 import torch
-import torch.distributed.rpc as rpc
-import torch.multiprocessing as mp
 
+import pippy.fx
+from pippy import run_pippy
 from pippy.IR import Pipe, TrivialLossWrapper, pipe_split, _null_coalesce_accumulate
 from pippy.PipelineDriver import PipelineDriverBase, PipelineDriverFillDrain, PipelineDriver1F1B
 from pippy.microbatch import TensorChunkSpec, CustomReducer
-import pippy.fx
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
@@ -30,7 +28,7 @@ if VERBOSE:
 pippy.fx.Tracer.proxy_buffer_attributes = True
 
 
-def run_master(args):
+def run_master(_, args):
     all_ranks = list(range(1, args.world_size))  # exclude master rank = 0
     chunks = len(all_ranks)
     bs = 4 * chunks
@@ -75,24 +73,6 @@ def run_master(args):
     pipe_driver(input, target)
 
 
-def run_worker(rank, world_size, args):
-    print(f"rank = {rank} host/pid = {socket.gethostname()}/{os.getpid()}")
-    os.environ['MASTER_ADDR'] = args.master_addr
-    os.environ['MASTER_PORT'] = args.master_port
-    options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256,
-                                              _transports=["shm", "uv"],
-                                              rpc_timeout=1800)
-    rpc.init_rpc(
-        f"worker{rank}",
-        rank=rank,
-        world_size=world_size,
-        rpc_backend_options=options
-    )
-    if rank == 0:
-        run_master(args)
-    rpc.shutdown()
-
-
 def main(args=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 5)))
@@ -106,12 +86,7 @@ def main(args=None):
     parser.add_argument('--checkpoint', type=int, default=0, choices=[0, 1])
     args = parser.parse_args(args)
 
-    if args.rank == -1:
-        mp.spawn(run_worker, args=(args.world_size, args,), nprocs=args.world_size, join=True)
-    elif args.rank < args.world_size:
-        run_worker(args.rank, args.world_size, args)
-    else:
-        print("I'm unused, exiting")
+    run_pippy(run_master, args)
 
 
 if __name__ == "__main__":

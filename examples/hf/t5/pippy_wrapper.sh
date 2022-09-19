@@ -11,4 +11,5 @@ export RANK=${SLURM_PROCID}
 python -u pippy_t5.py \
   --model_config=t5_3b_config.json \
   --record_mem_dumps=0 \
+  --batches=2 \
   --checkpoint=1

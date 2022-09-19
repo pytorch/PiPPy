@@ -2,11 +2,14 @@
 import itertools
 import torch
 
-from torch.distributed.distributed_c10d import ReduceOp
+from torch.distributed.distributed_c10d import ReduceOp, new_group
 
 from torch.testing._internal.common_utils import run_tests
 
-from spmd.test._utils import DistTensorTestBase, with_comms  # type: ignore
+from spmd.testing.common_utils import (  # type: ignore
+    DistTensorTestBase,
+    with_comms,
+)
 from spmd.tensor import DeviceMesh, DTensor, Replicate, Shard, _Partial
 from spmd import distribute_tensor
 
@@ -155,7 +158,7 @@ class RedistributeTest(DistTensorTestBase):
             replica_tensor, device_mesh, partial_spec
         )
         self.assertEqual(partial_tensor.size(), local_tensor.size())
-        # test it successfully zero out the gradients
+        # test it successfully zero out the contents on other ranks
         if self.rank == 0:
             self.assertEqual(
                 replica_tensor.to_local(), partial_tensor.to_local()
@@ -163,6 +166,38 @@ class RedistributeTest(DistTensorTestBase):
         else:
             self.assertEqual(
                 partial_tensor.to_local(), torch.zeros_like(local_tensor)
+            )
+
+        # replicate to partial on sub groups
+        local_tensor = torch.randn(12, 3, device=self.device_type)
+        subgroup = new_group(ranks=[1, 3])
+        if self.rank == 1 or self.rank == 3:
+            device_mesh = DeviceMesh(
+                self.device_type, [1, 3], dim_groups=[subgroup]
+            )
+        else:
+            device_mesh = DeviceMesh(self.device_type, [1, 3], dim_groups=[])
+        # 1) test replicate -> partial on subgroup
+        replica_tensor = DTensor(
+            local_tensor,
+            device_mesh,
+            replica_spec,
+            requires_grad=local_tensor.requires_grad,
+        )
+        partial_tensor = Redistribute.apply(
+            replica_tensor, device_mesh, partial_spec
+        )
+        self.assertEqual(partial_tensor.size(), local_tensor.size())
+
+        if self.rank != 3:
+            # replicate to partial should only zero out rank 3, and leave
+            # rank 0/2 (not in the group) and 1 (the first rank of the group) un-touched
+            self.assertEqual(
+                replica_tensor.to_local(), partial_tensor.to_local()
+            )
+        else:
+            self.assertEqual(
+                replica_tensor.to_local(), torch.zeros_like(local_tensor)
             )
 
     @with_comms

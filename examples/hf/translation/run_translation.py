@@ -25,6 +25,9 @@ import types
 from dataclasses import dataclass, field
 from typing import Optional
 
+# Run before `import torch` to pin CUDA devices first
+from pippy import run_pippy
+
 import datasets
 import numpy as np
 import torch
@@ -50,7 +53,7 @@ from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
-from pippy.hf import PiPPySeq2SeqTrainingArguments, PiPPySeq2SeqTrainer, run_pippy, wrap
+from pippy.hf import PiPPySeq2SeqTrainingArguments, PiPPySeq2SeqTrainer, wrap
 from pippy.microbatch import TensorChunkSpec, CustomReducer
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
@@ -266,10 +269,10 @@ def main():
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
     # =============================================== PiPPy change start ===============================================
-    run_pippy(model_args, data_args, training_args, run_master)
+    run_pippy(run_master, training_args, model_args, data_args)
 
 
-def run_master(model_args, data_args, training_args, pp_ranks):
+def run_master(pp_ranks, training_args, model_args, data_args):
     # ================================================ PiPPy change end ================================================
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
     # information sent is the one passed as arguments along with your Python/PyTorch versions.
@@ -399,10 +402,13 @@ def run_master(model_args, data_args, training_args, pp_ranks):
     if model.__class__.__name__ == 'T5ForConditionalGeneration':
         output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b),
                              'logits': TensorChunkSpec(0),
-                             'encoder_last_hidden_state': TensorChunkSpec(0),
-                             'past_key_values': [
-                                 [TensorChunkSpec(0) for _ in range(model.config.num_decoder_layers)] for _ in range(4)
-                             ]}
+                             'encoder_last_hidden_state': TensorChunkSpec(0)
+                            }
+        if model.config.use_cache:
+            # past_key_values, optional, returned when use_cache=True is passed or when config.use_cache=True.
+            output_chunk_spec['past_key_values'] = [
+                [TensorChunkSpec(0) for _ in range(model.config.num_decoder_layers)] for _ in range(4)
+            ]
     else:
         output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b),
                              'logits': TensorChunkSpec(0),
@@ -633,7 +639,8 @@ def run_master(model_args, data_args, training_args, pp_ranks):
         elif last_checkpoint is not None:
             checkpoint = last_checkpoint
         train_result = trainer.train(resume_from_checkpoint=checkpoint)
-        trainer.save_model()  # Saves the tokenizer too for easy upload
+        # TODO: overwrite save_model method so that it does not pickle process group
+        #trainer.save_model()  # Saves the tokenizer too for easy upload
 
         metrics = train_result.metrics
         max_train_samples = (

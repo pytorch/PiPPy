@@ -45,7 +45,8 @@ from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
-from pippy.hf import PiPPyTrainingArguments, PiPPyTrainer, run_pippy, wrap
+from pippy import run_pippy
+from pippy.hf import PiPPyTrainingArguments, PiPPyTrainer, wrap
 from pippy.microbatch import TensorChunkSpec, CustomReducer
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
@@ -220,10 +221,10 @@ def main():
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
     # =============================================== PiPPy change start ===============================================
-    run_pippy(model_args, data_args, training_args, run_master)
+    run_pippy(run_master, training_args, model_args, data_args)
 
 
-def run_master(model_args, data_args, training_args, pp_ranks):
+def run_master(pp_ranks, training_args, model_args, data_args):
     # ================================================ PiPPy change end ================================================
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
     # information sent is the one passed as arguments along with your Python/PyTorch versions.
@@ -563,7 +564,8 @@ def run_master(model_args, data_args, training_args, pp_ranks):
         )
         metrics["train_samples"] = min(max_train_samples, len(train_dataset))
 
-        trainer.save_model()  # Saves the tokenizer too for easy upload
+        # TODO: overwrite save_model method so that it does not pickle process group
+        #trainer.save_model()  # Saves the tokenizer too for easy upload
 
         trainer.log_metrics("train", metrics)
         trainer.save_metrics("train", metrics)

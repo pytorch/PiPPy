@@ -1,180 +1,19 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 from torch.testing._internal.common_utils import run_tests
-from spmd.tensor.dispatch import OpSchema
+from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 
-from spmd.tensor.ops.math_ops import einop_rule, reduction_rule
-from spmd.tensor.placement_types import DTensorSpec, Replicate
-from spmd.test._utils import DistTensorTestBase, with_comms  # type: ignore
+from spmd.tensor.placement_types import Replicate
+from spmd.testing.common_utils import (  # type: ignore
+    DistTensorTestBase,
+    with_comms,
+    TEST_GPU_NUM,
+)
 from spmd import distribute_tensor, DeviceMesh, Shard
+import itertools
 
 
 class DistMathOpsTest(DistTensorTestBase):
-    @with_comms
-    def test_einop_basic_propagation(self):
-        # plain einsum, mm
-        mesh = DeviceMesh(self.device_type, torch.arange(self.world_size))
-
-        # propagate col-wise sharding
-        mat1, mat2 = [-1, -1], [-1, 0]
-        mat1_spec = DTensorSpec.from_dim_map(mesh, mat1, [])
-        mat2_spec = DTensorSpec.from_dim_map(mesh, mat2, [])
-        output_sharding = einop_rule(
-            "mk,kn->mn", OpSchema((mat1_spec, mat2_spec), {})
-        )
-        output_spec = output_sharding.output_spec
-        self.assertIsNotNone(output_spec)
-        self.assertEqual(output_spec.dim_map, [-1, 0])
-
-        # propagate row-wise sharding
-        mat1, mat2 = [0, -1], [-1, -1]
-        mat1_spec = DTensorSpec.from_dim_map(mesh, mat1, [])
-        mat2_spec = DTensorSpec.from_dim_map(mesh, mat2, [])
-        output_sharding = einop_rule(
-            "mk,kn->mn", OpSchema((mat1_spec, mat2_spec), {})
-        )
-        output_spec = output_sharding.output_spec
-        self.assertIsNotNone(output_spec)
-        self.assertEqual(output_spec.dim_map, [0, -1])
-
-        # generate partial
-        mat1, mat2 = [-1, 0], [0, -1]
-        mat1_spec = DTensorSpec.from_dim_map(mesh, mat1, [])
-        mat2_spec = DTensorSpec.from_dim_map(mesh, mat2, [])
-        output_sharding = einop_rule(
-            "mk,kn->mn", OpSchema((mat1_spec, mat2_spec), {})
-        )
-        output_spec = output_sharding.output_spec
-        self.assertIsNotNone(output_spec)
-        self.assertTrue(output_spec.placements[0].is_partial())
-
-    @with_comms
-    def test_einop_pointwise_propagation(self):
-        mesh = DeviceMesh(self.device_type, torch.arange(self.world_size))
-        # addition
-        mat1 = [0, -1]
-        mat1_spec = DTensorSpec.from_dim_map(mesh, mat1, [])
-        output_spec = einop_rule(
-            "ij,ij->ij", OpSchema((mat1_spec, mat1_spec), {})
-        )
-        # broadcast addition
-        mat1 = [-1, 0, -1]
-        mat1_spec = DTensorSpec.from_dim_map(mesh, mat1, [])
-        mat2_spec = DTensorSpec.from_dim_map(mesh, [-1], [])
-        output_sharding = einop_rule(
-            "ijk,k->ijk", OpSchema((mat1_spec, mat2_spec), {})
-        )
-        output_spec = output_sharding.output_spec
-        self.assertIsNotNone(output_spec)
-        self.assertEqual(output_spec.dim_map, [-1, 0, -1])
-
-    @with_comms
-    def test_einop_merge_sharding(self):
-        # 2d mesh einop merge sharding
-        mesh_shape = torch.arange(self.world_size).reshape(
-            self.world_size // 2, self.world_size // 2
-        )
-        mesh = DeviceMesh(self.device_type, mesh_shape)
-        mat1, mat2 = [0, -1], [-1, 1]
-        mat1_spec = DTensorSpec.from_dim_map(mesh, mat1, [])
-        mat2_spec = DTensorSpec.from_dim_map(mesh, mat2, [])
-        output_sharding = einop_rule(
-            "mk,kn->mn", OpSchema((mat1_spec, mat2_spec), {})
-        )
-        output_spec = output_sharding.output_spec
-        self.assertIsNotNone(output_spec)
-        self.assertEqual(output_spec.dim_map, [0, 1])
-
-    @with_comms
-    def test_einop_linearity(self):
-        mesh_shape = torch.arange(self.world_size).reshape(
-            self.world_size // 2, self.world_size // 2
-        )
-        mesh = DeviceMesh(self.device_type, mesh_shape)
-
-        mat1, mat2 = [0, -1], [-1, -1]
-        mat1_spec = DTensorSpec.from_dim_map(mesh, mat1, [1])
-        mat2_spec = DTensorSpec.from_dim_map(mesh, mat2, [])
-        # if not turn on linearity, partial sum should trigger error
-        with self.assertRaisesRegex(RuntimeError, "Cannot do generic op"):
-            einop_rule("mk,kn->mn", OpSchema((mat1_spec, mat2_spec), {}))
-
-        # einop prop with linearity on mm, should give back suggestion
-        # on converting placements to partial
-        output_sharding = einop_rule(
-            "mk,kn->mn", OpSchema((mat1_spec, mat2_spec), {}), linearity=True
-        )
-        self.assertIsNone(output_sharding.output_spec)
-        suggestions = output_sharding.schema_suggestions
-        self.assertIsNotNone(suggestions)
-        mat2_spec = suggestions[0].args_schema[1]
-        # mat2 mesh dim 1 should become partial now!
-        self.assertTrue(mat2_spec.placements[1].is_partial())
-
-        # einop prop with linearity on point-wise, should give back suggestion
-        # on converting placements to partial
-        mat1, mat2 = [0, -1], [0, -1]
-        mat1_spec = DTensorSpec.from_dim_map(mesh, mat1, [1])
-        mat2_spec = DTensorSpec.from_dim_map(mesh, mat2, [])
-
-        output_sharding = einop_rule(
-            "ij,ij->ij", OpSchema((mat1_spec, mat2_spec), {}), linearity=True
-        )
-        self.assertIsNone(output_sharding.output_spec)
-        suggestions = output_sharding.schema_suggestions
-        self.assertIsNotNone(suggestions)
-        mat2_spec = suggestions[0].args_schema[1]
-        # mat2 mesh dim 1 should become partial now!
-        self.assertTrue(mat2_spec.placements[1].is_partial())
-
-    @with_comms
-    def test_einop_errors(self):
-        mesh_shape = torch.arange(self.world_size).reshape(
-            self.world_size // 2, self.world_size // 2
-        )
-        mesh = DeviceMesh(self.device_type, mesh_shape)
-
-        mat1, mat2 = [0, -1], [0, 1]
-        mat1_spec = DTensorSpec.from_dim_map(mesh, mat1, [])
-        mat2_spec = DTensorSpec.from_dim_map(mesh, mat2, [])
-        with self.assertRaisesRegex(RuntimeError, "across the same mesh dim!"):
-            einop_rule("mk,kn->mn", OpSchema((mat1_spec, mat2_spec), {}))
-
-        mat1, mat2 = [0, -1], [-1, -1]
-        mat1_spec = DTensorSpec.from_dim_map(mesh, mat1, [])
-        mat2_spec = DTensorSpec.from_dim_map(mesh, mat2, [])
-
-        with self.assertRaisesRegex(
-            AssertionError, "sharded two different ways:"
-        ):
-            einop_rule("ij,ij->ij", OpSchema((mat1_spec, mat2_spec), {}))
-
-    @with_comms
-    def test_reduction_rule(self):
-        mesh = DeviceMesh(self.device_type, torch.arange(self.world_size))
-        # reduction on a 2d mat
-        mat1 = [0, -1]
-        mat1_spec = DTensorSpec.from_dim_map(mesh, mat1, [])
-        # reduction on dim 0
-        output_sharding_0 = reduction_rule(OpSchema((mat1_spec, 0), {}))
-        self.assertIsNotNone(output_sharding_0.output_spec)
-        self.assertEqual(output_sharding_0.output_spec.dim_map, [-1])
-        # pending sum on dim 0
-        self.assertEqual(output_sharding_0.output_spec.sums, [0])
-
-        # reduction on dim 1
-        output_sharding_1 = reduction_rule(OpSchema((mat1_spec, 1), {}))
-        self.assertIsNotNone(output_sharding_1.output_spec)
-        self.assertEqual(output_sharding_1.output_spec.dim_map, [0])
-        self.assertEqual(output_sharding_1.output_spec.sums, [])
-
-        # full reduction if not specify dim
-        output_sharding_all_dim = reduction_rule(OpSchema((mat1_spec,), {}))
-        self.assertIsNotNone(output_sharding_all_dim.output_spec)
-        self.assertEqual(output_sharding_all_dim.output_spec.dim_map, [])
-        # pending sum on mesh
-        self.assertEqual(output_sharding_all_dim.output_spec.sums, [0])
-
     @with_comms
     def test_sum(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
@@ -196,6 +35,82 @@ class DistMathOpsTest(DistTensorTestBase):
             device_mesh, [Replicate()] * device_mesh.ndim
         )
         self.assertEqual(dt_sum.to_local(), full_sumed_tensor)
+
+    # TODO: forward test can be removed once test_softmax_with_bwd passes on CPU
+    @with_comms
+    def test_softmax_fwd(self):
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        x = torch.rand(8, 12, 16, device=self.device_type)
+        dims = range(3)  # used to convert -1 to the actual dim
+        softmax_dims = [-1, 0, 1, 2]
+        shard_dims = [-1, 0, 1, 2]
+        test_list = list(itertools.product(softmax_dims, shard_dims))
+
+        for softmax_dim, shard_dim in test_list:
+            local_y = torch.nn.functional.softmax(
+                x, dim=softmax_dim, dtype=torch.float32
+            )
+            dist_x = distribute_tensor(x, device_mesh, [Shard(shard_dim)])
+            if dims[shard_dim] == dims[softmax_dim]:
+                with self.assertRaisesRegex(
+                    Exception, "^Cannot run .* on sharding dimension!$"
+                ):
+                    dist_y = torch.nn.functional.softmax(
+                        dist_x, dim=softmax_dim, dtype=torch.float32
+                    )
+            else:
+                dist_y = torch.nn.functional.softmax(
+                    dist_x, dim=softmax_dim, dtype=torch.float32
+                )
+                self.assertTrue(dist_y.placements[0].is_shard(dim=shard_dim))
+                dist_y = dist_y.redistribute(device_mesh, [Replicate()])
+                self.assertEqual(dist_y.to_local(), local_y)
+
+    # TODO: get test_softmax_with_bwd pass on CPU
+    # DTensor's _softmax_backward_data produces wrong result on CPU on certain dimension.
+    # fail_on_cpu_list = [(0, -1), (1, -1)]
+    @with_comms
+    @skip_if_lt_x_gpu(TEST_GPU_NUM)
+    def test_softmax_with_bwd(self):
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        dims = range(3)  # used to convert -1 to the actual dim
+        softmax_dims = [-1, 0, 1, 2]
+        shard_dims = [-1, 0, 1, 2]
+        test_list = list(itertools.product(softmax_dims, shard_dims))
+
+        for params in test_list:
+            softmax_dim, shard_dim = params
+            x = torch.rand(
+                8, 12, 16, device=self.device_type, requires_grad=True
+            )
+            self.assertTrue(x.requires_grad)
+            local_y = torch.nn.functional.softmax(
+                x, dim=softmax_dim, dtype=torch.float32
+            ).sum()
+            local_y.backward()
+
+            dist_x = distribute_tensor(x, device_mesh, [Shard(shard_dim)])
+            self.assertTrue(dist_x.requires_grad)
+            if dims[softmax_dim] == dims[shard_dim]:
+                with self.assertRaisesRegex(
+                    Exception, "^Cannot run .* on sharding dimension!$"
+                ):
+                    dist_softmax = dist_x.softmax(dim=softmax_dim)
+            else:
+                dist_softmax = dist_x.softmax(dim=softmax_dim)
+                self.assertTrue(
+                    dist_softmax.placements[0].is_shard(dim=shard_dim)
+                )
+                dist_y = dist_softmax.sum()
+                dist_y = dist_y.redistribute(device_mesh, [Replicate()])
+                self.assertEqual(dist_y.to_local(), local_y)
+                self.assertIsNone(dist_x.grad)
+                dist_y.backward()
+                self.assertIsNotNone(dist_x.grad)
+                dist_x_grad = dist_x.grad.redistribute(
+                    device_mesh, [Replicate()]
+                )
+                self.assertEqual(dist_x_grad.to_local(), x.grad)
 
 
 if __name__ == "__main__":
