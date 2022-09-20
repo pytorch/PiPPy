@@ -1,7 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 
-from torch.distributed._spmd.comm_tensor import CommTensor
 from torch.distributed.distributed_c10d import (
     get_global_rank,
     get_world_size,
@@ -17,14 +16,8 @@ from spmd.tensor import DeviceMesh
 from typing import List
 
 
-class TraceDeviceMeshTest(DistTensorTestBase):
-    @property
-    def world_size(self) -> int:
-        return 4
-
-    @with_comms
-    def test_tracing_all_reduce_nd(self):
-        mesh_tensor = torch.arange(4).reshape(2, 2)
+class TraceDeviceMeshTestBase:
+    def _test_tracing_all_reduce_nd(self, mesh_tensor):
         mesh = DeviceMesh(self.device_type, mesh_tensor)
         local_tensor = torch.ones(3, 3, device=self.device_type) * self.rank
 
@@ -37,8 +30,7 @@ class TraceDeviceMeshTest(DistTensorTestBase):
             ]
 
             def fn(tensor: torch.Tensor):
-                comm_tensor = CommTensor(tensor)
-                reduced_tensor = mesh.all_reduce(comm_tensor, mesh_dim=dim)
+                reduced_tensor = mesh.all_reduce(tensor, mesh_dim=dim)
                 # multiply with 1 to trigger wait on read during tracing.
                 return reduced_tensor * 1
 
@@ -51,9 +43,7 @@ class TraceDeviceMeshTest(DistTensorTestBase):
             res_num = sum(global_ranks)
             self.assertEqual(reduced_tensor, torch.ones(3, 3) * res_num)
 
-    @with_comms
-    def test_broadcast_nd(self):
-        mesh_tensor = torch.arange(4).reshape(2, 2)
+    def _test_broadcast_nd(self, mesh_tensor):
         mesh = DeviceMesh(self.device_type, mesh_tensor)
         local_tensor = torch.ones(3, 3, device=self.device_type) * self.rank
 
@@ -66,8 +56,7 @@ class TraceDeviceMeshTest(DistTensorTestBase):
             ]
 
             def fn(tensor: torch.Tensor):
-                comm_tensor = CommTensor(tensor)
-                received_tensor = mesh.broadcast(comm_tensor, mesh_dim=dim)
+                received_tensor = mesh.broadcast(tensor, mesh_dim=dim)
                 # multiply with 1 to trigger wait on read during tracing.
                 return received_tensor * 1
 
@@ -80,9 +69,7 @@ class TraceDeviceMeshTest(DistTensorTestBase):
             res_num = global_ranks[0]
             self.assertEqual(received_tensor, torch.ones(3, 3) * res_num)
 
-    @with_comms
-    def test_scatter_nd(self):
-        mesh_tensor = torch.arange(4).reshape(2, 2)
+    def _test_scatter_nd(self, mesh_tensor):
         mesh = DeviceMesh(self.device_type, mesh_tensor)
 
         # check all dim groups
@@ -98,8 +85,7 @@ class TraceDeviceMeshTest(DistTensorTestBase):
             ]
 
             def fn(tensors: List[torch.Tensor]):
-                comm_tensors = [CommTensor(t) for t in tensors]
-                received_tensor = mesh.scatter(comm_tensors, mesh_dim=dim)
+                received_tensor = mesh.scatter(tensors, mesh_dim=dim)
                 # multiply with 1 to trigger wait on read during tracing.
                 return received_tensor * 1
 
@@ -110,9 +96,7 @@ class TraceDeviceMeshTest(DistTensorTestBase):
             received_tensor = traced_fn(scattered_tensors)
             self.assertEqual(received_tensor, torch.ones(3, 3) * self.rank)
 
-    @with_comms
-    def test_all_gather_nd(self):
-        mesh_tensor = torch.arange(4).reshape(2, 2)
+    def _test_all_gather_nd(self, mesh_tensor):
         mesh = DeviceMesh(self.device_type, mesh_tensor)
         # each rank have its own tensor, all_gather gives a list
         local_tensor = torch.ones(3, 3, device=self.device_type) * self.rank
@@ -125,8 +109,7 @@ class TraceDeviceMeshTest(DistTensorTestBase):
             ]
 
             def fn(tensor: torch.Tensor):
-                comm_tensor = CommTensor(tensor)
-                gathered_tensors = mesh.all_gather(comm_tensor, mesh_dim=dim)
+                gathered_tensors = mesh.all_gather(tensor, mesh_dim=dim)
                 # multiply with 1 to trigger wait on read during tracing.
                 return [t * 1 for t in gathered_tensors]
 
@@ -140,6 +123,50 @@ class TraceDeviceMeshTest(DistTensorTestBase):
                 self.assertEqual(
                     gathered_tensor, torch.ones(3, 3) * global_ranks[idx]
                 )
+
+
+class TraceDeviceMesh3DTest(DistTensorTestBase, TraceDeviceMeshTestBase):
+    @property
+    def world_size(self):
+        return 8
+
+    @with_comms
+    def test_tracing_all_reduce_nd(self):
+        self._test_tracing_all_reduce_nd(torch.arange(8).reshape(2, 2, 2))
+
+    @with_comms
+    def test_broadcast_nd(self):
+        self._test_broadcast_nd(torch.arange(8).reshape(2, 2, 2))
+
+    @with_comms
+    def test_scatter_nd(self):
+        self._test_scatter_nd(torch.arange(8).reshape(2, 2, 2))
+
+    @with_comms
+    def test_all_gather_nd(self):
+        self._test_all_gather_nd(torch.arange(8).reshape(2, 2, 2))
+
+
+class TraceDeviceMesh2DTest(DistTensorTestBase, TraceDeviceMeshTestBase):
+    @property
+    def world_size(self):
+        return 4
+
+    @with_comms
+    def test_tracing_all_reduce_nd(self):
+        self._test_tracing_all_reduce_nd(torch.arange(4).reshape(2, 2))
+
+    @with_comms
+    def test_broadcast_nd(self):
+        self._test_broadcast_nd(torch.arange(4).reshape(2, 2))
+
+    @with_comms
+    def test_scatter_nd(self):
+        self._test_scatter_nd(torch.arange(4).reshape(2, 2))
+
+    @with_comms
+    def test_all_gather_nd(self):
+        self._test_all_gather_nd(torch.arange(4).reshape(2, 2))
 
 
 if __name__ == "__main__":
