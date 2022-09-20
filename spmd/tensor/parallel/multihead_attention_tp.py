@@ -12,7 +12,9 @@ from spmd.tensor.parallel._view_with_dim_change import (
 from typing import Optional, Union
 
 
-def _stride_same_as_shard(tensor, tp_size, chunk_dim, cat_dim):
+def _stride_same_as_shard(
+    tensor: torch.Tensor, tp_size: int, chunk_dim: int, cat_dim: int
+):
     """
     Adjust local tensor's stride same as the sharded situation.
     So that view result will keeps the same.
@@ -65,23 +67,23 @@ class TensorParallelMultiheadAttention(torch.nn.Module):
         )
         self.num_heads = num_heads
         self.hidden_size = embed_dim
-        self.hidden_size_per_attention_head = self.hidden_size // num_heads
-        self.scale = self.hidden_size_per_attention_head**-0.5
+        self.hidden_size_per_attention_head: int = self.hidden_size // num_heads
+        self.scale: float = self.hidden_size_per_attention_head**-0.5
         if self_attention:
-            self.qkv = torch.nn.Linear(
+            self.qkv: Optional[torch.nn.Module] = torch.nn.Linear(
                 embed_dim, embed_dim * 3, bias=add_bias_kv, device=device
             )
             torch.nn.init.xavier_uniform_(self.qkv.weight)
             if add_bias_kv:
                 torch.nn.init.zeros_(self.qkv.bias)
         else:
-            self.query = torch.nn.Linear(
+            self.query: Optional[torch.nn.Module] = torch.nn.Linear(
                 embed_dim, embed_dim, bias=add_bias_kv, device=device
             )
-            self.key = torch.nn.Linear(
+            self.key: Optional[torch.nn.Module] = torch.nn.Linear(
                 embed_dim, embed_dim, bias=add_bias_kv, device=device
             )
-            self.value = torch.nn.Linear(
+            self.value: Optional[torch.nn.Module] = torch.nn.Linear(
                 embed_dim, embed_dim, bias=add_bias_kv, device=device
             )
             torch.nn.init.xavier_uniform_(self.query.weight)
@@ -91,7 +93,7 @@ class TensorParallelMultiheadAttention(torch.nn.Module):
                 torch.nn.init.zeros_(self.query.bias)
                 torch.nn.init.zeros_(self.key.bias)
                 torch.nn.init.zeros_(self.value.bias)
-        self.proj = torch.nn.Linear(
+        self.proj: torch.nn.Module = torch.nn.Linear(
             embed_dim, embed_dim, bias=bias, device=device
         )
         torch.nn.init.kaiming_uniform_(self.proj.weight, a=math.sqrt(5))
@@ -99,7 +101,7 @@ class TensorParallelMultiheadAttention(torch.nn.Module):
             torch.nn.init.zeros_(self.proj.bias)
         self.tp_size = tp_size
         self.hidden_size = embed_dim
-        self.norm_factor = math.sqrt(self.hidden_size_per_attention_head)
+        self.norm_factor: float = math.sqrt(self.hidden_size_per_attention_head)
         self.self_attention = self_attention
 
     def forward(
