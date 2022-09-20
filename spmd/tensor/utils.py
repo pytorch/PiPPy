@@ -31,19 +31,19 @@ def wrap(res: object, spec: OutputSpecType) -> object:
     if isinstance(res, torch.Tensor):
         assert spec is not None and isinstance(
             spec, DTensorSpec
-        ), "output spec does not match with output!"
+        ), f"output spec does not match with output! Expected DTensorSpec, got {spec}."
         return dtensor.DTensor(res, spec.mesh, spec.placements)
     elif isinstance(res, list):
         assert spec is not None and isinstance(
             spec, list
-        ), "output spec does not match with output!"
+        ), f"output spec does not match with output! Expected list, got {spec}."
         return list(
             dtensor.DTensor(e, s.mesh, s.placements) for e, s in zip(res, spec)
         )
     elif isinstance(res, tuple):
         assert spec is not None and isinstance(
             spec, tuple
-        ), "output spec does not match with output!"
+        ), f"output spec does not match with output! Expected tuple, got {spec}"
         return tuple(
             dtensor.DTensor(e, s.mesh, s.placements) for e, s in zip(res, spec)
         )

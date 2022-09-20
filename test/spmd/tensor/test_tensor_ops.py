@@ -6,6 +6,7 @@ from spmd.testing.common_utils import (  # type: ignore
     with_comms,
 )
 from spmd import distribute_tensor, DeviceMesh, DTensor, Shard, Replicate
+from spmd.tensor.api import _Partial
 
 
 class DistTensorOpsTest(DistTensorTestBase):
@@ -128,6 +129,56 @@ class DistTensorOpsTest(DistTensorTestBase):
         ones_like_dt = torch.ones_like(dist_tensor)
         ones_expected = torch.ones(4, 8)
         self.assertEqual(ones_expected, ones_like_dt.to_local())
+
+    @with_comms
+    def test_ones_like_partial_sum(self):
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        shard_spec = [_Partial()]
+
+        input_tensor = torch.randn(4, 8, requires_grad=True)
+        dist_tensor = DTensor.from_local(input_tensor, device_mesh, shard_spec)
+        assert dist_tensor.shape == (4, 8)
+
+        ones_like_dt = torch.ones_like(dist_tensor)
+        ones_expected = torch.ones(dist_tensor.shape)
+        self.assertEqual(
+            ones_expected,
+            ones_like_dt.redistribute(device_mesh, [Replicate()]).to_local(),
+        )
+
+    @with_comms
+    def test_fill_inplace_partial_sum(self):
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        shard_spec = [_Partial()]
+
+        input_tensor = torch.randn(4, 8, requires_grad=True)
+        dist_tensor = DTensor.from_local(input_tensor, device_mesh, shard_spec)
+        assert dist_tensor.shape == (4, 8)
+
+        torch.fill_(dist_tensor, 42)
+        fill_expected = torch.full(
+            dist_tensor.shape, 42, dtype=input_tensor.dtype
+        )
+        self.assertEqual(
+            fill_expected,
+            dist_tensor.redistribute(device_mesh, [Replicate()]).to_local(),
+        )
+
+    @with_comms
+    def test_zeros_like_partial_sum(self):
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        shard_spec = [_Partial()]
+
+        input_tensor = torch.randn(4, 8, requires_grad=True)
+        dist_tensor = DTensor.from_local(input_tensor, device_mesh, shard_spec)
+        assert dist_tensor.shape == (4, 8)
+
+        zeros_like_dt = torch.zeros_like(dist_tensor)
+        zeros_expected = torch.zeros(dist_tensor.shape)
+        self.assertEqual(
+            zeros_expected,
+            zeros_like_dt.redistribute(device_mesh, [Replicate()]).to_local(),
+        )
 
     @with_comms
     def test_zero_inplace(self):

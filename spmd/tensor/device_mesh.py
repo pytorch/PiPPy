@@ -2,6 +2,7 @@
 import warnings
 from typing import List, Optional, Iterable, Sequence
 import torch
+from torch.distributed._spmd.comm_tensor import CommTensor
 from torch.distributed.distributed_c10d import (
     all_gather,
     all_reduce,
@@ -268,7 +269,9 @@ class DeviceMesh(object):
         """
         my_coordinate = self.get_coordinate_on_dim(mesh_dim)
         # TODO: what should happen if rank is not in the mesh?
-        assert my_coordinate is not None
+        assert (
+            my_coordinate is not None
+        ), "Rank if not part of mesh"  # TODO: figure out behavior here
 
         num_chunks = self.size(mesh_dim)
         # TODO: handle uneven shard sizes
@@ -281,13 +284,20 @@ class DeviceMesh(object):
         scatter_list = list(
             tensor_to_scatter.tensor_split(num_chunks, dim=tensor_dim)
         )
-        to_scatter = [tensor.contiguous() for tensor in scatter_list]
+        # CommTensor does not change eager mode behavior. During tracing, it
+        # makes sure communication result is properly waited before subsequent
+        # read operations.
+        to_scatter = [CommTensor(tensor.contiguous()) for tensor in scatter_list]
         dim_group = self._dim_groups[mesh_dim]
         # src need to be global rank
         src_for_dim = 0
         if dim_group is not GroupMember.WORLD:
             src_for_dim = get_global_rank(dim_group, 0)
 
+        # N.B.: the `tensor` below will be a CommTensor too due to CommTensor's
+        # propagation rule: propagte wrapping until communication is called.
+        # This is necessary in order to properly trigger CommTensor's dispatch
+        # function for scatter_.
         tensor = torch.empty_like(to_scatter[my_coordinate])
         if src_for_dim == get_rank():
             scatter(
@@ -325,12 +335,16 @@ class DeviceMesh(object):
         if dim_group is not GroupMember.WORLD:
             src_for_dim = get_global_rank(dim_group, 0)
 
-        broadcast(tensor.contiguous(), src=src_for_dim, group=dim_group)
+        # CommTensor does not change eager mode behavior. During tracing, it
+        # makes sure communication result is properly waited before subsequent
+        # read operations.
+        to_broadcast = CommTensor(tensor.contiguous())
+        broadcast(to_broadcast, src=src_for_dim, group=dim_group)
         return tensor
 
     def all_gather(
         self,
-        output_tensor,
+        output_tensor: torch.Tensor,
         tensor: torch.Tensor,
         mesh_dim: int = 0,
         tensor_dim: int = 0,
@@ -360,8 +374,11 @@ class DeviceMesh(object):
         gathered_list = [tensor.contiguous() for tensor in split_list]
 
         dim_group = self._dim_groups[mesh_dim]
+        # N.B. CommTensor does not change eager mode behavior. During tracing, it
+        # makes sure communication result is properly waited before subsequent
+        # read operations.
         # input tensor must be contiguous
-        tensor = tensor.contiguous()
+        tensor = CommTensor(tensor.contiguous())
         all_gather(
             gathered_list,
             tensor,
@@ -391,7 +408,13 @@ class DeviceMesh(object):
             A :class:`torch.Tensor` object
         """
         dim_group = self._dim_groups[mesh_dim]
-        tensor = tensor.clone()
+        # CommTensor does not change eager mode behavior. During tracing, it
+        # makes sure communication result is properly waited before subsequent
+        # read operations.
+        if not tensor.is_contiguous():
+            tensor = CommTensor(tensor.contiguous())
+        else:
+            tensor = CommTensor(tensor.clone())
         all_reduce(tensor, op=op, group=dim_group)
         return tensor
 
@@ -427,11 +450,11 @@ class DeviceMesh(object):
 
         num_chunks = self.size(mesh_dim)
         if self.backend() == "nccl":
-            # gathered_list = output_tensor.tensor_split(num_chunks, dim=tensor_dim)
             input_list = list(input.tensor_split(num_chunks, dim=tensor_dim))
+            to_scatter = [tensor.contiguous() for tensor in input_list]
             output = torch.empty_like(input_list[my_coordinate])
             dim_group = self._dim_groups[mesh_dim]
-            reduce_scatter(output, input_list, op=op, group=dim_group)
+            reduce_scatter(output, to_scatter, op=op, group=dim_group)
             return output
         else:
             # it's gloo, which does not have reduce_scatter
