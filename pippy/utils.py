@@ -80,6 +80,10 @@ def run_worker(rank, run_master, args, *extra_args):
 
     os.environ['MASTER_ADDR'] = args.master_addr
     os.environ['MASTER_PORT'] = args.master_port
+    os.environ['WORLD_SIZE'] = str(args.dp_group_size)  # str(args.dp_group_size * args.pp_group_size)  # needed for HF accelerate to init MULTI_CPU mode
+    os.environ['LOCAL_RANK'] = str(rank)  # TODO: fix to local rank, dev_id?
+    os.environ['RANK'] = str(rank)
+    os.environ['USE_CPU'] = '1'  # set if cuda == 0
 
     actual_world_size = args.dp_group_size * args.pp_group_size
 

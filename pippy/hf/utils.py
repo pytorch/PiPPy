@@ -292,13 +292,14 @@ def wrap(model, training_args, pp_ranks, args_chunk_spec, kwargs_chunk_spec, out
     model.config = model_config
 
     logger.info('[PiPPy] Initializing pipeline driver ...')
-    model = PipelineDriverFillDrain(model, training_args.chunks or len(all_worker_ranks),
+    model = PipelineDriverFillDrain(model,
+                                    training_args.chunks if hasattr(training_args, 'chunks') else len(all_worker_ranks),
                                     args_chunk_spec, kwargs_chunk_spec, output_chunk_spec,
                                     world_size=len(all_worker_ranks),
                                     all_ranks=all_worker_ranks,
                                     _debug_mask_minibatches=False,
-                                    _record_mem_dumps=bool(training_args.record_mem_dumps),
-                                    checkpoint=bool(training_args.checkpoint))
+                                    _record_mem_dumps=bool(training_args.record_mem_dumps if hasattr(training_args, 'record_mem_dumps') else False),
+                                    checkpoint=bool(training_args.checkpoint) if hasattr(training_args, 'checkpoint') else True)
     model.config = model_config
 
     model.init_data_parallel(dp_group_size=training_args.dp_group_size)
