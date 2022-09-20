@@ -28,3 +28,31 @@ def _dist_dropout(
                 mask, device_mesh=self.device_mesh, placements=self.placements
             ),
         )
+
+@register_impl("aten.native_dropout_backward.default")
+def native_dropout_backward(
+        grad: DTensor,
+        mask: DTensor,
+        scale: float,
+) -> DTensor:
+    # TODO: To figure out why partial tensor does not dispatch here when in CPU.
+    # and with kwargs.
+
+    self_placement = grad.placements[0]
+    if self_placement.is_partial() or self_placement.is_replicate():
+        raise RuntimeError("Not supported!")
+
+    mask_placement = mask.placements[0]
+    if mask_placement.is_partial() or mask_placement.is_replicate():
+        raise RuntimeError("Not supported!")
+
+    local_tensor = torch.ops.aten.native_dropout_backward(
+        grad=grad._local_tensor,
+        mask=mask._local_tensor,
+        scale=scale,
+    )
+    return DTensor(
+        local_tensor,
+        device_mesh=grad.device_mesh,
+        placements=grad.placements,
+    )
