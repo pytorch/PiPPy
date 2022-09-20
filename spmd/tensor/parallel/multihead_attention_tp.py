@@ -60,7 +60,7 @@ class TensorParallelMultiheadAttention(torch.nn.Module):
         self_attention: bool = True,
     ) -> None:
         super(TensorParallelMultiheadAttention, self).__init__()
-        device = (
+        self.device: torch.device = (
             torch.device("cuda" if torch.cuda.is_available() else "cpu")
             if device is None
             else device
@@ -70,21 +70,21 @@ class TensorParallelMultiheadAttention(torch.nn.Module):
         self.hidden_size_per_attention_head: int = self.hidden_size // num_heads
         self.scale: float = self.hidden_size_per_attention_head**-0.5
         if self_attention:
-            self.qkv: Optional[torch.nn.Module] = torch.nn.Linear(
-                embed_dim, embed_dim * 3, bias=add_bias_kv, device=device
+            self.qkv: torch.nn.Module = torch.nn.Linear(
+                embed_dim, embed_dim * 3, bias=add_bias_kv, device=self.device
             )
             torch.nn.init.xavier_uniform_(self.qkv.weight)
             if add_bias_kv:
                 torch.nn.init.zeros_(self.qkv.bias)
         else:
-            self.query: Optional[torch.nn.Module] = torch.nn.Linear(
-                embed_dim, embed_dim, bias=add_bias_kv, device=device
+            self.query: torch.nn.Module = torch.nn.Linear(
+                embed_dim, embed_dim, bias=add_bias_kv, device=self.device
             )
-            self.key: Optional[torch.nn.Module] = torch.nn.Linear(
-                embed_dim, embed_dim, bias=add_bias_kv, device=device
+            self.key: torch.nn.Module = torch.nn.Linear(
+                embed_dim, embed_dim, bias=add_bias_kv, device=self.device
             )
-            self.value: Optional[torch.nn.Module] = torch.nn.Linear(
-                embed_dim, embed_dim, bias=add_bias_kv, device=device
+            self.value: torch.nn.Module = torch.nn.Linear(
+                embed_dim, embed_dim, bias=add_bias_kv, device=self.device
             )
             torch.nn.init.xavier_uniform_(self.query.weight)
             torch.nn.init.xavier_uniform_(self.key.weight)
@@ -192,7 +192,7 @@ class TensorParallelMultiheadAttention(torch.nn.Module):
             sq,
             sk,
             dtype=query_layer.dtype,
-            device=torch.cuda.current_device(),
+            device=self.device,
         )
         if isinstance(query_layer, DT):
             matmul_result = DT.from_local(
