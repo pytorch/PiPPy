@@ -3,7 +3,19 @@ import math
 
 import torch
 import spmd.tensor.api as spmd_tensor
+from spmd.tensor import DTensor as DT
 from spmd.tensor.placement_types import Shard
+
+
+def _view_with_sharding_dim_change(tensor, sharding_dim, shape):
+    """
+    Sometimes we want to change the implicit sharding dim for a
+    distributed tensor without comms.
+    """
+    if isinstance(tensor, DT):
+        return _ViewAndRedistribute.apply(tensor, sharding_dim, shape)
+    else:
+        return tensor.view(shape)
 
 
 class _ViewAndRedistribute(torch.autograd.Function):
@@ -18,6 +30,9 @@ class _ViewAndRedistribute(torch.autograd.Function):
         ctx.previous_placement = self.placements
         ctx.previous_device_mesh = self.device_mesh
         ctx.previous_local_shape = self.to_local().size()
+        assert (
+            self.device_mesh.ndim == 1
+        ), "Only support 1D Device Mesh for _ViewAndRedistribute."
         if (
             self.placements[0].is_shard(dim=sharding_dim)
             or self.placements[0].is_replicate()

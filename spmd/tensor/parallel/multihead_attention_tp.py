@@ -5,17 +5,9 @@ import math
 import torch
 from spmd.tensor import DTensor as DT
 from spmd.tensor.placement_types import Shard
-
-
-def _view_with_sharding_dim_change(tensor, sharding_dim, shape):
-    """
-    Sometimes we want to change the implicit sharding dim for a 
-    distributed tensor without comms. 
-    """
-    if isinstance(tensor, DT):
-        return tensor._view_with_sharding_dim_change(sharding_dim, shape)
-    else:
-        return tensor.view(shape)
+from spmd.tensor.parallel._view_with_dim_change import (
+    _view_with_sharding_dim_change,
+)
 
 
 def _stride_same_as_shard(tensor, tp_size, chunk_dim, cat_dim):
@@ -28,10 +20,7 @@ def _stride_same_as_shard(tensor, tp_size, chunk_dim, cat_dim):
     view_size = list(tensor.size())
     view_size[chunk_dim] //= tp_size
     return torch.cat(
-        [
-            t.view(*view_size)
-            for t in tensor.chunk(tp_size, dim=chunk_dim)
-        ],
+        [t.view(*view_size) for t in tensor.chunk(tp_size, dim=chunk_dim)],
         dim=cat_dim,
     ).contiguous()
 
@@ -75,7 +64,7 @@ class TensorParallelMultiheadAttention(torch.nn.Module):
         self.num_heads = num_heads
         self.hidden_size = embed_dim
         self.hidden_size_per_attention_head = self.hidden_size // num_heads
-        self.scale = self.hidden_size_per_attention_head ** -0.5
+        self.scale = self.hidden_size_per_attention_head**-0.5
         if self_attention:
             self.qkv = torch.nn.Linear(
                 embed_dim, embed_dim * 3, bias=add_bias_kv, device=device

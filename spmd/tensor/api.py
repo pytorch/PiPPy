@@ -13,7 +13,6 @@ from spmd.tensor.placement_types import (
     DTensorSpec,
 )
 from spmd.tensor.redistribute import Redistribute
-from spmd.tensor._view_n_reshard import _ViewAndRedistribute
 
 from spmd.tensor.dispatch import operator_dispatch, OpSchema, OutputSharding
 
@@ -330,10 +329,3 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # caller who want a different device_mesh
         # should call redistribute instead.
         return self._spec.mesh
-
-    # TODO: This is a temporary hack to unblock TP efforts. We need to
-    # come up with a more principle design for customized ops like this.
-    # pyre-fixme[3]: Return type must be annotated.
-    # pyre-fixme[2]: Parameter must be annotated.
-    def _view_with_sharding_dim_change(self, sharding_dim, shape):
-        return _ViewAndRedistribute.apply(self, sharding_dim, shape)
