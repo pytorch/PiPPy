@@ -5,14 +5,18 @@ import torch
 import spmd.tensor.api as spmd_tensor
 from spmd.tensor import DTensor as DT
 from spmd.tensor.placement_types import Shard
+from typing import Tuple, Union
 
 
-def _view_with_sharding_dim_change(tensor, sharding_dim, shape):
+def _view_with_sharding_dim_change(
+    tensor: Union[torch.Tensor, DT], sharding_dim: int, shape: Tuple[int, ...]
+) -> Union[torch.Tensor, DT]:
     """
     Sometimes we want to change the implicit sharding dim for a
     distributed tensor without comms.
     """
     if isinstance(tensor, DT):
+        # pyre-fixme[16]: Undefined attribute.
         return _ViewAndRedistribute.apply(tensor, sharding_dim, shape)
     else:
         return tensor.view(shape)
@@ -20,13 +24,12 @@ def _view_with_sharding_dim_change(tensor, sharding_dim, shape):
 
 class _ViewAndRedistribute(torch.autograd.Function):
     @staticmethod
-    def forward(  # type: ignore
-        # pyre-fixme[2]: Parameter must be annotated.
-        ctx,
-        self: "spmd_tensor.DTensor",
-        sharding_dim,
-        shape,
-    ):
+    def forward(
+        ctx,  # type: ignore
+        self: DT,
+        sharding_dim: int,
+        shape: Tuple[int, ...],
+    ) -> DT:
         ctx.previous_placement = self.placements
         ctx.previous_device_mesh = self.device_mesh
         ctx.previous_local_shape = self.to_local().size()
@@ -80,7 +83,7 @@ class _ViewAndRedistribute(torch.autograd.Function):
             )
 
     @staticmethod
-    def backward(ctx, grad_output: "spmd_tensor.DTensor"):  # type: ignore
+    def backward(ctx, grad_output: DT) -> Tuple[DT, None, None]:  # type: ignore
         previous_placement = ctx.previous_placement
         previous_device_mesh = ctx.previous_device_mesh
         previous_local_tensor_size = ctx.previous_local_shape

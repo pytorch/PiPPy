@@ -18,6 +18,7 @@ pip3 --version
 # Turn off progress bar to save logs
 pip3 install --upgrade pip
 pip3 install --pre torch --extra-index-url https://download.pytorch.org/whl/nightly/cu113
+pip3 install hypothesis
 
 # Install spmd
 python3 spmd/setup.py install

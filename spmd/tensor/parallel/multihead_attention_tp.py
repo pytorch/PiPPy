@@ -9,6 +9,8 @@ from spmd.tensor.parallel._view_with_dim_change import (
     _view_with_sharding_dim_change,
 )
 
+from typing import Optional, Union
+
 
 def _stride_same_as_shard(tensor, tp_size, chunk_dim, cat_dim):
     """
@@ -41,20 +43,20 @@ class TensorParallelMultiheadAttention(torch.nn.Module):
 
     def __init__(
         self,
-        embed_dim,
-        num_heads,
-        dropout=0.0,
-        bias=True,
-        add_bias_kv=False,
-        add_zero_attn=False,
-        kdim=None,
-        vdim=None,
-        batch_first=False,
-        device=None,
-        dtype=None,
-        tp_size=1,
-        self_attention=True,
-    ):
+        embed_dim: int,
+        num_heads: int,
+        dropout: float = 0.0,
+        bias: bool = True,
+        add_bias_kv: bool = False,
+        add_zero_attn: bool = False,
+        kdim: Optional[int] = None,
+        vdim: Optional[int] = None,
+        batch_first: bool = False,
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None,
+        tp_size: int = 1,
+        self_attention: bool = True,
+    ) -> None:
         super(TensorParallelMultiheadAttention, self).__init__()
         device = (
             torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -102,14 +104,14 @@ class TensorParallelMultiheadAttention(torch.nn.Module):
 
     def forward(
         self,
-        query,
-        key,
-        value,
-        key_padding_mask=None,
-        need_weights=True,
-        attn_mask=None,
-        average_attn_weights=True,
-    ):
+        query: Union[torch.Tensor, DT],
+        key: Union[torch.Tensor, DT],
+        value: Union[torch.Tensor, DT],
+        key_padding_mask: Optional[torch.Tensor] = None,
+        need_weights: bool = True,
+        attn_mask: Optional[torch.Tensor] = None,
+        average_attn_weights: bool = True,
+    ) -> Union[torch.Tensor, DT]:
         b, sq, h = query.shape
         sk = key.size(1)
         nh = self.num_heads
@@ -127,7 +129,7 @@ class TensorParallelMultiheadAttention(torch.nn.Module):
             key = key.permute(1, 0, 2).contiguous()
             value = value.permute(1, 0, 2).contiguous()
 
-            ## Attention heads [sq/sk/sv, b, h] --> [sq/sk/sv * b, (nh * hn)]
+            # Attention heads [sq/sk/sv, b, h] --> [sq/sk/sv * b, (nh * hn)]
             query = query.view(-1, h)
             key = key.view(-1, h)
             value = value.view(-1, h)

@@ -1,7 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 import torch.nn as nn
-import torch.distributed as dist
 import functools
 from torch.testing._internal.common_utils import run_tests
 from spmd.testing.common_utils import DistTensorTestBase, with_comms, TEST_GPU_NUM  # type: ignore
