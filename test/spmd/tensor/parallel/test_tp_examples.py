@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import functools
 from torch.testing._internal.common_utils import run_tests
+from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 from spmd.testing.common_utils import DistTensorTestBase, with_comms, TEST_GPU_NUM  # type: ignore
 from spmd import (
     distribute_tensor,
@@ -270,7 +271,9 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         output_tp = model_tp(inp)
         self.assertEqual(output, output_tp)
 
+    # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
     @with_comms
+    @skip_if_lt_x_gpu(TEST_GPU_NUM)
     def test_self_attn_megatron_e2e(self):
         inp_size = [8, 12, 16]
         # Ensure all tp ranks have same input.

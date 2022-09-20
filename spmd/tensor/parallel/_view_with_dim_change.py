@@ -25,7 +25,7 @@ def _view_with_sharding_dim_change(
 class _ViewAndRedistribute(torch.autograd.Function):
     @staticmethod
     # pyre-fixme[14]: Inconsistent override.
-    def forward(
+    def forward(  # type: ignore
         ctx,  # type: ignore
         self: DT,
         sharding_dim: int,
@@ -43,7 +43,7 @@ class _ViewAndRedistribute(torch.autograd.Function):
             or self.placements[0].is_partial()
         ):
             # pyre-fixme[7]: Incompatible return type.
-            return self.view(shape)
+            return self.view(shape)  # type: ignore
         else:
             if sharding_dim < 0:
                 sharding_dim += self.dim()
@@ -56,7 +56,7 @@ class _ViewAndRedistribute(torch.autograd.Function):
             try:
                 infer_idx = shape.index(-1)
             except ValueError:
-                infer_idx = None
+                infer_idx = None  # type: ignore
 
             # Infer the dim which is specified with -1.
             if infer_idx is not None:
