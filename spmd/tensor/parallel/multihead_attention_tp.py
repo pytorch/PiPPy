@@ -102,7 +102,7 @@ class TensorParallelMultiheadAttention(torch.nn.Module):
                 # pyre-fixme[6]: Incompatible parameter type.
                 torch.nn.init.zeros_(self.value.bias)
         self.proj: torch.nn.Module = torch.nn.Linear(
-            embed_dim, embed_dim, bias=bias, device=device
+            embed_dim, embed_dim, bias=bias, device=self.device
         )
         # pyre-fixme[6]: Incompatible parameter type.
         torch.nn.init.kaiming_uniform_(self.proj.weight, a=math.sqrt(5))

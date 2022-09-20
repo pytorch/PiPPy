@@ -512,7 +512,6 @@ dtensor_fails = {
     xfail("take_along_dim"),
     xfail("take"),
     xfail("tensor_split"),
-    xfail("tensordot"),
     xfail("to_sparse"),
     xfail("topk"),
     xfail("trace"),
