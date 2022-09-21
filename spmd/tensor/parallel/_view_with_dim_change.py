@@ -2,7 +2,6 @@
 import math
 
 import torch
-import spmd.tensor.api as spmd_tensor
 from spmd.tensor import DTensor as DT
 from spmd.tensor.placement_types import Shard
 from typing import Tuple, Union
@@ -12,8 +11,11 @@ def _view_with_sharding_dim_change(
     tensor: Union[torch.Tensor, DT], sharding_dim: int, shape: Tuple[int, ...]
 ) -> Union[torch.Tensor, DT]:
     """
-    Sometimes we want to change the implicit sharding dim for a
-    distributed tensor without comms.
+    We change the implicit sharding dim for a distributed tensor without comms.
+    Because if we don't change sharding dim, we will end up having an invalid DTensor.
+    This could happen either for the input of some ops or output of some other ops.
+
+    This should only be used when implicitly changing sharding dim doesn't have semantic issue.
     """
     if isinstance(tensor, DT):
         # pyre-fixme[16]: Undefined attribute.
@@ -77,7 +79,7 @@ class _ViewAndRedistribute(torch.autograd.Function):
             )
             new_local_tensor = self.to_local().view(*new_local_tensor_size)
 
-            return spmd_tensor.DTensor(
+            return DT(
                 new_local_tensor,
                 device_mesh,
                 new_sharding_placement,
@@ -90,7 +92,7 @@ class _ViewAndRedistribute(torch.autograd.Function):
         previous_device_mesh = ctx.previous_device_mesh
         previous_local_tensor_size = ctx.previous_local_shape
         return (
-            spmd_tensor.DTensor(
+            DT(
                 grad_output.to_local().view(*previous_local_tensor_size),
                 previous_device_mesh,
                 previous_placement,

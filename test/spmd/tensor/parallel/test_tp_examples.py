@@ -162,7 +162,7 @@ def shard_self_attn(m, device_type, tp_size):
     def replicate_input(inputs):
         DTensors = []
         for tensor in inputs:
-            DTensors.append(DTensor(tensor, device_mesh, replicate))
+            DTensors.append(DTensor.from_local(tensor, device_mesh, replicate))
         return tuple(DTensors)
 
     dist_mod = distribute_module(

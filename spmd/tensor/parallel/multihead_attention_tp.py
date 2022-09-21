@@ -1,4 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+# pyre-ignore-all-errors[6]
 
 import math
 
@@ -73,10 +74,8 @@ class TensorParallelMultiheadAttention(torch.nn.Module):
             self.qkv: torch.nn.Module = torch.nn.Linear(
                 embed_dim, embed_dim * 3, bias=add_bias_kv, device=self.device
             )
-            # pyre-fixme[6]: Incompatible parameter type.
             torch.nn.init.xavier_uniform_(self.qkv.weight)
             if add_bias_kv:
-                # pyre-fixme[6]: Incompatible parameter type.
                 torch.nn.init.zeros_(self.qkv.bias)
         else:
             self.query: torch.nn.Module = torch.nn.Linear(
@@ -88,26 +87,18 @@ class TensorParallelMultiheadAttention(torch.nn.Module):
             self.value: torch.nn.Module = torch.nn.Linear(
                 embed_dim, embed_dim, bias=add_bias_kv, device=self.device
             )
-            # pyre-fixme[6]: Incompatible parameter type.
             torch.nn.init.xavier_uniform_(self.query.weight)
-            # pyre-fixme[6]: Incompatible parameter type.
             torch.nn.init.xavier_uniform_(self.key.weight)
-            # pyre-fixme[6]: Incompatible parameter type.
             torch.nn.init.xavier_uniform_(self.value.weight)
             if add_bias_kv:
-                # pyre-fixme[6]: Incompatible parameter type.
                 torch.nn.init.zeros_(self.query.bias)
-                # pyre-fixme[6]: Incompatible parameter type.
                 torch.nn.init.zeros_(self.key.bias)
-                # pyre-fixme[6]: Incompatible parameter type.
                 torch.nn.init.zeros_(self.value.bias)
         self.proj: torch.nn.Module = torch.nn.Linear(
             embed_dim, embed_dim, bias=bias, device=self.device
         )
-        # pyre-fixme[6]: Incompatible parameter type.
         torch.nn.init.kaiming_uniform_(self.proj.weight, a=math.sqrt(5))
         if bias:
-            # pyre-fixme[6]: Incompatible parameter type.
             torch.nn.init.zeros_(self.proj.bias)
         self.tp_size = tp_size
         self.hidden_size = embed_dim
@@ -156,6 +147,9 @@ class TensorParallelMultiheadAttention(torch.nn.Module):
                 self.value(value), 1, (sk, b * nh, hn)
             )
         else:
+            assert (
+                query == key == value
+            ), "inputs are different for self-attention."
             # =====================
             # Query
             # =====================
