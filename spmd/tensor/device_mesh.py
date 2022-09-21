@@ -315,7 +315,7 @@ class DeviceMesh(object):
         # CommTensor does not change eager mode behavior. During tracing, it
         # makes sure communication result is properly waited before subsequent
         # read operations.
-        return all_gather(CommTensor(tensor), group=dim_group)
+        return all_gather(CommTensor(tensor.contiguous()), group=dim_group)
 
     # pyre-fixme[3]: Return type must be annotated.
     def all_gather_base(
@@ -355,7 +355,9 @@ class DeviceMesh(object):
         # CommTensor does not change eager mode behavior. During tracing, it
         # makes sure communication result is properly waited before subsequent
         # read operations.
-        return all_reduce(CommTensor(tensor), op=op, group=dim_group)
+        return all_reduce(
+            CommTensor(tensor.contiguous()), op=op, group=dim_group
+        )
 
     # pyre-fixme[3]: Return type must be annotated.
     def reduce_scatter_base(
