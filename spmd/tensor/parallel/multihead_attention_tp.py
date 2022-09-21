@@ -148,7 +148,7 @@ class TensorParallelMultiheadAttention(torch.nn.Module):
             )
         else:
             assert (
-                query == key and query == value
+                torch.eq(query, key) and torch.eq(query, value)
             ), "inputs are different for self-attention."
             # =====================
             # Query
