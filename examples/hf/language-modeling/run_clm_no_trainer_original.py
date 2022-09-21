@@ -38,7 +38,7 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
 import transformers
-from accelerate import DistributedType
+from accelerate import Accelerator, DistributedType
 from accelerate.logging import get_logger
 from accelerate.utils import set_seed
 from huggingface_hub import Repository
@@ -55,10 +55,6 @@ from transformers import (
 from transformers.utils import check_min_version, get_full_repo_name, send_example_telemetry
 from transformers.utils.versions import require_version
 
-from pippy import run_pippy
-from pippy.hf import wrap
-from pippy.hf.accelerate import PiPPyAccelerator
-from pippy.microbatch import TensorChunkSpec, CustomReducer
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.22.0.dev0")
@@ -224,13 +220,6 @@ def parse_args():
             "Only applicable when `--with_tracking` is passed."
         ),
     )
-    parser.add_argument("--dp_group_size", type=int, default=1)
-    parser.add_argument("--pp_group_size", type=int, default=8)
-    parser.add_argument("--rank", type=int, default=-1)
-    parser.add_argument('--master_addr', type=str, default=os.getenv('MASTER_ADDR', 'localhost'))
-    parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
-    parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()), choices=[0, 1])
-    parser.add_argument('--exclude_master', type=int, default=0, choices=[0, 1])
     args = parser.parse_args()
 
     # Sanity checks
@@ -252,12 +241,7 @@ def parse_args():
 
 def main():
     args = parse_args()
-    # =============================================== PiPPy change start ===============================================
-    run_pippy(run_master, args)
 
-
-def run_master(pp_ranks, args):
-    # ================================================ PiPPy change end ================================================
     # Sending telemetry. Tracking the example usage helps us better allocate resources to maintain them. The
     # information sent is the one passed as arguments along with your Python/PyTorch versions.
     send_example_telemetry("run_clm_no_trainer", args)
@@ -265,7 +249,9 @@ def run_master(pp_ranks, args):
     # Initialize the accelerator. We will let the accelerator handle device placement for us in this example.
     # If we're using tracking, we also need to initialize it here and it will by default pick up all supported trackers
     # in the environment
-    accelerator = PiPPyAccelerator(args)
+    accelerator = (
+        Accelerator(log_with=args.report_to, logging_dir=args.output_dir) if args.with_tracking else Accelerator()
+    )
     # Make one log on every process with the configuration for debugging.
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
@@ -388,17 +374,6 @@ def run_master(pp_ranks, args):
         model = AutoModelForCausalLM.from_config(config)
 
     model.resize_token_embeddings(len(tokenizer))
-
-    # =============================================== PiPPy change start ===============================================
-    args_chunk_spec = ()
-    kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'labels': TensorChunkSpec(0),
-                         'attention_mask': TensorChunkSpec(0)}
-    output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b), 'logits': TensorChunkSpec(0),
-                         'past_key_values': [[TensorChunkSpec(0) for _ in range(2)] for _ in
-                                             range(model.config.n_layer)]}
-    model = wrap(model, args, pp_ranks, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec)
-    args.label_names = ['labels']  # https://github.com/huggingface/transformers/blob/c8b6ae858d61e5bc10e388d095aa74f7690d1021/src/transformers/trainer.py#L629-L630
-    # ================================================ PiPPy change end ================================================
 
     # Preprocessing the datasets.
     # First we tokenize all the texts.
