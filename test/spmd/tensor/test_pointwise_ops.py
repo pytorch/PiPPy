@@ -13,61 +13,105 @@ from spmd.tensor.dispatch import OpSchema
 
 from spmd.tensor.ops.pointwise_ops import pointwise_rule
 from spmd import DeviceMesh, DTensor
-from spmd.tensor.placement_types import Shard, Replicate, _Partial, DTensorSpec, Placement
+from spmd.tensor.placement_types import (
+    Shard,
+    Replicate,
+    _Partial,
+    DTensorSpec,
+    Placement,
+)
 from torch.distributed.distributed_c10d import ReduceOp
 from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 
 
-def coerce_dtensor(val: Any, device_mesh:DeviceMesh, placements: Sequence[Placement],) -> Any:
+def coerce_dtensor(
+    val: Any,
+    device_mesh: DeviceMesh,
+    placements: Sequence[Placement],
+) -> Any:
+    """
+    Recursively coerce (over Sequence and Dict types) Tensors into DTensors.
+
+    :param device_mesh: the DeviceMesh to use.
+    :param placements: the Placement list to use.
+    :return: the transformed structure.
+    """
     if isinstance(val, Tensor):
-        return DTensor(val, device_mesh=device_mesh, placements=placements, requires_grad=val.requires_grad)
+        return DTensor(
+            val,
+            device_mesh=device_mesh,
+            placements=placements,
+            requires_grad=val.requires_grad,
+        )
 
     if isinstance(val, Sequence):
         return [
-            coerce_dtensor(x, device_mesh=device_mesh, placements=placements) for x in val
+            coerce_dtensor(
+                x,
+                device_mesh=device_mesh,
+                placements=placements,
+            )
+            for x in val
         ]
 
     if isinstance(val, Dict):
         return {
-            k: coerce_dtensor(v, device_mesh=device_mesh, placements=placements) for k, v in val.items()
+            k: coerce_dtensor(
+                v,
+                device_mesh=device_mesh,
+                placements=placements,
+            )
+            for k, v in val.items()
         }
 
     return val
 
+
 def collect_dtensor(val: Any) -> Any:
+    """
+    Recursive coerce any DTensor to local Tensor.
+
+    :param val: the structure to coerce.
+    :return: the coerced structure.
+    """
     if isinstance(val, DTensor):
         return val.to_local()
 
     if isinstance(val, Sequence):
-        return [
-            collect_dtensor(x) for x in val
-        ]
+        return [collect_dtensor(x) for x in val]
 
     if isinstance(val, Dict):
-        return {
-            k: collect_dtensor(v) for k, v in val.items()
-        }
+        return {k: collect_dtensor(v) for k, v in val.items()}
 
     return val
 
+
 class DistElementwiseOpsTest(DistTensorTestBase):
     def _compare_pairwise_ops(
-            self,
-            *,
-            device_mesh: DeviceMesh,
-            placements: Sequence[Placement],
-            op: Callable,
-            reset_seed: Optional[Callable]=None,
-            args: Sequence[Any] = tuple(),
-            kwargs: Optional[Dict[str, Any]] = None,
+        self,
+        *,
+        device_mesh: DeviceMesh,
+        placements: Sequence[Placement],
+        op: Callable,
+        reset_seed: Optional[Callable] = None,
+        args: Sequence[Any] = tuple(),
+        kwargs: Optional[Dict[str, Any]] = None,
     ):
         if not kwargs:
             kwargs = {}
 
         torch.manual_seed(self.rank)
 
-        dargs = coerce_dtensor(args, device_mesh=device_mesh, placements=placements)
-        dkwargs = coerce_dtensor(kwargs, device_mesh=device_mesh, placements=placements)
+        dargs = coerce_dtensor(
+            args,
+            device_mesh=device_mesh,
+            placements=placements,
+        )
+        dkwargs = coerce_dtensor(
+            kwargs,
+            device_mesh=device_mesh,
+            placements=placements,
+        )
 
         reset_seed() if reset_seed else None
 
@@ -85,10 +129,10 @@ class DistElementwiseOpsTest(DistTensorTestBase):
 
     # TODO: We need to add CPU tests for ops in the future.
     def _run_sharded_elementwise_ops(
-            self,
-            *,
-            mesh,
-            spec,
+        self,
+        *,
+        mesh,
+        spec,
         input_size,
         op,
         reset_seed=None,
@@ -106,7 +150,6 @@ class DistElementwiseOpsTest(DistTensorTestBase):
             args=(input_tensor,),
             kwargs=kwargs,
         )
-
 
     @with_comms
     def test_activations(self):
@@ -136,10 +179,16 @@ class DistElementwiseOpsTest(DistTensorTestBase):
             op=torch.nn.functional.relu,
         )
         self._run_sharded_elementwise_ops(
-            mesh=device_mesh, spec=[Shard(0)], input_size=(8, 5), op=torch.sigmoid
+            mesh=device_mesh,
+            spec=[Shard(0)],
+            input_size=(8, 5),
+            op=torch.sigmoid,
         )
         self._run_sharded_elementwise_ops(
-            mesh=device_mesh, spec=[Replicate()], input_size=(8, 5), op=torch.sigmoid
+            mesh=device_mesh,
+            spec=[Replicate()],
+            input_size=(8, 5),
+            op=torch.sigmoid,
         )
 
     @with_comms
@@ -171,12 +220,23 @@ class DistElementwiseOpsTest(DistTensorTestBase):
     @skip_if_lt_x_gpu(TEST_GPU_NUM)
     def test_dropout_backward(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
-        placements=[Shard(0)]
+        placements = [Shard(0)]
 
-        input_size=(8, 5)
+        input_size = (8, 5)
 
-        grad_output = torch.rand(input_size, device=self.device_type, requires_grad=True,)
-        mask = torch.rand(input_size, device=self.device_type, requires_grad=False,) < 0.8
+        grad_output = torch.rand(
+            input_size,
+            device=self.device_type,
+            requires_grad=True,
+        )
+        mask = (
+            torch.rand(
+                input_size,
+                device=self.device_type,
+                requires_grad=False,
+            )
+            < 0.8
+        )
 
         self._compare_pairwise_ops(
             device_mesh=device_mesh,
@@ -200,7 +260,6 @@ class DistElementwiseOpsTest(DistTensorTestBase):
                 input_size=(8, 5),
                 op=torch.nn.functional.dropout,
             )
-
 
     @with_comms
     def test_mul_out(self):
