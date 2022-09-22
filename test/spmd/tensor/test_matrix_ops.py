@@ -143,7 +143,7 @@ class DistMatrixOpsTest(DistTensorTestBase):
         # check that the local and distributed op results match
         self.assertEqual(
             c,
-            redistribute_spmd_tensor(dc, device_mesh, [Replicate()]).to_local(),
+            dc.redistribute(device_mesh, [Replicate()]).to_local(),
         )
 
     # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
