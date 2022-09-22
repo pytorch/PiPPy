@@ -3,7 +3,6 @@ import torch
 from torch.testing._internal.common_utils import run_tests
 from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 from spmd.tensor.api import DTensor
-from spmd.tensor.redistribute import redistribute_spmd_tensor
 from spmd.testing.common_utils import (  # type: ignore
     DistTensorTestBase,
     with_comms,
