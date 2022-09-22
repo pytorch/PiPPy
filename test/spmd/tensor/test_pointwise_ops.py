@@ -24,7 +24,7 @@ from torch.distributed.distributed_c10d import ReduceOp
 from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 
 
-def coerce_dtensor(
+def deepcopy_convert_to_dtensor(
     val: Any,
     device_mesh: DeviceMesh,
     placements: Sequence[Placement],
@@ -46,7 +46,7 @@ def coerce_dtensor(
 
     if isinstance(val, Sequence):
         return [
-            coerce_dtensor(
+            deepcopy_convert_to_dtensor(
                 x,
                 device_mesh=device_mesh,
                 placements=placements,
@@ -56,7 +56,7 @@ def coerce_dtensor(
 
     if isinstance(val, Dict):
         return {
-            k: coerce_dtensor(
+            k: deepcopy_convert_to_dtensor(
                 v,
                 device_mesh=device_mesh,
                 placements=placements,
@@ -67,7 +67,7 @@ def coerce_dtensor(
     return val
 
 
-def collect_dtensor(val: Any) -> Any:
+def deepcopy_convert_from_dtensor(val: Any) -> Any:
     """
     Recursive coerce any DTensor to local Tensor.
 
@@ -78,10 +78,10 @@ def collect_dtensor(val: Any) -> Any:
         return val.to_local()
 
     if isinstance(val, Sequence):
-        return [collect_dtensor(x) for x in val]
+        return [deepcopy_convert_from_dtensor(x) for x in val]
 
     if isinstance(val, Dict):
-        return {k: collect_dtensor(v) for k, v in val.items()}
+        return {k: deepcopy_convert_from_dtensor(v) for k, v in val.items()}
 
     return val
 
@@ -102,12 +102,12 @@ class DistElementwiseOpsTest(DistTensorTestBase):
 
         torch.manual_seed(self.rank)
 
-        dargs = coerce_dtensor(
+        dargs = deepcopy_convert_to_dtensor(
             args,
             device_mesh=device_mesh,
             placements=placements,
         )
-        dkwargs = coerce_dtensor(
+        dkwargs = deepcopy_convert_to_dtensor(
             kwargs,
             device_mesh=device_mesh,
             placements=placements,
@@ -123,7 +123,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
 
         dist_result = op(*dargs, **dkwargs)
 
-        collected_result = collect_dtensor(dist_result)
+        collected_result = deepcopy_convert_from_dtensor(dist_result)
 
         self.assertEqual(reference_result, collected_result)
 
