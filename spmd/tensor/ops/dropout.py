@@ -1,7 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 from typing import Tuple
-
 from spmd.tensor.ops.utils import register_impl
 from spmd.tensor.api import DTensor
 
