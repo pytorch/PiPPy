@@ -1,12 +1,11 @@
 # Python dependencies required for development
 black
+expecttest
 flake8
+hypothesis
 numpy
 pyre-check
 pytest
 pytest-cov
 pytest-xdist
-
-expecttest
-hypothesis
 pyyaml

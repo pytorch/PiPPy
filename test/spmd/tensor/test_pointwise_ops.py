@@ -11,6 +11,7 @@ from spmd.testing.common_utils import (  # type: ignore
 )
 from spmd.tensor.dispatch import OpSchema
 
+from spmd.tensor import distribute_tensor
 from spmd.tensor.ops.pointwise_ops import pointwise_rule
 from spmd import DeviceMesh, DTensor
 from spmd.tensor.placement_types import (
@@ -30,18 +31,17 @@ def deepcopy_convert_to_dtensor(
     placements: Sequence[Placement],
 ) -> Any:
     """
-    Recursively coerce (over Sequence and Dict types) Tensors into DTensors.
+    Recursively convert (over Sequence and Dict types) Tensors into DTensors.
 
     :param device_mesh: the DeviceMesh to use.
     :param placements: the Placement list to use.
     :return: the transformed structure.
     """
     if isinstance(val, Tensor):
-        return DTensor(
+        return distribute_tensor(
             val,
             device_mesh=device_mesh,
             placements=placements,
-            requires_grad=val.requires_grad,
         )
 
     if isinstance(val, Sequence):
@@ -69,7 +69,7 @@ def deepcopy_convert_to_dtensor(
 
 def deepcopy_convert_from_dtensor(val: Any) -> Any:
     """
-    Recursive coerce any DTensor to local Tensor.
+    Recursive convert any DTensor to local Tensor.
 
     :param val: the structure to coerce.
     :return: the coerced structure.
@@ -271,10 +271,14 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         dtensor = DTensor.from_local(input_tensor, device_mesh, shard_spec)
 
         other_tensor = torch.randn(*input_size, device=self.device_type)
-        other_dtensor = DTensor.from_local(other_tensor, device_mesh, shard_spec)
+        other_dtensor = DTensor.from_local(
+            other_tensor, device_mesh, shard_spec
+        )
 
         output_tensor = torch.randn(*input_size, device=self.device_type)
-        output_dtensor = DTensor.from_local(output_tensor, device_mesh, shard_spec)
+        output_dtensor = DTensor.from_local(
+            output_tensor, device_mesh, shard_spec
+        )
         dt = torch.mul(dtensor, other_dtensor, out=output_dtensor)
         expected = torch.mul(input_tensor, other_tensor, out=output_tensor)
         self.assertEqual(input_tensor, dtensor.to_local())
@@ -286,10 +290,16 @@ class DistElementwiseOpsTest(DistTensorTestBase):
 
         # propagate point-wise sharding
         inp1, inp2 = [-1, -1], [-1, 0]
-        mat1_spec = DTensorSpec.from_dim_map(mesh, inp1, [], shape=torch.Size([8, 4]))
-        mat2_spec = DTensorSpec.from_dim_map(mesh, inp2, [], shape=torch.Size([8, 4]))
+        mat1_spec = DTensorSpec.from_dim_map(
+            mesh, inp1, [], shape=torch.Size([8, 4])
+        )
+        mat2_spec = DTensorSpec.from_dim_map(
+            mesh, inp2, [], shape=torch.Size([8, 4])
+        )
         # adding a positional argument -1 to arg schema
-        output_sharding = pointwise_rule(OpSchema((mat1_spec, mat2_spec, -1), {}))
+        output_sharding = pointwise_rule(
+            OpSchema((mat1_spec, mat2_spec, -1), {})
+        )
         self.assertIsNone(output_sharding.output_spec)
         self.assertIsNotNone(output_sharding.schema_suggestions)
 
