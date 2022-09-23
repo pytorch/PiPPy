@@ -1,5 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import Sequence, Any, Dict, Callable, Optional
+from typing import Sequence, Any, Dict, Callable, Optional, List
 
 import torch
 from torch import Tensor
@@ -78,13 +78,13 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         device_mesh: DeviceMesh,
         placements: Sequence[Placement],
         op: Callable,
-        reset: Optional[Callable] = None,
+        pre_op_reset: Optional[Callable] = None,
         args: Sequence[Any] = tuple(),
         kwargs: Optional[Dict[str, Any]] = None,
         verify_args: bool = True,
     ):
-        if reset is None:
-            reset = lambda: None
+        if pre_op_reset is None:
+            pre_op_reset = lambda: None
 
         if not kwargs:
             kwargs = {}
@@ -112,13 +112,13 @@ class DistElementwiseOpsTest(DistTensorTestBase):
                 deepcopy_convert_from_dtensor(dkwargs),
             )
 
-        reset()
+        pre_op_reset()
 
         # run the reference first, in case the call is broken;
         # it's better to debug an incorrect call at this point.
         reference_result = op(*args, **kwargs)
 
-        reset()
+        pre_op_reset()
 
         dist_result = op(*dargs, **dkwargs)
 
@@ -130,13 +130,16 @@ class DistElementwiseOpsTest(DistTensorTestBase):
     def _run_sharded_elementwise_ops(
         self,
         *,
-        device_mesh,
-        placements,
-        input_size,
-        op,
-        reset_seed=None,
+        device_mesh: DeviceMesh,
+        placements: Sequence[Placement],
+        pre_op_reset: Optional[Callable] = None,
+        input_size: Sequence[int],
+        op: Callable,
         **kwargs,
     ):
+        if pre_op_reset is None:
+            pre_op_reset = lambda: None
+
         input_tensor = torch.randn(
             *input_size,
             device=self.device_type,
@@ -146,7 +149,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         self._compare_pairwise_ops(
             device_mesh=device_mesh,
             placements=placements,
-            reset=reset_seed,
+            pre_op_reset=pre_op_reset,
             op=op,
             args=(input_tensor,),
             kwargs=kwargs,
@@ -207,6 +210,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
             placements=[Shard(0)],
             input_size=(8, 5),
             op=torch.nn.functional.dropout,
+            pre_op_reset=_reset_random_seed,
             p=0.4,
             training=False,
         )
@@ -215,7 +219,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
             placements=[Shard(1)],
             input_size=(3, 14),
             op=torch.nn.functional.dropout,
-            reset_seed=_reset_random_seed,
+            pre_op_reset=_reset_random_seed,
             p=0.5,
             training=True,
         )
