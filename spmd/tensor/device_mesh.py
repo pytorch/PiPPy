@@ -1,5 +1,4 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from asyncio import gather
 import warnings
 from typing import List, Optional, Iterable, Sequence, Tuple
 import torch
@@ -246,12 +245,16 @@ class DeviceMesh(object):
         """
         return self._coordinate_on_dim[dim] if self._coordinate_on_dim else None
 
-    def _pad_tensor_dim_by_1(self, tensor, dim):
+    def _pad_tensor_dim_by_1(
+        self, tensor: torch.Tensor, dim: int
+    ) -> torch.Tensor:
         pad = [0, 0] * (tensor.ndim - dim)
         pad[-1] = 1
         return F.pad(tensor, pad)
 
-    def _unpad_tensor_dim_by_1(self, tensor, dim):
+    def _unpad_tensor_dim_by_1(
+        self, tensor: torch.Tensor, dim: int
+    ) -> torch.Tensor:
         return tensor.narrow(dim, start=0, length=tensor.size(dim) - 1)
 
     def scatter(
@@ -365,7 +368,7 @@ class DeviceMesh(object):
     def all_gather(
         self,
         tensor: torch.Tensor,
-        output_shape: Tuple[int, ...],
+        output_shape: Sequence[int],
         mesh_dim: int = 0,
         tensor_dim: int = 0,
     ) -> torch.Tensor:
@@ -390,7 +393,9 @@ class DeviceMesh(object):
         num_chunks = self.size(mesh_dim)
         _, rem = divmod(output_shape[tensor_dim], num_chunks)
         assert rem == 0, "output_shape must be divisible by num_chunks"
-        gathered_list = [CommTensor(torch.empty_like(tensor)) for _ in range(num_chunks)]
+        gathered_list = [
+            CommTensor(torch.empty_like(tensor)) for _ in range(num_chunks)
+        ]
 
         dim_group = self._dim_groups[mesh_dim]
         # N.B. CommTensor does not change eager mode behavior. During tracing, it
@@ -403,7 +408,7 @@ class DeviceMesh(object):
             tensor,
             group=dim_group,
         )
-        return torch.cat(gathered_list, dim=tensor_dim)
+        return torch.cat(gathered_list, dim=tensor_dim)  # pyre-ignore[6]
 
     # pyre-fixme[3]: Return type must be annotated.
     def all_reduce(

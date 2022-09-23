@@ -21,7 +21,10 @@ def distribute_tensor(
     specified. The rank of `device_mesh` and `placements` must be the same.
 
     Args:
-        tensor (torch.Tensor): torch.Tensor to be distributed
+        tensor (torch.Tensor): torch.Tensor to be distributed. Note that if you
+            want to shard a tensor on a dimension that is not evenly divisible by
+            the number of devices in that mesh dimension, we use `torch.tensor_split`
+            semantic to shard the tensor and scatter the shards.
         device_mesh (:class:`DeviceMesh`, optional): DeviceMesh to distribute the
             tensor, if not specified, must be called under a DeviceMesh context
             manager, default: None
