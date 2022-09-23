@@ -25,19 +25,19 @@ def _analyze_node_size(gm: pippy.fx.GraphModule) -> Dict[pippy.fx.Node, Dict[str
             param = state_dict[param_name]
             # Find use site of this parameter
             for user in node.users:
-                param_sizes = node_param_sizes.setdefault(user, {})
-                param_sizes.setdefault(param_name, param.numel())
+                func_param_sizes = node_param_sizes.setdefault(user, {})
+                func_param_sizes.setdefault(param_name, param.numel())
 
     # Module Parameter Usage
     for node in gm.graph.nodes:
         # We calcuate size of a user-defined submodule as a whole
         if node.op == 'call_module':
-            param_sizes : Dict[str, int] = {}
+            mod_param_sizes : Dict[str, int] = {}
             submod: torch.nn.Module = gm.get_submodule(node.target)
             for param_name, param in submod.named_parameters():
-                param_sizes.setdefault(param_name, param.numel())
-            if param_sizes:
-                node_param_sizes.setdefault(node, param_sizes)
+                mod_param_sizes.setdefault(param_name, param.numel())
+            if mod_param_sizes:
+                node_param_sizes.setdefault(node, mod_param_sizes)
 
     for node, param_sizes in node_param_sizes.items():
         logging.debug(f'{node} has params: {param_sizes}')
@@ -84,10 +84,10 @@ def split_on_size_threshold(mod : torch.nn.Module, threshold : int) -> Tuple[pip
         if (node.op == 'call_function'):
             # For function, the parameter it uses can be shared with other functions seen previously
             for param_name, size in param_sizes.items():
-                if param_name not in accumulate_params: # new parameter
+                if param_name not in accumulate_params:     # new parameter
                     new_params.setdefault(param_name)
                     new_size += size
-                else: # repeated parameter; mark down; use later
+                else:   # repeated parameter; mark down; use later
                     repeated_params.setdefault(param_name)
                     repeated_size += size
         elif (node.op == 'call_module'):
@@ -95,10 +95,10 @@ def split_on_size_threshold(mod : torch.nn.Module, threshold : int) -> Tuple[pip
             for param_name, size in param_sizes.items():
                 new_size += size
 
-        if accumulate_size + new_size <= threshold: # can accommodate this node in current bucket
+        if accumulate_size + new_size <= threshold:     # can accommodate this node in current bucket
             accumulate_size += new_size
             accumulate_params.update(new_params)
-        elif accumulate_size == 0 and new_size > threshold: # this node becomes a stage
+        elif accumulate_size == 0 and new_size > threshold:     # this node becomes a stage
             new_stage_before(node.next)
         else:   # cannot accommodate this node
             new_stage_before(node)
@@ -114,6 +114,6 @@ def split_on_size_threshold(mod : torch.nn.Module, threshold : int) -> Tuple[pip
 
     # Since we transformed the graph, we need to recompile the module
     gm.recompile()
-    
+
     nstages = len(insert_before_nodes) + 1
     return gm, nstages
