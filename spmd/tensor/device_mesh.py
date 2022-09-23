@@ -397,14 +397,17 @@ class DeviceMesh(object):
         self, input_tensor_list: List[torch.Tensor], mesh_dim: int = 0
     ) -> List[torch.Tensor]:
         # TODO: shall we make input tensors contiguous???
+        to_broadcast = [
+            CommTensor(tensor.contiguous()) for tensor in input_tensor_list
+        ]
         dim_group = self._dim_groups[mesh_dim]
         # all_to_all is not supported on 'gloo'
         if self.backend() == "gloo":
             raise RuntimeError(
                 f"torch.distributed.all_to_all does not support {self.backend()} backend."
             )
-        output_tensor_list = [torch.empty_like(input_tensor_list[0])] * len(
-            input_tensor_list
+        output_tensor_list = [torch.empty_like(to_broadcast[0])] * len(
+            to_broadcast
         )
-        all_to_all(output_tensor_list, input_tensor_list, dim_group)
+        all_to_all(output_tensor_list, to_broadcast, dim_group)
         return output_tensor_list

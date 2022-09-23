@@ -443,11 +443,20 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
             3, 3 * self.world_size, device=self.device_type
         )
         # chunk by dim 1 will make it non-contiguous
-        chunked_input_tensor_list = global_tensor.chunk(self.world_size, dim=1)
-        expected_tensor_list = chunked_input_tensor_list[self.rank] * self.world_size
-        output_tensor_list = mesh.all_to_all(chunked_input_tensor_list, mesh_dim=0)
-        self.assertEqual(output_tensor_list[0].shape, expected_tensor_list[0].shape)
+        chunked_input_tensor_list = list(
+            global_tensor.chunk(self.world_size, dim=1)
+        )
+        expected_tensor_list = [
+            chunked_input_tensor_list[self.rank]
+        ] * self.world_size
+        output_tensor_list = mesh.all_to_all(
+            chunked_input_tensor_list, mesh_dim=0
+        )
+        self.assertEqual(
+            output_tensor_list[0].shape, expected_tensor_list[0].shape
+        )
         self.assertEqual(output_tensor_list, expected_tensor_list)
+
 
 if __name__ == "__main__":
     run_tests()
