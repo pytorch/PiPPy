@@ -1,7 +1,9 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+from asyncio import gather
 import warnings
-from typing import List, Optional, Iterable, Sequence
+from typing import List, Optional, Iterable, Sequence, Tuple
 import torch
+import torch.nn.functional as F
 from torch.distributed._spmd.comm_tensor import CommTensor
 from torch.distributed.distributed_c10d import (
     all_gather,
@@ -244,6 +246,14 @@ class DeviceMesh(object):
         """
         return self._coordinate_on_dim[dim] if self._coordinate_on_dim else None
 
+    def _pad_tensor_dim_by_1(self, tensor, dim):
+        pad = [0, 0] * (tensor.ndim - dim)
+        pad[-1] = 1
+        return F.pad(tensor, pad)
+
+    def _unpad_tensor_dim_by_1(self, tensor, dim):
+        return tensor.narrow(dim, start=0, length=tensor.size(dim) - 1)
+
     def scatter(
         self,
         tensor_to_scatter: torch.Tensor,
@@ -284,60 +294,41 @@ class DeviceMesh(object):
         scatter_list = list(
             tensor_to_scatter.tensor_split(num_chunks, dim=tensor_dim)
         )
-        if self._backend == "gloo":
-            # gloo does not support uneven scattering, we need to resize tensor
-            # before really calling scatter, the first shape is always bigger
-            # TODO: remove this logic once ProcessGroupGloo suupport uneven list
-            scatter_shape = scatter_list[0].shape
-            my_rank_shape = scatter_list[my_coordinate].shape
-            to_scatter = []
-            for scatter_tensor in scatter_list:
-                scatter_tensor = scatter_tensor.contiguous()
-                if scatter_tensor.shape != scatter_shape:
-                    scatter_tensor.resize_(scatter_shape)
-                to_scatter.append(scatter_tensor)
-
-            # N.B.: the `tensor` below will be a CommTensor too due to CommTensor's
-            # propagation rule: propagte wrapping until communication is called.
-            # This is necessary in order to properly trigger CommTensor's dispatch
-            # function for scatter_.
-            tensor = torch.empty_like(to_scatter[my_coordinate])
-            if src_for_dim == get_rank():
-                scatter(
-                    tensor,
-                    scatter_list=to_scatter,
-                    src=src_for_dim,
-                    group=dim_group,
-                )
-            else:
-                scatter(
-                    tensor, scatter_list=None, src=src_for_dim, group=dim_group
-                )
-
-            # resize to uneven size if needed
-            if my_rank_shape != tensor.shape:
-                tensor.resize_(my_rank_shape)
-            return tensor
-        elif self._backend == "nccl":
-            to_scatter = [tensor.contiguous() for tensor in scatter_list]
-
-            tensor = torch.empty_like(to_scatter[my_coordinate])
-            if src_for_dim == get_rank():
-                scatter(
-                    tensor,
-                    scatter_list=to_scatter,
-                    src=src_for_dim,
-                    group=dim_group,
-                )
-            else:
-                scatter(
-                    tensor, scatter_list=None, src=src_for_dim, group=dim_group
-                )
-            return tensor
-        else:
-            raise RuntimeError(
-                f"backend {self._backend} not supporting scatter!"
+        # gloo does not support uneven scattering, nccl supports it, but it
+        # might be slow compare to even size collective, we need to pad tensor
+        # before really calling scatter, and unpad/narrow it after the collective
+        # TODO: consider if we should remove this logic once ProcessGroupGloo
+        # suupport uneven list, and collective perfomance on par
+        idx_start_to_pad = tensor_to_scatter.size(tensor_dim) % num_chunks
+        to_scatter = []
+        for i, scatter_tensor in enumerate(scatter_list):
+            if idx_start_to_pad != 0 and i >= idx_start_to_pad:
+                scatter_tensor = self._pad_tensor_dim_by_1(scatter_tensor, tensor_dim)
+            scatter_tensor = scatter_tensor.contiguous()
+            to_scatter.append(CommTensor(scatter_tensor))
+                
+        # N.B.: the `tensor` below will be a CommTensor too due to CommTensor's
+        # propagation rule: propagte wrapping until communication is called.
+        # This is necessary in order to properly trigger CommTensor's dispatch
+        # function for scatter_.
+        tensor = torch.empty_like(to_scatter[my_coordinate])
+        if src_for_dim == get_rank():
+            scatter(
+                tensor,
+                scatter_list=to_scatter,
+                src=src_for_dim,
+                group=dim_group,
             )
+        else:
+            scatter(
+                tensor, scatter_list=None, src=src_for_dim, group=dim_group
+            )
+
+        # resize to uneven size if needed
+        if idx_start_to_pad != 0 and my_coordinate >= idx_start_to_pad:
+            # tensor = tensor.narrow(tensor_dim, start=0, length=tensor.size(tensor_dim) - 1)
+            tensor = self._unpad_tensor_dim_by_1(tensor, tensor_dim)
+        return tensor
 
     def broadcast(
         self, tensor: torch.Tensor, mesh_dim: int = 0
@@ -373,8 +364,8 @@ class DeviceMesh(object):
 
     def all_gather(
         self,
-        output_tensor: torch.Tensor,
         tensor: torch.Tensor,
+        output_shape: Tuple[int, ...],
         mesh_dim: int = 0,
         tensor_dim: int = 0,
     ) -> torch.Tensor:
@@ -397,10 +388,9 @@ class DeviceMesh(object):
             A :class:`torch.Tensor` object
         """
         num_chunks = self.size(mesh_dim)
-        split_list = list(
-            output_tensor.tensor_split(num_chunks, dim=tensor_dim)
-        )
-        gathered_list = [tensor.contiguous() for tensor in split_list]
+        _, rem = divmod(output_shape[tensor_dim], num_chunks)
+        assert rem == 0, "output_shape must be divisible by num_chunks"
+        gathered_list = [CommTensor(torch.empty_like(tensor)) for _ in range(num_chunks)]
 
         dim_group = self._dim_groups[mesh_dim]
         # N.B. CommTensor does not change eager mode behavior. During tracing, it
@@ -413,7 +403,7 @@ class DeviceMesh(object):
             tensor,
             group=dim_group,
         )
-        return output_tensor
+        return torch.cat(gathered_list, dim=tensor_dim)
 
     # pyre-fixme[3]: Return type must be annotated.
     def all_reduce(
