@@ -422,6 +422,18 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
             received_tensor = mesh.scatter(scattered_tensors, mesh_dim=dim)
             self.assertEqual(received_tensor, torch.ones(3, 3) * self.rank)
 
+    @with_comms
+    def test_all_to_all_1d(self):
+        mesh = DeviceMesh(self.device_type, torch.arange(self.world_size))
+        input_tensor_list = [
+            torch.ones(3, 3, device=self.device_type) * rank
+            for rank in range(self.world_size)
+        ]
+        output_tensor_list = mesh.all_to_all(input_tensor_list, mesh_dim=0)
+        expected_tensor_list = [
+            torch.ones(3, 3, device=self.device_type) * rank
+        ] * self.world_size
+        self.assertEqual(output_tensor_list, expected_tensor_list)
 
 if __name__ == "__main__":
     run_tests()
