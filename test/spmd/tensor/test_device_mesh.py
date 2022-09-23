@@ -467,7 +467,8 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
                 torch.ones(3, 3, device=self.device_type) * global_rank
                 for global_rank in global_ranks
             ]
-            received_tensor = mesh.scatter(scattered_tensors, mesh_dim=dim)
+            tensor_to_scatter = torch.cat(scattered_tensors)
+            received_tensor = mesh.scatter(tensor_to_scatter, mesh_dim=dim)
             self.assertEqual(received_tensor, torch.ones(3, 3) * self.rank)
 
 

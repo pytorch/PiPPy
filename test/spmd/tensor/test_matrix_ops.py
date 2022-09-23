@@ -122,6 +122,29 @@ class DistMatrixOpsTest(DistTensorTestBase):
         self.assertEqual(tranposed_mat2.size(), torch.Size([12, 8]))
         self.assertEqual(tranposed_mat2.placements, shard_spec)
 
+    @with_comms
+    def test_t_partial(self):
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+
+        a = torch.randn(12, 8)
+        b = torch.randn(8, 4)
+        c = torch.mm(a, b).t()
+
+        da = distribute_tensor(a, device_mesh, [Shard(1)])
+        db = distribute_tensor(b, device_mesh, [Shard(0)])
+
+        # mm(da, db) should return a _Partial tensor.
+        # transposing it should keep it _Partial
+        dc = torch.mm(da, db).t()
+
+        self.assertTrue(isinstance(dc.placements[0], _Partial))
+
+        # check that the local and distributed op results match
+        self.assertEqual(
+            c,
+            dc.redistribute(device_mesh, [Replicate()]).to_local(),
+        )
+
     # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
     @with_comms
     @skip_if_lt_x_gpu(TEST_GPU_NUM)
