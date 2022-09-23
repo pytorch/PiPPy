@@ -396,13 +396,14 @@ class DeviceMesh(object):
     def all_to_all(
         self, input_tensor_list: List[torch.Tensor], mesh_dim: int = 0
     ) -> List[torch.Tensor]:
-        # TODO: shall we make input tensors contiguous???
+        # input tensors are expected to be congtiguous by the collective backend
         to_broadcast = [
             CommTensor(tensor.contiguous()) for tensor in input_tensor_list
         ]
         dim_group = self._dim_groups[mesh_dim]
         # all_to_all is not supported on 'gloo'
         if self.backend() == "gloo":
+            # TODO: use othre backend collec ops to perform all-to-all
             raise RuntimeError(
                 f"torch.distributed.all_to_all does not support {self.backend()} backend."
             )

@@ -457,6 +457,27 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
         )
         self.assertEqual(output_tensor_list, expected_tensor_list)
 
+    @with_comms
+    def test_all_to_all_nd(self):
+        mesh_tensor = torch.arange(8).reshape(2, 2, 2)
+        mesh = DeviceMesh(self.device_type, mesh_tensor)
+
+        # check all dim groups
+        dim_to_subgroups = mesh.get_dim_groups()
+        for dim, dim_group in enumerate(dim_to_subgroups):
+            dim_group_size = get_world_size(dim_group)
+            global_ranks = [
+                get_global_rank(dim_group, i) for i in range(dim_group_size)
+            ]
+            input_tensor_list = [
+                torch.ones(3, 3, device=self.device_type) * global_rank
+                for global_rank in global_ranks
+            ]
+            output_tensor_list = mesh.all_to_all(input_tensor_list, mesh_dim=dim)
+            expected_tensor_list = [
+                torch.ones(3, 3, device=self.device_type) * self.rank
+            ] * dim_group_size
+            self.assertEqual(output_tensor_list, expected_tensor_list)
 
 if __name__ == "__main__":
     run_tests()
