@@ -99,7 +99,9 @@ def redistribute_dtensor(
                     local_tensor, partial_spec.reduce_op, mesh_dim=i
                 )
             elif current.is_shard():
-                assert current.is_shard()
+                assert (
+                    current.is_shard()
+                ), f"Current placement should be shard but found {current}"
                 # for shard, all_gather all shards and return a tensor that
                 # is replicated on the previously sharded dimension
                 shard_spec = cast(Shard, current)
@@ -136,7 +138,11 @@ def redistribute_dtensor(
                     target_dim, my_rank * chunk_size, chunk_size
                 )
             else:
-                assert current.is_shard()
+                # NOTE: this case shouldn't hit _decompose_sharding, decompose sharding should
+                # decompose Shard(0) -> Shard(1) into Shard(0) -> Replicate -> Shard(1)
+                assert (
+                    current.is_shard()
+                ), f"Current placement should be shard but found {current}"
                 shard_spec = cast(Shard, current)
                 if shard_spec.dim != target_dim:
                     # TODO: enable this with all_to_all
