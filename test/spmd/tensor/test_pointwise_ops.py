@@ -24,6 +24,8 @@ from spmd.tensor.placement_types import (
 from torch.distributed.distributed_c10d import ReduceOp
 from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 
+import torch.utils._pytree as pytree
+
 
 def deepcopy_convert_to_dtensor(
     val: Any,
@@ -37,34 +39,17 @@ def deepcopy_convert_to_dtensor(
     :param placements: the Placement list to use.
     :return: the transformed structure.
     """
-    if isinstance(val, Tensor):
-        return distribute_tensor(
-            val,
-            device_mesh=device_mesh,
-            placements=placements,
-        )
 
-    if isinstance(val, Sequence):
-        return [
-            deepcopy_convert_to_dtensor(
+    def f(x):
+        if isinstance(x, Tensor) and not isinstance(x, DTensor):
+            return distribute_tensor(
                 x,
                 device_mesh=device_mesh,
                 placements=placements,
             )
-            for x in val
-        ]
+        return x
 
-    if isinstance(val, Dict):
-        return {
-            k: deepcopy_convert_to_dtensor(
-                v,
-                device_mesh=device_mesh,
-                placements=placements,
-            )
-            for k, v in val.items()
-        }
-
-    return val
+    return pytree.tree_map(f, [val])[0]
 
 
 def deepcopy_convert_from_dtensor(val: Any) -> Any:
@@ -74,16 +59,16 @@ def deepcopy_convert_from_dtensor(val: Any) -> Any:
     :param val: the structure to coerce.
     :return: the coerced structure.
     """
-    if isinstance(val, DTensor):
-        return val.to_local()
 
-    if isinstance(val, Sequence):
-        return [deepcopy_convert_from_dtensor(x) for x in val]
+    def f(x):
+        if isinstance(x, DTensor):
+            return x.redistribute(
+                device_mesh=x.device_mesh,
+                placements=[Replicate()],
+            ).to_local()
+        return x
 
-    if isinstance(val, Dict):
-        return {k: deepcopy_convert_from_dtensor(v) for k, v in val.items()}
-
-    return val
+    return pytree.tree_map(f, [val])[0]
 
 
 class DistElementwiseOpsTest(DistTensorTestBase):
@@ -93,10 +78,14 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         device_mesh: DeviceMesh,
         placements: Sequence[Placement],
         op: Callable,
-        reset_seed: Optional[Callable] = None,
+        reset: Optional[Callable] = None,
         args: Sequence[Any] = tuple(),
         kwargs: Optional[Dict[str, Any]] = None,
+        verify_args: bool = True,
     ):
+        if reset is None:
+            reset = lambda: None
+
         if not kwargs:
             kwargs = {}
 
@@ -113,13 +102,23 @@ class DistElementwiseOpsTest(DistTensorTestBase):
             placements=placements,
         )
 
-        reset_seed() if reset_seed else None
+        if verify_args:
+            self.assertEqual(
+                args,
+                deepcopy_convert_from_dtensor(args),
+            )
+            self.assertEqual(
+                kwargs,
+                deepcopy_convert_from_dtensor(dkwargs),
+            )
+
+        reset()
 
         # run the reference first, in case the call is broken;
         # it's better to debug an incorrect call at this point.
         reference_result = op(*args, **kwargs)
 
-        reset_seed() if reset_seed else None
+        reset()
 
         dist_result = op(*dargs, **dkwargs)
 
@@ -131,21 +130,23 @@ class DistElementwiseOpsTest(DistTensorTestBase):
     def _run_sharded_elementwise_ops(
         self,
         *,
-        mesh,
-        spec,
+        device_mesh,
+        placements,
         input_size,
         op,
         reset_seed=None,
         **kwargs,
     ):
         input_tensor = torch.randn(
-            *input_size, device=self.device_type, requires_grad=True
+            *input_size,
+            device=self.device_type,
+            requires_grad=True,
         )
 
         self._compare_pairwise_ops(
-            device_mesh=mesh,
-            placements=spec,
-            reset_seed=reset_seed,
+            device_mesh=device_mesh,
+            placements=placements,
+            reset=reset_seed,
             op=op,
             args=(input_tensor,),
             kwargs=kwargs,
@@ -155,38 +156,38 @@ class DistElementwiseOpsTest(DistTensorTestBase):
     def test_activations(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         self._run_sharded_elementwise_ops(
-            mesh=device_mesh,
-            spec=[Shard(0)],
+            device_mesh=device_mesh,
+            placements=[Shard(0)],
             input_size=(8, 5),
             op=torch.nn.functional.gelu,
         )
         self._run_sharded_elementwise_ops(
-            mesh=device_mesh,
-            spec=[Replicate()],
+            device_mesh=device_mesh,
+            placements=[Replicate()],
             input_size=(8, 5),
             op=torch.nn.functional.gelu,
         )
         self._run_sharded_elementwise_ops(
-            mesh=device_mesh,
-            spec=[Shard(1)],
+            device_mesh=device_mesh,
+            placements=[Shard(1)],
             input_size=(3, 14),
             op=torch.nn.functional.relu,
         )
         self._run_sharded_elementwise_ops(
-            mesh=device_mesh,
-            spec=[Replicate()],
+            device_mesh=device_mesh,
+            placements=[Replicate()],
             input_size=(8, 5),
             op=torch.nn.functional.relu,
         )
         self._run_sharded_elementwise_ops(
-            mesh=device_mesh,
-            spec=[Shard(0)],
+            device_mesh=device_mesh,
+            placements=[Shard(0)],
             input_size=(8, 5),
             op=torch.sigmoid,
         )
         self._run_sharded_elementwise_ops(
-            mesh=device_mesh,
-            spec=[Replicate()],
+            device_mesh=device_mesh,
+            placements=[Replicate()],
             input_size=(8, 5),
             op=torch.sigmoid,
         )
@@ -197,18 +198,21 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         def _reset_random_seed():
             torch.manual_seed(self.rank + 4)
 
-        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        device_mesh = DeviceMesh(
+            self.device_type,
+            list(range(self.world_size)),
+        )
         self._run_sharded_elementwise_ops(
-            mesh=device_mesh,
-            spec=[Shard(0)],
+            device_mesh=device_mesh,
+            placements=[Shard(0)],
             input_size=(8, 5),
             op=torch.nn.functional.dropout,
             p=0.4,
             training=False,
         )
         self._run_sharded_elementwise_ops(
-            mesh=device_mesh,
-            spec=[Shard(1)],
+            device_mesh=device_mesh,
+            placements=[Shard(1)],
             input_size=(3, 14),
             op=torch.nn.functional.dropout,
             reset_seed=_reset_random_seed,
@@ -219,7 +223,10 @@ class DistElementwiseOpsTest(DistTensorTestBase):
     @with_comms
     @skip_if_lt_x_gpu(TEST_GPU_NUM)
     def test_dropout_backward(self):
-        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        device_mesh = DeviceMesh(
+            self.device_type,
+            list(range(self.world_size)),
+        )
         placements = [Shard(0)]
 
         input_size = (8, 5)
@@ -252,11 +259,14 @@ class DistElementwiseOpsTest(DistTensorTestBase):
     @with_comms
     @skip_if_lt_x_gpu(TEST_GPU_NUM)
     def test_dropout_errors(self):
-        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        device_mesh = DeviceMesh(
+            self.device_type,
+            list(range(self.world_size)),
+        )
         with self.assertRaisesRegex(RuntimeError, "Not supported!"):
             self._run_sharded_elementwise_ops(
-                mesh=device_mesh,
-                spec=[_Partial(ReduceOp.SUM)],
+                device_mesh=device_mesh,
+                placements=[_Partial(ReduceOp.SUM)],
                 input_size=(8, 5),
                 op=torch.nn.functional.dropout,
             )
@@ -271,14 +281,10 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         dtensor = DTensor.from_local(input_tensor, device_mesh, shard_spec)
 
         other_tensor = torch.randn(*input_size, device=self.device_type)
-        other_dtensor = DTensor.from_local(
-            other_tensor, device_mesh, shard_spec
-        )
+        other_dtensor = DTensor.from_local(other_tensor, device_mesh, shard_spec)
 
         output_tensor = torch.randn(*input_size, device=self.device_type)
-        output_dtensor = DTensor.from_local(
-            output_tensor, device_mesh, shard_spec
-        )
+        output_dtensor = DTensor.from_local(output_tensor, device_mesh, shard_spec)
         dt = torch.mul(dtensor, other_dtensor, out=output_dtensor)
         expected = torch.mul(input_tensor, other_tensor, out=output_tensor)
         self.assertEqual(input_tensor, dtensor.to_local())
@@ -290,16 +296,10 @@ class DistElementwiseOpsTest(DistTensorTestBase):
 
         # propagate point-wise sharding
         inp1, inp2 = [-1, -1], [-1, 0]
-        mat1_spec = DTensorSpec.from_dim_map(
-            mesh, inp1, [], shape=torch.Size([8, 4])
-        )
-        mat2_spec = DTensorSpec.from_dim_map(
-            mesh, inp2, [], shape=torch.Size([8, 4])
-        )
+        mat1_spec = DTensorSpec.from_dim_map(mesh, inp1, [], shape=torch.Size([8, 4]))
+        mat2_spec = DTensorSpec.from_dim_map(mesh, inp2, [], shape=torch.Size([8, 4]))
         # adding a positional argument -1 to arg schema
-        output_sharding = pointwise_rule(
-            OpSchema((mat1_spec, mat2_spec, -1), {})
-        )
+        output_sharding = pointwise_rule(OpSchema((mat1_spec, mat2_spec, -1), {}))
         self.assertIsNone(output_sharding.output_spec)
         self.assertIsNotNone(output_sharding.schema_suggestions)
 
