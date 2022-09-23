@@ -438,5 +438,6 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
         ] * self.world_size
         self.assertEqual(output_tensor_list, expected_tensor_list)
 
+
 if __name__ == "__main__":
     run_tests()
