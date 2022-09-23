@@ -83,7 +83,7 @@ def addmm_rules(op_schema: OpSchema) -> OutputSharding:
 
 @register_prop_rule("aten.t.default")
 def transpose_rule(op_schema: OpSchema) -> OutputSharding:
-    return einop_rule("ij->ji", op_schema)
+    return einop_rule("ij->ji", op_schema, linearity=True)
 
 
 @register_prop_rule("aten.bmm.default")
