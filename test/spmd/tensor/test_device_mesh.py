@@ -243,25 +243,18 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
     @with_comms
     def test_scatter_1d(self):
         mesh = DeviceMesh(self.device_type, torch.arange(self.world_size))
-        tensor_list = [
-            torch.ones(3, 3, device=self.device_type) * rank
-            for rank in range(self.world_size)
-        ]
-        scattered_tensor = mesh.scatter(tensor_list, mesh_dim=0)
-        self.assertEqual(scattered_tensor, torch.ones(3, 3) * self.rank)
-
-        # slight complicate use case
-        # fix the random seed
-        torch.manual_seed(0)
-        global_tensor = torch.randn(
-            3, 3 * self.world_size, device=self.device_type
-        )
-        # chunk by dim 1 will make it non-contiguous
-        chunked_list = global_tensor.chunk(self.world_size, dim=1)
-        # test if scatter still works
-        local_tensor = mesh.scatter(chunked_list, mesh_dim=0)
-        self.assertEqual(local_tensor.shape, torch.Size((3, 3)))
-        self.assertEqual(local_tensor, chunked_list[self.rank])
+        scatter_tensor_shape = [3, 3, 3]
+        for scatter_dim in range(len(scatter_tensor_shape)):
+            scatter_tensor_shape[scatter_dim] *= self.world_size
+            # make the random seed same across rank
+            torch.manual_seed(0)
+            global_tensor = torch.randn(
+                scatter_tensor_shape, device=self.device_type
+            )
+            splitted_list = global_tensor.tensor_split(mesh.size(), scatter_dim)
+            # scatter on dim > 0 would generate non-contiguous tensor, verify that works
+            scattered_tensor = mesh.scatter(global_tensor, mesh_dim=0, tensor_dim=scatter_dim)
+            self.assertEqual(scattered_tensor, splitted_list[mesh.get_rank()])
 
     @with_comms
     def test_scatter_uneven(self):
