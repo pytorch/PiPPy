@@ -377,10 +377,13 @@ class DeviceMesh(object):
         device mesh dimension.
 
         Args:
-            output_tensor (torch.Tensor): output tensor of the all_gather call,
-                all_gather will inplace update this tensor. It's the caller's
-                responsibility to pass a properly sized tensor.
             tensor (torch.Tensor): tensor to be gathered on each rank.
+            output_shape (Tuple[int, ...]): output shape of the all_gather call,
+                this is needed because we need to know the proper size of each
+                receving tensor on each rank in order to call dist.all_gather,
+                as sometimes we have uneven sharding on the mesh dimension. We
+                use torch.tensor_split semantics to construct the recv tensor
+                and cat them to the output_shape.
             mesh_dim (int, optional): indicate which mesh dimension we want
                 to scatter on, we by default choose the first rank on the
                 mesh dimension as source of truth.
