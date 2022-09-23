@@ -8,6 +8,7 @@ from torch.distributed.distributed_c10d import (
     get_world_size,
 )
 from torch.testing._internal.common_utils import run_tests
+from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 from spmd.testing.common_utils import (  # type: ignore
     DistTensorTestBase,
     with_comms,
@@ -423,7 +424,9 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
             self.assertEqual(received_tensor, torch.ones(3, 3) * self.rank)
 
     @with_comms
+    @skip_if_lt_x_gpu(8)  # meaning self.world_size but self is not in scope
     def test_all_to_all_1d(self):
+        print(f"required gpu num = {TEST_GPU_NUM}, {self.world_size}")
         mesh = DeviceMesh(self.device_type, torch.arange(self.world_size))
         input_tensor_list = [
             torch.ones(3, 3, device=self.device_type) * rank
