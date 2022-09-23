@@ -426,7 +426,6 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
     @with_comms
     @skip_if_lt_x_gpu(8)  # meaning self.world_size but self is not in scope
     def test_all_to_all_1d(self):
-        print(f"required gpu num = {TEST_GPU_NUM}, {self.world_size}")
         mesh = DeviceMesh(self.device_type, torch.arange(self.world_size))
         input_tensor_list = [
             torch.ones(3, 3, device=self.device_type) * rank
@@ -438,6 +437,17 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
         ] * self.world_size
         self.assertEqual(output_tensor_list, expected_tensor_list)
 
+        # broadcast non-contiguous tensors
+        # fix the random seed
+        global_tensor = torch.randn(
+            3, 3 * self.world_size, device=self.device_type
+        )
+        # chunk by dim 1 will make it non-contiguous
+        chunked_input_tensor_list = global_tensor.chunk(self.world_size, dim=1)
+        expected_tensor_list = chunked_input_tensor_list[self.rank] * self.world_size
+        output_tensor_list = mesh.all_to_all(chunked_input_tensor_list, mesh_dim=0)
+        self.assertEqual(output_tensor_list[0].shape, expected_tensor_list[0].shape)
+        self.assertEqual(output_tensor_list, expected_tensor_list)
 
 if __name__ == "__main__":
     run_tests()
