@@ -401,9 +401,7 @@ class DeviceMesh(object):
         to_scatter = [
             CommTensor(tensor.contiguous()) for tensor in input_tensor_list
         ]
-        output_tensor_list = [torch.empty_like(to_scatter[0])] * len(
-            to_scatter
-        )
+        output_tensor_list = [torch.empty_like(to_scatter[0])] * len(to_scatter)
         dim_group = self._dim_groups[mesh_dim]
 
         # no direct dist.all_to_all support on 'gloo' so we manually do scatters
@@ -418,9 +416,19 @@ class DeviceMesh(object):
                 if dim_group is not GroupMember.WORLD:
                     src_for_dim = get_global_rank(dim_group, i)
                 if src_for_dim == get_rank():
-                    scatter(tensor, scatter_list=to_scatter, src=src_for_dim, group=dim_group)
+                    scatter(
+                        tensor,
+                        scatter_list=to_scatter,
+                        src=src_for_dim,
+                        group=dim_group,
+                    )
                 else:
-                    scatter(tensor, scatter_list=None, src=src_for_dim, group=dim_group)
+                    scatter(
+                        tensor,
+                        scatter_list=None,
+                        src=src_for_dim,
+                        group=dim_group,
+                    )
         else:
             all_to_all(output_tensor_list, to_scatter, dim_group)
         return output_tensor_list

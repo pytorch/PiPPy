@@ -8,7 +8,6 @@ from torch.distributed.distributed_c10d import (
     get_world_size,
 )
 from torch.testing._internal.common_utils import run_tests
-from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 from spmd.testing.common_utils import (  # type: ignore
     DistTensorTestBase,
     with_comms,
@@ -472,11 +471,14 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
                 torch.ones(3, 3, device=self.device_type) * global_rank
                 for global_rank in global_ranks
             ]
-            output_tensor_list = mesh.all_to_all(input_tensor_list, mesh_dim=dim)
+            output_tensor_list = mesh.all_to_all(
+                input_tensor_list, mesh_dim=dim
+            )
             expected_tensor_list = [
                 torch.ones(3, 3, device=self.device_type) * self.rank
             ] * dim_group_size
             self.assertEqual(output_tensor_list, expected_tensor_list)
+
 
 if __name__ == "__main__":
     run_tests()
