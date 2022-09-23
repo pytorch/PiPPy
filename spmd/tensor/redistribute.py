@@ -108,16 +108,9 @@ def redistribute_dtensor(
                     i
                 )  # only works for evenly sharded tensors
                 # TODO: support uneven sharding
-                output_tensor = torch.empty(
-                    new_size,
-                    dtype=local_tensor.dtype,
-                    layout=local_tensor.layout,
-                    device=local_tensor.device,
-                )
-
                 new_local_tensor = device_mesh.all_gather(
-                    output_tensor,
                     local_tensor,
+                    new_size,
                     mesh_dim=i,
                     tensor_dim=shard_spec.dim,
                 )

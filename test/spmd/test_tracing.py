@@ -84,9 +84,7 @@ class TraceDeviceMeshTestBase:
             tensor_to_scatter = torch.cat(scattered_tensors)
 
             def fn(tensor_to_scatter: torch.Tensor):
-                received_tensor = mesh.scatter(
-                    tensor_to_scatter, mesh_dim=dim
-                )
+                received_tensor = mesh.scatter(tensor_to_scatter, mesh_dim=dim)
                 # multiply with 1 to trigger wait on read during tracing.
                 return received_tensor * 1
 
@@ -109,18 +107,13 @@ class TraceDeviceMeshTestBase:
                 get_global_rank(dim_group, i) for i in range(dim_group_size)
             ]
 
-            def fn(output_tensor: torch.Tensor, tensor: torch.Tensor):
-                return mesh.all_gather(
-                    output_tensor, tensor, mesh_dim=dim
-                )
+            def fn(tensor: torch.Tensor, output_shape):
+                return mesh.all_gather(tensor, output_shape, mesh_dim=dim)
 
-            res_tensor = torch.empty(
-                dim_group_size * 3, 3, device=self.device_type
-            )
             # use a local_tensor + 1 for tracing to make sure that we are not
             # simply replaying recorded tensor value
-            traced_fn = make_fx(fn)(res_tensor, local_tensor + 1)
-            gathered_tensor = traced_fn(res_tensor, local_tensor)
+            traced_fn = make_fx(fn)(local_tensor + 1, (dim_group_size * 3, 3))
+            gathered_tensor = traced_fn(local_tensor, (dim_group_size * 3, 3))
 
             exp_tensor = torch.ones(3 * dim_group_size, 3)
             for i in range(len(global_ranks)):

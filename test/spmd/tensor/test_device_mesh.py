@@ -270,11 +270,10 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
         for dim in dims_to_gather:
             output_size = [3, 3]
             output_size[dim] *= self.world_size
-            output_tensor = torch.empty(output_size, device=self.device_type)
             # each rank have its own tensor, all_gather gives a list
             local_tensor = torch.ones(3, 3, device=self.device_type)
             gathered_tensor = mesh.all_gather(
-                output_tensor, local_tensor, mesh_dim=0, tensor_dim=dim
+                local_tensor, output_size, mesh_dim=0, tensor_dim=dim
             )
             self.assertEqual(gathered_tensor, torch.ones(output_size))
 
@@ -309,11 +308,8 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
             global_ranks = [
                 get_global_rank(dim_group, i) for i in range(dim_group_size)
             ]
-            res_tensor = torch.empty(
-                dim_group_size * 3, 3, device=self.device_type
-            )
             gathered_tensor = mesh.all_gather(
-                res_tensor, local_tensor, mesh_dim=dim
+                local_tensor, (dim_group_size * 3, 3), mesh_dim=dim
             )
             exp_tensor = torch.ones(3 * dim_group_size, 3)
             for i in range(len(global_ranks)):
