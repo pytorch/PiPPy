@@ -431,7 +431,7 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
         ]
         output_tensor_list = mesh.all_to_all(input_tensor_list, mesh_dim=0)
         expected_tensor_list = [
-            torch.ones(3, 3, device=self.device_type) * rank
+            torch.ones(3, 3, device=self.device_type) * self.rank
         ] * self.world_size
         self.assertEqual(output_tensor_list, expected_tensor_list)
 
