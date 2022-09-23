@@ -137,6 +137,7 @@ pointwise_ops = [
     "aten.div_.Tensor",
     "aten.div_.Tensor_mode",
     "aten.eq.Tensor",
+    "aten.equal.default",
     "aten.erf.default",
     "aten.erf.out",
     "aten.erf_.default",
