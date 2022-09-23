@@ -424,7 +424,6 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
             self.assertEqual(received_tensor, torch.ones(3, 3) * self.rank)
 
     @with_comms
-    @skip_if_lt_x_gpu(8)  # meaning self.world_size but self is not in scope
     def test_all_to_all_1d(self):
         mesh = DeviceMesh(self.device_type, torch.arange(self.world_size))
         input_tensor_list = [

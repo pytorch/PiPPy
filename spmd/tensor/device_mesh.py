@@ -393,22 +393,34 @@ class DeviceMesh(object):
             chunks = reduced_tensor.chunk(num_chunks, dim=shard_dim)
             return self.scatter(chunks, mesh_dim=mesh_dim)
 
+    # TODO: rewrite interface to adopt PR #491, #492
     def all_to_all(
         self, input_tensor_list: List[torch.Tensor], mesh_dim: int = 0
     ) -> List[torch.Tensor]:
         # input tensors are expected to be congtiguous by the collective backend
-        to_broadcast = [
+        to_scatter = [
             CommTensor(tensor.contiguous()) for tensor in input_tensor_list
         ]
-        dim_group = self._dim_groups[mesh_dim]
-        # all_to_all is not supported on 'gloo'
-        if self.backend() == "gloo":
-            # TODO: use othre backend collec ops to perform all-to-all
-            raise RuntimeError(
-                f"torch.distributed.all_to_all does not support {self.backend()} backend."
-            )
-        output_tensor_list = [torch.empty_like(to_broadcast[0])] * len(
-            to_broadcast
+        output_tensor_list = [torch.empty_like(to_scatter[0])] * len(
+            to_scatter
         )
-        all_to_all(output_tensor_list, to_broadcast, dim_group)
+        dim_group = self._dim_groups[mesh_dim]
+
+        # no direct dist.all_to_all support on 'gloo' so we manually do scatters
+        if self.backend() == "gloo":
+            dim_group_size = get_world_size(dim_group)
+            global_ranks = [
+                get_global_rank(dim_group, i) for i in range(dim_group_size)
+            ]
+            for i in range(dim_group_size):
+                tensor = output_tensor_list[i]
+                src_for_dim = i
+                if dim_group is not GroupMember.WORLD:
+                    src_for_dim = get_global_rank(dim_group, i)
+                if src_for_dim == get_rank():
+                    scatter(tensor, scatter_list=to_scatter, src=src_for_dim, group=dim_group)
+                else:
+                    scatter(tensor, scatter_list=None, src=src_for_dim, group=dim_group)
+        else:
+            all_to_all(output_tensor_list, to_scatter, dim_group)
         return output_tensor_list
