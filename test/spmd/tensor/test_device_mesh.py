@@ -253,7 +253,9 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
             )
             splitted_list = global_tensor.tensor_split(mesh.size(), scatter_dim)
             # scatter on dim > 0 would generate non-contiguous tensor, verify that works
-            scattered_tensor = mesh.scatter(global_tensor, mesh_dim=0, tensor_dim=scatter_dim)
+            scattered_tensor = mesh.scatter(
+                global_tensor, mesh_dim=0, tensor_dim=scatter_dim
+            )
             self.assertEqual(scattered_tensor, splitted_list[mesh.get_rank()])
 
     @with_comms
