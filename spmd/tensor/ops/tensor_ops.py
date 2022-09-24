@@ -280,39 +280,46 @@ def prop_slice_scatter(op_schema: OpSchema) -> OutputSharding:
             ],
         )
 
+
 from typing import List, Optional
 
-#@register_prop_rule("aten.index_select.default")
+# @register_prop_rule("aten.index_select.default")
 def prop_index_select(op_schema: OpSchema) -> OutputSharding:
-    print('index_select', op_schema)
+    print("index_select", op_schema)
     values_spec, dim, indices_spec = op_schema.args_schema
     assert isinstance(values_spec, DTensorSpec)
     assert isinstance(dim, int)
     assert isinstance(indices_spec, DTensorSpec)
 
-    all_indices_spec: List[Optional[DTensorSpec]] = [None] * values_spec.mesh.ndim
+    all_indices_spec: List[Optional[DTensorSpec]] = [
+        None
+    ] * values_spec.mesh.ndim
     all_indices_spec[dim] = indices_spec
 
     # TODO: this will fail for suggestions.
-    return prop_index(OpSchema(
-        args_schema=(values_spec, all_indices_spec),
-        kwargs_schema=op_schema.kwargs_schema,
-    ))
+    return prop_index(
+        OpSchema(
+            args_schema=(values_spec, all_indices_spec),
+            kwargs_schema=op_schema.kwargs_schema,
+        )
+    )
+
 
 @register_prop_rule("aten.index_copy_.default")
 def prop_index_copy_default(op_schema: OpSchema) -> OutputSharding:
-    print('callin index_copy_default: ', op_schema)
+    print("callin index_copy_default: ", op_schema)
     # OpSchema(args_schema=(DTensorSpec(mesh=DeviceMesh:([0, 1, 2, 3]), placements=[Replicate()], shape=torch.Size([755000]), ndim=1), 0, DTensorSpec(mesh=DeviceMesh:([0, 1, 2, 3]), placements=[Shard(dim=0)], shape=torch.Size([1024]), ndim=1), DTensorSpec(mesh=DeviceMesh:([0, 1, 2, 3]), placements=[Shard(dim=0)], shape=torch.Size([1024]), ndim=1)), kwargs_schema={})
     return OutputSharding(output_spec=None)
 
 
 @register_prop_rule("aten.index_add_.default")
 def prop_index_add_default(op_schema: OpSchema) -> OutputSharding:
-    print('callin index_add_default: ', op_schema)
+    print("callin index_add_default: ", op_schema)
     return OutputSharding(output_spec=None)
 
 
 from typing import cast, Union
+
 
 @register_prop_rule("aten.index.Tensor")
 def prop_index(op_schema: OpSchema) -> OutputSharding:
@@ -320,13 +327,17 @@ def prop_index(op_schema: OpSchema) -> OutputSharding:
     Expect replicated on the first input; _mostly_ pointwise on the second input.
     TODO: exception: when the dtype of second input is "bool", then a torch.nonzero needs to be triggered first.
     """
-    print('calling index::::', op_schema)
+    print("calling index::::", op_schema)
     values_spec, multi_indices_spec = op_schema.args_schema
     assert isinstance(values_spec, DTensorSpec)
-    multi_indices_spec = cast(Union[DTensorSpec, List[DTensorSpec]], multi_indices_spec)
+    multi_indices_spec = cast(
+        Union[DTensorSpec, List[DTensorSpec]], multi_indices_spec
+    )
 
     if isinstance(multi_indices_spec, list):
-        valid_indices_spec = [(i, a) for i, a in enumerate(multi_indices_spec) if a is not None]
+        valid_indices_spec = [
+            (i, a) for i, a in enumerate(multi_indices_spec) if a is not None
+        ]
     else:
         valid_indices_spec = [(0, multi_indices_spec)]
         multi_indices_spec = [multi_indices_spec]
@@ -338,18 +349,21 @@ def prop_index(op_schema: OpSchema) -> OutputSharding:
     # 2. other dimensions of values is not sharded on a mesh dimension that indices is also sharded in.
     # 3. no pending reduction on indices
 
-
     # 1. All indices have to be sharded equally. Moreover, indices can be broadcast.
     #    Here, we piggyback on the pointwise sharding rule for indices.
-    indices_out = pointwise_rule(OpSchema(args_schema=tuple(v[1] for v in valid_indices_spec), kwargs_schema={}))
+    indices_out = pointwise_rule(
+        OpSchema(
+            args_schema=tuple(v[1] for v in valid_indices_spec),
+            kwargs_schema={},
+        )
+    )
     need_reshard_on_indices = indices_out.output_spec is None
 
     indices_suggestion: List[Optional[DTensorSpec]] = multi_indices_spec
     if not need_reshard_on_indices:
         # this means that our inputs are already sharded properly and we will use that as our indices_spec
-        assert isinstance(indices_out.output_spec, tuple)
-        assert isinstance(indices_out.output_spec[0], DTensorSpec)
-        indices_spec = indices_out.output_spec[0]
+        assert isinstance(indices_out.output_spec, DTensorSpec)
+        indices_spec = indices_out.output_spec
     else:
         assert indices_out.schema_suggestions is not None
         valid_indices_suggestion = indices_out.schema_suggestions[0]
@@ -357,15 +371,20 @@ def prop_index(op_schema: OpSchema) -> OutputSharding:
             indices_suggestion[valid_indices_spec[i][0]] = v
         # we'll need to call pointwise_rule again to see what's our ideal indices_spec and then
         # use that to compute our ideal values_spec
-        indices_output_spec = pointwise_rule(valid_indices_suggestion).output_spec
-        assert isinstance(indices_output_spec, tuple)
-        indices_spec = indices_output_spec[0]
+        indices_output_spec = pointwise_rule(
+            valid_indices_suggestion
+        ).output_spec
+        assert isinstance(indices_output_spec, DTensorSpec)
+        indices_spec = indices_output_spec
 
     lookup_dims = set(v[0] for v in valid_indices_spec)
 
     need_reshard_on_values = tuple(
-            (isinstance(vp, Shard) and (vp.dim in lookup_dims or isinstance(ip, Shard)))
-            for vp, ip in zip(values_spec.placements, indices_spec.placements)
+        (
+            isinstance(vp, Shard)
+            and (vp.dim in lookup_dims or isinstance(ip, Shard))
+        )
+        for vp, ip in zip(values_spec.placements, indices_spec.placements)
     )
 
     if not need_reshard_on_indices and not any(need_reshard_on_values):
@@ -386,33 +405,49 @@ def prop_index(op_schema: OpSchema) -> OutputSharding:
             vp = values_spec.placements[mesh_dim]
             ip = indices_spec.placements[mesh_dim]
             if isinstance(vp, Shard):
-                return Shard(vp.dim if vp.dim < insert_dim else vp.dim + valid_indices_spec[0][1].ndim - 1)
+                return Shard(
+                    vp.dim
+                    if vp.dim < insert_dim
+                    else vp.dim + valid_indices_spec[0][1].ndim - 1
+                )
             if isinstance(ip, Shard):
                 return Shard(ip.dim + insert_dim)
             # _Partial or Replicated
             return vp
 
         value_placements = tuple(place(i) for i in range(values_spec.mesh.ndim))
-        value_shape = torch.Size(value_shape[:insert_dim] + indices_spec.shape + value_shape[insert_dim+1:])
+        value_shape = torch.Size(
+            value_shape[:insert_dim]
+            + indices_spec.shape
+            + value_shape[insert_dim + 1 :]
+        )
 
-        return OutputSharding(output_spec=DTensorSpec(
+        return OutputSharding(
+            output_spec=DTensorSpec(
                 mesh=values_spec.mesh,
                 placements=value_placements,
                 shape=value_shape,
                 ndim=len(value_shape),
-        ))
+            )
+        )
     else:
         # TODO: multi_indices_spec needs to be modified to replicate pending sum indices
         return OutputSharding(
             output_spec=None,
             schema_suggestions=[
                 OpSchema(
-                    args_schema=(DTensorSpec(
-                        mesh=values_spec.mesh,
-                        placements=[Replicate() if need_reshard_on_values[i] else v for i, v in enumerate(values_spec.placements)],
-                        ndim=values_spec.ndim,
-                        shape=values_spec.shape,
-                    ), indices_suggestion),
+                    args_schema=(
+                        DTensorSpec(
+                            mesh=values_spec.mesh,
+                            placements=[
+                                Replicate() if need_reshard_on_values[i] else v
+                                for i, v in enumerate(values_spec.placements)
+                            ],
+                            ndim=values_spec.ndim,
+                            shape=values_spec.shape,
+                        ),
+                        indices_suggestion,
+                    ),
                     kwargs_schema=op_schema.kwargs_schema,
                 )
             ],
