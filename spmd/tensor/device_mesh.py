@@ -1,6 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import warnings
-from typing import List, Optional, Iterable, Sequence, Tuple
+from typing import List, Optional, Iterable, Sequence
 import torch
 from torch.distributed._spmd.comm_tensor import CommTensor
 from torch.distributed.distributed_c10d import (
@@ -393,7 +393,7 @@ class DeviceMesh(object):
             tensor,
             group=dim_group,
         )
-        return torch.cat(gathered_list, dim=tensor_dim)  # pyre-ignore[6]
+        return torch.cat(gathered_list, dim=tensor_dim)  # type: ignore
 
     # pyre-fixme[3]: Return type must be annotated.
     def all_reduce(
