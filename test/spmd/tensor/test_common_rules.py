@@ -197,6 +197,31 @@ class CommonRulesTest(DistTensorTestBase):
         self.assertTrue(mat2_spec.placements[1].is_partial())
 
     @with_comms
+    def test_einop_multi_sharding_on_mesh_dim(self):
+        # einop prop with multi sharding on same mesh dim
+        mesh_shape = torch.arange(self.world_size)
+        mesh = DeviceMesh(self.device_type, mesh_shape)
+        mat1, mat2 = [0, -1], [0, -1]
+        mat1_spec = DTensorSpec.from_dim_map(
+            mesh, mat1, [], shape=torch.Size([8, 12])
+        )
+        mat2_spec = DTensorSpec.from_dim_map(
+            mesh, mat2, [], shape=torch.Size([12, 4])
+        )
+        output_sharding = einop_rule(
+            "mk,kn->mn", OpSchema((mat1_spec, mat2_spec), {})
+        )
+        output_spec = output_sharding.output_spec
+        self.assertIsNone(output_spec)
+        self.assertIsNotNone(output_sharding.schema_suggestions)
+
+        # ensure that the suggestion is to reshard the second
+        # arg by all_gather its tensor dim sharding
+        schema_suggestion = output_sharding.schema_suggestions[0]
+        self.assertEqual(schema_suggestion.args_schema[0].dim_map, [0, -1])
+        self.assertEqual(schema_suggestion.args_schema[1].dim_map, [-1, -1])
+
+    @with_comms
     def test_einop_errors(self):
         mesh_shape = torch.arange(self.world_size).reshape(
             self.world_size // 2, self.world_size // 2
@@ -250,6 +275,31 @@ class CommonRulesTest(DistTensorTestBase):
         schema_suggestion = output_sharding.schema_suggestions[0]
         self.assertEqual(len(schema_suggestion.args_schema), 3)
         self.assertEqual(schema_suggestion.args_schema[2], -1)
+
+    @with_comms
+    def test_pointwise_multi_sharding_on_mesh_dim(self):
+        # 2d mesh einop sharding
+        mesh_shape = torch.arange(self.world_size).reshape(
+            self.world_size // 2, self.world_size // 2
+        )
+        mesh = DeviceMesh(self.device_type, mesh_shape)
+        mat1, mat2 = [0, -1, -1, -1], [0, -1, -1]
+        mat1_spec = DTensorSpec.from_dim_map(
+            mesh, mat1, [], shape=torch.Size([12, 1, 1, 8])
+        )
+        mat2_spec = DTensorSpec.from_dim_map(
+            mesh, mat2, [], shape=torch.Size([12, 4, 8])
+        )
+        output_sharding = pointwise_rule(OpSchema((mat1_spec, mat2_spec), {}))
+        output_spec = output_sharding.output_spec
+        self.assertIsNone(output_spec)
+        self.assertIsNotNone(output_sharding.schema_suggestions)
+
+        # ensure that the suggestion is to reshard the first
+        # arg by all_gather first tensor dim sharding
+        schema_suggestion = output_sharding.schema_suggestions[0]
+        self.assertEqual(schema_suggestion.args_schema[0].dim_map, [-1, -1, -1, -1])
+        self.assertEqual(schema_suggestion.args_schema[1].dim_map, mat2)
 
     @with_comms
     def test_reduction_rule(self):

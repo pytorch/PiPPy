@@ -550,22 +550,6 @@ def propagate_shape_and_sharding(
     )
 
 
-def local_shape(spec: DTensorSpec, rank: int) -> Tuple[int, ...]:
-    """
-    Given a DTensorSpec and a global rank, compute the shape of a local
-    shard of the given DTensor.
-    """
-    assert spec.shape is not None, "DTensorSpec does not contain global shape."
-    local_shape = list(spec.shape)  # start with global shape
-    for idx, placement in enumerate(spec.placements):
-        if isinstance(placement, Shard):
-            assert (
-                local_shape[placement.dim] % spec.mesh.size(idx) == 0
-            ), f"Only even sharding supported for now. (Got {local_shape[placement.dim]} // {spec.mesh.size(idx)} for mesh idx {idx}"
-            local_shape[placement.dim] //= spec.mesh.size(idx)
-    return tuple(local_shape)
-
-
 def register_prop_rule_map(
     aten_op_name: str, local_op_name: Callable[..., torch.Tensor]
 ) -> None:
@@ -594,9 +578,7 @@ def register_prop_rule_map(
             placements=shard_out,
             shape=torch.Size(global_out_shape),
         )
-        local_out_shape = local_shape(
-            output_dtensor_spec, torch.distributed.get_rank()
-        )
+        local_out_shape = output_dtensor_spec.local_shape()
 
         # We only need the local shape to lower he call into the local op
         args = op_schema.args_schema
