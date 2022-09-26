@@ -1,5 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 from typing import Sequence, Any, Dict, Callable, Optional, List
+from unittest import skip
 
 import torch
 from torch import Tensor
@@ -199,6 +200,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
             op=torch.sigmoid,
         )
 
+    @skip("testing RNG based ops is broken: https://github.com/pytorch/tau/issues/494")
     @with_comms
     @skip_if_lt_x_gpu(TEST_GPU_NUM)
     def test_dropout(self):
