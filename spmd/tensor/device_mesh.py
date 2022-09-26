@@ -36,7 +36,7 @@ def set_global_device_mesh(mesh: Optional["DeviceMesh"]) -> None:
     _global_device_mesh = mesh
 
 
-T = TypeVar('T')
+T = TypeVar("T")
 _L = Union[T, Sequence[T]]
 DeepList = _L[_L[_L[_L[_L[int]]]]]
 
