@@ -1,6 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import warnings
-from typing import List, Optional, Iterable, Sequence, Union, TypeAlias, TypeVar
+from typing import List, Optional, Sequence, Union, TypeVar
 import torch
 import torch.nn.functional as F
 from torch.distributed._spmd.comm_tensor import CommTensor
@@ -37,10 +37,10 @@ def set_global_device_mesh(mesh: Optional["DeviceMesh"]) -> None:
 
 
 T = TypeVar('T')
-_L: TypeAlias = Union[T, Sequence[T]]
+_L = Union[T, Sequence[T]]
 DeepList = _L[_L[_L[_L[_L[int]]]]]
 
-MeshExprT: TypeAlias = Union[
+MeshExprT = Union[
     torch.Tensor,
     DeepList,
 ]
