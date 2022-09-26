@@ -1,5 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import Sequence, Any, Dict, Callable, Optional, List
+from typing import Sequence, Any, Dict, Callable, Optional
 from unittest import skip
 
 import torch
@@ -178,7 +178,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         self._run_sharded_elementwise_ops(
             device_mesh=device_mesh,
             placements=[Shard(1)],
-            input_size=(3, 14),
+            input_size=(3, 12),
             op=torch.nn.functional.relu,
         )
         self._run_sharded_elementwise_ops(
