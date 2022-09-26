@@ -393,7 +393,7 @@ class RankWorker(EventRecorder):
                 assert False, f'Unrecognized phase {work_item.phase} encountered in execution'
 
             logging.debug(f'[{self.rank}][{work_item.microbatch_id}] Populating result of type {type(out_val)} '
-                         f'for {key}')
+                          f'for {key}')
             future.set_result(out_val)
             work_item.state = SchedState.DONE
 
@@ -475,7 +475,7 @@ class PipeStageExecutor(EventRecorder):
             return
 
         logging.debug(f'Rank[{worker_rank}] stage[{self.stage_id}] Initializing data parallel: '
-                     f'creating DP process groups internally')
+                      f'creating DP process groups internally')
         # Discover DP peers via Store
         # HACK: using the Store coming with the default process group
         _store = torch.distributed.distributed_c10d._get_default_store()
@@ -579,7 +579,7 @@ class PipeStageExecutor(EventRecorder):
             # would hold it based on max outstanding allowed
             work_item.state = SchedState.READY
             logging.debug(f'[{self.stage_id}][{cur_microbatch}] No RRef arguments. '
-                         f'Scheduling directly as READY workitem')
+                          f'Scheduling directly as READY workitem')
             self.rank_worker.enqueue_ready_runlist(output_unique_key, work_item)
         else:
             logging.debug(f'[{self.stage_id}][{cur_microbatch}] Scheduling WorkItem as WAITING workitem')
@@ -590,7 +590,7 @@ class PipeStageExecutor(EventRecorder):
         _futures = []
         for arg_idx, value_ref_arg in enumerate(value_ref_args):
             logging.debug(f'[{self.stage_id}][{cur_microbatch}] Launching asynchronous data transfer for '
-                         f'ValueReference {arg_idx} {value_ref_arg}')
+                          f'ValueReference {arg_idx} {value_ref_arg}')
             assert self.peer_executors is not None
             _futures.append(self.async_transfer(cur_microbatch, value_ref_arg,
                                                 arg_idx, output_unique_key))
@@ -649,7 +649,7 @@ class PipeStageExecutor(EventRecorder):
     def get_value(self, caller_stage, runlist_key, microbatch, value_ref_arg):
         callee_stage = value_ref_arg.stage_id
         logging.debug(f'[{callee_stage}][{microbatch}] Executing transfer of value '
-                     f'{value_ref_arg} initiated by stage {caller_stage} for {runlist_key}')
+                      f'{value_ref_arg} initiated by stage {caller_stage} for {runlist_key}')
         assert callee_stage == self.stage_id, "Mismatch between ValueRef and stage executor"
 
         with self.value_store_cv:
@@ -669,7 +669,7 @@ class PipeStageExecutor(EventRecorder):
 
     def async_transfer(self, microbatch, value_ref_arg, arg_idx, runlist_key):
         logging.debug(f'[{self.stage_id}][{microbatch}] Requesting transfer of value {value_ref_arg} '
-                     f'for runlist item {runlist_key} arg_idx {arg_idx}')
+                      f'for runlist item {runlist_key} arg_idx {arg_idx}')
         value_ref_executor_rref = self.peer_executors[value_ref_arg.stage_id]
         fut = value_ref_executor_rref.rpc_async().get_value(
             self.stage_id, runlist_key, microbatch, value_ref_arg)
@@ -677,7 +677,7 @@ class PipeStageExecutor(EventRecorder):
         def bottom_half(fut):
             value = fut.value()
             logging.debug(f'[{self.stage_id}][{microbatch}] Completing transfer of value {value_ref_arg} '
-                         f'for runlist item {runlist_key} arg_idx {arg_idx}')
+                          f'for runlist item {runlist_key} arg_idx {arg_idx}')
             self.rank_worker.update_run_list(runlist_key, arg_idx, value)
 
         return fut.then(bottom_half)
@@ -1178,7 +1178,7 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
         if target in self.remote_stage_executor_rrefs:
             stage_id, stage_executor = self.remote_stage_executor_rrefs[target]
             logging.debug(f'[root][{self.cur_microbatch}] Issuing {Phase.FORWARD} '
-                         f'invocation for target {target} on stage {stage_id}')
+                          f'invocation for target {target} on stage {stage_id}')
             invocation_key = f'{self.cur_microbatch}_{node.name}'
             start_ts = time.time()
             forward_name = event_name(Phase.FORWARD, stage_id, self.cur_microbatch)
@@ -1225,7 +1225,7 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
             stage_id, stage_executor = self.remote_stage_executor_rrefs[node.meta['fw_stage']]
             if torch.is_grad_enabled():
                 logging.debug(f'[root][{self.cur_microbatch}] Issuing BW invocation '
-                             f'for target {node.meta["fw_stage"]} on stage {stage_id}')
+                              f'for target {node.meta["fw_stage"]} on stage {stage_id}')
                 start_ts = time.time()
                 backward_name = event_name(Phase.BACKWARD, stage_id, self.cur_microbatch)
                 backward_id = event_id(Phase.BACKWARD, stage_id, self.cur_microbatch, self.batch_id)
@@ -1245,7 +1245,7 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
             executor_keys = list(self.remote_stage_executor_rrefs.keys())
             stage_id, stage_executor = self.remote_stage_executor_rrefs[executor_keys[0]]
             logging.debug(f'[root][{self.cur_microbatch}] Issuing sync invocation '
-                         f'on stage {stage_id}')
+                          f'on stage {stage_id}')
             stage_executor.rpc_async().invoke(
                 invocation_key, Phase.SYNC_BARRIER, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
                 output_refcount=len(users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
@@ -1255,7 +1255,7 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
             stage_id, stage_executor = self.remote_stage_executor_rrefs[node.meta['fw_stage']]
             if torch.is_grad_enabled():
                 logging.debug(f'[root][{self.cur_microbatch}] Issuing accumulate grad invocation '
-                             f'for target {node.meta["fw_stage"]} on stage {stage_id}')
+                              f'for target {node.meta["fw_stage"]} on stage {stage_id}')
                 stage_executor.rpc_async().invoke(
                     invocation_key, Phase.ACCUMULATE_GRAD, args, kwargs, self.cur_microbatch,
                     debug_str=node.format_node(),
