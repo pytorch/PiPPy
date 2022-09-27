@@ -178,19 +178,13 @@ class TensorParallelMultiheadAttention(torch.nn.Module):
             value_layer = _stride_same_as_shard(value_layer, self.tp_size, 2, 1)
             # [sq, b, nh, hn] -> [sq, b * nh, hn]
             query_layer = _view_with_sharding_dim_change(
-                query_layer,
-                1,
-                (sq, b * nh, -1),
+                query_layer, 1, (sq, b * nh, -1)
             )
             key_layer = _view_with_sharding_dim_change(
-                key_layer,
-                1,
-                (sq, b * nh, -1),
+                key_layer, 1, (sq, b * nh, -1)
             )
             value_layer = _view_with_sharding_dim_change(
-                value_layer,
-                1,
-                (sq, b * nh, -1),
+                value_layer, 1, (sq, b * nh, -1)
             )
 
         # ===================================

@@ -127,10 +127,7 @@ class Split(DimSpec):
 
     @classmethod
     def new(
-        cls,
-        dim: DimSpec,
-        group_shape: Tuple[int, ...],
-        idx: int,
+        cls, dim: DimSpec, group_shape: Tuple[int, ...], idx: int
     ) -> DimSpec:
         assert len(group_shape) > 0
         if len(group_shape) == 1:
@@ -185,7 +182,6 @@ def expand(input_shape: Shape, shape: Shape) -> DimMap:
             ), f"DimSpec not supported in expand: {p}"
             actual_s = input_shape[p.input_dim]
             assert actual_s == 1 or desired_s == -1 or desired_s == actual_s
-
         mapping.append(
             p
             if desired_s in (1, -1) or desired_s == actual_s
@@ -213,8 +209,7 @@ def dim_flatten(ndim: int) -> DimMap:
 
 
 def normalize_dims(
-    dims: Union[int, Tuple[int, ...]],
-    ndim: int,
+    dims: Union[int, Tuple[int, ...]], ndim: int
 ) -> Tuple[int, ...]:
     if isinstance(dims, int):
         dims = (dims,)
@@ -420,62 +415,47 @@ import torch
 from torch import Tensor
 
 ops: Dict[Callable[..., torch.Tensor], Op] = {
-    torch.atleast_1d: Op(
-        lambda x: dim_pad_left(x.ndim, 1),
-    ),
-    torch.atleast_2d: Op(
-        lambda x: dim_pad_left(x.ndim, 2),
-    ),
-    torch.atleast_3d: Op(
-        lambda x: dim_atleast_3d(x.ndim),
-    ),
+    torch.atleast_1d: Op(dim_map=lambda x: dim_pad_left(x.ndim, 1)),
+    torch.atleast_2d: Op(dim_map=lambda x: dim_pad_left(x.ndim, 2)),
+    torch.atleast_3d: Op(dim_map=lambda x: dim_atleast_3d(x.ndim)),
     torch.broadcast_to: Op(
-        lambda input, shape: expand(input.shape, shape),
-        shape_argnum=1,
+        dim_map=lambda input, shape: expand(input.shape, shape), shape_argnum=1
     ),
     Tensor.expand: Op(
-        lambda self, *sizes: expand(self.shape, normalize_sizes(sizes)),
+        dim_map=lambda self, *sizes: expand(self.shape, normalize_sizes(sizes)),
         shape_argnum=1,
     ),
-    torch.flatten: Op(
-        lambda tensor: dim_flatten(tensor.ndim),
-    ),
+    torch.flatten: Op(dim_map=lambda tensor: dim_flatten(tensor.ndim)),
     torch.movedim: Op(
-        lambda input, source, destination: dim_movedim(
-            input.ndim,
-            source,
-            destination,
-        ),
+        dim_map=lambda input, source, destination: dim_movedim(
+            input.ndim, source, destination
+        )
     ),
     torch.permute: Op(
-        lambda input, dims: tuple(
+        dim_map=lambda input, dims: tuple(
             InputDim(i) for i in normalize_dims(dims, input.ndim)
-        ),
+        )
     ),
-    torch.ravel: Op(
-        lambda tensor: dim_flatten(tensor.ndim),
-    ),
+    torch.ravel: Op(dim_map=lambda tensor: dim_flatten(tensor.ndim)),
     Tensor.repeat: Op(
-        lambda self, *sizes: dim_repeat(self.ndim, sizes),
+        dim_map=lambda self, *sizes: dim_repeat(self.ndim, sizes)
     ),
     torch.reshape: Op(
-        lambda input, shape: view_groups(input.shape, shape),
+        dim_map=lambda input, shape: view_groups(input.shape, shape),
         shape_argnum=1,
     ),
     torch.squeeze: Op(
-        lambda input, dim=None: dim_squeeze(input.shape, dim),
+        dim_map=lambda input, dim=None: dim_squeeze(input.shape, dim)
     ),
-    torch.tile: Op(
-        lambda input, dims: dim_tile(input.ndim, dims),
-    ),
+    torch.tile: Op(dim_map=lambda input, dims: dim_tile(input.ndim, dims)),
     torch.transpose: Op(
-        lambda input, dim0, dim1: dim_transpose(input.ndim, dim0, dim1),
+        dim_map=lambda input, dim0, dim1: dim_transpose(input.ndim, dim0, dim1)
     ),
     torch.unsqueeze: Op(
-        lambda input, dim: dim_unsqueeze(input.ndim, dim),
+        dim_map=lambda input, dim: dim_unsqueeze(input.ndim, dim)
     ),
     Tensor.view: Op(
-        lambda input, *shape: view_groups(input.shape, shape),
+        dim_map=lambda input, *shape: view_groups(input.shape, shape),
         shape_argnum=1,
     ),
 }
