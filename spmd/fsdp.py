@@ -28,8 +28,9 @@ from torch.distributed.remote_device import _remote_device
 from spmd.tensor import DTensor as DistributedTensor, DeviceMesh
 from spmd.tensor.placement_types import Placement
 
+__all__ = ["is_available"]
 
-class STShardingInfo(NamedTuple):
+class _STShardingInfo(NamedTuple):
     """:class:`ShardedTensor` sharding information."""
 
     sharding_spec: Optional[shard_spec.ShardingSpec]
@@ -38,10 +39,9 @@ class STShardingInfo(NamedTuple):
     device_mesh: Optional[DeviceMesh]
     placements: Optional[List[Placement]]
 
-def get_box(tensor: DistributedTensor) -> Tuple:
+def _get_box(tensor: DistributedTensor) -> Tuple:
     device_mesh = tensor.device_mesh
     assert device_mesh.ndim == 1, f"Only 1D DeviceMeshes currently handled"
-    # assert tensor.placements[0].is_shard(), f"Only sharded placement supported"
 
     placement = tensor.placements[0]
     offsets = [0] * len(tensor.size())
@@ -54,28 +54,28 @@ def get_box(tensor: DistributedTensor) -> Tuple:
 
     return (torch.Size(offsets), tensor._local_tensor.size())
 
-def get_box_for(tensor: DistributedTensor, idx: int) -> Tuple:
-    offsets, size = get_box(tensor)
+def _get_box_for(tensor: DistributedTensor, idx: int) -> Tuple:
+    offsets, size = _get_box(tensor)
     offsets = [val * idx for val in offsets]
     return (torch.Size(offsets), size)
 
-def get_local_box(tensor: DistributedTensor) -> Tuple:
+def _get_local_box(tensor: DistributedTensor) -> Tuple:
     device_mesh = tensor.device_mesh
-    return get_box_for(tensor, device_mesh.get_coordinate_on_dim(0))
+    return _get_box_for(tensor, device_mesh.get_coordinate_on_dim(0))
 
-def create_shard_md_from_dt(dt: DistributedTensor, current_rank) -> ShardMetadata:
+def _create_shard_md_from_dt(dt: DistributedTensor, current_rank) -> ShardMetadata:
     mesh = dt.device_mesh
     assert mesh.ndim == 1, f"Only 1D DeviceMeshes currently handled"
 
-    offsets, sizes = get_local_box(dt)
+    offsets, sizes = _get_local_box(dt)
     return ShardMetadata(
         shard_offsets=list(offsets),
         shard_sizes=list(sizes),
         placement=f"rank:{current_rank}/{dt._local_tensor.device}"
     )
 
-def create_sharded_tensor_md_from_dt(dt: DistributedTensor, dt_pg) -> ShardedTensorMetadata:
-    # This is where it goes hilarious, we have to produce a ShardedTensor that has full coverage
+def _create_sharded_tensor_md_from_dt(dt: DistributedTensor, dt_pg) -> ShardedTensorMetadata:
+    # This is where it gets tricky, we have to produce a ShardedTensor that has full coverage
     # and yet has only one valid shard for the current rank.
 
     shards_md = []
@@ -88,7 +88,7 @@ def create_sharded_tensor_md_from_dt(dt: DistributedTensor, dt_pg) -> ShardedTen
         shard_count = 1 #
 
     for i in range(shard_count):
-        offsets, sizes = get_box_for(dt, i)
+        offsets, sizes = _get_box_for(dt, i)
         shards_md.append(ShardMetadata(
             shard_offsets=list(offsets),
             shard_sizes=list(sizes),
@@ -106,7 +106,7 @@ def create_sharded_tensor_md_from_dt(dt: DistributedTensor, dt_pg) -> ShardedTen
         )
     )
 
-def get_dt_pg(dt: DistributedTensor) -> dist.ProcessGroup:
+def _get_dt_pg(dt: DistributedTensor) -> dist.ProcessGroup:
     mesh = dt.device_mesh
     assert mesh.ndim == 1, f"Only 1D DeviceMeshes currently handled"
     return mesh.get_dim_groups()[0]
@@ -138,7 +138,7 @@ def _rewrite_spec_if_needed(spec: shard_spec.ShardingSpec, tensor: torch.Tensor,
 
 def _flatten_tensor(tensor: torch.Tensor,) -> Tuple[torch.Tensor, Optional[Any]]:
     if type(tensor) is ShardedTensor:
-        return tensor.local_tensor(), STShardingInfo(
+        return tensor.local_tensor(), _STShardingInfo(
             tensor.sharding_spec(),
             tensor.size(),
             tensor._process_group,
@@ -147,7 +147,7 @@ def _flatten_tensor(tensor: torch.Tensor,) -> Tuple[torch.Tensor, Optional[Any]]
         )
     elif type(tensor) is DistributedTensor:
         tensor._local_tensor.requires_grad_()
-        return tensor._local_tensor, STShardingInfo(
+        return tensor._local_tensor, _STShardingInfo(
             None,
             None,
             None,
@@ -156,7 +156,7 @@ def _flatten_tensor(tensor: torch.Tensor,) -> Tuple[torch.Tensor, Optional[Any]]
         )
     return tensor, None
 
-def _unflatten_tensor(tensor: torch.Tensor, sharding_info: STShardingInfo) -> torch.Tensor:
+def _unflatten_tensor(tensor: torch.Tensor, sharding_info: _STShardingInfo) -> torch.Tensor:
     if sharding_info.sharding_spec is not None:
         sharded_tensor = ShardedTensor._init_from_local_tensor(
             tensor,
@@ -232,10 +232,10 @@ def _chunk_tensor(
             pg,
         )
 
-        dt_pg = get_dt_pg(tensor)
+        dt_pg = _get_dt_pg(tensor)
         # We do this differently here, we create a ST with no local shards then patch it
         shards = []
-        st_meta = create_sharded_tensor_md_from_dt(tensor, dt_pg)
+        st_meta = _create_sharded_tensor_md_from_dt(tensor, dt_pg)
         st_meta.tensor_properties.requires_grad = False
 
         st_outer = ShardedTensor._init_from_local_shards_and_global_metadata(
@@ -247,7 +247,7 @@ def _chunk_tensor(
         st_outer._local_shards.append(
             Shard(
                 inner_st, 
-                create_shard_md_from_dt(tensor, dist.get_rank(dt_pg))
+                _create_shard_md_from_dt(tensor, dist.get_rank(dt_pg))
             )
         )
 
@@ -272,7 +272,6 @@ def _pre_load_state_dict(
     return (tensor, [shards[0].tensor] if len(shards) > 0 else [])
 
 
-
 try:
     from torch.distributed.fsdp._tensor_flattener import (
         _set_tensor_flattener,
@@ -286,7 +285,7 @@ try:
             return _flatten_tensor(tensor)
 
         def post_unflatten_transform(
-            self, tensor: torch.Tensor, sharding_info: STShardingInfo
+            self, tensor: torch.Tensor, sharding_info: _STShardingInfo
         ) -> torch.Tensor:
             return _unflatten_tensor(tensor, sharding_info)
 
@@ -313,9 +312,14 @@ try:
             return _pre_load_state_dict(tensor)
 
     _set_tensor_flattener(TensorFlattener2DParallel())
+
+    def is_available():
+        return True
 except BaseException as e:
     warnings.warn(
         "PyTorch doesn't have TensorFlattener extension point available"
         "2D parallelism won't work with FSDP"
         f"exception: {e}"
     )
+    def is_available():
+        return False
