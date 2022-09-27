@@ -396,7 +396,10 @@ class DeviceMesh(object):
             return self.scatter(chunks, mesh_dim=mesh_dim)
 
     # TODO: rewrite interface to adopt PR #491, #492
-    # Now input_tensor_list is assumed evenly splitted before being passed to all_to_all
+    # TODO: Now input_tensor_list is assumed evenly splitted before being passed 
+    # to all_to_all, add test for uneven split case to see if current code
+    # work for GLOO/NCCL. I believe that this should work for NCCL but not 
+    # for GLOO until PR #498 gets landed.
     def all_to_all(
         self, input_tensor_list: List[torch.Tensor], mesh_dim: int = 0
     ) -> List[torch.Tensor]:
