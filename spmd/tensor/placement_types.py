@@ -92,7 +92,9 @@ class DTensorSpec(object):
                 shard_dim = cast(Shard, placement).dim
                 if r[shard_dim] > -1:
                     raise ValueError(
-                        f"Tensor dim {shard_dim} is already sharded on mesh dim {r[shard_dim]}"
+                        f"Tensor dim {shard_dim} is already sharded on mesh dim {r[shard_dim]},"
+                        " DTensor operator implementation does not support things like hybrid"
+                        " sharding strategies yet (i.e. [Shard(0), Shard(0)])"
                     )
                 r[shard_dim] = i
         return r
@@ -116,6 +118,7 @@ class DTensorSpec(object):
         Compute the shape of a local shard of the given DTensor on its current
         global rank.
         """
+        # TODO: support uneven sharding
         assert (
             self.shape is not None
         ), "DTensorSpec does not contain global shape."
