@@ -228,16 +228,6 @@ class CommonRulesTest(DistTensorTestBase):
         )
         mesh = DeviceMesh(self.device_type, mesh_shape)
 
-        mat1, mat2 = [0, -1], [0, 1]
-        mat1_spec = DTensorSpec.from_dim_map(
-            mesh, mat1, [], shape=torch.Size([8, 4])
-        )
-        mat2_spec = DTensorSpec.from_dim_map(
-            mesh, mat2, [], shape=torch.Size([8, 4])
-        )
-        with self.assertRaisesRegex(RuntimeError, "across the same mesh dim!"):
-            einop_rule("mk,kn->mn", OpSchema((mat1_spec, mat2_spec), {}))
-
         mat1, mat2 = [0, -1], [1, -1]
         mat1_spec = DTensorSpec.from_dim_map(
             mesh, mat1, [], shape=torch.Size([8, 4])
