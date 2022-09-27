@@ -135,6 +135,8 @@ jobs:
         run: python test/local_test_forward_hf_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
       - name: Run visualizer test
         run: python test/local_test_visualizer.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+      - name: Run auto-split test
+        run: python test/local_test_autosplit.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
 
   hf_example_tests:
     runs-on: linux.12xlarge
