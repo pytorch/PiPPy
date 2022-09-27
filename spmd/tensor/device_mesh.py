@@ -396,6 +396,7 @@ class DeviceMesh(object):
             return self.scatter(chunks, mesh_dim=mesh_dim)
 
     # TODO: rewrite interface to adopt PR #491, #492
+    # Now input_tensor_list is assumed evenly splitted before being passed to all_to_all
     def all_to_all(
         self, input_tensor_list: List[torch.Tensor], mesh_dim: int = 0
     ) -> List[torch.Tensor]:
@@ -409,14 +410,9 @@ class DeviceMesh(object):
         # no direct dist.all_to_all support on 'gloo' so we manually do scatters
         if self.backend() == "gloo":
             dim_group_size = get_world_size(dim_group)
-            global_ranks = [
-                get_global_rank(dim_group, i) for i in range(dim_group_size)
-            ]
             for i in range(dim_group_size):
                 tensor = output_tensor_list[i]
-                src_for_dim = i
-                if dim_group is not GroupMember.WORLD:
-                    src_for_dim = get_global_rank(dim_group, i)
+                src_for_dim = get_global_rank(dim_group, i)
                 if src_for_dim == get_rank():
                     scatter(
                         tensor,
@@ -431,6 +427,10 @@ class DeviceMesh(object):
                         src=src_for_dim,
                         group=dim_group,
                     )
-        else:
+        elif self.backend() == "nccl":
             all_to_all(output_tensor_list, to_scatter, dim_group)
+        else:
+            raise RuntimeError(
+                f"DeviceMesh does not support all-to-all collective operations on {self.backend()} backend."
+            )
         return output_tensor_list
