@@ -155,8 +155,7 @@ class DTensorConverter(object):
         )
 
     def gen_sharding_choices_for_arg(
-        self,
-        arg: torch.Tensor,
+        self, arg: torch.Tensor
     ) -> Sequence[Placement]:
         mesh_size = self.mesh.size()
         sharding_choices: List[Placement] = [Replicate()]
