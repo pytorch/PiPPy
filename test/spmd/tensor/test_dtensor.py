@@ -31,9 +31,7 @@ class DistTensorTest(DistTensorTestBase):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
         local_tensor = torch.randn(3, 3, requires_grad=True)
-        dist_tensor = DTensor(
-            local_tensor, device_mesh, shard_spec, requires_grad=True
-        )
+        dist_tensor = DTensor(local_tensor, device_mesh, shard_spec, requires_grad=True)
         self.assertEqual(dist_tensor.size(), torch.Size((12, 3)))
 
         with self.assertWarnsRegex(UserWarning, "To construct"):
@@ -72,9 +70,7 @@ class DistTensorTest(DistTensorTestBase):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
         local_tensor = torch.randn(3, 3)
-        sharded_tensor = DTensor.from_local(
-            local_tensor, device_mesh, shard_spec
-        )
+        sharded_tensor = DTensor.from_local(local_tensor, device_mesh, shard_spec)
         self.assertEqual(sharded_tensor.size(), torch.Size([12, 3]))
 
         replica_spec = [Replicate()]
@@ -82,9 +78,7 @@ class DistTensorTest(DistTensorTestBase):
         self.assertEqual(ddp_tensor.size(), local_tensor.size())
 
         partial_spec = [_Partial(ReduceOp.SUM)]
-        partial_tensor = DTensor.from_local(
-            local_tensor, device_mesh, partial_spec
-        )
+        partial_tensor = DTensor.from_local(local_tensor, device_mesh, partial_spec)
         self.assertEqual(partial_tensor.size(), local_tensor.size())
 
         # test dist tensor works with torch.Tensor during backwards
@@ -93,9 +87,7 @@ class DistTensorTest(DistTensorTestBase):
         local_tensor_temp = local_tensor_with_grad * 3
         # create the dist tensor with non leaf local tensor, dist tensor created
         # should also be non leaf node
-        dist_tensor = DTensor.from_local(
-            local_tensor_temp, device_mesh, shard_spec
-        )
+        dist_tensor = DTensor.from_local(local_tensor_temp, device_mesh, shard_spec)
         self.assertFalse(dist_tensor.is_leaf)
         # do some random operations on dist tensor
         output = dist_tensor * 3
@@ -139,9 +131,7 @@ class DistTensorTest(DistTensorTestBase):
         self.assertIsNotNone(sharded_tensor.grad)
 
         expected_grad = DTensor(torch.ones(3, 3) * 3, device_mesh, shard_spec)
-        self.assertEqual(
-            sharded_tensor.grad.to_local(), expected_grad.to_local()
-        )
+        self.assertEqual(sharded_tensor.grad.to_local(), expected_grad.to_local())
 
     @with_comms
     def test_from_local_then_local_tensor(self):
@@ -157,9 +147,7 @@ class DistTensorTest(DistTensorTestBase):
         local_tensor_temp = local_tensor_with_grad + 8
         # step 2. create the dist tensor with non leaf local tensor, dist tensor
         # created should also be non leaf node
-        dist_tensor = DTensor.from_local(
-            local_tensor_temp, device_mesh, shard_spec
-        )
+        dist_tensor = DTensor.from_local(local_tensor_temp, device_mesh, shard_spec)
         self.assertFalse(dist_tensor.is_leaf)
         # do some random operations on dist tensor
         output = dist_tensor * 6
@@ -183,9 +171,7 @@ class DistTensorTest(DistTensorTestBase):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
         local_tensor = torch.randn(3, 3)
-        sharded_tensor = DTensor.from_local(
-            local_tensor, device_mesh, shard_spec
-        )
+        sharded_tensor = DTensor.from_local(local_tensor, device_mesh, shard_spec)
 
         # modify shard_spec, and dist_tensor's spec should not be changed
         shard_spec[0] = Replicate()
@@ -197,9 +183,7 @@ class DistTensorTest(DistTensorTestBase):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
         local_tensor = torch.randn(3, 3)
-        sharded_tensor = DTensor.from_local(
-            local_tensor, device_mesh, shard_spec
-        )
+        sharded_tensor = DTensor.from_local(local_tensor, device_mesh, shard_spec)
         self.assertEqual(sharded_tensor.device.type, self.device_type)
 
 

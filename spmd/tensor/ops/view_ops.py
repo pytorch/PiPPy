@@ -127,7 +127,10 @@ class Split(DimSpec):
 
     @classmethod
     def new(
-        cls, dim: DimSpec, group_shape: Tuple[int, ...], idx: int
+        cls,
+        dim: DimSpec,
+        group_shape: Tuple[int, ...],
+        idx: int,
     ) -> DimSpec:
         assert len(group_shape) > 0
         if len(group_shape) == 1:
@@ -177,11 +180,10 @@ def expand(input_shape: Shape, shape: Shape) -> DimMap:
             actual_s = 1
             assert desired_s >= 0
         else:
-            assert isinstance(
-                p, InputDim
-            ), f"DimSpec not supported in expand: {p}"
+            assert isinstance(p, InputDim), f"DimSpec not supported in expand: {p}"
             actual_s = input_shape[p.input_dim]
             assert actual_s == 1 or desired_s == -1 or desired_s == actual_s
+
         mapping.append(
             p
             if desired_s in (1, -1) or desired_s == actual_s
@@ -209,7 +211,8 @@ def dim_flatten(ndim: int) -> DimMap:
 
 
 def normalize_dims(
-    dims: Union[int, Tuple[int, ...]], ndim: int
+    dims: Union[int, Tuple[int, ...]],
+    ndim: int,
 ) -> Tuple[int, ...]:
     if isinstance(dims, int):
         dims = (dims,)
@@ -231,9 +234,7 @@ def dim_movedim(
     assert len(input) == len(destination)
     input_set = set(input)
     assert len(input_set) == len(input), "Found repeated input dims"
-    assert len(set(destination)) == len(
-        destination
-    ), "Found repeated output dims"
+    assert len(set(destination)) == len(destination), "Found repeated output dims"
     assert max(input) < ndim
     assert max(destination) < ndim
 
@@ -360,9 +361,7 @@ def view_groups(from_size: Shape, to_size: Shape) -> DimMap:
 
         if len(to_group_shape) > 0:
             flattened = Flatten.new(
-                tuple(
-                    InputDim(fi) for fi in from_group_dim if from_size[fi] > 1
-                )
+                tuple(InputDim(fi) for fi in from_group_dim if from_size[fi] > 1)
             )
             result_pp += [
                 Split.new(flattened, tuple(to_group_shape), i)
@@ -415,47 +414,62 @@ import torch
 from torch import Tensor
 
 ops: Dict[Callable[..., torch.Tensor], Op] = {
-    torch.atleast_1d: Op(dim_map=lambda x: dim_pad_left(x.ndim, 1)),
-    torch.atleast_2d: Op(dim_map=lambda x: dim_pad_left(x.ndim, 2)),
-    torch.atleast_3d: Op(dim_map=lambda x: dim_atleast_3d(x.ndim)),
-    torch.broadcast_to: Op(
-        dim_map=lambda input, shape: expand(input.shape, shape), shape_argnum=1
+    torch.atleast_1d: Op(
+        lambda x: dim_pad_left(x.ndim, 1),
     ),
-    Tensor.expand: Op(
-        dim_map=lambda self, *sizes: expand(self.shape, normalize_sizes(sizes)),
+    torch.atleast_2d: Op(
+        lambda x: dim_pad_left(x.ndim, 2),
+    ),
+    torch.atleast_3d: Op(
+        lambda x: dim_atleast_3d(x.ndim),
+    ),
+    torch.broadcast_to: Op(
+        lambda input, shape: expand(input.shape, shape),
         shape_argnum=1,
     ),
-    torch.flatten: Op(dim_map=lambda tensor: dim_flatten(tensor.ndim)),
+    Tensor.expand: Op(
+        lambda self, *sizes: expand(self.shape, normalize_sizes(sizes)),
+        shape_argnum=1,
+    ),
+    torch.flatten: Op(
+        lambda tensor: dim_flatten(tensor.ndim),
+    ),
     torch.movedim: Op(
-        dim_map=lambda input, source, destination: dim_movedim(
-            input.ndim, source, destination
-        )
+        lambda input, source, destination: dim_movedim(
+            input.ndim,
+            source,
+            destination,
+        ),
     ),
     torch.permute: Op(
-        dim_map=lambda input, dims: tuple(
+        lambda input, dims: tuple(
             InputDim(i) for i in normalize_dims(dims, input.ndim)
-        )
+        ),
     ),
-    torch.ravel: Op(dim_map=lambda tensor: dim_flatten(tensor.ndim)),
+    torch.ravel: Op(
+        lambda tensor: dim_flatten(tensor.ndim),
+    ),
     Tensor.repeat: Op(
-        dim_map=lambda self, *sizes: dim_repeat(self.ndim, sizes)
+        lambda self, *sizes: dim_repeat(self.ndim, sizes),
     ),
     torch.reshape: Op(
-        dim_map=lambda input, shape: view_groups(input.shape, shape),
+        lambda input, shape: view_groups(input.shape, shape),
         shape_argnum=1,
     ),
     torch.squeeze: Op(
-        dim_map=lambda input, dim=None: dim_squeeze(input.shape, dim)
+        lambda input, dim=None: dim_squeeze(input.shape, dim),
     ),
-    torch.tile: Op(dim_map=lambda input, dims: dim_tile(input.ndim, dims)),
+    torch.tile: Op(
+        lambda input, dims: dim_tile(input.ndim, dims),
+    ),
     torch.transpose: Op(
-        dim_map=lambda input, dim0, dim1: dim_transpose(input.ndim, dim0, dim1)
+        lambda input, dim0, dim1: dim_transpose(input.ndim, dim0, dim1),
     ),
     torch.unsqueeze: Op(
-        dim_map=lambda input, dim: dim_unsqueeze(input.ndim, dim)
+        lambda input, dim: dim_unsqueeze(input.ndim, dim),
     ),
     Tensor.view: Op(
-        dim_map=lambda input, *shape: view_groups(input.shape, shape),
+        lambda input, *shape: view_groups(input.shape, shape),
         shape_argnum=1,
     ),
 }
@@ -479,9 +493,7 @@ def propagate_shape_and_sharding(
       if the leftmost split size is divisible by the mesh dimension
     """
     assert len(in_shard) == len(mesh_sizes)
-    sharded_in_dims: Set[int] = set(
-        s.dim for s in in_shard if isinstance(s, Shard)
-    )
+    sharded_in_dims: Set[int] = set(s.dim for s in in_shard if isinstance(s, Shard))
 
     def get_dim_size(cmd: DimSpec) -> Tuple[int, Optional[InputDim]]:
         if isinstance(cmd, InputDim):
@@ -499,8 +511,7 @@ def propagate_shape_and_sharding(
             return (
                 _prod(get_dim_size(a)[0] for a in cmd.input_dims),
                 dim0
-                if isinstance(dim0, InputDim)
-                and dim0.input_dim in sharded_in_dims
+                if isinstance(dim0, InputDim) and dim0.input_dim in sharded_in_dims
                 else None,
             )
         elif isinstance(cmd, Split):
@@ -543,10 +554,7 @@ def propagate_shape_and_sharding(
 
     return (
         tuple(out_shape),
-        [
-            Shard(dim_map[s.dim]) if isinstance(s, Shard) else s
-            for s in in_shard
-        ],
+        [Shard(dim_map[s.dim]) if isinstance(s, Shard) else s for s in in_shard],
     )
 
 

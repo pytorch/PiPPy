@@ -34,8 +34,7 @@ def prop_create_like(op_schema: OpSchema) -> OutputSharding:
     output_spec = DTensorSpec(
         mesh=input_spec.mesh,
         placements=tuple(
-            Replicate() if isinstance(p, _Partial) else p
-            for p in input_spec.placements
+            Replicate() if isinstance(p, _Partial) else p for p in input_spec.placements
         ),
         ndim=input_spec.ndim,
         shape=input_spec.shape,
@@ -138,8 +137,7 @@ def prop_bucketize(op_schema: OpSchema) -> OutputSharding:
                         input_schema,
                         DTensorSpec(
                             mesh=boundaries.mesh,
-                            placements=[Replicate()]
-                            * len(boundaries.placements),
+                            placements=[Replicate()] * len(boundaries.placements),
                             ndim=boundaries.ndim,
                             shape=boundaries.shape,
                         ),
@@ -191,8 +189,7 @@ def _prop_all_but_dim(
             output_spec=None,
             schema_suggestions=[
                 OpSchema(
-                    args_schema=(suggested_input_spec,)
-                    + op_schema.args_schema[1:],
+                    args_schema=(suggested_input_spec,) + op_schema.args_schema[1:],
                     kwargs_schema=op_schema.kwargs_schema,
                 ),
             ],

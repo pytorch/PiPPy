@@ -117,10 +117,7 @@ class TraceDeviceMeshTestBase:
 
             exp_tensor = torch.ones(3 * dim_group_size, 3)
             for i in range(len(global_ranks)):
-                exp_tensor[i * 3 : (i + 1) * 3] = (
-                    torch.ones(3, 3) * global_ranks[i]
-                )
-            self.assertEqual(gathered_tensor, exp_tensor)
+                exp_tensor[i * 3 : (i + 1) * 3] =( torch.ones(3, 3) * global_ranks[i])self.assertEqual(gathered_tensor, exp_tensor)
 
 
 class TraceDeviceMesh3DTest(DistTensorTestBase, TraceDeviceMeshTestBase):

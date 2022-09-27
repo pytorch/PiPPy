@@ -25,9 +25,7 @@ _global_device_mesh: Optional["DeviceMesh"] = None
 
 def get_global_device_mesh() -> "DeviceMesh":
     global _global_device_mesh
-    assert (
-        _global_device_mesh is not None
-    ), "Could not get a default device mesh!"
+    assert _global_device_mesh is not None, "Could not get a default device mesh!"
     return _global_device_mesh
 
 
@@ -190,9 +188,7 @@ class DeviceMesh(object):
                     # call new_group regardless of the current rank in the
                     # pg or not, it's required that all ranks participate
                     # in subgroup construction
-                    new_subgroup = new_group(
-                        ranks=subgroup_ranks, backend=self._backend
-                    )
+                    new_subgroup = new_group(ranks=subgroup_ranks, backend=self._backend)
                     # only add to dim_groups if the current rank in the subgroup
                     if self.get_rank() in subgroup_ranks:
                         if len(self._dim_groups) > dim:
@@ -493,17 +489,13 @@ class DeviceMesh(object):
                         scatter_tensor, tensor_dim
                     )
                 scatter_tensor = scatter_tensor.contiguous()
-                to_scatter.append(CommTensor(scatter_tensor))
-
-            output = torch.empty_like(to_scatter[my_coordinate])
-            dim_group = self._dim_groups[mesh_dim]
-            reduce_scatter(output, to_scatter, op=op, group=dim_group)
+                to_scatter.append(CommTensor(scatter_tensor))output= torch.empty_like(to_scatter[my_coordinate])
+            dim_group=self._dim_groups[mesh_dim]reduce_scatter(output, to_scatter, op=op, group=dim_group)
 
             # resize to uneven size if needed
             if idx_start_to_pad != 0 and my_coordinate >= idx_start_to_pad:
                 # tensor = tensor.narrow(tensor_dim, start=0, length=tensor.size(tensor_dim) - 1)
                 output = self._unpad_tensor_dim_by_1(output, tensor_dim)
-
             return output
         elif self._backend == "gloo":
             # it's gloo, which does not have reduce_scatter

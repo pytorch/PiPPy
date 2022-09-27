@@ -80,9 +80,7 @@ def with_comms(
         self, *args: Tuple[object], **kwargs: Dict[str, Any]  # type: ignore
     ) -> None:
         # if backend not specified, and cuda available, then use nccl, else gloo
-        pg_backend = (
-            "nccl" if backend is None and torch.cuda.is_available() else "gloo"
-        )
+        pg_backend = "nccl" if backend is None and torch.cuda.is_available() else "gloo"
         if pg_backend == "nccl" and torch.cuda.device_count() < self.world_size:
             sys.exit(TEST_SKIPS[f"multi-gpu-{self.world_size}"].exit_code)
 
@@ -155,7 +153,8 @@ class DTensorConverter(object):
         )
 
     def gen_sharding_choices_for_arg(
-        self, arg: torch.Tensor
+        self,
+        arg: torch.Tensor,
     ) -> Sequence[Placement]:
         mesh_size = self.mesh.size()
         sharding_choices: List[Placement] = [Replicate()]
@@ -225,9 +224,7 @@ class DTensorConverter(object):
                 # bool tensor args the same tensor so we don't need to broadcast
                 # TODO: add bool tensor dtype support in c10d collective
                 if t.dtype == torch.bool:
-                    r = DTensor(
-                        t, mesh, placements, requires_grad=t.requires_grad
-                    )
+                    r = DTensor(t, mesh, placements, requires_grad=t.requires_grad)
                 else:
                     r = distribute_tensor(t, mesh, placements)
                 if type(t) is torch.nn.Parameter:
@@ -246,6 +243,4 @@ class DTensorConverter(object):
             self.miss += 1
             return t
         else:
-            raise RuntimeError(
-                f"Trying to convert to DTensor, but got {type(t)}"
-            )
+            raise RuntimeError(f"Trying to convert to DTensor, but got {type(t)}")
