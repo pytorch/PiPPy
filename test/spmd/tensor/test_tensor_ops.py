@@ -167,7 +167,9 @@ class DistTensorOpsTest(DistTensorTestBase):
         assert dist_tensor.shape == (4, 8)
 
         torch.fill_(dist_tensor, 42)
-        fill_expected = torch.full(dist_tensor.shape, 42, dtype=input_tensor.dtype)
+        fill_expected = torch.full(
+            dist_tensor.shape, 42, dtype=input_tensor.dtype
+        )
         self.assertEqual(
             fill_expected,
             dist_tensor.redistribute(device_mesh, [Replicate()]).to_local(),

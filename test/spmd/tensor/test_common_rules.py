@@ -24,9 +24,15 @@ class CommonRulesTest(DistTensorTestBase):
 
         # propagate col-wise sharding
         mat1, mat2 = [-1, -1], [-1, 0]
-        mat1_spec = DTensorSpec.from_dim_map(mesh, mat1, [], shape=torch.Size([8, 4]))
-        mat2_spec = DTensorSpec.from_dim_map(mesh, mat2, [], shape=torch.Size([4, 8]))
-        output_sharding = einop_rule("mk,kn->mn", OpSchema((mat1_spec, mat2_spec), {}))
+        mat1_spec = DTensorSpec.from_dim_map(
+            mesh, mat1, [], shape=torch.Size([8, 4])
+        )
+        mat2_spec = DTensorSpec.from_dim_map(
+            mesh, mat2, [], shape=torch.Size([4, 8])
+        )
+        output_sharding = einop_rule(
+            "mk,kn->mn", OpSchema((mat1_spec, mat2_spec), {})
+        )
         output_spec = output_sharding.output_spec
         self.assertIsNotNone(output_spec)
         self.assertEqual(output_spec.dim_map, [-1, 0])
@@ -34,9 +40,15 @@ class CommonRulesTest(DistTensorTestBase):
 
         # propagate row-wise sharding
         mat1, mat2 = [0, -1], [-1, -1]
-        mat1_spec = DTensorSpec.from_dim_map(mesh, mat1, [], shape=torch.Size([8, 4]))
-        mat2_spec = DTensorSpec.from_dim_map(mesh, mat2, [], shape=torch.Size([4, 8]))
-        output_sharding = einop_rule("mk,kn->mn", OpSchema((mat1_spec, mat2_spec), {}))
+        mat1_spec = DTensorSpec.from_dim_map(
+            mesh, mat1, [], shape=torch.Size([8, 4])
+        )
+        mat2_spec = DTensorSpec.from_dim_map(
+            mesh, mat2, [], shape=torch.Size([4, 8])
+        )
+        output_sharding = einop_rule(
+            "mk,kn->mn", OpSchema((mat1_spec, mat2_spec), {})
+        )
         output_spec = output_sharding.output_spec
         self.assertIsNotNone(output_spec)
         self.assertEqual(output_spec.dim_map, [0, -1])
@@ -44,9 +56,15 @@ class CommonRulesTest(DistTensorTestBase):
 
         # generate partial
         mat1, mat2 = [-1, 0], [0, -1]
-        mat1_spec = DTensorSpec.from_dim_map(mesh, mat1, [], shape=torch.Size([8, 4]))
-        mat2_spec = DTensorSpec.from_dim_map(mesh, mat2, [], shape=torch.Size([4, 8]))
-        output_sharding = einop_rule("mk,kn->mn", OpSchema((mat1_spec, mat2_spec), {}))
+        mat1_spec = DTensorSpec.from_dim_map(
+            mesh, mat1, [], shape=torch.Size([8, 4])
+        )
+        mat2_spec = DTensorSpec.from_dim_map(
+            mesh, mat2, [], shape=torch.Size([4, 8])
+        )
+        output_sharding = einop_rule(
+            "mk,kn->mn", OpSchema((mat1_spec, mat2_spec), {})
+        )
         output_spec = output_sharding.output_spec
         self.assertIsNotNone(output_spec)
         self.assertTrue(output_spec.placements[0].is_partial())
@@ -57,8 +75,12 @@ class CommonRulesTest(DistTensorTestBase):
         mesh = DeviceMesh(self.device_type, torch.arange(self.world_size))
         # addition
         mat1 = [0, -1]
-        mat1_spec = DTensorSpec.from_dim_map(mesh, mat1, [], shape=torch.Size([8, 8]))
-        output_sharding = einop_rule("ij,ij->ij", OpSchema((mat1_spec, mat1_spec), {}))
+        mat1_spec = DTensorSpec.from_dim_map(
+            mesh, mat1, [], shape=torch.Size([8, 8])
+        )
+        output_sharding = einop_rule(
+            "ij,ij->ij", OpSchema((mat1_spec, mat1_spec), {})
+        )
         output_spec = output_sharding.output_spec
         self.assertIsNotNone(output_spec)
         self.assertEqual(output_spec.dim_map, [0, -1])
@@ -69,8 +91,12 @@ class CommonRulesTest(DistTensorTestBase):
         mat1_spec = DTensorSpec.from_dim_map(
             mesh, mat1, [], shape=torch.Size([8, 4, 2])
         )
-        mat2_spec = DTensorSpec.from_dim_map(mesh, [-1], [], shape=torch.Size([2]))
-        output_sharding = einop_rule("ijk,k->ijk", OpSchema((mat1_spec, mat2_spec), {}))
+        mat2_spec = DTensorSpec.from_dim_map(
+            mesh, [-1], [], shape=torch.Size([2])
+        )
+        output_sharding = einop_rule(
+            "ijk,k->ijk", OpSchema((mat1_spec, mat2_spec), {})
+        )
         output_spec = output_sharding.output_spec
         self.assertIsNotNone(output_spec)
         self.assertEqual(output_spec.dim_map, [-1, 0, -1])
@@ -99,9 +125,15 @@ class CommonRulesTest(DistTensorTestBase):
         )
         mesh = DeviceMesh(self.device_type, mesh_shape)
         mat1, mat2 = [0, -1], [-1, 1]
-        mat1_spec = DTensorSpec.from_dim_map(mesh, mat1, [], shape=torch.Size([8, 4]))
-        mat2_spec = DTensorSpec.from_dim_map(mesh, mat2, [], shape=torch.Size([4, 8]))
-        output_sharding = einop_rule("mk,kn->mn", OpSchema((mat1_spec, mat2_spec), {}))
+        mat1_spec = DTensorSpec.from_dim_map(
+            mesh, mat1, [], shape=torch.Size([8, 4])
+        )
+        mat2_spec = DTensorSpec.from_dim_map(
+            mesh, mat2, [], shape=torch.Size([4, 8])
+        )
+        output_sharding = einop_rule(
+            "mk,kn->mn", OpSchema((mat1_spec, mat2_spec), {})
+        )
         output_spec = output_sharding.output_spec
         self.assertIsNotNone(output_spec)
         self.assertEqual(output_spec.dim_map, [0, 1])
@@ -115,11 +147,17 @@ class CommonRulesTest(DistTensorTestBase):
         mesh = DeviceMesh(self.device_type, mesh_shape)
 
         mat1, mat2 = [0, -1], [-1, -1]
-        mat1_spec = DTensorSpec.from_dim_map(mesh, mat1, [1], shape=torch.Size([8, 4]))
-        mat2_spec = DTensorSpec.from_dim_map(mesh, mat2, [], shape=torch.Size([4, 8]))
+        mat1_spec = DTensorSpec.from_dim_map(
+            mesh, mat1, [1], shape=torch.Size([8, 4])
+        )
+        mat2_spec = DTensorSpec.from_dim_map(
+            mesh, mat2, [], shape=torch.Size([4, 8])
+        )
         # if not turn on linearity, partial sum is not eligible to propagate, we return
         # suggestion to reshard inputs with no partial sum (i.e. all_reduce one input)
-        output_sharding = einop_rule("mk,kn->mn", OpSchema((mat1_spec, mat2_spec), {}))
+        output_sharding = einop_rule(
+            "mk,kn->mn", OpSchema((mat1_spec, mat2_spec), {})
+        )
         self.assertIsNone(output_sharding.output_spec)
         suggestions = output_sharding.schema_suggestions
         self.assertIsNotNone(suggestions)
@@ -141,8 +179,12 @@ class CommonRulesTest(DistTensorTestBase):
         # einop prop with linearity on point-wise, should give back suggestion
         # on converting placements to partial
         mat1, mat2 = [0, -1], [0, -1]
-        mat1_spec = DTensorSpec.from_dim_map(mesh, mat1, [1], shape=torch.Size([8, 6]))
-        mat2_spec = DTensorSpec.from_dim_map(mesh, mat2, [], shape=torch.Size([8, 6]))
+        mat1_spec = DTensorSpec.from_dim_map(
+            mesh, mat1, [1], shape=torch.Size([8, 6])
+        )
+        mat2_spec = DTensorSpec.from_dim_map(
+            mesh, mat2, [], shape=torch.Size([8, 6])
+        )
 
         output_sharding = einop_rule(
             "ij,ij->ij", OpSchema((mat1_spec, mat2_spec), {}), linearity=True
@@ -160,9 +202,15 @@ class CommonRulesTest(DistTensorTestBase):
         mesh_shape = torch.arange(self.world_size)
         mesh = DeviceMesh(self.device_type, mesh_shape)
         mat1, mat2 = [0, -1], [0, -1]
-        mat1_spec = DTensorSpec.from_dim_map(mesh, mat1, [], shape=torch.Size([8, 12]))
-        mat2_spec = DTensorSpec.from_dim_map(mesh, mat2, [], shape=torch.Size([12, 4]))
-        output_sharding = einop_rule("mk,kn->mn", OpSchema((mat1_spec, mat2_spec), {}))
+        mat1_spec = DTensorSpec.from_dim_map(
+            mesh, mat1, [], shape=torch.Size([8, 12])
+        )
+        mat2_spec = DTensorSpec.from_dim_map(
+            mesh, mat2, [], shape=torch.Size([12, 4])
+        )
+        output_sharding = einop_rule(
+            "mk,kn->mn", OpSchema((mat1_spec, mat2_spec), {})
+        )
         output_spec = output_sharding.output_spec
         self.assertIsNone(output_spec)
         self.assertIsNotNone(output_sharding.schema_suggestions)
@@ -181,10 +229,16 @@ class CommonRulesTest(DistTensorTestBase):
         mesh = DeviceMesh(self.device_type, mesh_shape)
 
         mat1, mat2 = [0, -1], [1, -1]
-        mat1_spec = DTensorSpec.from_dim_map(mesh, mat1, [], shape=torch.Size([8, 4]))
-        mat2_spec = DTensorSpec.from_dim_map(mesh, mat2, [], shape=torch.Size([8, 4]))
+        mat1_spec = DTensorSpec.from_dim_map(
+            mesh, mat1, [], shape=torch.Size([8, 4])
+        )
+        mat2_spec = DTensorSpec.from_dim_map(
+            mesh, mat2, [], shape=torch.Size([8, 4])
+        )
 
-        with self.assertRaisesRegex(RuntimeError, "sharded two different ways:"):
+        with self.assertRaisesRegex(
+            RuntimeError, "sharded two different ways:"
+        ):
             einop_rule("ij,ij->ij", OpSchema((mat1_spec, mat2_spec), {}))
 
     @with_comms
@@ -193,10 +247,16 @@ class CommonRulesTest(DistTensorTestBase):
 
         # propagate point-wise sharding
         inp1, inp2 = [-1, -1], [-1, 0]
-        mat1_spec = DTensorSpec.from_dim_map(mesh, inp1, [], shape=torch.Size([8, 4]))
-        mat2_spec = DTensorSpec.from_dim_map(mesh, inp2, [], shape=torch.Size([8, 4]))
+        mat1_spec = DTensorSpec.from_dim_map(
+            mesh, inp1, [], shape=torch.Size([8, 4])
+        )
+        mat2_spec = DTensorSpec.from_dim_map(
+            mesh, inp2, [], shape=torch.Size([8, 4])
+        )
         # adding a positional argument -1 to arg schema
-        output_sharding = pointwise_rule(OpSchema((mat1_spec, mat2_spec, -1), {}))
+        output_sharding = pointwise_rule(
+            OpSchema((mat1_spec, mat2_spec, -1), {})
+        )
         self.assertIsNone(output_sharding.output_spec)
         self.assertIsNotNone(output_sharding.schema_suggestions)
 
@@ -215,8 +275,12 @@ class CommonRulesTest(DistTensorTestBase):
         mesh = DeviceMesh(self.device_type, mesh_shape)
         # basic case to test implicit broadcasting shape alignment
         mat1, mat2 = [-1, 0], [0]
-        mat1_spec = DTensorSpec.from_dim_map(mesh, mat1, [], shape=torch.Size([20, 6]))
-        mat2_spec = DTensorSpec.from_dim_map(mesh, mat2, [], shape=torch.Size([6]))
+        mat1_spec = DTensorSpec.from_dim_map(
+            mesh, mat1, [], shape=torch.Size([20, 6])
+        )
+        mat2_spec = DTensorSpec.from_dim_map(
+            mesh, mat2, [], shape=torch.Size([6])
+        )
         output_sharding = pointwise_rule(OpSchema((mat1_spec, mat2_spec), {}))
         output_spec = output_sharding.output_spec
         self.assertIsNotNone(output_spec)
@@ -238,7 +302,9 @@ class CommonRulesTest(DistTensorTestBase):
         # ensure that the suggestion is to reshard the first
         # arg by all_gather first tensor dim sharding
         schema_suggestion = output_sharding.schema_suggestions[0]
-        self.assertEqual(schema_suggestion.args_schema[0].dim_map, [-1, -1, -1, 1])
+        self.assertEqual(
+            schema_suggestion.args_schema[0].dim_map, [-1, -1, -1, 1]
+        )
         self.assertEqual(schema_suggestion.args_schema[1].dim_map, mat2)
 
     @with_comms
@@ -246,7 +312,9 @@ class CommonRulesTest(DistTensorTestBase):
         mesh = DeviceMesh(self.device_type, torch.arange(self.world_size))
         # reduction on a 2d mat
         mat1 = [0, -1]
-        mat1_spec = DTensorSpec.from_dim_map(mesh, mat1, [], shape=torch.Size([8, 4]))
+        mat1_spec = DTensorSpec.from_dim_map(
+            mesh, mat1, [], shape=torch.Size([8, 4])
+        )
         # reduction on dim 0
         output_sharding_0 = reduction_rule(OpSchema((mat1_spec, 0), {}))
         self.assertIsNotNone(output_sharding_0.output_spec)
@@ -268,7 +336,9 @@ class CommonRulesTest(DistTensorTestBase):
         self.assertEqual(output_sharding_all_dim.output_spec.dim_map, [])
         # pending sum on mesh
         self.assertEqual(output_sharding_all_dim.output_spec.sums, [0])
-        self.assertEqual(output_sharding_all_dim.output_spec.shape, torch.Size([]))
+        self.assertEqual(
+            output_sharding_all_dim.output_spec.shape, torch.Size([])
+        )
 
 
 if __name__ == "__main__":

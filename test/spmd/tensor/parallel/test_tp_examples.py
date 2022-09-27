@@ -60,10 +60,14 @@ def shard_mlp(m, device_type, tp_size):
         if isinstance(module, nn.Linear):
             if name == "net1":
                 sharded_weight = nn.Parameter(
-                    distribute_tensor(module.weight, device_mesh, col_wise_sharding)
+                    distribute_tensor(
+                        module.weight, device_mesh, col_wise_sharding
+                    )
                 )
                 sharded_bias = nn.Parameter(
-                    distribute_tensor(module.bias, device_mesh, col_wise_sharding)
+                    distribute_tensor(
+                        module.bias, device_mesh, col_wise_sharding
+                    )
                 )
                 module.register_parameter("weight", sharded_weight)
                 module.register_parameter("bias", sharded_bias)
@@ -72,7 +76,9 @@ def shard_mlp(m, device_type, tp_size):
                 )
             elif name == "net2":
                 sharded_weight = nn.Parameter(
-                    distribute_tensor(module.weight, device_mesh, row_wise_sharding)
+                    distribute_tensor(
+                        module.weight, device_mesh, row_wise_sharding
+                    )
                 )
                 replicated_bias = nn.Parameter(
                     distribute_tensor(module.bias, device_mesh, replicate)
@@ -86,7 +92,9 @@ def shard_mlp(m, device_type, tp_size):
     def aggregate_output(outputs):
         assert isinstance(outputs, DTensor)
         return (
-            outputs.redistribute(outputs.device_mesh, replicate).contiguous().to_local()
+            outputs.redistribute(outputs.device_mesh, replicate)
+            .contiguous()
+            .to_local()
         )
 
     dist_mod = distribute_module(
@@ -113,7 +121,9 @@ def shard_self_attn(m, device_type, tp_size):
         if isinstance(module, nn.Linear):
             if name == "qkv":
                 sharded_weight = nn.Parameter(
-                    distribute_tensor(module.weight, device_mesh, col_wise_sharding)
+                    distribute_tensor(
+                        module.weight, device_mesh, col_wise_sharding
+                    )
                 )
                 module.register_parameter("weight", sharded_weight)
                 module.weight.register_hook(
@@ -121,7 +131,9 @@ def shard_self_attn(m, device_type, tp_size):
                 )
                 if module.bias is not None:
                     sharded_bias = nn.Parameter(
-                        distribute_tensor(module.bias, device_mesh, col_wise_sharding)
+                        distribute_tensor(
+                            module.bias, device_mesh, col_wise_sharding
+                        )
                     )
                     module.register_parameter("bias", sharded_bias)
                     module.bias.register_hook(
@@ -129,7 +141,9 @@ def shard_self_attn(m, device_type, tp_size):
                     )
             elif name == "proj":
                 sharded_weight = nn.Parameter(
-                    distribute_tensor(module.weight, device_mesh, row_wise_sharding)
+                    distribute_tensor(
+                        module.weight, device_mesh, row_wise_sharding
+                    )
                 )
                 module.register_parameter("weight", sharded_weight)
                 module.weight.register_hook(

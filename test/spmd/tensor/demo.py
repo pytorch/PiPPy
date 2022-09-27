@@ -54,8 +54,12 @@ def main():
             # X, y are local tensors, we need to create distributed tensor from local
             # torch.Tensor, and use DTensor as model input to implement data parallel
             X, y = synthetic_data(true_w, true_b, batch_size)
-            g_X = DTensor.from_local(x, device_mesh=mesh, placements=shard_0_placement)
-            g_y = DTensor.from_local(y, device_mesh=mesh, placements=shard_0_placement)
+            g_X = DTensor.from_local(
+                x, device_mesh=mesh, placements=shard_0_placement
+            )
+            g_y = DTensor.from_local(
+                y, device_mesh=mesh, placements=shard_0_placement
+            )
             l = loss_func(model(g_X, w, b), g_y)
 
             optimizer.zero_grad()

@@ -119,7 +119,9 @@ class DTensorSpec(object):
         global rank.
         """
         # TODO: support uneven sharding
-        assert self.shape is not None, "DTensorSpec does not contain global shape."
+        assert (
+            self.shape is not None
+        ), "DTensorSpec does not contain global shape."
         local_shape = list(self.shape)  # start with global shape
         for idx, placement in enumerate(self.placements):
             if isinstance(placement, Shard):

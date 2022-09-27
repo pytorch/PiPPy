@@ -180,7 +180,9 @@ def expand(input_shape: Shape, shape: Shape) -> DimMap:
             actual_s = 1
             assert desired_s >= 0
         else:
-            assert isinstance(p, InputDim), f"DimSpec not supported in expand: {p}"
+            assert isinstance(
+                p, InputDim
+            ), f"DimSpec not supported in expand: {p}"
             actual_s = input_shape[p.input_dim]
             assert actual_s == 1 or desired_s == -1 or desired_s == actual_s
 
@@ -234,7 +236,9 @@ def dim_movedim(
     assert len(input) == len(destination)
     input_set = set(input)
     assert len(input_set) == len(input), "Found repeated input dims"
-    assert len(set(destination)) == len(destination), "Found repeated output dims"
+    assert len(set(destination)) == len(
+        destination
+    ), "Found repeated output dims"
     assert max(input) < ndim
     assert max(destination) < ndim
 
@@ -361,7 +365,9 @@ def view_groups(from_size: Shape, to_size: Shape) -> DimMap:
 
         if len(to_group_shape) > 0:
             flattened = Flatten.new(
-                tuple(InputDim(fi) for fi in from_group_dim if from_size[fi] > 1)
+                tuple(
+                    InputDim(fi) for fi in from_group_dim if from_size[fi] > 1
+                )
             )
             result_pp += [
                 Split.new(flattened, tuple(to_group_shape), i)
@@ -493,7 +499,9 @@ def propagate_shape_and_sharding(
       if the leftmost split size is divisible by the mesh dimension
     """
     assert len(in_shard) == len(mesh_sizes)
-    sharded_in_dims: Set[int] = set(s.dim for s in in_shard if isinstance(s, Shard))
+    sharded_in_dims: Set[int] = set(
+        s.dim for s in in_shard if isinstance(s, Shard)
+    )
 
     def get_dim_size(cmd: DimSpec) -> Tuple[int, Optional[InputDim]]:
         if isinstance(cmd, InputDim):
@@ -511,7 +519,8 @@ def propagate_shape_and_sharding(
             return (
                 _prod(get_dim_size(a)[0] for a in cmd.input_dims),
                 dim0
-                if isinstance(dim0, InputDim) and dim0.input_dim in sharded_in_dims
+                if isinstance(dim0, InputDim)
+                and dim0.input_dim in sharded_in_dims
                 else None,
             )
         elif isinstance(cmd, Split):
@@ -554,7 +563,10 @@ def propagate_shape_and_sharding(
 
     return (
         tuple(out_shape),
-        [Shard(dim_map[s.dim]) if isinstance(s, Shard) else s for s in in_shard],
+        [
+            Shard(dim_map[s.dim]) if isinstance(s, Shard) else s
+            for s in in_shard
+        ],
     )
 
 

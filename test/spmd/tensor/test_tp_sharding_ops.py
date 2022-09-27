@@ -16,7 +16,9 @@ class TPShardingOpsTest(DistTensorTestBase):
         tensor = torch.rand(16, 35, 26)
         sharding = [Shard(0)]
         st = distribute_tensor(tensor, device_mesh, sharding).view(8, 4, 35, 13)
-        st_new = distribute_tensor(tensor.view(8, 4, 35, 13), device_mesh, sharding)
+        st_new = distribute_tensor(
+            tensor.view(8, 4, 35, 13), device_mesh, sharding
+        )
         self.assertEqual(st.to_local(), st_new.to_local())
         self.assertEqual(st.placements[0], st_new.placements[0])
 

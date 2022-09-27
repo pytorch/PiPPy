@@ -73,8 +73,12 @@ class TestViewOps(DistTensorTestBase):
         self.assertEquals(
             view_groups([2, 3, 4, 5, 7], [3, 8, 7, 5]),
             (
-                Split(Flatten((InputDim(0), InputDim(1), InputDim(2))), (3, 8), 0),
-                Split(Flatten((InputDim(0), InputDim(1), InputDim(2))), (3, 8), 1),
+                Split(
+                    Flatten((InputDim(0), InputDim(1), InputDim(2))), (3, 8), 0
+                ),
+                Split(
+                    Flatten((InputDim(0), InputDim(1), InputDim(2))), (3, 8), 1
+                ),
                 Split(Flatten((InputDim(3), InputDim(4))), (7, 5), 0),
                 Split(Flatten((InputDim(3), InputDim(4))), (7, 5), 1),
             ),
@@ -153,7 +157,9 @@ class TestViewOps(DistTensorTestBase):
             no_shard_dims.add(kwargs.get("dim", 0))
 
         sharding_choices = cast(List[Placement], [Replicate()]) + [
-            Shard(i) for i, s in enumerate(in_shape) if s > 1 and i not in no_shard_dims
+            Shard(i)
+            for i, s in enumerate(in_shape)
+            if s > 1 and i not in no_shard_dims
         ]
 
         all_sharding_choices = itertools.product(
@@ -184,11 +190,19 @@ class TestViewOps(DistTensorTestBase):
         )
         self.dimmap_test(torch.atleast_1d, (randn(()),), (Singleton(),))
         self.dimmap_test(torch.atleast_1d, (randn(24),), (InputDim(0),))
-        self.dimmap_test(torch.atleast_1d, (randn(24, 36),), (InputDim(0), InputDim(1)))
+        self.dimmap_test(
+            torch.atleast_1d, (randn(24, 36),), (InputDim(0), InputDim(1))
+        )
 
-        self.dimmap_test(torch.atleast_2d, (randn(()),), (Singleton(), Singleton()))
-        self.dimmap_test(torch.atleast_2d, (randn(24),), (Singleton(), InputDim(0)))
-        self.dimmap_test(torch.atleast_2d, (randn(24, 36),), (InputDim(0), InputDim(1)))
+        self.dimmap_test(
+            torch.atleast_2d, (randn(()),), (Singleton(), Singleton())
+        )
+        self.dimmap_test(
+            torch.atleast_2d, (randn(24),), (Singleton(), InputDim(0))
+        )
+        self.dimmap_test(
+            torch.atleast_2d, (randn(24, 36),), (InputDim(0), InputDim(1))
+        )
         self.dimmap_test(
             torch.atleast_2d,
             (randn(24, 36, 48),),
