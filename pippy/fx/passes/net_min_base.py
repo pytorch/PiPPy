@@ -16,11 +16,15 @@ from .tools_common import (
     NodeSet,
     CALLABLE_NODE_OPS,
     FxNetAccFusionsFinder,
-    Names
+    Names,
 )
 from dataclasses import dataclass
 
-__all__ = ['FxNetMinimizerBadModuleError', 'FxNetMinimizerRunFuncError', 'FxNetMinimizerResultMismatchError']
+__all__ = [
+    "FxNetMinimizerBadModuleError",
+    "FxNetMinimizerRunFuncError",
+    "FxNetMinimizerResultMismatchError",
+]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,6 +37,7 @@ class FxNetMinimizerBadModuleError(Exception):
 
     pass
 
+
 @compatibility(is_backward_compatible=False)
 class FxNetMinimizerRunFuncError(Exception):
     """
@@ -41,6 +46,7 @@ class FxNetMinimizerRunFuncError(Exception):
 
     pass
 
+
 @compatibility(is_backward_compatible=False)
 class FxNetMinimizerResultMismatchError(Exception):
     """
@@ -48,6 +54,7 @@ class FxNetMinimizerResultMismatchError(Exception):
     """
 
     pass
+
 
 @dataclass
 class _MinimizerSettingBase:
@@ -65,6 +72,7 @@ class _MinimizerSettingBase:
     `return_intermediate`: If true, when using `run_nodes()` function to run the
     model, intermediate results of all the ops will be returned as output.
     """
+
     accumulate_error: bool = False
     traverse_method: str = "sequential"
     find_all: bool = False
@@ -98,7 +106,9 @@ class _MinimizerBase:
         self,
         module: pippy.fx.GraphModule,
         sample_input: Tensors,
-        compare_fn: Callable[[TensorOrTensors, TensorOrTensors, Names], Tuple[float, bool]],
+        compare_fn: Callable[
+            [TensorOrTensors, TensorOrTensors, Names], Tuple[float, bool]
+        ],
         settings: _MinimizerSettingBase,
     ):
         assert isinstance(module, pippy.fx.GraphModule)
@@ -118,14 +128,18 @@ class _MinimizerBase:
         self.results: Dict[Any, Any] = {}
 
         callable_nodes = {
-            node for node in self.module.graph.nodes if node.op in CALLABLE_NODE_OPS
+            node
+            for node in self.module.graph.nodes
+            if node.op in CALLABLE_NODE_OPS
         }
         ShapeProp(self.module).propagate(*self.sample_input)
         self.fusions = FxNetAccFusionsFinder(self.module, callable_nodes)()
 
         # Check if number of input in sample_input matches the number of placeholders
         placeholders = [
-            node.name for node in self.module.graph.nodes if node.op == "placeholder"
+            node.name
+            for node in self.module.graph.nodes
+            if node.op == "placeholder"
         ]
         assert len(placeholders) == len(self.sample_input)
 
@@ -134,14 +148,18 @@ class _MinimizerBase:
             self.a_outputs[name] = sample_input[i]
             self.b_outputs[name] = sample_input[i]
 
-    def run_a(self, mod: pippy.fx.GraphModule, inputs: Tensors) -> TensorOrTensors:
+    def run_a(
+        self, mod: pippy.fx.GraphModule, inputs: Tensors
+    ) -> TensorOrTensors:
         """
         Run `mod` with `inputs` and generate output. The output will be compared with
         output of run_b().
         """
         raise RuntimeError("run_a() is not implemented.")
 
-    def run_b(self, mod: pippy.fx.GraphModule, inputs: Tensors) -> TensorOrTensors:
+    def run_b(
+        self, mod: pippy.fx.GraphModule, inputs: Tensors
+    ) -> TensorOrTensors:
         """
         Run `mod` with `inputs` and generate output. The output will be compared with
         output of run_a().
@@ -200,7 +218,9 @@ class _MinimizerBase:
         b_input = []
         submodule = getattr(main_module, submod_path)
         placeholders = [
-            node.name for node in submodule.graph.nodes if node.op == "placeholder"
+            node.name
+            for node in submodule.graph.nodes
+            if node.op == "placeholder"
         ]
 
         # If all placeholder can be found in stored outputs, use stored
@@ -212,7 +232,9 @@ class _MinimizerBase:
                 b_input.append(self.b_outputs[name])
         else:
             if self.settings.accumulate_error:
-                print(f"Can't find previous stored outputs named {placeholders}!")
+                print(
+                    f"Can't find previous stored outputs named {placeholders}!"
+                )
 
             def get_inputs(self: torch.nn.Module, inputs: Any):
                 nonlocal a_input
@@ -255,7 +277,9 @@ class _MinimizerBase:
             else:
                 node.tag = "main_0"
 
-    def _build_submodule(self, nodes: NodeSet) -> Tuple[pippy.fx.GraphModule, str]:
+    def _build_submodule(
+        self, nodes: NodeSet
+    ) -> Tuple[pippy.fx.GraphModule, str]:
         """
         Split self.module so that one submodule consists of `nodes` and only `nodes`.
 
@@ -270,7 +294,9 @@ class _MinimizerBase:
         self._tag_nodes(nodes)
 
         # Split module based on coloring
-        split_module = split_by_tags(self.module, ["main_0", "minimize", "main_1"])
+        split_module = split_by_tags(
+            self.module, ["main_0", "minimize", "main_1"]
+        )
 
         # Find submodule containing colored nodes
         submodule_name: str = ""
@@ -297,7 +323,7 @@ class _MinimizerBase:
         self,
         split_module: pippy.fx.GraphModule,
         submod_name: str,
-        output_names: Names
+        output_names: Names,
     ):
         """
         Run the submodule in `split_module` that has name `submod_name`
@@ -322,7 +348,9 @@ class _MinimizerBase:
                     output_nodes.append(node)
 
             submodule.graph.output(
-                output_nodes[0] if len(output_nodes) == 1 else tuple(output_nodes)
+                output_nodes[0]
+                if len(output_nodes) == 1
+                else tuple(output_nodes)
             )
             submodule.graph.lint()
             submodule.recompile()
@@ -343,7 +371,9 @@ class _MinimizerBase:
         numeric_result, bool_result = self.compare_fn(a_result, b_result, names)
         self.results[result_key] = numeric_result
         if not bool_result:
-            raise FxNetMinimizerResultMismatchError(f"Result mismatch for {result_key}")
+            raise FxNetMinimizerResultMismatchError(
+                f"Result mismatch for {result_key}"
+            )
 
     def _binary_search_impl(self, nodes: NodeList) -> NodeSet:
         """
@@ -356,11 +386,7 @@ class _MinimizerBase:
 
         try:
             split_module, submod_name = self._build_submodule(cur_nodes)
-            self._run_and_compare(
-                split_module,
-                submod_name,
-                []
-            )
+            self._run_and_compare(split_module, submod_name, [])
         except (FxNetMinimizerRunFuncError, FxNetMinimizerResultMismatchError):
             if len(nodes) == 1:
                 return cur_nodes
@@ -402,9 +428,7 @@ class _MinimizerBase:
 
             try:
                 split_module, submod_name = self._build_submodule(cur_nodes)
-                self._run_and_compare(
-                    split_module, submod_name, [node.name]
-                )
+                self._run_and_compare(split_module, submod_name, [node.name])
             except (FxNetMinimizerResultMismatchError):
                 culprits.add(node)
                 if not self.settings.find_all:
@@ -432,19 +456,25 @@ class _MinimizerBase:
             node_name = node.name
             if node_name is not None and isinstance(node_name, tuple):
                 node_name = node_name[0]
-            assert node_name is not None and isinstance(node_name, str), f"minimize: node_name: {node_name}"
+            assert node_name is not None and isinstance(
+                node_name, str
+            ), f"minimize: node_name: {node_name}"
 
             try:
                 split_module, submod_name = self._build_submodule(nodes_to_run)
                 self._run_and_compare(split_module, submod_name, [node_name])
-            except (FxNetMinimizerResultMismatchError,
-                    FxNetMinimizerRunFuncError):
+            except (
+                FxNetMinimizerResultMismatchError,
+                FxNetMinimizerRunFuncError,
+            ):
                 culprits.add(node)
                 return culprits
 
         return culprits
 
-    def _collect_nodes(self, start: Optional[str], end: Optional[str]) -> NodeList:
+    def _collect_nodes(
+        self, start: Optional[str], end: Optional[str]
+    ) -> NodeList:
         """
         Collect nodes in the model that between nodes with name of `start` and `end`.
         These two nodes are also included.
@@ -501,7 +531,9 @@ class _MinimizerBase:
         ) as e:
             print(e)
 
-    def minimize(self, start: Optional[str] = None, end: Optional[str] = None) -> NodeSet:
+    def minimize(
+        self, start: Optional[str] = None, end: Optional[str] = None
+    ) -> NodeSet:
         """
         Minimizing the model from node with name `start` to node with name `end` base
         on self.settings. Find culprits that causes FxNetMinimizerRunFuncError or
@@ -531,4 +563,6 @@ class _MinimizerBase:
         if self.settings.traverse_method == "accumulate":
             return self._accumulate_traverse(nodes)
 
-        raise RuntimeError(f"Unknow traverse method {self.settings.traverse_method}!")
+        raise RuntimeError(
+            f"Unknow traverse method {self.settings.traverse_method}!"
+        )

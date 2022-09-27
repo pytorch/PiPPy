@@ -36,7 +36,9 @@ class TestDCE(TestCase):
                     return True
                 return super().trace(m, qualname)
 
-        traced: pippy.fx.GraphModule = pippy.fx.GraphModule(m, TestTracer().trace(m))
+        traced: pippy.fx.GraphModule = pippy.fx.GraphModule(
+            m, TestTracer().trace(m)
+        )
         print(str(traced.graph))
 
         # Verify there are nodes without users (if expected).
@@ -164,7 +166,9 @@ class TestDCE(TestCase):
                 return a * 2
 
         self._run_dce_and_test(
-            TestModule(), expect_dce_changes=False, modules_to_be_leafs={ReLUImpure}
+            TestModule(),
+            expect_dce_changes=False,
+            modules_to_be_leafs={ReLUImpure},
         )
 
     def test_keep_torch_assert(self):

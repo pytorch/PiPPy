@@ -146,7 +146,8 @@ def get_latency_of_one_partition(
             # this node is on the top bfs level in this partition
             if not any(
                 [
-                    n in partition.nodes and n.op not in {"placeholder", "get_attr"}
+                    n in partition.nodes
+                    and n.op not in {"placeholder", "get_attr"}
                     for n in input_nodes
                 ]
             ):
@@ -168,20 +169,25 @@ def get_latency_of_one_partition(
         )
         # Update the compute latency of this path
         computer_latency_sec = (
-            partition_latency.computer_latency_sec + node_latency.computer_latency_sec
+            partition_latency.computer_latency_sec
+            + node_latency.computer_latency_sec
         )
         # Get all users of this node that are in this partition
         users = set(node.users).intersection(partition.nodes)
         if users:
             max_latency = PartitionLatency(
-                mem_latency_sec=0.0, computer_latency_sec=0.0, overall_latency_sec=0.0
+                mem_latency_sec=0.0,
+                computer_latency_sec=0.0,
+                overall_latency_sec=0.0,
             )
             for n in users:
                 # Get new partition latency recursively
                 new_partition_latency = dfs_helper(
                     n,
                     PartitionLatency(
-                        mem_latency_sec, computer_latency_sec, overall_latency_sec
+                        mem_latency_sec,
+                        computer_latency_sec,
+                        overall_latency_sec,
                     ),
                 )
                 if (
@@ -206,7 +212,9 @@ def get_latency_of_one_partition(
         partition_latency = dfs_helper(
             node,
             PartitionLatency(
-                mem_latency_sec=0.0, computer_latency_sec=0.0, overall_latency_sec=0.0
+                mem_latency_sec=0.0,
+                computer_latency_sec=0.0,
+                overall_latency_sec=0.0,
             ),
         )
         if (
@@ -218,7 +226,8 @@ def get_latency_of_one_partition(
 
 
 def get_partition_to_latency_mapping(
-    partitions: List[Partition], node_to_latency_mapping: Dict[Node, NodeLatency]
+    partitions: List[Partition],
+    node_to_latency_mapping: Dict[Node, NodeLatency],
 ) -> Dict[Partition, PartitionLatency]:
     """Given all the partitions and node_to_latency_mapping dictionary,
     return a mapping dictionary of each partition to its overall latency
@@ -245,7 +254,8 @@ def get_comm_latency_between(
     if (
         parent_partition.logical_device_ids != []
         and child_partition.logical_device_ids != []
-        and parent_partition.logical_device_ids == child_partition.logical_device_ids
+        and parent_partition.logical_device_ids
+        == child_partition.logical_device_ids
     ):
         return 0.0
     # Keep tracking the communication size between parent and child

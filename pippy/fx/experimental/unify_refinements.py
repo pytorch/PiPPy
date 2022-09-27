@@ -13,6 +13,7 @@ def infer_symbolic_types_single_pass(traced):
     mgu = unify_eq(r.constraints)
     substitute_all_types(traced.graph, mgu)
 
+
 def infer_symbolic_types(traced):
     """
     Calls our symbolic inferencer twice.
@@ -31,6 +32,7 @@ def infer_symbolic_types(traced):
     substitute_all_types(traced.graph, mgu)
 
     r.symbolic_relations()
+
 
 def convert_eq(list_of_eq):
     """
@@ -108,6 +110,7 @@ def substitute_all_types(graph, mapping):
 
     for n in graph.nodes:
         n.type = substitute_solution_one_type(mapping, n.type)
+
 
 def check_for_type_equality(g1, g2):
     """

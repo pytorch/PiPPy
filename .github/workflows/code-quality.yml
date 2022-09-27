@@ -39,6 +39,6 @@ jobs:
     - name: Lint with flake8
       if: always()
       run: flake8 pippy spmd
-    - name: Lint with black for SPMD
+    - name: Lint with black
       if: always()
-      run: black --check spmd test/spmd
+      run: black --check pippy spmd test

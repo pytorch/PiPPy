@@ -57,7 +57,11 @@ class DAG:
         size_bytes: int,
     ) -> None:
         node = DAGNode(
-            submodule_node, input_nodes, output_nodes, logical_devices, size_bytes
+            submodule_node,
+            input_nodes,
+            output_nodes,
+            logical_devices,
+            size_bytes,
         )
         self.nodes.append(node)
 
@@ -157,7 +161,9 @@ def get_bfs_level_partition(partitions: List[Partition]) -> None:
     return
 
 
-def get_node_to_partition_mapping(partitions: List[Partition]) -> Dict[Node, int]:
+def get_node_to_partition_mapping(
+    partitions: List[Partition],
+) -> Dict[Node, int]:
     """Given a list of partitions,return node to partition mapping"""
     node_to_partition: Dict[Node, int] = {}
     for partition in partitions:
@@ -323,7 +329,9 @@ class Partitioner:
         get_size_of_all_nodes(self.graph_module)
         # Check if there are op nodes in the fx module
         nodes = self.graph_module.graph.nodes
-        if all(node.op in {"placeholder", "get_attr", "output"} for node in nodes):
+        if all(
+            node.op in {"placeholder", "get_attr", "output"} for node in nodes
+        ):
             raise RuntimeError("No Partition since no operations in the module")
         # Calculate total size of the fx module
         total_size_of_graph = 0
@@ -332,7 +340,9 @@ class Partitioner:
                 break
             total_size_of_graph += node.size_bytes.total_size
         # Find the device with the max mem size
-        device_with_max_mem = max(self.devices, key=lambda d: d.available_mem_bytes)
+        device_with_max_mem = max(
+            self.devices, key=lambda d: d.available_mem_bytes
+        )
         # AOT based partition
         if partitioner_config.mode == PartitionMode.aot_based:
             self.aot_based_partition(
@@ -342,9 +352,12 @@ class Partitioner:
         # Single partition if the whole module can be fit into one device
         elif total_size_of_graph <= device_with_max_mem.available_mem_bytes:
             self.find_single_partition(
-                total_size_of_graph, logical_device_id=device_with_max_mem.logical_id
+                total_size_of_graph,
+                logical_device_id=device_with_max_mem.logical_id,
             )
-        elif total_size_of_graph > sum([d.available_mem_bytes for d in self.devices]):
+        elif total_size_of_graph > sum(
+            [d.available_mem_bytes for d in self.devices]
+        ):
             raise RuntimeError("Devices have no enough memory for the module")
         else:
             # Sparse nn based partition
@@ -354,7 +367,9 @@ class Partitioner:
                     device.available_mem_bytes == available_mem_bytes
                     for device in self.devices
                 ):
-                    raise RuntimeError("All devices must have same memory size!")
+                    raise RuntimeError(
+                        "All devices must have same memory size!"
+                    )
                 # sparse_nn_partition only support same memory size
                 # TODO: add different size support for sparse_nn_partition
                 self.sparse_nn_partition(available_mem_bytes)
@@ -445,7 +460,9 @@ class Partitioner:
             if node.op in {"call_module", "call_method", "call_function"}:
                 # Check if there are devices left
                 if len(self.partitions) <= len(self.devices):
-                    total_size_of_input_nodes = get_extra_size_of(node, partition.nodes)
+                    total_size_of_input_nodes = get_extra_size_of(
+                        node, partition.nodes
+                    )
                     # Check if the current partition is the very first partition
                     if partition.used_mem_bytes == 0:
                         # Find a device to fit the first node, return available mem size
@@ -482,9 +499,13 @@ class Partitioner:
                             partition_to_left_mem_bytes[
                                 partition
                             ] = device.available_mem_bytes
-                            partition.logical_device_ids.append(device.logical_id)
+                            partition.logical_device_ids.append(
+                                device.logical_id
+                            )
                     partition.add_node(node)
-                    partition_to_left_mem_bytes[partition] -= total_size_of_input_nodes
+                    partition_to_left_mem_bytes[
+                        partition
+                    ] -= total_size_of_input_nodes
                 # Create single node partitions if no device is left
                 else:
                     self.create_single_node_partition(node)
@@ -496,7 +517,9 @@ class Partitioner:
             self.partitions, self.devices
         )
         if not found_partition_to_device_mapping:
-            raise RuntimeError("Cannot Get a Valid Partition to Logical Device Mapping")
+            raise RuntimeError(
+                "Cannot Get a Valid Partition to Logical Device Mapping"
+            )
         return
 
     def saturate_host(self) -> None:
@@ -518,20 +541,23 @@ class Partitioner:
         ), f"Expect no_device_partitions has 0 device, but get {len(no_device_partitions)}"
 
         # Devices that hold partitions
-        used_devices = [d for d in self.devices if len(device_to_partitions[d]) > 0]
+        used_devices = [
+            d for d in self.devices if len(device_to_partitions[d]) > 0
+        ]
         # Track replicates of the assigned devices
         replicated_device_to_used_device: Dict[Device, Device] = {}
 
-        while len(used_devices) * 2 + len(replicated_device_to_used_device) <= len(
-            self.devices
-        ):
+        while len(used_devices) * 2 + len(
+            replicated_device_to_used_device
+        ) <= len(self.devices):
             # Success flag for this round
             success = True
             # Devices that have not been assigned
             idle_devices = [
                 d
                 for d in self.devices
-                if d not in used_devices and d not in replicated_device_to_used_device
+                if d not in used_devices
+                and d not in replicated_device_to_used_device
             ]
             # Temporary mapping from replicated device to original device
             temp_replicate_mapping = {}
@@ -549,7 +575,9 @@ class Partitioner:
                 if len(available_devices) == 0:
                     success = False
                     break
-                new_device = min(available_devices, key=lambda d: d.available_mem_bytes)
+                new_device = min(
+                    available_devices, key=lambda d: d.available_mem_bytes
+                )
                 idle_devices.remove(new_device)
                 temp_replicate_mapping[new_device] = used_device
 
@@ -657,10 +685,15 @@ class Partitioner:
             find_combination = True
             while find_combination:
                 # Sort partitions based on memory size
-                sorted_partitions = sorted(partitions, key=lambda p: p.used_mem_bytes)
+                sorted_partitions = sorted(
+                    partitions, key=lambda p: p.used_mem_bytes
+                )
                 # Mark bfs level
                 get_bfs_level_partition(self.partitions)
-                find_combination, partitions = find_partition_to_combine_based_on_size(
+                (
+                    find_combination,
+                    partitions,
+                ) = find_partition_to_combine_based_on_size(
                     sorted_partitions, available_mem_bytes, partitions
                 )
             return
@@ -686,9 +719,13 @@ class Partitioner:
             for p in sorted_partitions[::-1]:
                 if abs(smallest_partition.bfs_level - p.bfs_level) <= 1:
                     # Calculate how many bytes needed if combined
-                    mem_bytes_needed = calculate_mem_bytes_needed(p, smallest_partition)
+                    mem_bytes_needed = calculate_mem_bytes_needed(
+                        p, smallest_partition
+                    )
                     if mem_bytes_needed <= available_mem_bytes:
-                        combine_two_partitions(p, smallest_partition, self.partitions)
+                        combine_two_partitions(
+                            p, smallest_partition, self.partitions
+                        )
                         partitions.remove(smallest_partition)
                         partitions.remove(p)
                         partitions.append(self.partitions[-1])
@@ -740,13 +777,17 @@ class Partitioner:
                         # The current partition isn't an empty partition. Create a new one.
                         partition = reset_partition_in_sparse_nn(partition)
                     in_embedding_region = not in_embedding_region
-                total_size_of_input_nodes = get_extra_size_of(node, partition.nodes)
+                total_size_of_input_nodes = get_extra_size_of(
+                    node, partition.nodes
+                )
                 if (
                     total_size_of_input_nodes + partition.used_mem_bytes
                     > available_mem_bytes
                 ):
                     partition = reset_partition_in_sparse_nn(partition)
-                    total_size_of_input_nodes = get_extra_size_of(node, partition.nodes)
+                    total_size_of_input_nodes = get_extra_size_of(
+                        node, partition.nodes
+                    )
                     if total_size_of_input_nodes > available_mem_bytes:
                         raise RuntimeError(
                             node.target + "is too large to fit into a device"
@@ -756,9 +797,13 @@ class Partitioner:
         # Set parents and children for partitions
         set_parents_and_children(self.partitions)
         # Combining non-embedding partitions
-        combine_partitions_based_on_size(non_embedding_partitions, available_mem_bytes)
+        combine_partitions_based_on_size(
+            non_embedding_partitions, available_mem_bytes
+        )
         # Combining embedding partitions
-        combine_partitions_based_on_size(embedding_partitions, available_mem_bytes)
+        combine_partitions_based_on_size(
+            embedding_partitions, available_mem_bytes
+        )
         total_size_of_non_embedding_partitions = 0
         for partition in non_embedding_partitions:
             total_size_of_non_embedding_partitions += partition.used_mem_bytes
@@ -776,7 +821,8 @@ class Partitioner:
         for i, partition in enumerate(embedding_partitions):
             # Check if all non-embedding partitions can fit into embedding partition devices
             if (
-                total_size_of_non_embedding_partitions + partition.used_mem_bytes
+                total_size_of_non_embedding_partitions
+                + partition.used_mem_bytes
                 > available_mem_bytes
             ):
                 raise RuntimeError(
@@ -881,7 +927,9 @@ class Partitioner:
                 for j in range(i + 1, len(self.partitions)):
                     # Try to combine the partition pair
                     # and see the new cost after combination
-                    new_cost = try_combining_partitions(i, j, self.partitions[:])
+                    new_cost = try_combining_partitions(
+                        i, j, self.partitions[:]
+                    )
                     if new_cost <= cost:
                         partition_pair = [i, j]
                         cost = new_cost
@@ -998,7 +1046,12 @@ class Partitioner:
                     continue
                 # Try swapping node in p0 with n1 in p1
                 cost = try_swap_nodes(
-                    node, n1, p0, p1, node_to_latency_mapping, transfer_rate_per_sec
+                    node,
+                    n1,
+                    p0,
+                    p1,
+                    node_to_latency_mapping,
+                    transfer_rate_per_sec,
                 )
                 if cost < min_cost:
                     node_pair = [node, n1]
@@ -1012,7 +1065,9 @@ class Partitioner:
         )
         # Calculate the cost of the partitions
         cost = get_latency_of_partitioned_graph(
-            self.partitions, partition_to_latency_mapping, transfer_rate_bytes_per_sec
+            self.partitions,
+            partition_to_latency_mapping,
+            transfer_rate_bytes_per_sec,
         )
         # Keep tracking the node pair that shows the better cost
         node_pair: List[Node] = []
@@ -1048,7 +1103,10 @@ class Partitioner:
             # Do the swapping after trying all the nodes from a partition
             if len(node_pair) != 0:
                 swap_nodes(
-                    node_pair[0], node_pair[1], partition_pair[0], partition_pair[1]
+                    node_pair[0],
+                    node_pair[1],
+                    partition_pair[0],
+                    partition_pair[1],
                 )
                 reorganize_partitions(self.partitions)
                 get_device_to_partitions_mapping(self.partitions, self.devices)
@@ -1072,9 +1130,9 @@ class Partitioner:
                 partition = Partition(partition_id)
                 self.partitions.append(partition)
                 partition_id_to_partition_mapping[partition_id] = partition
-                partition.logical_device_ids = partition_to_logical_device_mapping[
-                    partition_id
-                ]
+                partition.logical_device_ids = (
+                    partition_to_logical_device_mapping[partition_id]
+                )
             else:
                 partition = partition_id_to_partition_mapping[
                     self.node_to_partition[node]

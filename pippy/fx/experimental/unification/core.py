@@ -11,33 +11,47 @@ from .dispatch import dispatch
 # Reificiation #
 ################
 
+
 @dispatch(Iterator, dict)
 def _reify(t, s):
     return map(partial(reify, s=s), t)
     # return (reify(arg, s) for arg in t)
+
+
 _reify
+
 
 @dispatch(tuple, dict)  # type: ignore[no-redef]
 def _reify(t, s):
     return tuple(reify(iter(t), s))
+
+
 _reify
+
 
 @dispatch(list, dict)  # type: ignore[no-redef]
 def _reify(t, s):
     return list(reify(iter(t), s))
+
+
 _reify
+
 
 @dispatch(dict, dict)  # type: ignore[no-redef]
 def _reify(d, s):
     return dict((k, reify(v, s)) for k, v in d.items())
+
+
 _reify
+
 
 @dispatch(object, dict)  # type: ignore[no-redef]
 def _reify(o, s):
     return o  # catch all, just return the object
 
+
 def reify(e, s):
-    """ Replace variables of expression with substitution
+    """Replace variables of expression with substitution
     >>> x, y = var(), var()
     >>> e = (1, x, (3, y))
     >>> s = {x: 2, y: 4}
@@ -51,11 +65,13 @@ def reify(e, s):
         return reify(s[e], s) if e in s else e
     return _reify(e, s)
 
+
 ###############
 # Unification #
 ###############
 
 seq = tuple, list, Iterator
+
 
 @dispatch(seq, seq, dict)
 def _unify(u, v, s):
@@ -66,6 +82,8 @@ def _unify(u, v, s):
         if s is False:
             return False
     return s
+
+
 #
 # @dispatch((set, frozenset), (set, frozenset), dict)
 # def _unify(u, v, s):
@@ -95,7 +113,7 @@ def _unify(u, v, s):
 
 @dispatch(object, object, dict)
 def unify(u, v, s):  # no check at the moment
-    """ Find substitution so that u == v while satisfying s
+    """Find substitution so that u == v while satisfying s
     >>> x = var('x')
     >>> unify((1, x), (1, 2), {})
     {~x: 2}
@@ -109,7 +127,10 @@ def unify(u, v, s):  # no check at the moment
     if isvar(v):
         return assoc(s, v, u)
     return _unify(u, v, s)
+
+
 unify
+
 
 @dispatch(object, object)  # type: ignore[no-redef]
 def unify(u, v):

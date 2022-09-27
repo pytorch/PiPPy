@@ -8,7 +8,7 @@ _glv = _global_logic_variables
 
 
 class Var(object):
-    """ Logic Variable """
+    """Logic Variable"""
 
     _id = 1
 
@@ -25,6 +25,7 @@ class Var(object):
 
     def __str__(self):
         return "~" + str(self.token)  # type: ignore[attr-defined]
+
     __repr__ = __str__
 
     def __eq__(self, other):
@@ -37,6 +38,7 @@ class Var(object):
 def var():
     return lambda *args: Var(*args)
 
+
 def vars():
     return lambda n: [var() for i in range(n)]
 
@@ -45,7 +47,9 @@ def vars():
 def isvar(v):
     return True
 
+
 isvar
+
 
 @dispatch(object)  # type: ignore[no-redef]
 def isvar(o):
@@ -54,7 +58,7 @@ def isvar(o):
 
 @contextmanager
 def variables(*variables):
-    """ Context manager for logic variables
+    """Context manager for logic variables
     >>> from __future__ import with_statement
     >>> with variables(1):
     ...     print(isvar(1))

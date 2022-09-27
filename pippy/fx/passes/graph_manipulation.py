@@ -12,8 +12,14 @@ from pippy.fx.node import (
 )
 from pippy.fx.passes.shape_prop import ShapeProp
 
-__all__ = ['replace_target_nodes_with', 'size_bytes', 'get_size_of_all_nodes', 'get_tensor_meta',
-           'get_size_of_node']
+__all__ = [
+    "replace_target_nodes_with",
+    "size_bytes",
+    "get_size_of_all_nodes",
+    "get_tensor_meta",
+    "get_size_of_node",
+]
+
 
 @compatibility(is_backward_compatible=False)
 def replace_target_nodes_with(
@@ -105,7 +111,9 @@ def get_size_of_node(fx_module: GraphModule, node: Node) -> size_bytes:
             [], dtype=tensor_meta.dtype
         ).element_size()
     else:
-        size_per_elem_bytes = torch.tensor([], dtype=tensor_meta.dtype).element_size()
+        size_per_elem_bytes = torch.tensor(
+            [], dtype=tensor_meta.dtype
+        ).element_size()
     total_size = size_per_elem_bytes * total_num_of_elems
     output_size = size_per_elem_bytes * output_elem
     return size_bytes(output_size, total_size)

@@ -9,7 +9,13 @@ from pippy.fx.graph_module import GraphModule
 from pippy.fx._compatibility import compatibility
 from pippy.fx.passes.infra.pass_base import PassResult
 
-__all__ = ['inplace_wrapper', 'pass_result_wrapper', 'this_before_that_pass_constraint', 'PassManager']
+__all__ = [
+    "inplace_wrapper",
+    "pass_result_wrapper",
+    "this_before_that_pass_constraint",
+    "PassManager",
+]
+
 
 @compatibility(is_backward_compatible=False)
 def inplace_wrapper(fn: Callable) -> Callable:
@@ -34,6 +40,7 @@ def inplace_wrapper(fn: Callable) -> Callable:
 
     return wrapped_fn
 
+
 @compatibility(is_backward_compatible=False)
 def pass_result_wrapper(fn: Callable) -> Callable:
     """
@@ -57,6 +64,7 @@ def pass_result_wrapper(fn: Callable) -> Callable:
 
     return wrapped_fn
 
+
 def _validate_pass_schedule_constraint(
     constraint: Callable[[Callable, Callable], bool], passes: List[Callable]
 ) -> None:
@@ -69,6 +77,7 @@ def _validate_pass_schedule_constraint(
                 f" but found {a} at index {i} and {b} at index{j} in pass"
                 f" list."
             )
+
 
 def _topological_sort_passes(
     passes: List[Callable], constraints: List[Callable]
@@ -86,8 +95,8 @@ def _topological_sort_passes(
         return passes
 
     # Contruct a graph mapping nodes to a list of their users
-    graph: Dict[Callable, List[Callable]] = {p : [] for p in passes}
-    indegree_map: Dict[Callable, int] = {p : 0 for p in passes}
+    graph: Dict[Callable, List[Callable]] = {p: [] for p in passes}
+    indegree_map: Dict[Callable, int] = {p: 0 for p in passes}
     candidates: Queue = Queue()
     for a in passes:
         for b in passes:
@@ -102,7 +111,7 @@ def _topological_sort_passes(
         if indegree_map[a] == 0:
             candidates.put(a)
 
-    visited: Dict[Callable, bool] = {p : False for p in passes}
+    visited: Dict[Callable, bool] = {p: False for p in passes}
     sorted_passes: List[Callable] = []
 
     while not candidates.empty():
@@ -117,15 +126,20 @@ def _topological_sort_passes(
                     candidates.put(n)
 
     # Check if there are unvisited nodes (aka cycles in the graph)
-    cycle_passes = list(filter(lambda p: indegree_map[p] != 0, indegree_map.keys()))
+    cycle_passes = list(
+        filter(lambda p: indegree_map[p] != 0, indegree_map.keys())
+    )
     if len(cycle_passes) != 0:
         error = f"Circular dependency detected within the following passes: {cycle_passes}"
         raise RuntimeError(error)
 
     return sorted_passes
 
+
 @compatibility(is_backward_compatible=False)
-def this_before_that_pass_constraint(this: Callable, that: Callable) -> Callable:
+def this_before_that_pass_constraint(
+    this: Callable, that: Callable
+) -> Callable:
     """
     Defines a partial order ('depends on' function) where `this` must occur
     before `that`.
@@ -244,7 +258,9 @@ class PassManager:
         sig = inspect.signature(check)
 
         if len(list(sig.parameters.values())) != 1:
-            raise TypeError("PassManager check function should only take in one variable, a module")
+            raise TypeError(
+                "PassManager check function should only take in one variable, a module"
+            )
 
         setattr(self, "check", check)  # noqa: B010
 

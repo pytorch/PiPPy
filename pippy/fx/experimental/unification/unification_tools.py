@@ -4,20 +4,35 @@ import operator
 from functools import reduce
 from collections.abc import Mapping
 
-__all__ = ('merge', 'merge_with', 'valmap', 'keymap', 'itemmap',
-           'valfilter', 'keyfilter', 'itemfilter',
-           'assoc', 'dissoc', 'assoc_in', 'update_in', 'get_in')
+__all__ = (
+    "merge",
+    "merge_with",
+    "valmap",
+    "keymap",
+    "itemmap",
+    "valfilter",
+    "keyfilter",
+    "itemfilter",
+    "assoc",
+    "dissoc",
+    "assoc_in",
+    "update_in",
+    "get_in",
+)
+
 
 def _get_factory(f, kwargs):
-    factory = kwargs.pop('factory', dict)
+    factory = kwargs.pop("factory", dict)
     if kwargs:
-        raise TypeError("{}() got an unexpected keyword argument "
-                        "'{}'".format(f.__name__, kwargs.popitem()[0]))
+        raise TypeError(
+            "{}() got an unexpected keyword argument "
+            "'{}'".format(f.__name__, kwargs.popitem()[0])
+        )
     return factory
 
 
 def merge(*dicts, **kwargs):
-    """ Merge a collection of dictionaries
+    """Merge a collection of dictionaries
 
     >>> merge({1: 'one'}, {2: 'two'})
     {1: 'one', 2: 'two'}
@@ -41,7 +56,7 @@ def merge(*dicts, **kwargs):
 
 
 def merge_with(func, *dicts, **kwargs):
-    """ Merge dictionaries and apply function to combined values
+    """Merge dictionaries and apply function to combined values
 
     A key may occur in more than one dict, and all values mapped from the key
     will be passed to the function as a list, such as func([val1, val2, ...]).
@@ -70,7 +85,7 @@ def merge_with(func, *dicts, **kwargs):
 
 
 def valmap(func, d, factory=dict):
-    """ Apply function to values of dictionary
+    """Apply function to values of dictionary
 
     >>> bills = {"Alice": [20, 15, 30], "Bob": [10, 35]}
     >>> valmap(sum, bills)  # doctest: +SKIP
@@ -86,7 +101,7 @@ def valmap(func, d, factory=dict):
 
 
 def keymap(func, d, factory=dict):
-    """ Apply function to keys of dictionary
+    """Apply function to keys of dictionary
 
     >>> bills = {"Alice": [20, 15, 30], "Bob": [10, 35]}
     >>> keymap(str.lower, bills)  # doctest: +SKIP
@@ -102,7 +117,7 @@ def keymap(func, d, factory=dict):
 
 
 def itemmap(func, d, factory=dict):
-    """ Apply function to items of dictionary
+    """Apply function to items of dictionary
 
     >>> accountids = {"Alice": 10, "Bob": 20}
     >>> itemmap(reversed, accountids)  # doctest: +SKIP
@@ -118,7 +133,7 @@ def itemmap(func, d, factory=dict):
 
 
 def valfilter(predicate, d, factory=dict):
-    """ Filter items in dictionary by value
+    """Filter items in dictionary by value
 
     >>> iseven = lambda x: x % 2 == 0
     >>> d = {1: 2, 2: 3, 3: 4, 4: 5}
@@ -138,7 +153,7 @@ def valfilter(predicate, d, factory=dict):
 
 
 def keyfilter(predicate, d, factory=dict):
-    """ Filter items in dictionary by key
+    """Filter items in dictionary by key
 
     >>> iseven = lambda x: x % 2 == 0
     >>> d = {1: 2, 2: 3, 3: 4, 4: 5}
@@ -158,7 +173,7 @@ def keyfilter(predicate, d, factory=dict):
 
 
 def itemfilter(predicate, d, factory=dict):
-    """ Filter items in dictionary by item
+    """Filter items in dictionary by item
 
     >>> def isvalid(item):
     ...     k, v = item
@@ -182,7 +197,7 @@ def itemfilter(predicate, d, factory=dict):
 
 
 def assoc(d, key, value, factory=dict):
-    """ Return a new dict with new key value pair
+    """Return a new dict with new key value pair
 
     New dict has d[key] set to value. Does not modify the initial dictionary.
 
@@ -198,7 +213,7 @@ def assoc(d, key, value, factory=dict):
 
 
 def dissoc(d, *keys, **kwargs):
-    """ Return a new dict with the given key(s) removed.
+    """Return a new dict with the given key(s) removed.
 
     New dict has d[key] deleted for each supplied key.
     Does not modify the initial dictionary.
@@ -213,7 +228,7 @@ def dissoc(d, *keys, **kwargs):
     factory = _get_factory(dissoc, kwargs)
     d2 = factory()
 
-    if len(keys) < len(d) * .6:
+    if len(keys) < len(d) * 0.6:
         d2.update(d)
         for key in keys:
             if key in d2:
@@ -227,7 +242,7 @@ def dissoc(d, *keys, **kwargs):
 
 
 def assoc_in(d, keys, value, factory=dict):
-    """ Return a new dict with new, potentially nested, key value pair
+    """Return a new dict with new, potentially nested, key value pair
 
     >>> purchase = {'name': 'Alice',
     ...             'order': {'items': ['Apple', 'Orange'],
@@ -242,7 +257,7 @@ def assoc_in(d, keys, value, factory=dict):
 
 
 def update_in(d, keys, func, default=None, factory=dict):
-    """ Update value in a (potentially) nested dictionary
+    """Update value in a (potentially) nested dictionary
 
     inputs:
     d - dictionary on which to operate
@@ -300,7 +315,7 @@ def update_in(d, keys, func, default=None, factory=dict):
 
 
 def get_in(keys, coll, default=None, no_default=False):
-    """ Returns coll[i0][i1]...[iX] where [i0, i1, ..., iX]==keys.
+    """Returns coll[i0][i1]...[iX] where [i0, i1, ..., iX]==keys.
 
     If coll[i0][i1]...[iX] cannot be found, returns ``default``, unless
     ``no_default`` is specified, then it raises KeyError or IndexError.
@@ -337,6 +352,7 @@ def get_in(keys, coll, default=None, no_default=False):
             raise
         return default
 
+
 def getter(index):
     if isinstance(index, list):
         if len(index) == 1:
@@ -349,8 +365,9 @@ def getter(index):
     else:
         return operator.itemgetter(index)
 
+
 def groupby(key, seq):
-    """ Group a collection by a key function
+    """Group a collection by a key function
 
     >>> names = ['Alice', 'Bob', 'Charlie', 'Dan', 'Edith', 'Frank']
     >>> groupby(len, names)  # doctest: +SKIP
@@ -384,8 +401,9 @@ def groupby(key, seq):
         rv[k] = v.__self__  # type: ignore[var-annotated, attr-defined]
     return rv
 
+
 def first(seq):
-    """ The first element in a sequence
+    """The first element in a sequence
 
     >>> first('ABC')
     'A'

@@ -68,7 +68,9 @@ class FoldedGraphModule(pippy.fx.GraphModule):
                 i
                 if not isinstance(i, int)
                 else torch.Tensor([i]).to(device=self.device_for_folded_attrs),
-                requires_grad=i.requires_grad if isinstance(i, torch.Tensor) else False,
+                requires_grad=i.requires_grad
+                if isinstance(i, torch.Tensor)
+                else False,
             )
 
         params = (
@@ -124,7 +126,9 @@ def _inline_module(gm: pippy.fx.GraphModule, inline_mod_name: str):
     gm.graph.eliminate_dead_code()
 
 
-def get_unique_attr_name_in_module(mod_traced: pippy.fx.GraphModule, name: str) -> str:
+def get_unique_attr_name_in_module(
+    mod_traced: pippy.fx.GraphModule, name: str
+) -> str:
     """
     Make sure the name is unique (in a module) and can represents an attr.
     """

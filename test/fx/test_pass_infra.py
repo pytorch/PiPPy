@@ -13,6 +13,7 @@ from pippy.fx.passes.infra.pass_manager import (
     _topological_sort_passes,
 )
 
+
 def replace_add_with_mul_pass(gm):
     modified = False
     for node in gm.graph.nodes:
@@ -21,6 +22,7 @@ def replace_add_with_mul_pass(gm):
             modified = True
     return PassResult(gm, modified)
 
+
 def replace_mul_with_div_pass(gm):
     modified = False
     for node in gm.graph.nodes:
@@ -28,6 +30,7 @@ def replace_mul_with_div_pass(gm):
             node.target = torch.div
             modified = True
     return PassResult(gm, modified)
+
 
 class AddModule(torch.nn.Module):
     def __init__(self):
@@ -47,7 +50,10 @@ class TestPassManager(TestCase):
 
         m = AddModule()
         traced_m = pippy.fx.symbolic_trace(m)
-        pm = PassManager(passes=[replace_add_with_mul_pass, replace_mul_with_div_pass], steps=5)
+        pm = PassManager(
+            passes=[replace_add_with_mul_pass, replace_mul_with_div_pass],
+            steps=5,
+        )
 
         pm.validate_constraints()
         self.assertEqual(len(pm.passes), 2)
@@ -69,11 +75,12 @@ class TestPassManager(TestCase):
         pm = PassManager(passes)
 
         # add unfulfillable constraint
-        pm.add_constraint(this_before_that_pass_constraint(passes[-1], passes[0]))
+        pm.add_constraint(
+            this_before_that_pass_constraint(passes[-1], passes[0])
+        )
 
         with self.assertRaises(RuntimeError):
             pm.validate_constraints()
-
 
     def test_pass_manager_checks(self):
         """
@@ -81,12 +88,15 @@ class TestPassManager(TestCase):
         """
         m = AddModule()
         traced_m = fx.symbolic_trace(m)
-        pm = PassManager(passes=[replace_add_with_mul_pass, replace_mul_with_div_pass])
+        pm = PassManager(
+            passes=[replace_add_with_mul_pass, replace_mul_with_div_pass]
+        )
 
         def check_div_target(graph_module):
             for node in graph_module.graph.nodes:
                 if node.op == "call_function" and node.target != torch.div:
                     raise ValueError("Target should be div!")
+
         pm.add_checks(check_div_target)
 
         with self.assertRaises(ValueError):
@@ -96,6 +106,7 @@ class TestPassManager(TestCase):
         """
         Checks that we error if we pass in a check function with the wrong parameters
         """
+
         def check_bad_args(graph_module, i):
             pass
 
