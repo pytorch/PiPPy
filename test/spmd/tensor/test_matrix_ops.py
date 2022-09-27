@@ -244,20 +244,6 @@ class DistMatrixOpsTest(DistTensorTestBase):
                         alpha,
                         batch_1.grad,
                     )
-            # TODO: support these tests
-            # shard_specs_comb = [
-            #     spec for spec in shard_specs_comb if spec not in passlist
-            # ]
-            # for spec in shard_specs_comb:
-            #     with self.assertRaises(Exception):
-            #         test_placement_comb(
-            #             [spec[0]],
-            #             [spec[1]],
-            #             [spec[2]],
-            #             beta,
-            #             alpha,
-            #             batch_1.grad,
-            #         )
 
     @with_comms
     def test_bmm(self):
