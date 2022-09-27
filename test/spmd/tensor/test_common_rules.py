@@ -298,7 +298,9 @@ class CommonRulesTest(DistTensorTestBase):
         # ensure that the suggestion is to reshard the first
         # arg by all_gather first tensor dim sharding
         schema_suggestion = output_sharding.schema_suggestions[0]
-        self.assertEqual(schema_suggestion.args_schema[0].dim_map, [-1, -1, -1, -1])
+        self.assertEqual(
+            schema_suggestion.args_schema[0].dim_map, [-1, -1, -1, -1]
+        )
         self.assertEqual(schema_suggestion.args_schema[1].dim_map, mat2)
 
     @with_comms
