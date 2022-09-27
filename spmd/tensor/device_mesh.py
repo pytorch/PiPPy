@@ -29,7 +29,9 @@ _global_device_mesh: Optional["DeviceMesh"] = None
 
 def get_global_device_mesh() -> "DeviceMesh":
     global _global_device_mesh
-    assert _global_device_mesh is not None, "Could not get a default device mesh!"
+    assert (
+        _global_device_mesh is not None
+    ), "Could not get a default device mesh!"
     return _global_device_mesh
 
 
@@ -191,7 +193,9 @@ class DeviceMesh(object):
                     # call new_group regardless of the current rank in the
                     # pg or not, it's required that all ranks participate
                     # in subgroup construction
-                    new_subgroup = new_group(ranks=subgroup_ranks, backend=backend_name)
+                    new_subgroup = new_group(
+                        ranks=subgroup_ranks, backend=backend_name
+                    )
                     # only add to dim_groups if the current rank in the subgroup
                     if self.get_rank() in subgroup_ranks:
                         if len(self._dim_groups) > dim:
@@ -266,7 +270,9 @@ class DeviceMesh(object):
         # CommTensor does not change eager mode behavior. During tracing, it
         # makes sure communication result is properly waited before subsequent
         # read operations.
-        to_scatter = [CommTensor(tensor.contiguous()) for tensor in scatter_list]
+        to_scatter = [
+            CommTensor(tensor.contiguous()) for tensor in scatter_list
+        ]
         dim_group = self._dim_groups[mesh_dim]
         # src need to be global rank
         src_for_dim = 0
@@ -349,7 +355,9 @@ class DeviceMesh(object):
         # CommTensor does not change eager mode behavior. During tracing, it
         # makes sure communication result is properly waited before subsequent
         # read operations.
-        return all_reduce(CommTensor(tensor.contiguous()), op=op, group=dim_group)
+        return all_reduce(
+            CommTensor(tensor.contiguous()), op=op, group=dim_group
+        )
 
     # pyre-fixme[3]: Return type must be annotated.
     def reduce_scatter_base(
@@ -367,7 +375,9 @@ class DeviceMesh(object):
         #    this in other case which requires autograd, we should
         #    add the autograd enabled collective in distributed/nn/functional
         if self.backend() == "nccl":
-            _reduce_scatter_base(output, input, op, group=self._dim_groups[mesh_dim])
+            _reduce_scatter_base(
+                output, input, op, group=self._dim_groups[mesh_dim]
+            )
             return output
         else:
             # it's gloo, which does not have reduce_scatter

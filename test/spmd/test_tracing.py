@@ -120,7 +120,9 @@ class TraceDeviceMeshTestBase:
             gathered_tensors = traced_fn(local_tensor)
             self.assertEqual(len(gathered_tensors), dim_group_size)
             for idx, gathered_tensor in enumerate(gathered_tensors):
-                self.assertEqual(gathered_tensor, torch.ones(3, 3) * global_ranks[idx])
+                self.assertEqual(
+                    gathered_tensor, torch.ones(3, 3) * global_ranks[idx]
+                )
 
 
 class TraceDeviceMesh3DTest(DistTensorTestBase, TraceDeviceMeshTestBase):

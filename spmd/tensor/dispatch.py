@@ -78,7 +78,9 @@ class OpSchema(object):
         """
         # filter out non-relavant values from args schema to get a clean spec list
         # this would mainly be used by sharding propagation rules
-        return tuple(item for item in self.args_schema if isinstance(item, DTensorSpec))
+        return tuple(
+            item for item in self.args_schema if isinstance(item, DTensorSpec)
+        )
 
 
 @dataclass
@@ -104,9 +106,9 @@ def _reshape_alias(
     return torch.ops.aten.view(x, shape)
 
 
-_CURRENT_DECOMPOSITION_TABLE: Dict[Callable[..., object], Callable[..., object]] = {
-    torch.ops.aten._reshape_alias.default: _reshape_alias
-}
+_CURRENT_DECOMPOSITION_TABLE: Dict[
+    Callable[..., object], Callable[..., object]
+] = {torch.ops.aten._reshape_alias.default: _reshape_alias}
 
 
 def operator_dispatch(

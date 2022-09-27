@@ -32,7 +32,9 @@ class RedistributeTest(DistTensorTestBase):
         sharded_tensor = DTensor(
             local_tensor, device_mesh, shard_spec, requires_grad=True
         )
-        global_sharded_tensor = sharded_tensor.redistribute(device_mesh, replica_spec)
+        global_sharded_tensor = sharded_tensor.redistribute(
+            device_mesh, replica_spec
+        )
         self.assertEqual(global_sharded_tensor.size(), torch.Size([12, 3]))
         self.assertEqual(expected_tensor, global_sharded_tensor.to_local())
 
@@ -49,12 +51,16 @@ class RedistributeTest(DistTensorTestBase):
     def test_replicate_to_replicate_forward_backward(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         replica_spec = [Replicate()]
-        local_tensor = torch.randn(12, 3, device=self.device_type, requires_grad=True)
+        local_tensor = torch.randn(
+            12, 3, device=self.device_type, requires_grad=True
+        )
         # 1) test replicate -> replicate forward
         replica_tensor = DTensor(
             local_tensor, device_mesh, replica_spec, requires_grad=True
         )
-        global_replica_tensor = replica_tensor.redistribute(device_mesh, replica_spec)
+        global_replica_tensor = replica_tensor.redistribute(
+            device_mesh, replica_spec
+        )
         self.assertEqual(replica_tensor.size(), local_tensor.size())
         self.assertEqual(replica_tensor, global_replica_tensor)
 
@@ -74,7 +80,9 @@ class RedistributeTest(DistTensorTestBase):
         shard_spec = [Shard(shard_dim)]
         replica_spec = [Replicate()]
         # 1) test replicate -> shard forward
-        local_replica = torch.randn(12, 3, device=self.device_type, requires_grad=True)
+        local_replica = torch.randn(
+            12, 3, device=self.device_type, requires_grad=True
+        )
         chunked_list = local_replica.chunk(self.world_size, shard_dim)
         # make local tensor as the element of the corresponding chunked list
         local_tensor = chunked_list[self.rank]
@@ -102,14 +110,18 @@ class RedistributeTest(DistTensorTestBase):
         # replicate to partial internally, and also partial to replicate
         # backward should work as expected
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
-        partial_local = torch.randn(12, 3, device=self.device_type, requires_grad=True)
+        partial_local = torch.randn(
+            12, 3, device=self.device_type, requires_grad=True
+        )
         partial_spec = [_Partial(ReduceOp.SUM)]
         replica_spec = [Replicate()]
         # test partial -> replicate, which trigger all_reduce
         partial_tensor = DTensor(
             partial_local, device_mesh, partial_spec, requires_grad=True
         )
-        global_partial_tensor = partial_tensor.redistribute(device_mesh, replica_spec)
+        global_partial_tensor = partial_tensor.redistribute(
+            device_mesh, replica_spec
+        )
         self.assertEqual(partial_tensor.size(), partial_local.size())
         self.assertEqual(partial_local * 4, global_partial_tensor.to_local())
 
@@ -117,36 +129,52 @@ class RedistributeTest(DistTensorTestBase):
         global_partial_tensor.to_local().sum().backward()
         self.assertIsNotNone(partial_tensor.grad)
         self.assertTrue(partial_tensor.grad.placements[0].is_replicate())
-        self.assertEqual(partial_tensor.grad.to_local(), torch.ones_like(partial_local))
+        self.assertEqual(
+            partial_tensor.grad.to_local(), torch.ones_like(partial_local)
+        )
 
     @with_comms
     def test_replicate_to_partial(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
-        local_tensor = torch.randn(12, 3, device=self.device_type, requires_grad=True)
+        local_tensor = torch.randn(
+            12, 3, device=self.device_type, requires_grad=True
+        )
         partial_spec = [_Partial(ReduceOp.SUM)]
         replica_spec = [Replicate()]
         # 1) test replicate -> partial forward
         replica_tensor = DTensor(
             local_tensor, device_mesh, replica_spec, requires_grad=True
         )
-        with self.assertRaisesRegex(RuntimeError, "Can not redistribute to _Partial"):
-            partial_tensor = replica_tensor.redistribute(device_mesh, partial_spec)
+        with self.assertRaisesRegex(
+            RuntimeError, "Can not redistribute to _Partial"
+        ):
+            partial_tensor = replica_tensor.redistribute(
+                device_mesh, partial_spec
+            )
 
         from spmd.tensor.redistribute import Redistribute
 
-        partial_tensor = Redistribute.apply(replica_tensor, device_mesh, partial_spec)
+        partial_tensor = Redistribute.apply(
+            replica_tensor, device_mesh, partial_spec
+        )
         self.assertEqual(partial_tensor.size(), local_tensor.size())
         # test it successfully zero out the contents on other ranks
         if self.rank == 0:
-            self.assertEqual(replica_tensor.to_local(), partial_tensor.to_local())
+            self.assertEqual(
+                replica_tensor.to_local(), partial_tensor.to_local()
+            )
         else:
-            self.assertEqual(partial_tensor.to_local(), torch.zeros_like(local_tensor))
+            self.assertEqual(
+                partial_tensor.to_local(), torch.zeros_like(local_tensor)
+            )
 
         # replicate to partial on sub groups
         local_tensor = torch.randn(12, 3, device=self.device_type)
         subgroup = new_group(ranks=[1, 3])
         if self.rank == 1 or self.rank == 3:
-            device_mesh = DeviceMesh(self.device_type, [1, 3], dim_groups=[subgroup])
+            device_mesh = DeviceMesh(
+                self.device_type, [1, 3], dim_groups=[subgroup]
+            )
         else:
             device_mesh = DeviceMesh(self.device_type, [1, 3], dim_groups=[])
         # 1) test replicate -> partial on subgroup
@@ -156,15 +184,21 @@ class RedistributeTest(DistTensorTestBase):
             replica_spec,
             requires_grad=local_tensor.requires_grad,
         )
-        partial_tensor = Redistribute.apply(replica_tensor, device_mesh, partial_spec)
+        partial_tensor = Redistribute.apply(
+            replica_tensor, device_mesh, partial_spec
+        )
         self.assertEqual(partial_tensor.size(), local_tensor.size())
 
         if self.rank != 3:
             # replicate to partial should only zero out rank 3, and leave
             # rank 0/2 (not in the group) and 1 (the first rank of the group) un-touched
-            self.assertEqual(replica_tensor.to_local(), partial_tensor.to_local())
+            self.assertEqual(
+                replica_tensor.to_local(), partial_tensor.to_local()
+            )
         else:
-            self.assertEqual(replica_tensor.to_local(), torch.zeros_like(local_tensor))
+            self.assertEqual(
+                replica_tensor.to_local(), torch.zeros_like(local_tensor)
+            )
 
     @with_comms
     def test_partial_to_shard_0(self):
@@ -175,7 +209,9 @@ class RedistributeTest(DistTensorTestBase):
         partial_local = torch.ones(12, 3, device=self.device_type)
         partial_tensor = DTensor(partial_local, device_mesh, partial_spec)
         # test partial to shard 0, trigger reduce_scatter
-        scatter_shard_tensor = partial_tensor.redistribute(device_mesh, shard_spec)
+        scatter_shard_tensor = partial_tensor.redistribute(
+            device_mesh, shard_spec
+        )
         self.assertEqual(scatter_shard_tensor.size(), partial_tensor.size())
         self.assertEqual(scatter_shard_tensor.placements, shard_spec)
         self.assertEqual(scatter_shard_tensor.to_local(), torch.ones(3, 3) * 4)
@@ -189,7 +225,9 @@ class RedistributeTest(DistTensorTestBase):
         partial_local = torch.ones(4, 12, device=self.device_type)
         # test partial to shard 1, trigger reduce_scatter
         partial_tensor = DTensor(partial_local, device_mesh, partial_spec)
-        scatter_shard_tensor = partial_tensor.redistribute(device_mesh, shard1_spec)
+        scatter_shard_tensor = partial_tensor.redistribute(
+            device_mesh, shard1_spec
+        )
         self.assertEqual(scatter_shard_tensor.size(), partial_tensor.size())
         self.assertEqual(scatter_shard_tensor.placements, shard1_spec)
         self.assertEqual(scatter_shard_tensor.to_local(), torch.ones(4, 3) * 4)
@@ -215,15 +253,23 @@ class MultiDimRedistributeTest(DistTensorTestBase):
                 # because distribute_tensor is expected to override shards in ranks != 0
                 full_tensor = torch.ones(*tensor_shape)
 
-            possibilities = [Replicate()] + [Shard(i) for i in range(full_tensor.ndim)]
-            all_outputs = list(itertools.product(*(mesh_shape.ndim * [possibilities])))
+            possibilities = [Replicate()] + [
+                Shard(i) for i in range(full_tensor.ndim)
+            ]
+            all_outputs = list(
+                itertools.product(*(mesh_shape.ndim * [possibilities]))
+            )
             all_inputs = list(
-                itertools.product(*(mesh_shape.ndim * [possibilities + [_Partial()]]))
+                itertools.product(
+                    *(mesh_shape.ndim * [possibilities + [_Partial()]])
+                )
             )
 
             for inputs in all_inputs:
                 # if partial, temporarily make it Replicated, then replace replicated with partial afterwards
-                repl_inputs = [Replicate() if s.is_partial() else s for s in inputs]
+                repl_inputs = [
+                    Replicate() if s.is_partial() else s for s in inputs
+                ]
                 dt = distribute_tensor(full_tensor, device_mesh, repl_inputs)
 
                 if repl_inputs != inputs:
