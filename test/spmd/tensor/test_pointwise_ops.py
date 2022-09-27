@@ -103,14 +103,10 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         dtensor = DTensor.from_local(input_tensor, device_mesh, shard_spec)
 
         other_tensor = torch.randn(*input_size, device=self.device_type)
-        other_dtensor = DTensor.from_local(
-            other_tensor, device_mesh, shard_spec
-        )
+        other_dtensor = DTensor.from_local(other_tensor, device_mesh, shard_spec)
 
         output_tensor = torch.randn(*input_size, device=self.device_type)
-        output_dtensor = DTensor.from_local(
-            output_tensor, device_mesh, shard_spec
-        )
+        output_dtensor = DTensor.from_local(output_tensor, device_mesh, shard_spec)
         dt = torch.mul(dtensor, other_dtensor, out=output_dtensor)
         expected = torch.mul(input_tensor, other_tensor, out=output_tensor)
         self.assertEqual(input_tensor, dtensor.to_local())
@@ -122,16 +118,10 @@ class DistElementwiseOpsTest(DistTensorTestBase):
 
         # propagate point-wise sharding
         inp1, inp2 = [-1, -1], [-1, 0]
-        mat1_spec = DTensorSpec.from_dim_map(
-            mesh, inp1, [], shape=torch.Size([8, 4])
-        )
-        mat2_spec = DTensorSpec.from_dim_map(
-            mesh, inp2, [], shape=torch.Size([8, 4])
-        )
+        mat1_spec = DTensorSpec.from_dim_map(mesh, inp1, [], shape=torch.Size([8, 4]))
+        mat2_spec = DTensorSpec.from_dim_map(mesh, inp2, [], shape=torch.Size([8, 4]))
         # adding a positional argument -1 to arg schema
-        output_sharding = pointwise_rule(
-            OpSchema((mat1_spec, mat2_spec, -1), {})
-        )
+        output_sharding = pointwise_rule(OpSchema((mat1_spec, mat2_spec, -1), {}))
         self.assertIsNone(output_sharding.output_spec)
         self.assertIsNotNone(output_sharding.schema_suggestions)
 

@@ -53,15 +53,11 @@ def distribute_module(
             if param is not None and not isinstance(param, DTensor):
                 m.register_parameter(
                     key,
-                    nn.Parameter(
-                        distribute_tensor(param.data, mesh, full_replicate)
-                    ),
+                    nn.Parameter(distribute_tensor(param.data, mesh, full_replicate)),
                 )
         for key, buffer in m._buffers.items():
             if buffer is not None and not isinstance(buffer, DTensor):
-                m._buffers[key] = distribute_tensor(
-                    buffer, mesh, full_replicate
-                )
+                m._buffers[key] = distribute_tensor(buffer, mesh, full_replicate)
 
     if partition_fn is None:
         # if partition_fn not specified, we by default replicate

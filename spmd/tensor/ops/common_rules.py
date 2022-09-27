@@ -107,18 +107,11 @@ def einop_rule(
                 seen_shardings[sum_dim] = "+"
             # update pending sum counter for pending sum mesh
             # dimension with the occurance from each input
-            pending_sums_counter[sum_dim] = (
-                pending_sums_counter.get(sum_dim, 0) + 1
-            )
+            pending_sums_counter[sum_dim] = pending_sums_counter.get(sum_dim, 0) + 1
 
-        for idx, (dim, mesh_dim) in enumerate(
-            zip(input_dim, input_spec.dim_map)
-        ):
+        for idx, (dim, mesh_dim) in enumerate(zip(input_dim, input_spec.dim_map)):
             if mesh_dim != -1:
-                if (
-                    mesh_dim in seen_shardings
-                    and dim != seen_shardings[mesh_dim]
-                ):
+                if mesh_dim in seen_shardings and dim != seen_shardings[mesh_dim]:
                     needs_reshard = True
                     seen_shardings[mesh_dim] += dim
                 else:
@@ -136,9 +129,7 @@ def einop_rule(
     if pending_sums_counter and not linearity:
         # return reshard suggestion with no pending sum, because we already properly
         # merge the sharding, this reshard suggestion is legit to use
-        return _gen_reshard_suggestions(
-            input_dims, input_specs, dim_to_sharding, []
-        )
+        return _gen_reshard_suggestions(input_dims, input_specs, dim_to_sharding, [])
     else:
         # It's a op that support linearity, but not all input arguments are partial
         # we fail the sharding propagation with suggestion to make all inputs be
@@ -195,9 +186,7 @@ def einop_rule(
     )
 
 
-def pointwise_rule(
-    op_schema: OpSchema, linearity: bool = False
-) -> OutputSharding:
+def pointwise_rule(op_schema: OpSchema, linearity: bool = False) -> OutputSharding:
     """
     Propagate the sharding for pointwise operations. Examples:
         ij,ij->ij - addition/mul
@@ -233,9 +222,7 @@ def pointwise_rule(
     for output_dim_idx in range(len(out_dimchars)):
         out_dimchar = out_dimchars[output_dim_idx]
         if dimchar_singleton_counter.get(out_dimchar, 0) == len(input_specs):
-            out_dimchars = _replace_char_in_str(
-                out_dimchars, "1", output_dim_idx
-            )
+            out_dimchars = _replace_char_in_str(out_dimchars, "1", output_dim_idx)
 
     fmt = f"{','.join(p for p in dimchars)}->{out_dimchars}"
     einop_schema = OpSchema(input_specs, {})

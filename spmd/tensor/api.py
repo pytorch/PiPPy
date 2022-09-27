@@ -149,13 +149,9 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
                 # the current stride on the shard_dim
                 for i in range(len(tensor_stride)):
                     if tensor_stride[i] > tensor_stride[shard_dim]:
-                        tensor_stride[i] = tensor_stride[i] * device_mesh.size(
-                            idx
-                        )
+                        tensor_stride[i] = tensor_stride[i] * device_mesh.size(idx)
             elif not isinstance(placement, (Replicate, _Partial)):
-                raise RuntimeError(
-                    f"placement type {type(placement)} not supported!"
-                )
+                raise RuntimeError(f"placement type {type(placement)} not supported!")
 
         requires_grad = kwargs.get("requires_grad", False)
         if requires_grad != local_tensor.requires_grad:
@@ -177,9 +173,7 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         )
         # deepcopy and set spec, data should be handled
         # by __init__ or from_local instead.
-        r._spec = DTensorSpec(
-            device_mesh, copy.deepcopy(placements), shape=r.size()
-        )
+        r._spec = DTensorSpec(device_mesh, copy.deepcopy(placements), shape=r.size())
         # detach local tensor from autograd graph as we initialize the
         # distributed tensor and autograd will be working on top of
         # the wrapper tensor directly instead of local torch.Tensor
@@ -268,9 +262,7 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # There should be no data communication unless there's replication
         # strategy, where we broadcast the replication from the first rank
         # in the mesh dimension
-        device_mesh = (
-            get_global_device_mesh() if device_mesh is None else device_mesh
-        )
+        device_mesh = get_global_device_mesh() if device_mesh is None else device_mesh
         # convert the local tensor to desired device base on device mesh's device_type
         local_tensor = local_tensor.to(device_mesh.device_type)
 
@@ -298,9 +290,7 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # sharding it's a reshard behavior.
         # TODO: handle last shard uneven with padding
         # right now we assume all local shard equal size
-        device_mesh = (
-            get_global_device_mesh() if device_mesh is None else device_mesh
-        )
+        device_mesh = get_global_device_mesh() if device_mesh is None else device_mesh
         # raise error if new placements not specified
         if placements is None:
             raise RuntimeError("placements is needed for redistribute!")

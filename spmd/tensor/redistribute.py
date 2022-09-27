@@ -54,8 +54,7 @@ def _decompose_reshard(val: List[_PlacementItem]) -> List[_PlacementItem]:
             and isinstance(target, Shard)
             and (
                 current.dim != target.dim
-                or repeat_dim_current[current.dim]
-                != repeat_dim_target[target.dim]
+                or repeat_dim_current[current.dim] != repeat_dim_target[target.dim]
             )
         ):
             # decompose Shard(i) -> Shard(j) into Shard(i) -> Replicate() -> Shard(j)

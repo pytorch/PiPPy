@@ -31,9 +31,7 @@ class MyModule(torch.nn.Module):
     ) -> None:
         super().__init__()
         self.param = torch.nn.Parameter(
-            torch.arange(
-                start=rank * 4, end=rank * 4 + 4, step=1, dtype=torch.float32
-            )
+            torch.arange(start=rank * 4, end=rank * 4 + 4, step=1, dtype=torch.float32)
         )
         self._extra_state = extra_state
         self._extra_state_tensor = extra_state_tensor

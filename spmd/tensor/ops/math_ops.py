@@ -41,7 +41,5 @@ def softmax_bwd_rule(op_schema: OpSchema) -> OutputSharding:
     if softmax_dim < len(grad_out_dim_map) and (
         grad_out_dim_map[softmax_dim] >= 0 or out_dim_map[softmax_dim] >= 0
     ):
-        raise RuntimeError(
-            "Cannot run _softmax_backward_data on sharding dimension!"
-        )
+        raise RuntimeError("Cannot run _softmax_backward_data on sharding dimension!")
     return pointwise_rule(op_schema)
