@@ -283,7 +283,21 @@ class CommonRulesTest(DistTensorTestBase):
             self.world_size // 2, self.world_size // 2
         )
         mesh = DeviceMesh(self.device_type, mesh_shape)
-        mat1, mat2 = [0, -1, -1, -1], [0, -1, -1]
+        # basic case to test implicit broadcasting shape alignment
+        mat1, mat2 = [-1, 0], [0]
+        mat1_spec = DTensorSpec.from_dim_map(
+            mesh, mat1, [], shape=torch.Size([20, 6])
+        )
+        mat2_spec = DTensorSpec.from_dim_map(
+            mesh, mat2, [], shape=torch.Size([6])
+        )
+        output_sharding = pointwise_rule(OpSchema((mat1_spec, mat2_spec), {}))
+        output_spec = output_sharding.output_spec
+        self.assertIsNotNone(output_spec)
+        self.assertEqual(output_spec.dim_map, [-1, 0])
+
+        # more advanced case that needs reshard one input to align sharding
+        mat1, mat2 = [0, -1, -1, 1], [0, -1, 1]
         mat1_spec = DTensorSpec.from_dim_map(
             mesh, mat1, [], shape=torch.Size([12, 1, 1, 8])
         )
@@ -299,7 +313,7 @@ class CommonRulesTest(DistTensorTestBase):
         # arg by all_gather first tensor dim sharding
         schema_suggestion = output_sharding.schema_suggestions[0]
         self.assertEqual(
-            schema_suggestion.args_schema[0].dim_map, [-1, -1, -1, -1]
+            schema_suggestion.args_schema[0].dim_map, [-1, -1, -1, 1]
         )
         self.assertEqual(schema_suggestion.args_schema[1].dim_map, mat2)
 

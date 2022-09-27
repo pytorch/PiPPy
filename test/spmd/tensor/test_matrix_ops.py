@@ -197,28 +197,22 @@ class DistMatrixOpsTest(DistTensorTestBase):
         shard1_spec = Shard(1)
         shard2_spec = Shard(2)
         replica_spec = Replicate()
-        placement_specs = [shard0_spec, shard1_spec, shard2_spec, replica_spec]
+        shard_specs = [shard0_spec, shard1_spec, shard2_spec, replica_spec]
         shard_specs_comb = list(
-            itertools.product(placement_specs, placement_specs, placement_specs)
+            itertools.product(shard_specs, shard_specs, shard_specs)
         )
-        # faillist = [(replica_spec, shard1_spec)]
-        faillist = []
-
-        shard_specs_comb = [
-            spec for spec in shard_specs_comb if spec not in faillist
+        passlist = [
+            (shard0_spec, shard0_spec, shard0_spec),
+            (shard0_spec, shard0_spec, replica_spec),
+            (shard1_spec, shard1_spec, replica_spec),
+            (shard0_spec, replica_spec, shard0_spec),
+            (shard2_spec, replica_spec, shard2_spec),
+            (replica_spec, shard0_spec, shard0_spec),
+            (replica_spec, shard1_spec, replica_spec),
+            (replica_spec, shard2_spec, shard1_spec),
+            (replica_spec, replica_spec, shard2_spec),
+            (replica_spec, replica_spec, replica_spec),
         ]
-        # passlist = [
-        #     (shard0_spec, shard0_spec, shard0_spec),
-        #     (shard0_spec, shard0_spec, replica_spec),
-        #     (shard1_spec, shard1_spec, replica_spec),
-        #     (shard0_spec, replica_spec, shard0_spec),
-        #     (shard2_spec, replica_spec, shard2_spec),
-        #     (replica_spec, shard0_spec, shard0_spec),
-        #     (replica_spec, shard1_spec, replica_spec),
-        #     (replica_spec, shard2_spec, shard1_spec),
-        #     (replica_spec, replica_spec, shard2_spec),
-        #     (replica_spec, replica_spec, replica_spec),
-        # ]
         # If beta is 0, input tensor will be ignored
         numeric_params_comb = [
             (0.0, 0.5),  # zero-beta
@@ -236,7 +230,6 @@ class DistMatrixOpsTest(DistTensorTestBase):
                 test_placement_comb(
                     [spec[0]], [spec[1]], [spec[2]], beta, alpha, batch_1.grad
                 )
-
             # TODO: support these tests
             shard_specs_comb = [
                 spec for spec in shard_specs_comb if spec not in passlist
@@ -251,6 +244,20 @@ class DistMatrixOpsTest(DistTensorTestBase):
                         alpha,
                         batch_1.grad,
                     )
+            # TODO: support these tests
+            # shard_specs_comb = [
+            #     spec for spec in shard_specs_comb if spec not in passlist
+            # ]
+            # for spec in shard_specs_comb:
+            #     with self.assertRaises(Exception):
+            #         test_placement_comb(
+            #             [spec[0]],
+            #             [spec[1]],
+            #             [spec[2]],
+            #             beta,
+            #             alpha,
+            #             batch_1.grad,
+            #         )
 
     @with_comms
     def test_bmm(self):

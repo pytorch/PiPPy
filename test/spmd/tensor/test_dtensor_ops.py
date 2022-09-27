@@ -315,7 +315,6 @@ dtensor_fails = {
     xfail("min", "reduction_no_dim"),
     xfail("min", "reduction_with_dim"),
     xfail("minimum"),
-    xfail("mm"),
     xfail("mode"),
     xfail("msort"),
     xfail("multinomial"),
@@ -529,7 +528,6 @@ dtensor_fails = {
     xfail("view_as"),
     xfail("view"),  # view related op only works with certain sharding dims
     xfail("vstack"),
-    xfail("where"),
     # ops inside this might even fail without dtensor
     # tests, as we rescale op db common test size factor (i.e. L, M, S)
     # which triggered the orignal function run failures with input
