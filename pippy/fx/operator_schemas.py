@@ -167,7 +167,6 @@ def check_for_mutable_operation(
             # Matched exactly one schema, unambiguous
             _, schema_to_check = matched_schemas[0]
             throw_if_mutable(schema_to_check)
-            pass
         else:
             # Ambiguous schema match. Since mutability checking is best effort,
             # do nothing.
@@ -242,7 +241,6 @@ def create_type_hint(x):
         warnings.warn(
             f"We were not able to successfully create type hint from the type {x}"
         )
-        pass
     return x
 
 

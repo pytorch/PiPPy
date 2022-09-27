@@ -6,3 +6,11 @@ from .dispatcher import (
     restart_ordering,
     MDNotImplementedError,
 )
+
+__all__ = [
+    "dispatch",
+    "Dispatcher",
+    "halt_ordering",
+    "restart_ordering",
+    "MDNotImplementedError",
+]

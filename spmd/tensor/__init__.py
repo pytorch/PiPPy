@@ -8,7 +8,6 @@ from spmd.tensor.placement_types import Placement, Shard, Replicate, _Partial
 
 
 # Import all builtin dist tensor ops
-import spmd.tensor.ops
 
 
 def distribute_tensor(
@@ -77,3 +76,15 @@ def distribute_tensor(
         placements,
         requires_grad=tensor.requires_grad,
     )
+
+
+__all__ = [
+    "distribute_tensor",
+    "DTensor",
+    "DeviceMesh",
+    "get_global_device_mesh",
+    "Placement",
+    "Shard",
+    "Replicate",
+    "_Partial",
+]

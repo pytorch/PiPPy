@@ -35,8 +35,6 @@ class FxNetMinimizerBadModuleError(Exception):
     Raised if failed to split out a minimize module
     """
 
-    pass
-
 
 @compatibility(is_backward_compatible=False)
 class FxNetMinimizerRunFuncError(Exception):
@@ -44,16 +42,12 @@ class FxNetMinimizerRunFuncError(Exception):
     Raised if error occurs during run_a or run_b functions
     """
 
-    pass
-
 
 @compatibility(is_backward_compatible=False)
 class FxNetMinimizerResultMismatchError(Exception):
     """
     Raised if comparing function thinks the results are mismatching.
     """
-
-    pass
 
 
 @dataclass
