@@ -158,7 +158,6 @@ dtensor_fails = {
     xfail("baddbmm"),
     xfail("bernoulli"),
     xfail("block_diag"),
-    xfail("bmm"),
     xfail("broadcast_shapes"),
     xfail("cat"),
     xfail("cartesian_prod"),
