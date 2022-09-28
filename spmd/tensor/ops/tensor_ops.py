@@ -10,7 +10,7 @@ from spmd.tensor.api import (
 )
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.ops.utils import register_prop_rule
-from typing import Sequence
+from typing import Sequence, cast
 
 
 # NOTE: the default propagation rule should apply for
@@ -63,9 +63,8 @@ def new_no_arg_prop_rule(op_schema: OpSchema) -> OutputSharding:
     # this op would benefit from backward sharding propagation!
     # Since we cannot do that yet, just return replicated
     input = op_schema.args_schema[0]
-    size = op_schema.args_schema[1]
+    size = torch.Size(cast(Sequence[int], op_schema.args_schema[1]))
     assert isinstance(input, DTensorSpec)
-    assert isinstance(size, torch.Size)
 
     return OutputSharding(
         output_spec=DTensorSpec(
