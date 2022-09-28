@@ -68,11 +68,12 @@ def new_no_arg_prop_rule(op_schema: OpSchema) -> OutputSharding:
     return OutputSharding(
         output_spec=DTensorSpec(
             mesh=input.mesh,
-            placements=(Replicate(), ) * input.mesh.ndim,
+            placements=(Replicate(),) * input.mesh.ndim,
             shape=size,
             ndim=len(size),
         )
     )
+
 
 default_prop_ops = [
     "aten._to_copy.default",
