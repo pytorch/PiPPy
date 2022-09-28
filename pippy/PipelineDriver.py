@@ -217,13 +217,13 @@ class RankWorker(EventRecorder):
 
     def enqueue_ready_runlist(self, unique_key, work_item):
         with self.ready_runlist_cv:
-            logging.info(f'[{self.rank}] Current ready runlist keys: {self.ready_runlist.keys()}')
+            logging.debug(f'[{self.rank}] Current ready runlist keys: {self.ready_runlist.keys()}')
             self.ready_runlist[unique_key] = work_item
             self.ready_runlist_cv.notify()
 
     def enqueue_waiting_runlist(self, unique_key, work_item):
         with self.waiting_runlist_lock:
-            logging.info(f'[{self.rank}] Current waiting runlist keys: {self.waiting_runlist.keys()}')
+            logging.debug(f'[{self.rank}] Current waiting runlist keys: {self.waiting_runlist.keys()}')
             assert unique_key not in self.waiting_runlist, f'key {unique_key} already in waiting runlist {self.waiting_runlist}'
             self.waiting_runlist[unique_key] = work_item
 
@@ -235,7 +235,7 @@ class RankWorker(EventRecorder):
                 while len(self.ready_runlist) == 0:
                     self.ready_runlist_cv.wait()
 
-                logging.info(f'[{self.rank}] Dequeueing workitem from set of {len(self.ready_runlist)}')
+                logging.debug(f'[{self.rank}] Dequeueing workitem from set of {len(self.ready_runlist)}')
                 # TODO: extra priorities
                 for key in iter(self.ready_runlist.keys()):
                     # Skip forward work items if we hit the max outstanding limit
@@ -255,7 +255,7 @@ class RankWorker(EventRecorder):
             # back to the loop in this case
             if work_item is None:
                 continue
-            logging.info(f'[{self.rank}][{work_item.microbatch_id}] Got WorkItem {work_item}')
+            logging.debug(f'[{self.rank}][{work_item.microbatch_id}] Got WorkItem {work_item}')
 
             work_item.state = SchedState.RUNNING
             args_value_refs = work_item.args
@@ -314,7 +314,7 @@ class RankWorker(EventRecorder):
 
                 args = pippy.fx.node.map_aggregate(args, extract_tensor_args, dont_traverse_size)
                 kwargs = pippy.fx.node.map_aggregate(kwargs, extract_tensor_args, dont_traverse_size)
-                logging.info(f'[{self.rank}][{work_item.microbatch_id}] Running forward module')
+                logging.debug(f'[{self.rank}][{work_item.microbatch_id}] Running forward module')
 
                 def forward_maybe_with_ddp(args, kwargs):
                     if isinstance(stage_executor.mod, torch.nn.parallel.distributed.DistributedDataParallel):
@@ -341,7 +341,7 @@ class RankWorker(EventRecorder):
 
             if phase == Phase.BACKWARD:
                 if self.checkpoint:
-                    logging.info(
+                    logging.debug(
                         f'[{self.rank}][{work_item.microbatch_id}] Running backward phase. '
                         f'Rerunning forward because of checkpointing')
                     f_args, f_kwargs = stage_executor.fwd_cache.pop(microbatch_id)
@@ -350,7 +350,7 @@ class RankWorker(EventRecorder):
                     kwargs['stage_output'], kwargs['input_values'] = \
                         (out_val if isinstance(out_val, tuple) else (out_val,), flat_tensor_args)
                 else:
-                    logging.info(
+                    logging.debug(
                         f'[{self.rank}][{work_item.microbatch_id}] Running backward phase. '
                         f'Retrieving stashed values')
                     # HACK: here we are directly accessing the saved tensor outputs
@@ -369,7 +369,7 @@ class RankWorker(EventRecorder):
                         (out_val if isinstance(out_val, tuple) else (out_val,), flat_tensor_args)
 
             elif work_item.phase == Phase.BACKWARD:
-                logging.info(f'[{self.rank}][{work_item.microbatch_id}] Running backward')
+                logging.debug(f'[{self.rank}][{work_item.microbatch_id}] Running backward')
 
                 batch_id_to_remaining_backward_microbatches[batch_id] -= 1
 
@@ -384,16 +384,16 @@ class RankWorker(EventRecorder):
                 # Schedule forward stage of a new micro-batch
                 self.outstanding -= 1
             elif work_item.phase == Phase.ACCUMULATE_GRAD:
-                logging.info(f'[{self.rank}][{work_item.microbatch_id}] Running accumulate grad')
+                logging.debug(f'[{self.rank}][{work_item.microbatch_id}] Running accumulate grad')
                 out_val = _null_coalesce_accumulate(*args, **kwargs)
             elif work_item.phase == Phase.SYNC_BARRIER:
-                logging.info(f'[{self.rank}][{work_item.microbatch_id}] Running sync_barrier')
+                logging.debug(f'[{self.rank}][{work_item.microbatch_id}] Running sync_barrier')
                 out_val = sync_barrier(*args, **kwargs)
             else:
                 assert False, f'Unrecognized phase {work_item.phase} encountered in execution'
 
-            logging.info(f'[{self.rank}][{work_item.microbatch_id}] Populating result of type {type(out_val)} '
-                         f'for {key}')
+            logging.debug(f'[{self.rank}][{work_item.microbatch_id}] Populating result of type {type(out_val)} '
+                          f'for {key}')
             future.set_result(out_val)
             work_item.state = SchedState.DONE
 
@@ -419,7 +419,7 @@ class RankWorker(EventRecorder):
                     work_item.state = SchedState.READY
                     self.ready_runlist[runlist_key] = self.waiting_runlist.pop(runlist_key)
                     self.ready_runlist_cv.notify()
-                logging.info(f'[{self.rank}][{work_item.microbatch_id}] all operands ready: {runlist_key}')
+                logging.debug(f'[{self.rank}][{work_item.microbatch_id}] all operands ready: {runlist_key}')
 
 
 class PipeStageExecutor(EventRecorder):
@@ -474,8 +474,8 @@ class PipeStageExecutor(EventRecorder):
             self.mod = torch.nn.parallel.DistributedDataParallel(self.mod, process_group=dp_pg_cb(self.stage_id))
             return
 
-        logging.info(f'Rank[{worker_rank}] stage[{self.stage_id}] Initializing data parallel: '
-                     f'creating DP process groups internally')
+        logging.debug(f'Rank[{worker_rank}] stage[{self.stage_id}] Initializing data parallel: '
+                      f'creating DP process groups internally')
         # Discover DP peers via Store
         # HACK: using the Store coming with the default process group
         _store = torch.distributed.distributed_c10d._get_default_store()
@@ -496,7 +496,7 @@ class PipeStageExecutor(EventRecorder):
         world_size = n_stages * dp_group_size
         all_ranks = [str(i) for i in range(world_size)]
         store.wait(all_ranks)
-        logging.info(f'Rank[{worker_rank}] stage[{self.stage_id}] Initializing data parallel: all stages have checked in')
+        logging.debug(f'Rank[{worker_rank}] stage[{self.stage_id}] Initializing data parallel: all stages have checked in')
 
         # Fill the mapping
         for rank in all_ranks:
@@ -529,7 +529,7 @@ class PipeStageExecutor(EventRecorder):
         # TODO: do we need to serialize calls to invoke() to preserve the order in which WorkItems appear for
         # static schedules?
 
-        logging.info(f'[{self.stage_id}][{cur_microbatch}] Received invoke call for {debug_str}')
+        logging.debug(f'[{self.stage_id}][{cur_microbatch}] Received invoke call for {debug_str}')
         # Extract all ValueRef arguments so we can spawn asynchronous data transfers
         # for each of them
         value_ref_args : List[ValueReference] = []
@@ -540,7 +540,7 @@ class PipeStageExecutor(EventRecorder):
         pippy.fx.node.map_aggregate(args, extract_value_ref_args)
         pippy.fx.node.map_aggregate(kwargs, extract_value_ref_args)
 
-        logging.info(f'[{self.stage_id}][{cur_microbatch}] Invoke call found {len(value_ref_args)} ValueReference arguments')
+        logging.debug(f'[{self.stage_id}][{cur_microbatch}] Invoke call found {len(value_ref_args)} ValueReference arguments')
 
         # Construct WorkItem for this microbatch+phase and record it in the
         # waiting runlist
@@ -571,26 +571,26 @@ class PipeStageExecutor(EventRecorder):
         work_item = WorkItem(stage_id=self.stage_id, phase=phase, args=args, kwargs=kwargs, future=future,
                              microbatch_id=cur_microbatch, blocked_args_count=len(value_ref_args), ready_args={},
                              batch_id=batch_id, num_microbatches=num_microbatches, debug_str=debug_str)
-        logging.info(f'[{self.stage_id}][{cur_microbatch}] Invoke instantiated WorkItem {work_item} with key {output_unique_key}')
+        logging.debug(f'[{self.stage_id}][{cur_microbatch}] Invoke instantiated WorkItem {work_item} with key {output_unique_key}')
         if len(value_ref_args) == 0:
             # TODO: convert initial input into ValueRef?
             # We always put this work item into the ready queue, though we mark
             # it with different state flags depending on whether the schedule
             # would hold it based on max outstanding allowed
             work_item.state = SchedState.READY
-            logging.info(f'[{self.stage_id}][{cur_microbatch}] No RRef arguments. '
-                         f'Scheduling directly as READY workitem')
+            logging.debug(f'[{self.stage_id}][{cur_microbatch}] No RRef arguments. '
+                          f'Scheduling directly as READY workitem')
             self.rank_worker.enqueue_ready_runlist(output_unique_key, work_item)
         else:
-            logging.info(f'[{self.stage_id}][{cur_microbatch}] Scheduling WorkItem as WAITING workitem')
+            logging.debug(f'[{self.stage_id}][{cur_microbatch}] Scheduling WorkItem as WAITING workitem')
             work_item.state = SchedState.WAITING
             self.rank_worker.enqueue_waiting_runlist(output_unique_key, work_item)
 
         # Spawn asynchronous data transfers for each of the ValueRef arguments.
         _futures = []
         for arg_idx, value_ref_arg in enumerate(value_ref_args):
-            logging.info(f'[{self.stage_id}][{cur_microbatch}] Launching asynchronous data transfer for '
-                         f'ValueReference {arg_idx} {value_ref_arg}')
+            logging.debug(f'[{self.stage_id}][{cur_microbatch}] Launching asynchronous data transfer for '
+                          f'ValueReference {arg_idx} {value_ref_arg}')
             assert self.peer_executors is not None
             _futures.append(self.async_transfer(cur_microbatch, value_ref_arg,
                                                 arg_idx, output_unique_key))
@@ -615,11 +615,11 @@ class PipeStageExecutor(EventRecorder):
     def coalesced_index_value(self, indices : List[Tuple[str, int, ValueReference, int]]):
         for index_tuple in indices:
             (output_unique_key, output_refcount, value_ref, idx) = index_tuple
-            logging.info(f'[{self.stage_id}] Received getitem call: {(output_unique_key, output_refcount, value_ref, idx)}')
+            logging.debug(f'[{self.stage_id}] Received getitem call: {(output_unique_key, output_refcount, value_ref, idx)}')
             with self.value_store_cv:
                 # TODO: investigate why value reference in the last batch has not been fully consumed
                 if output_unique_key in self.value_store:
-                    logging.info(f'[{self.stage_id}] Indexed value already in store: {(output_unique_key, output_refcount, value_ref, idx)}')
+                    logging.debug(f'[{self.stage_id}] Indexed value already in store: {(output_unique_key, output_refcount, value_ref, idx)}')
                     # raise RuntimeError(f'Repeated index value call detected, potentially due to getitem calls not consumed in previous batch')
 
                 # Wait for the future representing the stage output to be created
@@ -648,8 +648,8 @@ class PipeStageExecutor(EventRecorder):
 
     def get_value(self, caller_stage, runlist_key, microbatch, value_ref_arg):
         callee_stage = value_ref_arg.stage_id
-        logging.info(f'[{callee_stage}][{microbatch}] Executing transfer of value '
-                     f'{value_ref_arg} initiated by stage {caller_stage} for {runlist_key}')
+        logging.debug(f'[{callee_stage}][{microbatch}] Executing transfer of value '
+                      f'{value_ref_arg} initiated by stage {caller_stage} for {runlist_key}')
         assert callee_stage == self.stage_id, "Mismatch between ValueRef and stage executor"
 
         with self.value_store_cv:
@@ -668,16 +668,16 @@ class PipeStageExecutor(EventRecorder):
         return value
 
     def async_transfer(self, microbatch, value_ref_arg, arg_idx, runlist_key):
-        logging.info(f'[{self.stage_id}][{microbatch}] Requesting transfer of value {value_ref_arg} '
-                     f'for runlist item {runlist_key} arg_idx {arg_idx}')
+        logging.debug(f'[{self.stage_id}][{microbatch}] Requesting transfer of value {value_ref_arg} '
+                      f'for runlist item {runlist_key} arg_idx {arg_idx}')
         value_ref_executor_rref = self.peer_executors[value_ref_arg.stage_id]
         fut = value_ref_executor_rref.rpc_async().get_value(
             self.stage_id, runlist_key, microbatch, value_ref_arg)
 
         def bottom_half(fut):
             value = fut.value()
-            logging.info(f'[{self.stage_id}][{microbatch}] Completing transfer of value {value_ref_arg} '
-                         f'for runlist item {runlist_key} arg_idx {arg_idx}')
+            logging.debug(f'[{self.stage_id}][{microbatch}] Completing transfer of value {value_ref_arg} '
+                          f'for runlist item {runlist_key} arg_idx {arg_idx}')
             self.rank_worker.update_run_list(runlist_key, arg_idx, value)
 
         return fut.then(bottom_half)
@@ -1081,7 +1081,7 @@ class PipelineDriverBase(torch.nn.Module):
         return PipelineLRScheduler(stage_to_scheds, self.stage_to_executor)
 
     def _sync_replicated_params(self):
-        logging.info(f'[root] Synchronizing gradients for {len(self.pipe.replicated_params)} sets of replicated parameters')
+        logging.debug(f'[root] Synchronizing gradients for {len(self.pipe.replicated_params)} sets of replicated parameters')
         for param_set in self.pipe.replicated_params:
             grad_values = []
             for module_name, param_qualname in param_set.items():
@@ -1098,7 +1098,7 @@ class PipelineDriverBase(torch.nn.Module):
                 module_rref.rpc_sync().set_grad(param_qualname, synced_value)
 
     def _retrieve_output_values(self, microbatch_interpreters, last_nodes):
-        logging.info(f'[root] Retrieving output values from {len(microbatch_interpreters)} chunks')
+        logging.debug(f'[root] Retrieving output values from {len(microbatch_interpreters)} chunks')
         output_vals = []
         for interp, last_node in zip(microbatch_interpreters, last_nodes):
             interp.run_until(lambda n : False)
@@ -1145,7 +1145,7 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
         self.cur_microbatch = cur_microbatch
         self.pc = 0
         self.node_list = list(self.module.graph.nodes)
-        logging.info(f'[root] RemoteInterpreter created with {len(self.node_list)} nodes')
+        logging.debug(f'[root] RemoteInterpreter created with {len(self.node_list)} nodes')
 
         # Process args/kwargs
 
@@ -1177,8 +1177,8 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
             node.users.keys())) if not torch.is_grad_enabled() else node.users.keys()
         if target in self.remote_stage_executor_rrefs:
             stage_id, stage_executor = self.remote_stage_executor_rrefs[target]
-            logging.info(f'[root][{self.cur_microbatch}] Issuing {Phase.FORWARD} '
-                         f'invocation for target {target} on stage {stage_id}')
+            logging.debug(f'[root][{self.cur_microbatch}] Issuing {Phase.FORWARD} '
+                          f'invocation for target {target} on stage {stage_id}')
             invocation_key = f'{self.cur_microbatch}_{node.name}'
             start_ts = time.time()
             forward_name = event_name(Phase.FORWARD, stage_id, self.cur_microbatch)
@@ -1194,7 +1194,7 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
             self.record_event_dependency(from_id=name, to_id=f"R{forward_name}", type='invoke')
             return ValueReference(stage_id, invocation_key)
         else:
-            logging.info(f'[root][{self.cur_microbatch}] Running local operation {target} from driver')
+            logging.debug(f'[root][{self.cur_microbatch}] Running local operation {target} from driver')
             return super().call_module(target, args, kwargs)
 
     def call_function(self, target, args, kwargs):
@@ -1217,15 +1217,15 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
             else:
                 indices = self.stage_output_indices.setdefault(stage_id, [])
                 index_tuple = (invocation_key, num_users, args[0], args[1])
-                logging.info(f'[root][{self.cur_microbatch}] Appending getitem tuple to stage {stage_id}: {index_tuple}')
+                logging.debug(f'[root][{self.cur_microbatch}] Appending getitem tuple to stage {stage_id}: {index_tuple}')
                 indices.append(index_tuple)
                 return ValueReference(stage_id, invocation_key)
         elif target is stage_backward:
             assert 'fw_stage' in node.meta
             stage_id, stage_executor = self.remote_stage_executor_rrefs[node.meta['fw_stage']]
             if torch.is_grad_enabled():
-                logging.info(f'[root][{self.cur_microbatch}] Issuing BW invocation '
-                             f'for target {node.meta["fw_stage"]} on stage {stage_id}')
+                logging.debug(f'[root][{self.cur_microbatch}] Issuing BW invocation '
+                              f'for target {node.meta["fw_stage"]} on stage {stage_id}')
                 start_ts = time.time()
                 backward_name = event_name(Phase.BACKWARD, stage_id, self.cur_microbatch)
                 backward_id = event_id(Phase.BACKWARD, stage_id, self.cur_microbatch, self.batch_id)
@@ -1244,8 +1244,8 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
         elif target is sync_barrier:
             executor_keys = list(self.remote_stage_executor_rrefs.keys())
             stage_id, stage_executor = self.remote_stage_executor_rrefs[executor_keys[0]]
-            logging.info(f'[root][{self.cur_microbatch}] Issuing sync invocation '
-                         f'on stage {stage_id}')
+            logging.debug(f'[root][{self.cur_microbatch}] Issuing sync invocation '
+                          f'on stage {stage_id}')
             stage_executor.rpc_async().invoke(
                 invocation_key, Phase.SYNC_BARRIER, args, kwargs, self.cur_microbatch, debug_str=node.format_node(),
                 output_refcount=len(users), batch_id=self.batch_id, num_microbatches=self.num_microbatches)
@@ -1254,8 +1254,8 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
             assert 'fw_stage' in node.meta
             stage_id, stage_executor = self.remote_stage_executor_rrefs[node.meta['fw_stage']]
             if torch.is_grad_enabled():
-                logging.info(f'[root][{self.cur_microbatch}] Issuing accumulate grad invocation '
-                             f'for target {node.meta["fw_stage"]} on stage {stage_id}')
+                logging.debug(f'[root][{self.cur_microbatch}] Issuing accumulate grad invocation '
+                              f'for target {node.meta["fw_stage"]} on stage {stage_id}')
                 stage_executor.rpc_async().invoke(
                     invocation_key, Phase.ACCUMULATE_GRAD, args, kwargs, self.cur_microbatch,
                     debug_str=node.format_node(),
@@ -1270,7 +1270,7 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
     def issue_coalesced_getitem_calls(self):
         if len(self.stage_output_indices) == 0:
             return
-        logging.info(f'[root][{self.cur_microbatch}] Issuing getitem calls to stage: {self.stage_output_indices.keys()}')
+        logging.debug(f'[root][{self.cur_microbatch}] Issuing getitem calls to stage: {self.stage_output_indices.keys()}')
 
         for stage_id in self.stage_output_indices:
             stage_executor = self.stage_to_executor[stage_id]
@@ -1301,7 +1301,7 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
 
     def run_one(self, node):
         # TODO: hoist run() implementation
-        logging.info(f'[{self.cur_microbatch}] Issue command to run {node.format_node()}')
+        logging.debug(f'[{self.cur_microbatch}] Issue command to run {node.format_node()}')
         self.env[node] = super().run_node(node)
 
         # TODO: we could potentially move this waiting to the use sites for an RRef
@@ -1364,7 +1364,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         if self.single_loss:
             raise NotImplementedError('Single minibatch loss not implemented')
 
-        logging.info('[root] Running pipeline FillDrain')
+        logging.debug(f'[root] Running pipeline with {self.chunks} micro-batches')
         # Roadmap:
         # 1) Micro-batch splitting - divide input arguments out into concrete chunk values
         # 2) Interpreter tiling - one interpreter per micro-batch
@@ -1381,14 +1381,14 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         self.batch_id += 1
 
         for chunk in range(self.chunks):
-            logging.info(f'[root] Instantiating microbatch interpreter for chunk {chunk}')
+            logging.debug(f'[root] Instantiating microbatch interpreter for chunk {chunk}')
             interp = RemoteInterpreter(remote_stage_executor_rrefs=self.remote_stage_executor_rrefs,
                                        stage_to_executor=self.stage_to_executor, module=self.pipe.split_gm,
                                        cur_microbatch=chunk, args=args_split[chunk], kwargs=kwargs_split[chunk],
                                        batch_id=batch_id, num_microbatches=self.chunks)
             self.microbatch_interpreters.append(interp)
 
-        logging.info(f'[root] {len(self.microbatch_interpreters)} instantiated')
+        logging.debug(f'[root] {len(self.microbatch_interpreters)} instantiated')
 
         # Deterministic clock cycle - see torchgpipe paper section 3.2.1 for details
 

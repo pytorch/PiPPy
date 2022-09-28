@@ -5,7 +5,6 @@ from typing import Any, Dict, List
 import torch
 import torch.distributed.distributed_c10d as c10d
 from torch import distributed as dist
-from torch.distributed import ProcessGroup
 from torch.distributed._shard.checkpoint.default_planner import (
     DefaultLoadPlanner,
     DefaultSavePlanner,
@@ -18,7 +17,7 @@ from torch.distributed._shard.checkpoint.planner import ReadItem
 from torch.distributed._shard.sharded_tensor.api import ShardedTensor
 
 
-def get_ranks(pg: ProcessGroup) -> List[int]:
+def get_ranks(pg: c10d.ProcessGroup) -> List[int]:
     """
     Return an array of global ranks for a given process group.
     """

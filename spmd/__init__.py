@@ -51,7 +51,7 @@ def distribute_module(
         full_replicate = [Replicate()] * mesh.ndim
         for key, param in m._parameters.items():
             if param is not None and not isinstance(param, DTensor):
-                submod.register_parameter(
+                m.register_parameter(
                     key,
                     nn.Parameter(
                         distribute_tensor(param.data, mesh, full_replicate)
@@ -59,7 +59,7 @@ def distribute_module(
                 )
         for key, buffer in m._buffers.items():
             if buffer is not None and not isinstance(buffer, DTensor):
-                submod._buffers[key] = distribute_tensor(
+                m._buffers[key] = distribute_tensor(
                     buffer, mesh, full_replicate
                 )
 

@@ -1,4 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+import math
+
 import torch
 from typing import List, Dict, Tuple, cast
 from spmd.tensor.dispatch import OpSchema, OutputSharding
@@ -77,7 +79,7 @@ def einop_rule(
     # record pending sum, key is mesh dimension, value is pending sum
     # counter across input specs
     pending_sums_counter: Dict[int, int] = {}
-    seen_shardings = {}
+    seen_shardings: Dict[int, str] = {}
     needs_reshard = False
 
     def merge_sharding(dim: str, a: int, b: int) -> int:
@@ -112,17 +114,16 @@ def einop_rule(
         for idx, (dim, mesh_dim) in enumerate(
             zip(input_dim, input_spec.dim_map)
         ):
-            if (
-                mesh_dim in seen_shardings
-                and mesh_dim != -1
-                and dim != seen_shardings[mesh_dim]
-            ):
-                # TODO: add recommendation to this case, i.e. all_gather one input
-                raise RuntimeError(
-                    "Two different input dims are sharded across the same mesh dim!"
-                )
+            if mesh_dim != -1:
+                if (
+                    mesh_dim in seen_shardings
+                    and dim != seen_shardings[mesh_dim]
+                ):
+                    needs_reshard = True
+                    seen_shardings[mesh_dim] += dim
+                else:
+                    seen_shardings[mesh_dim] = dim
 
-            seen_shardings[mesh_dim] = dim
             if dim not in dim_to_sharding:
                 dim_to_sharding[dim] = mesh_dim
                 dim_to_size[dim] = input_spec.shape[idx]
@@ -146,6 +147,32 @@ def einop_rule(
         for value in pending_sums_counter.values():
             if value != len(input_specs):
                 needs_reshard = True
+
+    for mesh_dim, dims in seen_shardings.items():
+        if len(dims) > 1:
+            # we found different input dims are being sharded on the same mesh dim
+            # in order to perform local op computation, we need to reshard inputs
+            # base on some simple heuristics, now we simply pick the one with least comm
+            # volume. (i.e. the input with least size)
+            # TODO: consider a more advanced heuristic to pick the best sharding
+            costs = []
+            for d in dims:
+                cost = 0
+                for input_dim, input_spec in zip(input_dims, input_specs):
+                    if (
+                        d in input_dim
+                        and input_spec.dim_map[input_dim.index(d)] == mesh_dim
+                    ):
+                        cost += math.prod(
+                            input_spec.local_shape
+                        ) * input_spec.mesh.size(mesh_dim)
+                costs.append(cost)
+            d_to_keep_sharding = dims[costs.index(max(costs))]
+            for d in dims:
+                # update dim_to_sharding to keep the sharding of the dim with
+                # highest comm and make the rest of the dims to replicate
+                if d != d_to_keep_sharding:
+                    dim_to_sharding[d] = -1
 
     pending_sums = list(pending_sums_counter.keys())
     if needs_reshard:
