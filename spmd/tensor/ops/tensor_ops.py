@@ -383,9 +383,11 @@ def prop_index(op_schema: OpSchema) -> OutputSharding:
         value_placements = values_spec.placements
         value_shape = values_spec.shape
 
-        import numpy
-
-        if all(numpy.diff([v[0] for v in valid_indices_spec]) == 1):
+        all_dims_consecutive = all(
+            b[0] - a[0] == 1
+            for b, a in zip(valid_indices_spec[1:], valid_indices_spec[:-1])
+        )
+        if all_dims_consecutive:
             # if all index vectors are consecutives, insert at the dimension of the first index
             insert_dim: int = valid_indices_spec[0][0]
         else:
