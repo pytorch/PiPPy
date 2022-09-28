@@ -401,7 +401,8 @@ class DeviceMesh(object):
         assert rem == 0, "output_shape must be divisible by num_chunks"
         input_tensor = tensor.contiguous()
         gathered_list = [
-            CommTensor(torch.empty_like(input_tensor)) for _ in range(num_chunks)
+            CommTensor(torch.empty_like(input_tensor))
+            for _ in range(num_chunks)
         ]
 
         dim_group = self._dim_groups[mesh_dim]
