@@ -385,7 +385,7 @@ def prop_index(op_schema: OpSchema) -> OutputSharding:
 
         import numpy
 
-        if all(numpy.diff(tuple(v[0] for v in valid_indices_spec)) == 1):
+        if all(numpy.diff([v[0] for v in valid_indices_spec]) == 1):
             # if all index vectors are consecutives, insert at the dimension of the first index
             insert_dim: int = valid_indices_spec[0][0]
         else:
