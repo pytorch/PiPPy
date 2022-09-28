@@ -431,10 +431,9 @@ class DeviceMesh(object):
         # makes sure communication result is properly waited before subsequent
         # read operations.
         # input tensor must be contiguous
-        tensor = CommTensor(tensor.contiguous())
         all_gather(
             gathered_list,
-            tensor,
+            CommTensor(tensor.contiguous()),
             group=dim_group,
         )
 
@@ -446,7 +445,7 @@ class DeviceMesh(object):
                 else gathered_tensor
                 for i, gathered_tensor in enumerate(gathered_list)
             ]
-        return torch.cat(gathered_list, dim=tensor_dim)
+        return torch.cat(gathered_list, dim=tensor_dim)  # type: ignore
 
     def all_reduce(
         self,
