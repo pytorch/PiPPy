@@ -419,7 +419,10 @@ class DeviceMesh(object):
         # CommTensor does not change eager mode behavior. During tracing, it
         # makes sure communication result is properly waited before subsequent
         # read operations.
-        tensor = CommTensor(tensor.clone())
+        if not tensor.is_contiguous():
+            tensor = CommTensor(tensor.contiguous())
+        else:
+            tensor = CommTensor(tensor.clone())
         all_reduce(tensor, op=op, group=dim_group)
         return tensor
 
