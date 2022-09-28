@@ -1,7 +1,9 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 
 import copy
-from typing import Dict, Tuple
+
+import torch.distributed as dist
+from torch.distributed.remote_device import _remote_device
 
 from torch.distributed._shard.checkpoint.metadata import (
     STATE_DICT_TYPE,
@@ -9,19 +11,38 @@ from torch.distributed._shard.checkpoint.metadata import (
 from torch.distributed._shard.sharded_tensor import (
     Shard,
     ShardMetadata,
-    ShardedTensor
+    ShardedTensor,
 )
 
-from .utils import (
+from torch.distributed._shard.sharded_tensor.metadata import (
+    ShardedTensorMetadata,
+)
+
+
+from .traverse import (
+    OBJ_PATH,
     traverse_state_dict,
     set_element,
-    element_wise_add,
+    STATE_DICT_ITEM,
 )
 
-def flatten_sharded_tensors(state_dict: Dict[str, Any]) -> Dict[str, Any]:
-    new_state_dict = {}
+from .utils import _element_wise_add
 
-    def rewrite_dict(path, value):
+
+def flatten_sharded_tensors(state_dict: STATE_DICT_TYPE) -> STATE_DICT_TYPE:
+    """
+    Transform ``state_dict`` by flattening all nested ShardedTensor instances found.
+
+    The resulting ShardedTensor instances are only correct regarding the local shard and
+    MUST not be used for any other purpose but checkpointing, no operator will work with them.
+
+    This function should be used in conjunction with a state_dict produced by FSDP's
+    StateDictType.SHARDED_STATE_DICT methods.
+
+    """
+    new_state_dict: STATE_DICT_TYPE = {}
+
+    def rewrite_dict(path: OBJ_PATH, value: STATE_DICT_ITEM) -> None:
         if not isinstance(value, ShardedTensor):
             set_element(new_state_dict, path, value)
             return
@@ -29,7 +50,9 @@ def flatten_sharded_tensors(state_dict: Dict[str, Any]) -> Dict[str, Any]:
         if len(shards) == 0:
             return
         if len(shards) != 1:
-            raise ValueError(f"Cannot handle outer tensor with more than 1 shard {path} -- {len(shards)}")
+            raise ValueError(
+                f"Cannot handle outer tensor with more than 1 shard {path} -- {len(shards)}"
+            )
         outer_shard = shards[0]
 
         inner_st = outer_shard.tensor
@@ -38,19 +61,23 @@ def flatten_sharded_tensors(state_dict: Dict[str, Any]) -> Dict[str, Any]:
             return
 
         if len(inner_st.local_shards()) != 1:
-            raise ValueError("Cannot handle inner tensor with more than 1 shard")
+            raise ValueError(
+                "Cannot handle inner tensor with more than 1 shard"
+            )
         inner_shard = inner_st.local_shards()[0]
 
         local_shards = [
             Shard(
                 tensor=inner_shard.tensor,
                 metadata=ShardMetadata(
-                    shard_offsets=element_wise_add(
-                        outer_shard.metadata.shard_offsets, 
-                        inner_shard.metadata.shard_offsets),
+                    shard_offsets=_element_wise_add(
+                        outer_shard.metadata.shard_offsets,
+                        inner_shard.metadata.shard_offsets,
+                    ),
                     shard_sizes=inner_shard.metadata.shard_sizes,
-                    placement=f"rank:{dist.get_rank()}/{inner_shard.tensor.device}"
-                ))
+                    placement=f"rank:{dist.get_rank()}/{inner_shard.tensor.device}",
+                ),
+            )
         ]
 
         st_meta: ShardedTensorMetadata = copy.deepcopy(value.metadata())
@@ -63,22 +90,25 @@ def flatten_sharded_tensors(state_dict: Dict[str, Any]) -> Dict[str, Any]:
 
         # blame other rank for the other shards
         for shard_md in st_meta.shards_metadata:
-            shard_md.placement=_remote_device(f"rank:{other_rank}/cuda:0")
+            shard_md.placement = _remote_device(f"rank:{other_rank}/cuda:0")
 
         # Add other inner shards from the inner tensor
         for inner_md in inner_st.metadata().shards_metadata:
             if inner_md.shard_offsets != inner_shard.metadata.shard_offsets:
-                st_meta.shards_metadata.append(ShardMetadata(
-                    shard_offsets=element_wise_add(
-                        outer_shard.metadata.shard_offsets, 
-                        inner_md.shard_offsets),
-                    shard_sizes=inner_md.shard_sizes,
-                    placement=f"rank:{other_rank}/cuda:0"
-                ))
-        
-        #finally add this shard
+                st_meta.shards_metadata.append(
+                    ShardMetadata(
+                        shard_offsets=_element_wise_add(
+                            outer_shard.metadata.shard_offsets,
+                            inner_md.shard_offsets,
+                        ),
+                        shard_sizes=inner_md.shard_sizes,
+                        placement=f"rank:{other_rank}/cuda:0",
+                    )
+                )
+
+        # Finally add this shard
         st_meta.shards_metadata.append(local_shards[0].metadata)
-        
+
         st = ShardedTensor._init_from_local_shards_and_global_metadata(
             local_shards=local_shards,
             sharded_tensor_metadata=st_meta,
