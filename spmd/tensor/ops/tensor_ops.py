@@ -11,7 +11,7 @@ from spmd.tensor.api import (
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.ops.common_rules import pointwise_rule
 from spmd.tensor.ops.utils import register_prop_rule
-from typing import List, Optional, Sequence, Union, cast
+from typing import List, Optional, Sequence, Tuple, Union, cast
 
 
 # NOTE: the default propagation rule should apply for
@@ -283,15 +283,15 @@ def prop_slice_scatter(op_schema: OpSchema) -> OutputSharding:
 
 @register_prop_rule("aten.index_select.default")
 def prop_index_select(op_schema: OpSchema) -> OutputSharding:
-    if len(op_schema.args_schema) == 3:
-        values_spec, dim, indices_spec = op_schema.args_schema
+    values_spec, dim, indices_spec = op_schema.args_schema
 
     assert isinstance(values_spec, DTensorSpec)
     assert isinstance(dim, int)
     assert isinstance(indices_spec, DTensorSpec)
 
-    all_indices_spec: List[Optional[DTensorSpec]] = [None] * values_spec.ndim
-    all_indices_spec[dim] = indices_spec
+    all_indices_spec: List[Optional[DTensorSpec]] = [
+        indices_spec if dim == i else None for i in range(values_spec.ndim)
+    ]
 
     result = prop_index(
         OpSchema(
@@ -319,11 +319,11 @@ def prop_index(op_schema: OpSchema) -> OutputSharding:
     values_spec, multi_indices_spec = op_schema.args_schema
     assert isinstance(values_spec, DTensorSpec)
     multi_indices_spec = cast(
-        Union[DTensorSpec, List[DTensorSpec]], multi_indices_spec
+        Union[DTensorSpec, List[Optional[DTensorSpec]]], multi_indices_spec
     )
 
     if isinstance(multi_indices_spec, list):
-        valid_indices_spec = [
+        valid_indices_spec: List[Tuple[int, DTensorSpec]] = [
             (i, a) for i, a in enumerate(multi_indices_spec) if a is not None
         ]
     else:
@@ -347,11 +347,14 @@ def prop_index(op_schema: OpSchema) -> OutputSharding:
     )
     need_reshard_on_indices = indices_out.output_spec is None
 
-    indices_suggestion: List[Optional[DTensorSpec]] = multi_indices_spec
+    # N.B.: the weird typing below is needed to make pyre happy.
+    indices_suggestion: Union[
+        List[Optional[DTensorSpec]], List[DTensorSpec]
+    ] = multi_indices_spec
     if not need_reshard_on_indices:
         # this means that our inputs are already sharded properly and we will use that as our indices_spec
         assert isinstance(indices_out.output_spec, DTensorSpec)
-        indices_spec = indices_out.output_spec
+        indices_spec: DTensorSpec = indices_out.output_spec
     else:
         assert indices_out.schema_suggestions is not None
         valid_indices_suggestion = indices_out.schema_suggestions[0]
@@ -384,14 +387,14 @@ def prop_index(op_schema: OpSchema) -> OutputSharding:
 
         if all(numpy.diff(tuple(v[0] for v in valid_indices_spec)) == 1):
             # if all index vectors are consecutives, insert at the dimension of the first index
-            insert_dim = valid_indices_spec[0][0]
+            insert_dim: int = valid_indices_spec[0][0]
         else:
             # else, insert on the first dimension
             insert_dim = 0
 
-        def place(mesh_dim):
-            vp = values_spec.placements[mesh_dim]
-            ip = indices_spec.placements[mesh_dim]
+        def place(vp: Placement, ip: Placement) -> Placement:
+            # vp = values_spec.placements[mesh_dim]
+            # ip = indices_spec.placements[mesh_dim]
             if isinstance(vp, Shard):
                 return Shard(
                     vp.dim
@@ -406,11 +409,14 @@ def prop_index(op_schema: OpSchema) -> OutputSharding:
             # _Partial or Replicated
             return vp
 
-        value_placements = tuple(place(i) for i in range(values_spec.mesh.ndim))
+        value_placements = tuple(
+            place(vp, ip)
+            for vp, ip in zip(values_spec.placements, indices_spec.placements)
+        )
         value_shape = torch.Size(
-            value_shape[:insert_dim]
-            + indices_spec.shape
-            + value_shape[insert_dim + 1 :]
+            tuple(value_shape[:insert_dim])
+            + tuple(indices_spec.shape)
+            + tuple(value_shape[insert_dim + 1 :])
         )
 
         result = OutputSharding(
