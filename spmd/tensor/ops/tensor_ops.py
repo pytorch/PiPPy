@@ -11,7 +11,7 @@ from spmd.tensor.api import (
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.ops.common_rules import pointwise_rule
 from spmd.tensor.ops.utils import register_prop_rule
-from typing import Sequence
+from typing import List, Optional, Sequence, Union, cast
 
 
 # NOTE: the default propagation rule should apply for
@@ -281,44 +281,35 @@ def prop_slice_scatter(op_schema: OpSchema) -> OutputSharding:
         )
 
 
-from typing import List, Optional
-
-# @register_prop_rule("aten.index_select.default")
+@register_prop_rule("aten.index_select.default")
 def prop_index_select(op_schema: OpSchema) -> OutputSharding:
-    print("index_select", op_schema)
-    values_spec, dim, indices_spec = op_schema.args_schema
+    if len(op_schema.args_schema) == 3:
+        values_spec, dim, indices_spec = op_schema.args_schema
+
     assert isinstance(values_spec, DTensorSpec)
     assert isinstance(dim, int)
     assert isinstance(indices_spec, DTensorSpec)
 
     all_indices_spec: List[Optional[DTensorSpec]] = [
         None
-    ] * values_spec.mesh.ndim
+    ] * values_spec.ndim
     all_indices_spec[dim] = indices_spec
 
-    # TODO: this will fail for suggestions.
-    return prop_index(
+    result = prop_index(
         OpSchema(
             args_schema=(values_spec, all_indices_spec),
             kwargs_schema=op_schema.kwargs_schema,
         )
     )
-
-
-@register_prop_rule("aten.index_copy_.default")
-def prop_index_copy_default(op_schema: OpSchema) -> OutputSharding:
-    print("callin index_copy_default: ", op_schema)
-    # OpSchema(args_schema=(DTensorSpec(mesh=DeviceMesh:([0, 1, 2, 3]), placements=[Replicate()], shape=torch.Size([755000]), ndim=1), 0, DTensorSpec(mesh=DeviceMesh:([0, 1, 2, 3]), placements=[Shard(dim=0)], shape=torch.Size([1024]), ndim=1), DTensorSpec(mesh=DeviceMesh:([0, 1, 2, 3]), placements=[Shard(dim=0)], shape=torch.Size([1024]), ndim=1)), kwargs_schema={})
-    return OutputSharding(output_spec=None)
-
-
-@register_prop_rule("aten.index_add_.default")
-def prop_index_add_default(op_schema: OpSchema) -> OutputSharding:
-    print("callin index_add_default: ", op_schema)
-    return OutputSharding(output_spec=None)
-
-
-from typing import cast, Union
+    if result.schema_suggestions:
+        result.schema_suggestions = [
+            OpSchema(
+                args_schema=(s.args_schema[0], dim, s.args_schema[1][dim]),
+                kwargs_schema=op_schema.kwargs_schema,
+            )
+            for s in result.schema_suggestions
+        ]
+    return result
 
 
 @register_prop_rule("aten.index.Tensor")
@@ -327,7 +318,6 @@ def prop_index(op_schema: OpSchema) -> OutputSharding:
     Expect replicated on the first input; _mostly_ pointwise on the second input.
     TODO: exception: when the dtype of second input is "bool", then a torch.nonzero needs to be triggered first.
     """
-    print("calling index::::", op_schema)
     values_spec, multi_indices_spec = op_schema.args_schema
     assert isinstance(values_spec, DTensorSpec)
     multi_indices_spec = cast(
@@ -408,7 +398,8 @@ def prop_index(op_schema: OpSchema) -> OutputSharding:
                 return Shard(
                     vp.dim
                     if vp.dim < insert_dim
-                    else vp.dim + valid_indices_spec[0][1].ndim - 1
+                    # accounts for the offset in output dimensions
+                    else vp.dim + indices_spec.ndim - sum(1 if vp.dim > v[0] else 0 for v in valid_indices_spec)
                 )
             if isinstance(ip, Shard):
                 return Shard(ip.dim + insert_dim)
@@ -422,7 +413,7 @@ def prop_index(op_schema: OpSchema) -> OutputSharding:
             + value_shape[insert_dim + 1 :]
         )
 
-        return OutputSharding(
+        result = OutputSharding(
             output_spec=DTensorSpec(
                 mesh=values_spec.mesh,
                 placements=value_placements,
@@ -430,9 +421,9 @@ def prop_index(op_schema: OpSchema) -> OutputSharding:
                 ndim=len(value_shape),
             )
         )
+        return result
     else:
-        # TODO: multi_indices_spec needs to be modified to replicate pending sum indices
-        return OutputSharding(
+        result =  OutputSharding(
             output_spec=None,
             schema_suggestions=[
                 OpSchema(
@@ -452,3 +443,4 @@ def prop_index(op_schema: OpSchema) -> OutputSharding:
                 )
             ],
         )
+        return result

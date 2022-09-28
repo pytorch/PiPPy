@@ -211,106 +211,118 @@ class DistTensorOpsTest(DistTensorTestBase):
             self.assertTrue(dtc.successful())
             d_out = op_call(*d_args, **d_kwargs)
             self.assertEqual(
-                d_out.redistribute(mesh, [Replicate()]).to_local(), out
+                d_out.redistribute(mesh, [Replicate()] * mesh.ndim).to_local(), out
             )
 
     @with_comms
     def test_index(self):
-        mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        meshes = [
+            DeviceMesh(self.device_type, list(range(self.world_size))),  # 1D mesh
+            # TODO(@azzolini): un-comment when DTensorConverter supports N-D mesh
+            # DeviceMesh(self.device_type, torch.arange(self.world_size).reshape(2, -1)), # 2D mesh
+        ]
+        for mesh in meshes:
+            self._test_op(
+                mesh,
+                lambda x, y: x[y],
+                torch.randn(16, 32, 16),
+                torch.randint(5, (4, 8)),
+            )
+            self._test_op(
+                mesh,
+                lambda x, y: x.index_select(1, y),
+                torch.randn(16, 32, 16),
+                torch.randint(5, (4, )),
+            )
+            self._test_op(
+                mesh,
+                lambda x, y: x.index_select(0, y),
+                torch.randn(16, 32, 16),
+                torch.randint(5, (4, )),
+            )
+            self._test_op(
+                mesh,
+                lambda x, y: x[y],
+                torch.randn(16, 32, 16),
+                torch.randint(5, (12,)),
+            )
+            self._test_op(
+                mesh,
+                lambda x, y: x[:, y],
+                torch.randn(16, 32, 16),
+                torch.randint(5, (4, 8)),
+            )
+            self._test_op(
+                mesh,
+                lambda x, y: x[..., y],
+                torch.randn(16, 32, 16),
+                torch.randint(5, (4, 12)),
+            )
+            self._test_op(
+                mesh,
+                lambda x, y: x[..., y],
+                torch.randn(16, 32, 16),
+                torch.randint(5, (4, 8, 16)),
+            )
+            self._test_op(
+                mesh,
+                lambda x, y, z: x[z, y],
+                torch.randn(16, 32, 16),
+                torch.randint(5, (12, 8, 12)),
+                torch.randint(2, (12, 8, 12)),
+            )
+            self._test_op(
+                mesh,
+                lambda x, y, z: x[z, :, y],
+                torch.randn(16, 32, 16),
+                torch.randint(5, (12, 8, 12)),
+                torch.randint(2, (12, 8, 12)),
+            )
+            self._test_op(
+                mesh,
+                lambda x, y, z: x[:, z, :, y],
+                torch.randn(16, 32, 16, 12),
+                torch.randint(5, (12, 8, 12)),
+                torch.randint(2, (12, 8, 12)),
+            )
+            # broadcast in inner dimensions
+            self._test_op(
+                mesh,
+                lambda x, y, z: x[:, z, :, y],
+                torch.randn(16, 32, 16, 12),
+                torch.randint(5, (12, 8, 12)),
+                torch.randint(2, (12, 1, 12)),
+            )
+            # implicit (left-padded) broadcast
+            self._test_op(
+                mesh,
+                lambda x, y, z: x[:, z, :, y],
+                torch.randn(16, 32, 16, 12),
+                torch.randint(5, (12, 8, 12)),
+                torch.randint(2, (8, 12)),
+            )
+            self._test_op(
+                mesh,
+                lambda x, y, z: x[z, y, :, :],
+                torch.randn(16, 32, 16, 12),
+                torch.randint(2, (8, 12)),
+                torch.randint(5, (12, 8, 12)),
+            )
+            self._test_op(
+                mesh,
+                lambda x, y, z: x[z, :, y, :],
+                torch.randn(16, 32, 16, 12),
+                torch.randint(2, (8, 12)),
+                torch.randint(5, (12, 8, 12)),
+            )
+            self._test_op(
+                mesh,
+                lambda x, y, z: x[z, :, :, y],
+                torch.randn(16, 32, 16, 12),
+                torch.randint(2, (8, 1)),
+                torch.randint(5, (12, 8, 12)),
+            )
 
-        # >>> x = torch.randn(16,32,14); y = torch.randint(5,(2,3)); z = x[y]; print(z.shape)
-        # torch.Size([2, 3, 32, 14])
-        # >>> x = torch.randn(16,32,14); y = torch.randint(5,(2, )); z = x[y]; print(z.shape)
-        # torch.Size([2, 32, 14])
-
-        self._test_op(
-            mesh,
-            lambda x, y: x[y],
-            torch.randn(16, 32, 16),
-            torch.randint(5, (4, 8)),
-        )
-        self._test_op(
-            mesh,
-            lambda x, y: x[y],
-            torch.randn(16, 32, 16),
-            torch.randint(5, (12,)),
-        )
-
-        # >>> x = torch.randn(16,32,16); y = torch.randint(5,(2, 3)); z = x[:, y]; print(z.shape)
-        # torch.Size([16, 2, 3, 16])
-
-        self._test_op(
-            mesh,
-            lambda x, y: x[:, y],
-            torch.randn(16, 32, 16),
-            torch.randint(5, (4, 8)),
-        )
-
-        # >>> x = torch.randn(16,32,16); y = torch.randint(5,(2, 3)); z = x[..., y]; print(z.shape)
-        # torch.Size([16, 32, 2, 3])
-        self._test_op(
-            mesh,
-            lambda x, y: x[..., y],
-            torch.randn(16, 32, 16),
-            torch.randint(5, (4, 12)),
-        )
-
-        # >>> x = torch.randn(16,32,16); y = torch.randint(5,(2, 3, 5)); z = x[..., y]; print(z.shape)
-        # torch.Size([16, 32, 2, 3, 5])
-        self._test_op(
-            mesh,
-            lambda x, y: x[..., y],
-            torch.randn(16, 32, 16),
-            torch.randint(5, (4, 8, 16)),
-        )
-
-        # >>> x = torch.randn(16,32,16); y = torch.randint(5,(2, 3, 5)); w = torch.randint(2, (3, 1, 4)); z = x[w, y]; print(z.shape)
-        # Traceback (most recent call last):
-        #  File "<stdin>", line 1, in <module>
-        # IndexError: shape mismatch: indexing tensors could not be broadcast together with shapes [3, 1, 4], [2, 3, 5]
-
-        # >>> x = torch.randn(16, 32, 14); y = torch.randint(5,(2, 3, 5)); w = torch.randint(2, (2, 3, 5)); z = x[w, y]; print(z.shape)
-        # torch.Size([2, 3, 5, 14])
-        self._test_op(
-            mesh,
-            lambda x, y, z: x[z, y],
-            torch.randn(16, 32, 16),
-            torch.randint(5, (12, 8, 12)),
-            torch.randint(2, (12, 8, 12)),
-        )
-
-        # >>> x = torch.randn(16,32,14); y = torch.randint(5,(2, 3, 5)); w = torch.randint(2, (2, 3, 5)); z = x[w, :, y]; print(z.shape) #torch.Size([2, 3, 5, 32])
-        # >>> x = torch.randn(16,32,14,13); y = torch.randint(5,(2, 3, 5)); w = torch.randint(2, (2, 3, 5)); z = x[w, :, y]; print(z.shape) #torch.Size([2, 3, 5, 32, 13])
-        # >>> x = torch.randn(16,32,14,13); y = torch.randint(5,(2, 3, 5)); w = torch.randint(2, (2, 3, 5)); z = x[:, :, w, y]; print(z.shape)
-        # torch.Size([16, 32, 2, 3, 5])
-
-        # >>> x = torch.randn(16,32,14,13); y = torch.randint(5,(2, 3, 5)); w = torch.randint(2, (2, 3, 5)); z = x[:, w, :, y]; print(z.shape)
-        # torch.Size([2, 3, 5, 16, 14])
-
-        self._test_op(
-            mesh,
-            lambda x, y, z: x[:z, :, y],
-            torch.randn(16, 32, 16, 12),
-            torch.randint(5, (12, 32, 20)),
-        )
-
-
-# >>> x = torch.randn(16,32,14,13); y = torch.randint(5,(2, 3, 5)); w = torch.randint(2, (2, 3, 5)); z = x[:, w, :, y]; print(z.shape)
-
-# >>> x = torch.randn(16,32,14,13); y = torch.randint(5,(2, 3, 5)); w = torch.randint(2, (2, 3, 5)); z = x[w, y, :, :]; print(z.shape)
-# torch.Size([2, 3, 5, 14, 13])
-# >>> x = torch.randn(16,32,14,13); y = torch.randint(5,(2, 3, 5)); w = torch.randint(2, (2, 3, 5)); z = x[w, :, y, :]; print(z.shape)
-# torch.Size([2, 3, 5, 32, 13])
-# >>> x = torch.randn(16,32,14,13); y = torch.randint(5,(2, 3, 5)); w = torch.randint(2, (2, 3, 5)); z = x[w, :, :, y]; print(z.shape)
-# torch.Size([2, 3, 5, 32, 14])
-# >>> x = torch.randn(16,32,14,13); y = torch.randint(5,(2, 3, 5)); w = torch.randint(2, (2, 3, 5)); z = x[:, w, :, y]; print(z.shape)
-# torch.Size([2, 3, 5, 16, 14])
-
-# >>> x = torch.randn(16,32,14,13); y = torch.randint(5,(2, 3, 5)); w = torch.randint(2, (2, 1, 5)); z = x[:, w, :, y]; print(z.shape)
-# torch.Size([2, 3, 5, 16, 14])
-
-# >>> x = torch.randn(16,32,14,13); y = torch.randint(5,(3, )); z = torch.index_select(x, 0, y); print(z.shape)
-# torch.Size([3, 32, 14, 13])
 
 if __name__ == "__main__":
     run_tests()
