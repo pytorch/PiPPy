@@ -35,9 +35,7 @@ class NormalizeArgs(Transformer):
     """
 
     def __init__(
-        self,
-        module: pippy.fx.GraphModule,
-        normalize_to_only_use_kwargs: bool = True,
+        self, module: pippy.fx.GraphModule, normalize_to_only_use_kwargs: bool = True
     ):
         super().__init__(module)
         self.node_map: Dict[Proxy, Node] = {}
@@ -56,9 +54,7 @@ class NormalizeArgs(Transformer):
         arg_types = tuple([create_type_hint(i) for i in arg_types])
         kwarg_types = {k: get_type(v) for k, v in kwargs.items()}
         if n.op == "call_function":
-            out = self.call_function(
-                n.target, args, kwargs, arg_types, kwarg_types
-            )
+            out = self.call_function(n.target, args, kwargs, arg_types, kwarg_types)
         else:
             out = super().run_node(n)
         if n.op != "output":

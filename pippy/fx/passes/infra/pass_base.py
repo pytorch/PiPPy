@@ -6,8 +6,7 @@ from pippy.fx.graph_module import GraphModule
 from pippy.fx._compatibility import compatibility
 
 
-__all__ = ["PassResult", "PassBase"]
-
+__all__ = ['PassResult', 'PassBase']
 
 @compatibility(is_backward_compatible=False)
 class PassResult(namedtuple("PassResult", ["graph_module", "modified"])):
@@ -16,10 +15,8 @@ class PassResult(namedtuple("PassResult", ["graph_module", "modified"])):
         graph_module: The modified graph module
         modified: A flag for if the pass has modified the graph module
     """
-
     def __new__(cls, graph_module, modified):
         return super().__new__(cls, graph_module, modified)
-
 
 @compatibility(is_backward_compatible=False)
 class PassBase(abc.ABC):
@@ -56,6 +53,7 @@ class PassBase(abc.ABC):
         Args:
             graph_module: The graph module we will run a pass on
         """
+        pass
 
     def requires(self, graph_module: GraphModule) -> None:
         """
@@ -66,6 +64,7 @@ class PassBase(abc.ABC):
         Args:
             graph_module: The graph module we will run checks on
         """
+        pass
 
     def ensures(self, graph_module: GraphModule) -> None:
         """
@@ -76,3 +75,4 @@ class PassBase(abc.ABC):
         Args:
             graph_module: The graph module we will run checks on
         """
+        pass

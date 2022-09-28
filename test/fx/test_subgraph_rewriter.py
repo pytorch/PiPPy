@@ -7,7 +7,6 @@ import sys
 import torch
 from pippy.fx import symbolic_trace, subgraph_rewriter
 from pippy.fx.annotate import annotate
-
 # Make the helper files in test/ importable
 from pippy.fx.experimental.rewriter import RewritingTracer
 
@@ -15,15 +14,13 @@ pytorch_test_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.append(pytorch_test_dir)
 from torch.testing._internal.jit_utils import JitTestCase
 
-if __name__ == "__main__":
-    raise RuntimeError(
-        "This test file is not meant to be run directly, use:\n\n"
-        "\tpython test/test_fx.py TESTNAME\n\n"
-        "instead."
-    )
-
+if __name__ == '__main__':
+    raise RuntimeError("This test file is not meant to be run directly, use:\n\n"
+                       "\tpython test/test_fx.py TESTNAME\n\n"
+                       "instead.")
 
 class TestSubgraphRewriter(JitTestCase):
+
     def test_subgraph_rewriter_preserves_logic(self):
         class M(torch.nn.Module):
             def forward(self, x):
@@ -223,9 +220,7 @@ class TestSubgraphRewriter(JitTestCase):
 
         x = torch.randn(3, 4)
 
-        subgraph_rewriter.replace_pattern(
-            traced, traced_pattern, traced_replacement
-        )
+        subgraph_rewriter.replace_pattern(traced, traced_pattern, traced_replacement)
 
         traced.graph.lint()
 
@@ -260,9 +255,7 @@ class TestSubgraphRewriter(JitTestCase):
         test_outs = traced.forward(x)
         self.assertEqual(ref_outs, test_outs)
 
-    def test_subgraph_rewriter_pattern_output_pattern_node_can_have_users_that_are_not_matched(
-        self,
-    ):
+    def test_subgraph_rewriter_pattern_output_pattern_node_can_have_users_that_are_not_matched(self):
         class M(torch.nn.Module):
             def forward(self, x):
                 y = torch.relu(x)
@@ -291,9 +284,7 @@ class TestSubgraphRewriter(JitTestCase):
         test_outs = traced.forward(x)
         self.assertEqual(ref_outs, test_outs)
 
-    def test_subgraph_rewriter_internal_pattern_nodes_cannot_have_users_that_are_not_matched(
-        self,
-    ):
+    def test_subgraph_rewriter_internal_pattern_nodes_cannot_have_users_that_are_not_matched(self):
         class M(torch.nn.Module):
             def forward(self, x, w1, w2, b1, b2):
                 m0 = torch.cat([w1, w2])
@@ -352,7 +343,6 @@ class TestSubgraphRewriter(JitTestCase):
 
         Credit to Jerry Zhang (GitHub: jerryzh168) for this test case
         """
-
         class M(torch.nn.Module):
             def __init__(self):
                 super().__init__()
@@ -451,6 +441,7 @@ class TestSubgraphRewriter(JitTestCase):
         self.assertEqual(type(submod), torch.nn.ReLU)
 
     def test_subgraph_rewriter_annotations_int(self):
+
         class M1(torch.nn.Module):
             def forward(self, x):
                 y: int = x
@@ -467,11 +458,12 @@ class TestSubgraphRewriter(JitTestCase):
         module = M2()
         symbolic_traced: pippy.fx.GraphModule = symbolic_trace(module)
         for n, m in zip(symbolic_traced.graph.nodes, graph.nodes):
-            if n.op == "placeholder":
+            if n.op == 'placeholder':
                 assert n.type == int
                 assert m.type == int
 
     def test_subgraph_writer_replace_consecutive_submodules(self):
+
         def f(x):
             x = torch.sigmoid(x)
             x = torch.sigmoid(x)

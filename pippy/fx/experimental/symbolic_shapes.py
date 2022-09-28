@@ -3,11 +3,9 @@ import torch
 
 try:
     import sympy  # type: ignore[import]
-
     HAS_SYMPY = True
 except ImportError:
     HAS_SYMPY = False
-
 
 class PySymInt(object):
     """
@@ -15,7 +13,6 @@ class PySymInt(object):
     our program. They're what sit under FakeTensor, and contains our primary
     implementation of symbolic shapes.
     """
-
     def __init__(self, expr, shape_env):
         self.expr = expr
         self.shape_env = shape_env
@@ -29,45 +26,40 @@ class PySymInt(object):
     # Today we error on calling int on a symbolic shape, as this is a very accessible footgun.
     # In the future we'll probably need some explicit way of allowing this
     def __int__(self):
-        raise RuntimeError(
-            "Trying to extract a concrete int out of a symbolic int"
-        )
+        raise RuntimeError("Trying to extract a concrete int out of a symbolic int")
 
     def __bool__(self):
         return bool(self.shape_env.evaluate_expr(self.expr))
 
-
 # Methods that have a `__foo__` as well as `__rfoo__`
 reflectable_magic_methods = {
-    "add": lambda a, b: a + b,
-    "sub": lambda a, b: a - b,
-    "mul": lambda a, b: a * b,
-    "mod": lambda a, b: a % b,
+    'add': lambda a, b: a + b,
+    'sub': lambda a, b: a - b,
+    'mul': lambda a, b: a * b,
+    'mod': lambda a, b: a % b,
 }
 
 magic_methods = {
     **reflectable_magic_methods,
-    "eq": lambda a, b: sympy.Eq(a, b),
-    "gt": lambda a, b: sympy.Gt(a, b),
-    "lt": lambda a, b: sympy.Lt(a, b),
-    "le": lambda a, b: sympy.Le(a, b),
-    "ge": lambda a, b: sympy.Ge(a, b),
+    'eq': lambda a, b: sympy.Eq(a, b),
+    'gt': lambda a, b: sympy.Gt(a, b),
+    'lt': lambda a, b: sympy.Lt(a, b),
+    'le': lambda a, b: sympy.Le(a, b),
+    'ge': lambda a, b: sympy.Ge(a, b),
 }
 
 for method, func in magic_methods.items():
-    method_name = f"{method}"
+    method_name = f'{method}'
 
     def create_magic_impl(func):
         def magic_impl(self, other):
             if isinstance(other, PySymInt):
                 other = other.expr
             return PySymInt(func(self.expr, other), self.shape_env)
-
         return magic_impl
 
     # this should be wrapped transparently into torch._C.SymbolicIntNode
     setattr(PySymInt, method_name, create_magic_impl(func))
-
 
 class ShapeEnv(object):
     def __init__(self):
@@ -87,10 +79,7 @@ class ShapeEnv(object):
 
     def try_constantify(self, expr):
         # Simplifies assuming that shape vars > 1 (since we cache on 0/1 shape values)
-        new_shape_env = {
-            k: sympy.Symbol(f"shape_{idx}", positive=True) + 1
-            for idx, k in enumerate(self.shape_env.keys())
-        }
+        new_shape_env = {k: sympy.Symbol(f'shape_{idx}', positive=True) + 1 for idx, k in enumerate(self.shape_env.keys())}
         new_expr = expr.subs(new_shape_env)
         new_expr = new_expr.simplify()
         if len(list(new_expr.free_symbols)) == 0:

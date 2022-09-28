@@ -29,7 +29,6 @@ from ._compatibility import compatibility
 from .graph import _PyTreeCodeGen, _PyTreeInfo, Graph, _ParamDescr
 from .graph_module import GraphModule
 from .node import base_types, map_aggregate
-
 if TYPE_CHECKING:
     from .node import Argument
 from .proxy import ParameterProxy, Proxy, TracerBase
@@ -243,14 +242,10 @@ class Tracer(TracerBase):
         # this captures both `math.sqrt()` and `from math import sqrt` automatically
         self._autowrap_function_ids: Set[int] = {
             id(value)
-            for name, value in chain(
-                *[m.__dict__.items() for m in autowrap_modules]
-            )
+            for name, value in chain(*[m.__dict__.items() for m in autowrap_modules])
             if not name.startswith("_") and callable(value)
         }
-        self._autowrap_function_ids.update(
-            set([id(f) for f in autowrap_functions])
-        )
+        self._autowrap_function_ids.update(set([id(f) for f in autowrap_functions]))
 
         # Python modules to apply autowrap to at the start, in addition to
         # modules we see while tracing
@@ -352,9 +347,7 @@ class Tracer(TracerBase):
         return super().create_arg(a)
 
     @compatibility(is_backward_compatible=True)
-    def is_leaf_module(
-        self, m: torch.nn.Module, module_qualified_name: str
-    ) -> bool:
+    def is_leaf_module(self, m: torch.nn.Module, module_qualified_name: str) -> bool:
         """
         A method to specify whether a given ``nn.Module`` is a "leaf" module.
 
@@ -441,9 +434,7 @@ class Tracer(TracerBase):
         module_qualified_name = self.path_of_module(m)
         if not self.is_leaf_module(m, module_qualified_name):
             return forward(*args, **kwargs)
-        return self.create_proxy(
-            "call_module", module_qualified_name, args, kwargs
-        )
+        return self.create_proxy("call_module", module_qualified_name, args, kwargs)
 
     # This method will be refactored
     @compatibility(is_backward_compatible=False)
@@ -508,9 +499,7 @@ class Tracer(TracerBase):
                             out,
                             f"{name} has been specialized to have value None but got another value",
                         )
-                        self.create_proxy(
-                            "call_function", _assert_is_none, args, {}
-                        )
+                        self.create_proxy("call_function", _assert_is_none, args, {})
                     else:
                         warnings.warn(
                             f"Was not able to add assertion to guarantee correct input {name} to "
@@ -534,17 +523,13 @@ class Tracer(TracerBase):
                 type_expr=fn_for_analysis.__annotations__.get(name, None),
             )
 
-        arg_names = [
-            next(names_iter) for idx in range(skip_arg_idx, total_args)
-        ]
+        arg_names = [next(names_iter) for idx in range(skip_arg_idx, total_args)]
         if isinstance(concrete_args, tuple):
             if len(arg_names) != len(concrete_args):
                 raise RuntimeError(
                     f"Tracing expected {len(arg_names)} arguments but got {len(concrete_args)} concrete arguments"
                 )
-            concrete_args = {
-                name: val for name, val in zip(arg_names, concrete_args)
-            }
+            concrete_args = {name: val for name, val in zip(arg_names, concrete_args)}
         args.extend(proxy_placeholder(names) for names in arg_names)
 
         if co.co_kwonlyargcount > 0 or co.co_flags & HAS_VARSTUFF:
@@ -556,9 +541,7 @@ class Tracer(TracerBase):
             root_fn = _patch_function(root_fn, len(args))
 
         flat_args, in_spec = pytree.tree_flatten(tuple(args))
-        if any(
-            not isinstance(i, pytree.LeafSpec) for i in in_spec.children_specs
-        ):
+        if any(not isinstance(i, pytree.LeafSpec) for i in in_spec.children_specs):
             # In the case that we have pytree-flattened inputs in
             # `concrete_args`, generate a flattening wrapper around the
             # original root function and return that.
@@ -566,14 +549,7 @@ class Tracer(TracerBase):
             # TODO: this seems sketchy. We're not carrying forward type annotations
             # or default values
             self.graph._codegen = _PyTreeCodeGen(
-                _PyTreeInfo(
-                    [
-                        _ParamDescr(arg, "", "")
-                        for arg in orig_args[:total_args]
-                    ],
-                    in_spec,
-                    None,
-                )
+                _PyTreeInfo([_ParamDescr(arg, '', '') for arg in orig_args[:total_args]], in_spec, None)
             )
 
             def flatten_fn(*args):
@@ -670,16 +646,12 @@ class Tracer(TracerBase):
                 ), f"traced_func_name={self.traced_func_name} doesn't exist in {type(root).__name__}"
 
                 fn = getattr(type(root), self.traced_func_name)
-                self.submodule_paths = {
-                    mod: name for name, mod in root.named_modules()
-                }
+                self.submodule_paths = {mod: name for name, mod in root.named_modules()}
             else:
                 self.root = torch.nn.Module()
                 fn = root
 
-            tracer_cls: Optional[Type["Tracer"]] = getattr(
-                self, "__class__", None
-            )
+            tracer_cls: Optional[Type["Tracer"]] = getattr(self, "__class__", None)
             self.graph = Graph(tracer_cls=tracer_cls)
 
             # When we encounter a Tensor value that's not a parameter, we look if it
@@ -688,9 +660,7 @@ class Tracer(TracerBase):
             # in create_arg
             self.tensor_attrs: Dict[Union[torch.Tensor, ScriptObject], str] = {}
 
-            def collect_tensor_attrs(
-                m: torch.nn.Module, prefix_atoms: List[str]
-            ):
+            def collect_tensor_attrs(m: torch.nn.Module, prefix_atoms: List[str]):
                 for k, v in m.__dict__.items():
                     if isinstance(v, (torch.Tensor, ScriptObject)):
                         self.tensor_attrs[v] = ".".join(prefix_atoms + [k])
@@ -715,9 +685,7 @@ class Tracer(TracerBase):
             @functools.wraps(_orig_module_getattr)
             def module_getattr_wrapper(mod, attr):
                 attr_val = _orig_module_getattr(mod, attr)
-                return self._module_getattr(
-                    attr, attr_val, parameter_proxy_cache
-                )
+                return self._module_getattr(attr, attr_val, parameter_proxy_cache)
 
             @functools.wraps(_orig_module_call)
             def module_call_wrapper(mod, *args, **kwargs):
@@ -740,15 +708,10 @@ class Tracer(TracerBase):
                     deduplicate=False,
                 )
                 patcher.patch_method(
-                    torch.nn.Module,
-                    "__call__",
-                    module_call_wrapper,
-                    deduplicate=False,
+                    torch.nn.Module, "__call__", module_call_wrapper, deduplicate=False
                 )
                 _patch_wrapped_functions(patcher)
-                _autowrap_check(
-                    patcher, fn_globals, self._autowrap_function_ids
-                )
+                _autowrap_check(patcher, fn_globals, self._autowrap_function_ids)
                 for module in self._autowrap_search:
                     _autowrap_check(
                         patcher, module.__dict__, self._autowrap_function_ids
@@ -1012,9 +975,7 @@ def wrap(fn_or_name: Union[str, Callable]):
     f = currentframe.f_back
     assert f is not None
     if f.f_code.co_name != "<module>":
-        raise NotImplementedError(
-            "wrap must be called at the top level of a module"
-        )
+        raise NotImplementedError("wrap must be called at the top level of a module")
 
     # consider implementing Callable version of this via _autowrap_function_ids / _autowrap_search
     # semantics would be slightly different, but would add support `from x import wrapped_function`
@@ -1077,9 +1038,7 @@ def symbolic_trace(
     tracer = Tracer()
     graph = tracer.trace(root, concrete_args)
     name = (
-        root.__class__.__name__
-        if isinstance(root, torch.nn.Module)
-        else root.__name__
+        root.__class__.__name__ if isinstance(root, torch.nn.Module) else root.__name__
     )
     return GraphModule(tracer.root, graph, name)
 

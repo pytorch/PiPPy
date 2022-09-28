@@ -1,10 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from __future__ import (
-    absolute_import,
-    division,
-    print_function,
-    unicode_literals,
-)
+from __future__ import absolute_import, division, print_function, unicode_literals
 
 import hashlib
 import torch
@@ -15,10 +10,9 @@ from pippy.fx.passes.shape_prop import TensorMetadata
 from pippy.fx._compatibility import compatibility
 from itertools import chain
 
-__all__ = ["FxGraphDrawer"]
+__all__ = ['FxGraphDrawer']
 try:
     import pydot  # type: ignore
-
     HAS_PYDOT = True
 except ImportError:
     HAS_PYDOT = False
@@ -58,7 +52,6 @@ _WEIGHT_TEMPLATE = {
 }
 
 if HAS_PYDOT:
-
     @compatibility(is_backward_compatible=False)
     class FxGraphDrawer:
         """
@@ -80,11 +73,7 @@ if HAS_PYDOT:
             self._name = name
             self._dot_graphs = {
                 name: self._to_dot(
-                    graph_module,
-                    name,
-                    ignore_getattr,
-                    ignore_parameters_and_buffers,
-                    skip_node_names_in_args,
+                    graph_module, name, ignore_getattr, ignore_parameters_and_buffers, skip_node_names_in_args
                 )
             }
 
@@ -132,12 +121,8 @@ if HAS_PYDOT:
             else:
                 # Use a random color for each node; based on its name so it's stable.
                 target_name = node._pretty_print_target(node.target)
-                target_hash = int(
-                    hashlib.md5(target_name.encode()).hexdigest()[:8], 16
-                )
-                template["fillcolor"] = _HASH_COLOR_MAP[
-                    target_hash % len(_HASH_COLOR_MAP)
-                ]
+                target_hash = int(hashlib.md5(target_name.encode()).hexdigest()[:8], 16)
+                template["fillcolor"] = _HASH_COLOR_MAP[target_hash % len(_HASH_COLOR_MAP)]
             return template
 
         def _get_leaf_node(
@@ -172,9 +157,7 @@ if HAS_PYDOT:
             def _get_str_for_args_kwargs(arg):
                 if isinstance(arg, tuple):
                     prefix, suffix = r"|args=(\l", r",\n)\l"
-                    arg_strs_list = [
-                        _format_arg(a, max_list_len=8) for a in arg
-                    ]
+                    arg_strs_list = [_format_arg(a, max_list_len=8) for a in arg]
                 elif isinstance(arg, dict):
                     prefix, suffix = r"|kwargs={\l", r",\n}\l"
                     arg_strs_list = [
@@ -191,6 +174,7 @@ if HAS_PYDOT:
                     return ""
                 arg_strs = prefix + r",\n".join(arg_strs_list) + suffix
                 return arg_strs.replace("{", r"\{").replace("}", r"\}")
+
 
             label = "{" + f"name=%{node.name}|op_code={node.op}\n"
 
@@ -211,7 +195,7 @@ if HAS_PYDOT:
                     label += _get_str_for_args_kwargs(node.kwargs)
                 label += f"|num_users={len(node.users)}" + r"\n"
 
-            tensor_meta = node.meta.get("tensor_meta")
+            tensor_meta = node.meta.get('tensor_meta')
             label += self._tensor_meta_to_label(tensor_meta)
 
             return label + "}"
@@ -245,59 +229,29 @@ if HAS_PYDOT:
                 print("tm", tm)
             result += "|" + "dtype" + "=" + str(tm.dtype) + r"\n"
             result += "|" + "shape" + "=" + str(tuple(tm.shape)) + r"\n"
-            result += (
-                "|" + "requires_grad" + "=" + str(tm.requires_grad) + r"\n"
-            )
+            result += "|" + "requires_grad" + "=" + str(tm.requires_grad) + r"\n"
             result += "|" + "stride" + "=" + str(tm.stride) + r"\n"
             if tm.is_quantized:
                 assert tm.qparams is not None
                 assert "qscheme" in tm.qparams
                 qscheme = tm.qparams["qscheme"]
                 if qscheme in {
-                    torch.per_tensor_affine,
-                    torch.per_tensor_symmetric,
+                        torch.per_tensor_affine,
+                        torch.per_tensor_symmetric,
                 }:
-                    result += (
-                        "|" + "q_scale" + "=" + str(tm.qparams["scale"]) + r"\n"
-                    )
-                    result += (
-                        "|"
-                        + "q_zero_point"
-                        + "="
-                        + str(tm.qparams["zero_point"])
-                        + r"\n"
-                    )
+                    result += "|" + "q_scale" + "=" + str(tm.qparams["scale"]) + r"\n"
+                    result += "|" + "q_zero_point" + "=" + str(tm.qparams["zero_point"]) + r"\n"
                 elif qscheme in {
-                    torch.per_channel_affine,
-                    torch.per_channel_symmetric,
-                    torch.per_channel_affine_float_qparams,
+                        torch.per_channel_affine,
+                        torch.per_channel_symmetric,
+                        torch.per_channel_affine_float_qparams,
                 }:
-                    result += (
-                        "|"
-                        + "q_per_channel_scale"
-                        + "="
-                        + str(tm.qparams["scale"])
-                        + r"\n"
-                    )
-                    result += (
-                        "|"
-                        + "q_per_channel_zero_point"
-                        + "="
-                        + str(tm.qparams["zero_point"])
-                        + r"\n"
-                    )
-                    result += (
-                        "|"
-                        + "q_per_channel_axis"
-                        + "="
-                        + str(tm.qparams["axis"])
-                        + r"\n"
-                    )
+                    result += "|" + "q_per_channel_scale" + "=" + str(tm.qparams["scale"]) + r"\n"
+                    result += "|" + "q_per_channel_zero_point" + "=" + str(tm.qparams["zero_point"]) + r"\n"
+                    result += "|" + "q_per_channel_axis" + "=" + str(tm.qparams["axis"]) + r"\n"
                 else:
                     raise RuntimeError(f"Unsupported qscheme: {qscheme}")
-                result += (
-                    "|" + "qscheme" + "=" + str(tm.qparams["qscheme"]) + r"\n"
-                )
+                result += "|" + "qscheme" + "=" + str(tm.qparams["qscheme"]) + r"\n"
             return result
 
         def _get_tensor_label(self, t: torch.Tensor) -> str:
@@ -324,18 +278,13 @@ if HAS_PYDOT:
 
                 style = self._get_node_style(node)
                 dot_node = pydot.Node(
-                    node.name,
-                    label=self._get_node_label(
-                        graph_module, node, skip_node_names_in_args
-                    ),
-                    **style,
+                    node.name, label=self._get_node_label(graph_module, node, skip_node_names_in_args), **style
                 )
                 dot_graph.add_node(dot_node)
 
                 def get_module_params_or_buffers():
                     for pname, ptensor in chain(
-                        leaf_module.named_parameters(),
-                        leaf_module.named_buffers(),
+                        leaf_module.named_parameters(), leaf_module.named_buffers()
                     ):
                         pname1 = node.name + "." + pname
                         label1 = (
@@ -345,10 +294,7 @@ if HAS_PYDOT:
                         )
                         dot_w_node = pydot.Node(
                             pname1,
-                            label="{"
-                            + label1
-                            + self._get_tensor_label(ptensor)
-                            + "}",
+                            label="{" + label1 + self._get_tensor_label(ptensor) + "}",
                             **_WEIGHT_TEMPLATE,
                         )
                         dot_graph.add_node(dot_w_node)
@@ -357,9 +303,7 @@ if HAS_PYDOT:
                 if node.op == "call_module":
                     leaf_module = self._get_leaf_node(graph_module, node)
 
-                    if not ignore_parameters_and_buffers and not isinstance(
-                        leaf_module, pippy.fx.GraphModule
-                    ):
+                    if not ignore_parameters_and_buffers and not isinstance(leaf_module, pippy.fx.GraphModule):
                         get_module_params_or_buffers()
 
             for node in graph_module.graph.nodes:
@@ -373,16 +317,8 @@ if HAS_PYDOT:
 
 else:
     if not TYPE_CHECKING:
-
         @compatibility(is_backward_compatible=False)
         class FxGraphDrawer:
-            def __init__(
-                self,
-                graph_module: pippy.fx.GraphModule,
-                name: str,
-                ignore_getattr: bool = False,
-            ):
-                raise RuntimeError(
-                    "FXGraphDrawer requires the pydot package to be installed. Please install "
-                    "pydot through your favorite Python package manager."
-                )
+            def __init__(self, graph_module: pippy.fx.GraphModule, name: str, ignore_getattr: bool = False):
+                raise RuntimeError('FXGraphDrawer requires the pydot package to be installed. Please install '
+                                   'pydot through your favorite Python package manager.')

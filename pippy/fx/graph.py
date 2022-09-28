@@ -1,31 +1,12 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from .node import (
-    Node,
-    Argument,
-    Target,
-    map_arg,
-    _type_repr,
-    _get_qualified_name,
-)
+from .node import Node, Argument, Target, map_arg, _type_repr, _get_qualified_name
 import torch.utils._pytree as pytree
 from . import _pytree as fx_pytree
 from ._compatibility import compatibility
 import contextlib
 import pippy.fx
 
-from typing import (
-    TYPE_CHECKING,
-    Callable,
-    Any,
-    List,
-    Dict,
-    NamedTuple,
-    Optional,
-    Tuple,
-    Set,
-    FrozenSet,
-    Type,
-)
+from typing import TYPE_CHECKING, Callable, Any, List, Dict, NamedTuple, Optional, Tuple, Set, FrozenSet, Type
 from dataclasses import dataclass
 from contextlib import contextmanager
 import copy
@@ -40,7 +21,7 @@ import inspect
 
 if TYPE_CHECKING:
     from .graph_module import GraphModule  # noqa: F401
-    from ._symbolic_trace import Tracer  # noqa: F401
+    from ._symbolic_trace import Tracer   # noqa: F401
 
 
 # Mapping of builtins to their `typing` equivalent.
@@ -65,12 +46,10 @@ class _CustomBuiltin(NamedTuple):
     an import. For common objects of this sort, we bundle them in the globals of
     every FX graph.
     """
-
     # How to import this object from the standard library.
     import_str: str
     # The actual object, produced from that import string.
     obj: Any
-
 
 _custom_builtins: Dict[str, _CustomBuiltin] = {}
 
@@ -79,22 +58,18 @@ def _register_custom_builtin(name: str, import_str: str, obj: Any):
     _custom_builtins[name] = _CustomBuiltin(import_str, obj)
 
 
-_register_custom_builtin("inf", "from math import inf", math.inf)
-_register_custom_builtin("nan", "from math import nan", math.nan)
-_register_custom_builtin("NoneType", "NoneType = type(None)", type(None))
-_register_custom_builtin("torch", "import torch", torch)
-_register_custom_builtin("pippy", "import pippy", pippy)
-_register_custom_builtin("device", "from torch import device", torch.device)
-_register_custom_builtin(
-    "fx_pytree", "import pippy.fx._pytree as fx_pytree", fx_pytree
-)
-_register_custom_builtin(
-    "pytree", "import torch.utils._pytree as pytree", pytree
-)
+_register_custom_builtin('inf', 'from math import inf', math.inf)
+_register_custom_builtin('nan', 'from math import nan', math.nan)
+_register_custom_builtin('NoneType', 'NoneType = type(None)', type(None))
+_register_custom_builtin('torch', 'import torch', torch)
+_register_custom_builtin('pippy', 'import pippy', pippy)
+_register_custom_builtin('device', 'from torch import device', torch.device)
+_register_custom_builtin('fx_pytree', 'import pippy.fx._pytree as fx_pytree', fx_pytree)
+_register_custom_builtin('pytree', 'import torch.utils._pytree as pytree', pytree)
 
 
 def _is_magic(x: str) -> bool:
-    return x.startswith("__") and x.endswith("__")
+    return x.startswith('__') and x.endswith('__')
 
 
 def _snake_case(s: str) -> str:
@@ -110,24 +85,24 @@ def _snake_case(s: str) -> str:
     prev_lower = False
     for c in s:
         if prev_lower and c.isupper():
-            chars.append("_")
+            chars.append('_')
         chars.append(c.lower())
         prev_lower = c.islower()
-    return "".join(chars)
+    return ''.join(chars)
 
 
 def _is_from_torch(obj: Any) -> bool:
-    module_name = getattr(obj, "__module__", None)
+    module_name = getattr(obj, '__module__', None)
     if module_name is not None:
-        if module_name.startswith("pippy.fx"):
+        if module_name.startswith('pippy.fx'):
             return True
 
-        base_module = module_name.partition(".")[0]
-        return base_module == "torch"
+        base_module = module_name.partition('.')[0]
+        return base_module == 'torch'
 
-    name = getattr(obj, "__name__", None)
+    name = getattr(obj, '__name__', None)
     # exclude torch because torch.torch.torch.torch works. idk mang
-    if name is not None and name != "torch":
+    if name is not None and name != 'torch':
         for guess in [torch, torch.nn.functional]:
             if getattr(guess, name, None) is obj:
                 return True
@@ -143,13 +118,12 @@ class _Namespace:
     - Each name is unique within a given namespace.
     - Names generated do not shadow builtins, unless the object is indeed that builtin.
     """
-
     def __init__(self):
         self._obj_to_name: Dict[Any, str] = {}
         self._unassociated_names = set()
         self._used_names: Dict[str, int] = {}
 
-        self._illegal_char_regex = re.compile("[^0-9a-zA-Z_]+")
+        self._illegal_char_regex = re.compile('[^0-9a-zA-Z_]+')
         self._name_suffix_regex = re.compile(r"(.*)_(\d+)$")
 
     def create_name(self, candidate: str, obj: Optional[Any]) -> str:
@@ -163,10 +137,10 @@ class _Namespace:
             return self._obj_to_name[obj]
 
         # delete all characters that are illegal in a Python identifier
-        candidate = self._illegal_char_regex.sub("_", candidate)
+        candidate = self._illegal_char_regex.sub('_', candidate)
 
         if candidate[0].isdigit():
-            candidate = f"_{candidate}"
+            candidate = f'_{candidate}'
 
         match = self._name_suffix_regex.match(candidate)
         if match is None:
@@ -176,14 +150,12 @@ class _Namespace:
             base, num_str = match.group(1, 2)
             num = int(num_str)
 
-        candidate = base if num is None else f"{base}_{num}"
+        candidate = base if num is None else f'{base}_{num}'
         num = num if num else 0
 
-        while candidate in self._used_names or self._is_illegal_name(
-            candidate, obj
-        ):
+        while candidate in self._used_names or self._is_illegal_name(candidate, obj):
             num += 1
-            candidate = f"{base}_{num}"
+            candidate = f'{base}_{num}'
 
         self._used_names.setdefault(candidate, 0)
         if obj is None:
@@ -224,7 +196,6 @@ class PythonCode:
     """
     Represents all the information necessary to exec or save a graph as Python code.
     """
-
     # Python source code for the forward function definition.
     src: str
     # Values in global scope during exection of `src_def`.
@@ -232,15 +203,14 @@ class PythonCode:
 
 
 def _format_target(base: str, target: str) -> str:
-    elems = target.split(".")
+    elems = target.split('.')
     r = base
     for e in elems:
         if not e.isidentifier():
             r = f'getattr({r}, "{e}")'
         else:
-            r = f"{r}.{e}"
+            r = f'{r}.{e}'
     return r
-
 
 class _InsertPoint:
     def __init__(self, graph, new_insert):
@@ -253,10 +223,9 @@ class _InsertPoint:
     def __exit__(self, type, value, tb):
         self.graph._insert = self.orig_insert
 
-
 class _node_list:
-    def __init__(self, graph: "Graph", direction: str = "_next"):
-        assert direction in ["_next", "_prev"]
+    def __init__(self, graph: 'Graph', direction: str = '_next'):
+        assert direction in ['_next', '_prev']
         self.graph = graph
         self.direction = direction
 
@@ -272,25 +241,23 @@ class _node_list:
             cur = getattr(cur, direction)
 
     def __reversed__(self):
-        return _node_list(
-            self.graph, "_next" if self.direction == "_prev" else "_prev"
-        )
+        return _node_list(self.graph, '_next' if self.direction == '_prev' else '_prev')
 
 
 class _ParamDescr(NamedTuple):
-    name: str
-    maybe_type_annotation: str
-    maybe_default_arg: str
+    name : str
+    maybe_type_annotation : str
+    maybe_default_arg : str
 
 
 class _PyTreeInfo(NamedTuple):
     """
     Contains extra info stored when we're using Pytrees
     """
-
     orig_args: List[_ParamDescr]
     in_spec: pytree.TreeSpec
     out_spec: Optional[pytree.TreeSpec]
+
 
 
 @compatibility(is_backward_compatible=False)
@@ -298,28 +265,26 @@ class CodeGen(object):
     def __init__(self):
         self._body_transformer: Optional[TransformCodeFunc] = None
 
-    def gen_fn_def(
-        self, free_vars: List[_ParamDescr], maybe_return_annotation: str
-    ) -> str:
+    def gen_fn_def(self, free_vars: List[_ParamDescr], maybe_return_annotation: str) -> str:
         """
         Given the free variables and a return annotation, generates the beginning of the FX function.
         By default, `gen_fn_def(['a', 'b'], '') == 'def forward(a, b):'`
         """
         # If the original function didn't have self as its first argument, we
         # would have added it.
-        if len(free_vars) == 0 or free_vars[0].name != "self":
-            free_vars.insert(0, _ParamDescr("self", "", ""))
+        if len(free_vars) == 0 or free_vars[0].name != 'self':
+            free_vars.insert(0, _ParamDescr('self', '', ''))
         return f"def forward({', '.join(self._param_descr_to_param_for_sig(var) for var in free_vars)}){maybe_return_annotation}:"
 
-    def _param_descr_to_param_for_sig(self, descr: _ParamDescr):
-        return f"{descr.name}{descr.maybe_type_annotation}{descr.maybe_default_arg}"
+    def _param_descr_to_param_for_sig(self, descr : _ParamDescr):
+        return f'{descr.name}{descr.maybe_type_annotation}{descr.maybe_default_arg}'
 
     def generate_output(self, output_args: Argument) -> str:
         """
         Given the output arguments, generates the return statement of the FX function.
         Note: The returned statement should not be indented.
         """
-        return f"return {repr(output_args)}"
+        return f'return {repr(output_args)}'
 
     def process_inputs(self, *args: Any) -> Any:
         """
@@ -347,16 +312,14 @@ class CodeGen(object):
         """
         return []
 
-    def _gen_python_code(
-        self, nodes, root_module: str, namespace: _Namespace
-    ) -> PythonCode:
+    def _gen_python_code(self, nodes, root_module: str, namespace: _Namespace) -> PythonCode:
         free_vars: List[_ParamDescr] = []
         body: List[str] = []
         globals_: Dict[str, Any] = {}
         wrapped_fns: Dict[str, None] = {}
 
         # Wrap string in list to pass by reference
-        maybe_return_annotation: List[str] = [""]
+        maybe_return_annotation : List[str] = ['']
 
         def add_global(name_hint: str, obj: Any):
             """Add an obj to be tracked as a global.
@@ -366,9 +329,7 @@ class CodeGen(object):
 
             Returns: the global name that should be used to reference 'obj' in generated source.
             """
-            if (
-                _is_from_torch(obj) and obj != torch.device
-            ):  # to support registering torch.device
+            if _is_from_torch(obj) and obj != torch.device:  # to support registering torch.device
                 # HACK: workaround for how torch custom ops are registered. We
                 # can't import them like normal modules so they must retain their
                 # fully qualified name.
@@ -387,21 +348,19 @@ class CodeGen(object):
         for name, (_, obj) in _custom_builtins.items():
             add_global(name, obj)
 
-        def type_repr(o: Any):
+        def type_repr(o : Any):
             if o == ():
                 # Empty tuple is used for empty tuple type annotation Tuple[()]
-                return "()"
+                return '()'
 
             typename = _type_repr(o)
 
-            if hasattr(o, "__origin__"):
+            if hasattr(o, '__origin__'):
                 # This is a generic type, e.g. typing.List[torch.Tensor]
                 origin_type = _origin_type_map.get(o.__origin__, o.__origin__)
-                origin_typename = add_global(
-                    _type_repr(origin_type), origin_type
-                )
+                origin_typename = add_global(_type_repr(origin_type), origin_type)
 
-                if hasattr(o, "__args__"):
+                if hasattr(o, '__args__'):
                     # Assign global names for each of the inner type variables.
                     args = [type_repr(arg) for arg in o.__args__]
 
@@ -419,33 +378,28 @@ class CodeGen(object):
             # Common case: this is a regular module name like 'foo.bar.baz'
             return add_global(typename, o)
 
-        def _format_args(
-            args: Tuple[Argument, ...], kwargs: Dict[str, Argument]
-        ) -> str:
+        def _format_args(args: Tuple[Argument, ...], kwargs: Dict[str, Argument]) -> str:
             def _get_repr(arg):
                 # Handle NamedTuples (if it has `_fields`) via add_global.
-                if isinstance(arg, tuple) and hasattr(arg, "_fields"):
+                if isinstance(arg, tuple) and hasattr(arg, '_fields'):
                     qualified_name = _get_qualified_name(type(arg))
                     global_name = add_global(qualified_name, type(arg))
                     return f"{global_name}{repr(tuple(arg))}"
                 return repr(arg)
-
-            args_s = ", ".join(_get_repr(a) for a in args)
-            kwargs_s = ", ".join(
-                f"{k} = {_get_repr(v)}" for k, v in kwargs.items()
-            )
+            args_s = ', '.join(_get_repr(a) for a in args)
+            kwargs_s = ', '.join(f'{k} = {_get_repr(v)}' for k, v in kwargs.items())
             if args_s and kwargs_s:
-                return f"{args_s}, {kwargs_s}"
+                return f'{args_s}, {kwargs_s}'
             return args_s or kwargs_s
 
         # Run through reverse nodes and record the first instance of a use
         # of a given node. This represents the *last* use of the node in the
         # execution order of the program, which we will use to free unused
         # values
-        node_to_last_use: Dict[Node, Node] = {}
-        user_to_last_uses: Dict[Node, List[Node]] = {}
+        node_to_last_use : Dict[Node, Node] = {}
+        user_to_last_uses : Dict[Node, List[Node]] = {}
 
-        def register_last_uses(n: Node, user: Node):
+        def register_last_uses(n : Node, user : Node):
             if n not in node_to_last_use:
                 node_to_last_use[n] = user
                 user_to_last_uses.setdefault(user, []).append(n)
@@ -454,117 +408,87 @@ class CodeGen(object):
             map_arg(node.args, lambda n: register_last_uses(n, node))
             map_arg(node.kwargs, lambda n: register_last_uses(n, node))
 
-        def delete_unused_values(user: Node):
+        def delete_unused_values(user : Node):
             """
             Delete values after their last use. This ensures that values that are
             not used in the remainder of the code are freed and the memory usage
             of the code is optimal.
             """
-            if user.op == "placeholder":
+            if user.op == 'placeholder':
                 return
-            if user.op == "output":
-                body.append("\n")
+            if user.op == 'output':
+                body.append('\n')
                 return
             nodes_to_delete = user_to_last_uses.get(user, [])
             if len(nodes_to_delete):
-                to_delete_str = " = ".join(
-                    [repr(n) for n in nodes_to_delete] + ["None"]
-                )
-                body.append(f";  {to_delete_str}\n")
+                to_delete_str = ' = '.join([repr(n) for n in nodes_to_delete] + ['None'])
+                body.append(f';  {to_delete_str}\n')
             else:
-                body.append("\n")
+                body.append('\n')
 
-        def emit_node(node: Node):
-            maybe_type_annotation = (
-                "" if node.type is None else f" : {type_repr(node.type)}"
-            )
-            if node.op == "placeholder":
+
+        def emit_node(node : Node):
+            maybe_type_annotation = '' if node.type is None else f' : {type_repr(node.type)}'
+            if node.op == 'placeholder':
                 assert isinstance(node.target, str)
-                maybe_default_arg = (
-                    "" if not node.args else f" = {repr(node.args[0])}"
-                )
-                free_vars.append(
-                    _ParamDescr(
-                        node.target, maybe_type_annotation, maybe_default_arg
-                    )
-                )
-                raw_name = node.target.replace("*", "")
+                maybe_default_arg = '' if not node.args else f' = {repr(node.args[0])}'
+                free_vars.append(_ParamDescr(node.target, maybe_type_annotation, maybe_default_arg))
+                raw_name = node.target.replace('*', '')
                 if raw_name != repr(node):
-                    body.append(f"{repr(node)} = {raw_name}\n")
+                    body.append(f'{repr(node)} = {raw_name}\n')
                 return
-            elif node.op == "call_method":
+            elif node.op == 'call_method':
                 assert isinstance(node.target, str)
                 body.append(
-                    f"{repr(node)}{maybe_type_annotation} = {_format_target(repr(node.args[0]), node.target)}"
-                    f"({_format_args(node.args[1:], node.kwargs)})"
-                )
+                    f'{repr(node)}{maybe_type_annotation} = {_format_target(repr(node.args[0]), node.target)}'
+                    f'({_format_args(node.args[1:], node.kwargs)})')
                 return
-            elif node.op == "call_function":
+            elif node.op == 'call_function':
                 assert callable(node.target)
                 # pretty print operators
-                if (
-                    node.target.__module__ == "_operator"
-                    and node.target.__name__ in magic_methods
-                ):
+                if node.target.__module__ == '_operator' and node.target.__name__ in magic_methods:
                     assert isinstance(node.args, tuple)
-                    body.append(
-                        f"{repr(node)}{maybe_type_annotation} = "
-                        f"{magic_methods[node.target.__name__].format(*(repr(a) for a in node.args))}"
-                    )
+                    body.append(f'{repr(node)}{maybe_type_annotation} = '
+                                f'{magic_methods[node.target.__name__].format(*(repr(a) for a in node.args))}')
                     return
 
                 # pretty print inplace operators; required for jit.script to work properly
                 # not currently supported in normal FX graphs, but generated by torchdynamo
-                if (
-                    node.target.__module__ == "_operator"
-                    and node.target.__name__ in inplace_methods
-                ):
-                    body.append(
-                        f"{inplace_methods[node.target.__name__].format(*(repr(a) for a in node.args))};  "
-                        f"{repr(node)}{maybe_type_annotation} = {repr(node.args[0])}"
-                    )
+                if node.target.__module__ == '_operator' and node.target.__name__ in inplace_methods:
+                    body.append(f'{inplace_methods[node.target.__name__].format(*(repr(a) for a in node.args))};  '
+                                f'{repr(node)}{maybe_type_annotation} = {repr(node.args[0])}')
                     return
 
                 qualified_name = _get_qualified_name(node.target)
                 global_name = add_global(qualified_name, node.target)
                 # special case for getattr: node.args could be 2-argument or 3-argument
                 # 2-argument: attribute access; 3-argument: fall through to attrib function call with default value
-                if (
-                    global_name == "getattr"
-                    and isinstance(node.args, tuple)
-                    and isinstance(node.args[1], str)
-                    and node.args[1].isidentifier()
-                    and len(node.args) == 2
-                ):
-                    body.append(
-                        f"{repr(node)}{maybe_type_annotation} = {_format_target(repr(node.args[0]), node.args[1])}"
-                    )
+                if global_name == 'getattr' and \
+                   isinstance(node.args, tuple) and \
+                   isinstance(node.args[1], str) and \
+                   node.args[1].isidentifier() and \
+                   len(node.args) == 2:
+                    body.append(f'{repr(node)}{maybe_type_annotation} = {_format_target(repr(node.args[0]), node.args[1])}')
                     return
-                body.append(
-                    f"{repr(node)}{maybe_type_annotation} = {global_name}({_format_args(node.args, node.kwargs)})"
-                )
-                if node.meta.get("is_wrapped", False):
+                body.append(f'{repr(node)}{maybe_type_annotation} = {global_name}({_format_args(node.args, node.kwargs)})')
+                if node.meta.get('is_wrapped', False):
                     wrapped_fns.setdefault(global_name)
                 return
-            elif node.op == "call_module":
+            elif node.op == 'call_module':
                 assert isinstance(node.target, str)
-                body.append(
-                    f"{repr(node)}{maybe_type_annotation} = "
-                    f"{_format_target(root_module, node.target)}({_format_args(node.args, node.kwargs)})"
-                )
+                body.append(f'{repr(node)}{maybe_type_annotation} = '
+                            f'{_format_target(root_module, node.target)}({_format_args(node.args, node.kwargs)})')
                 return
-            elif node.op == "get_attr":
+            elif node.op == 'get_attr':
                 assert isinstance(node.target, str)
-                body.append(
-                    f"{repr(node)}{maybe_type_annotation} = {_format_target(root_module, node.target)}"
-                )
+                body.append(f'{repr(node)}{maybe_type_annotation} = {_format_target(root_module, node.target)}')
                 return
-            elif node.op == "output":
+            elif node.op == 'output':
                 if node.type is not None:
                     maybe_return_annotation[0] = f" -> {type_repr(node.type)}"
                 body.append(self.generate_output(node.args[0]))
                 return
-            raise NotImplementedError(f"node: {node.op} {node.target}")
+            raise NotImplementedError(f'node: {node.op} {node.target}')
 
         for node in nodes:
             # NOTE: emit_node does not emit a string with newline. It depends
@@ -576,15 +500,15 @@ class CodeGen(object):
             # If the Graph has no non-placeholder nodes, no lines for the body
             # have been emitted. To continue to have valid Python code, emit a
             # single pass statement
-            body.append("pass\n")
+            body.append('pass\n')
+
+
 
         if len(wrapped_fns) > 0:
-            wrap_name = add_global("wrap", pippy.fx.wrap)
-            wrap_stmts = "\n".join(
-                [f'{wrap_name}("{name}")' for name in wrapped_fns]
-            )
+            wrap_name = add_global('wrap', pippy.fx.wrap)
+            wrap_stmts = '\n'.join([f'{wrap_name}("{name}")' for name in wrapped_fns])
         else:
-            wrap_stmts = ""
+            wrap_stmts = ''
 
         if self._body_transformer:
             body = self._body_transformer(body)
@@ -594,8 +518,8 @@ class CodeGen(object):
 
         prologue = self.gen_fn_def(free_vars, maybe_return_annotation[0])
 
-        code = "".join(body)
-        code = "\n".join("    " + line for line in code.split("\n"))
+        code = ''.join(body)
+        code = '\n'.join('    ' + line for line in code.split('\n'))
         fn_code = f"""
 {wrap_stmts}
 
@@ -624,19 +548,17 @@ class _PyTreeCodeGen(CodeGen):
             return out
         if not isinstance(out, list):
             out = [out]
-        assert self.pytree_info.out_spec is not None
+        assert(self.pytree_info.out_spec is not None)
         return pytree.tree_unflatten(out, self.pytree_info.out_spec)
 
-    def gen_fn_def(self, free_vars: List[_ParamDescr], maybe_return_annotation):
+    def gen_fn_def(self, free_vars : List[_ParamDescr], maybe_return_annotation):
         if self.pytree_info is None:
             return super().gen_fn_def(free_vars, maybe_return_annotation)
         function_args = self.pytree_info.orig_args
-        has_orig_self = function_args[0].name == "self"
+        has_orig_self = (function_args[0].name == 'self')
         if has_orig_self:
-            free_vars.insert(0, _ParamDescr("self", "", ""))
-        function_definition = super().gen_fn_def(
-            function_args[:], maybe_return_annotation
-        )
+            free_vars.insert(0, _ParamDescr('self', '', ''))
+        function_definition = super().gen_fn_def(function_args[:], maybe_return_annotation)
         if len(free_vars) > 0:  # pytree has placeholders in it
             function_definition += f"""
     {', '.join(var.name for var in free_vars)}, = fx_pytree.tree_flatten_spec\
@@ -645,10 +567,9 @@ class _PyTreeCodeGen(CodeGen):
 
     def generate_output(self, output_args):
         if self.pytree_info:
-            return f"return pytree.tree_unflatten({repr(output_args)}, self._out_spec)"
+            return f'return pytree.tree_unflatten({repr(output_args)}, self._out_spec)'
         else:
             return super().generate_output(output_args)
-
 
 @compatibility(is_backward_compatible=True)
 class Graph:
@@ -696,17 +617,13 @@ class Graph:
     """
 
     @compatibility(is_backward_compatible=True)
-    def __init__(
-        self,
-        owning_module: Optional["GraphModule"] = None,
-        tracer_cls: Optional[Type["Tracer"]] = None,
-        tracer_extras: Optional[Dict[str, Any]] = None,
-    ):
+    def __init__(self, owning_module: Optional["GraphModule"] = None, tracer_cls: Optional[Type["Tracer"]] = None,
+                 tracer_extras: Optional[Dict[str, Any]] = None):
         """
         Construct an empty Graph.
         """
-        self._root: Node = Node(self, "", "root", "", (), {})
-        self._used_names: Dict[str, int] = {}  # base name -> number
+        self._root : Node = Node(self, '', 'root', '', (), {})
+        self._used_names : Dict[str, int] = {}  # base name -> number
         self._insert = self._root.prepend
         self._len = 0
         self._graph_namespace = _Namespace()
@@ -747,9 +664,7 @@ class Graph:
         return _node_list(self)
 
     @compatibility(is_backward_compatible=True)
-    def graph_copy(
-        self, g: "Graph", val_map: Dict[Node, Node], return_output_node=False
-    ) -> "Optional[Argument]":
+    def graph_copy(self, g : 'Graph', val_map : Dict[Node, Node], return_output_node=False) -> 'Optional[Argument]':
         """
         Copy all nodes from a given graph into ``self``.
 
@@ -769,13 +684,13 @@ class Graph:
         for node in g.nodes:
             if node in val_map:
                 continue
-            if node.op == "output":
+            if node.op == 'output':
                 rv = map_arg(node.args[0], lambda n: val_map[n])
                 return rv if not return_output_node else (rv, node)
-            val_map[node] = self.node_copy(node, lambda n: val_map[n])
+            val_map[node] = self.node_copy(node, lambda n : val_map[n])
         return None
 
-    def __deepcopy__(self, memo=None) -> "Graph":
+    def __deepcopy__(self, memo=None) -> 'Graph':
         """
         Explicitly implement __deepcopy__ to prevent excessive recursion depth
         from the default implementation. This uses graph_copy to copy the nodes
@@ -789,19 +704,15 @@ class Graph:
         g._codegen = copy.deepcopy(self._codegen)
         assert isinstance(output_vals, tuple)
         output_val, old_output_val = output_vals
-        g.output(output_val, type_expr=getattr(old_output_val, "type", None))
+        g.output(output_val, type_expr=getattr(old_output_val, 'type', None))
         return g
 
     @compatibility(is_backward_compatible=True)
-    def create_node(
-        self,
-        op: str,
-        target: "Target",
-        args: Optional[Tuple["Argument", ...]] = None,
-        kwargs: Optional[Dict[str, "Argument"]] = None,
-        name: Optional[str] = None,
-        type_expr: Optional[Any] = None,
-    ) -> Node:
+    def create_node(self, op: str, target: 'Target',
+                    args: Optional[Tuple['Argument', ...]] = None,
+                    kwargs: Optional[Dict[str, 'Argument']] = None,
+                    name: Optional[str] = None,
+                    type_expr: Optional[Any] = None) -> Node:
         """
         Create a ``Node`` and add it to the ``Graph`` at the current insert-point.
         Note that the current insert-point can be set via :meth:`Graph.inserting_before`
@@ -827,14 +738,7 @@ class Graph:
 
             The newly-created and inserted node.
         """
-        assert op in (
-            "call_function",
-            "call_method",
-            "get_attr",
-            "call_module",
-            "placeholder",
-            "output",
-        )
+        assert op in ('call_function', 'call_method', 'get_attr', 'call_module', 'placeholder', 'output')
         args = () if args is None else args
         kwargs = {} if kwargs is None else kwargs
         assert isinstance(args, tuple), "args must be a tuple"
@@ -861,8 +765,9 @@ class Graph:
     def process_outputs(self, out):
         return self._codegen.process_outputs(out)
 
+
     @compatibility(is_backward_compatible=True)
-    def erase_node(self, to_erase: Node) -> None:
+    def erase_node(self, to_erase : Node) -> None:
         """
         Erases a ``Node`` from the ``Graph``. Throws an exception if
         there are still users of that node in the ``Graph``.
@@ -872,10 +777,8 @@ class Graph:
             to_erase (Node): The ``Node`` to erase from the ``Graph``.
         """
         if len(to_erase.users) > 0:
-            raise RuntimeError(
-                f"Tried to erase Node {to_erase} but it still had {len(to_erase.users)} "
-                f"users in the graph: {to_erase.users}!"
-            )
+            raise RuntimeError(f'Tried to erase Node {to_erase} but it still had {len(to_erase.users)} '
+                               f'users in the graph: {to_erase.users}!')
 
         to_erase._remove_from_list()
         to_erase._erased = True  # iterators may retain handles to erased nodes
@@ -939,12 +842,8 @@ class Graph:
         return _InsertPoint(self, n.append)
 
     @compatibility(is_backward_compatible=True)
-    def placeholder(
-        self,
-        name: str,
-        type_expr: Optional[Any] = None,
-        default_value: Any = inspect.Signature.empty,
-    ) -> Node:
+    def placeholder(self, name: str, type_expr: Optional[Any] = None,
+                    default_value : Any = inspect.Signature.empty) -> Node:
         """
         Insert a ``placeholder`` node into the Graph. A ``placeholder`` represents
         a function input.
@@ -968,17 +867,11 @@ class Graph:
             The same insertion point and type expression rules apply for this method
             as ``Graph.create_node``.
         """
-        args = (
-            () if default_value is inspect.Signature.empty else (default_value,)
-        )
-        return self.create_node(
-            "placeholder", name, args=args, type_expr=type_expr
-        )
+        args = () if default_value is inspect.Signature.empty else (default_value,)
+        return self.create_node('placeholder', name, args=args, type_expr=type_expr)
 
     @compatibility(is_backward_compatible=True)
-    def get_attr(
-        self, qualified_name: str, type_expr: Optional[Any] = None
-    ) -> Node:
+    def get_attr(self, qualified_name: str, type_expr: Optional[Any] = None) -> Node:
         """
         Insert a ``get_attr`` node into the Graph. A ``get_attr`` ``Node`` represents the
         fetch of an attribute from the ``Module`` hierarchy.
@@ -1002,10 +895,7 @@ class Graph:
             The same insertion point and type expression rules apply for this method
             as ``Graph.create_node``.
         """
-
-        def _get_attr_reference_exists(
-            mod: torch.nn.Module, qualified_name: str
-        ) -> bool:
+        def _get_attr_reference_exists(mod: torch.nn.Module, qualified_name: str) -> bool:
             module_path, _, name = qualified_name.rpartition(".")
 
             try:
@@ -1019,40 +909,32 @@ class Graph:
 
             res = getattr(submod, name)
 
-            if (
-                not isinstance(res, torch.nn.Module)
-                and not isinstance(res, torch.nn.Parameter)
-                and name not in submod._buffers
-            ):
+            if (not isinstance(res, torch.nn.Module)
+                    and not isinstance(res, torch.nn.Parameter)
+                    and name not in submod._buffers):
                 return False
 
             return True
 
-        if self.owning_module and not _get_attr_reference_exists(
-            self.owning_module, qualified_name
-        ):
-            warnings.warn(
-                "Attempted to insert a get_attr Node with no "
-                "underlying reference in the owning "
-                "GraphModule! Call "
-                "GraphModule.add_submodule to add the "
-                "necessary submodule, "
-                "GraphModule.add_parameter to add the "
-                "necessary Parameter, or "
-                "nn.Module.register_buffer to add the "
-                "necessary buffer",
-                stacklevel=2,
-            )
-        return self.create_node("get_attr", qualified_name, type_expr=type_expr)
+        if (self.owning_module and
+                not _get_attr_reference_exists(self.owning_module, qualified_name)):
+            warnings.warn("Attempted to insert a get_attr Node with no "
+                          "underlying reference in the owning "
+                          "GraphModule! Call "
+                          "GraphModule.add_submodule to add the "
+                          "necessary submodule, "
+                          "GraphModule.add_parameter to add the "
+                          "necessary Parameter, or "
+                          "nn.Module.register_buffer to add the "
+                          "necessary buffer", stacklevel=2)
+        return self.create_node('get_attr', qualified_name, type_expr=type_expr)
 
     @compatibility(is_backward_compatible=True)
-    def call_module(
-        self,
-        module_name: str,
-        args: Optional[Tuple["Argument", ...]] = None,
-        kwargs: Optional[Dict[str, "Argument"]] = None,
-        type_expr: Optional[Any] = None,
-    ) -> Node:
+    def call_module(self,
+                    module_name: str,
+                    args: Optional[Tuple['Argument', ...]] = None,
+                    kwargs: Optional[Dict[str, 'Argument']] = None,
+                    type_expr: Optional[Any] = None) -> Node:
         """
         Insert a ``call_module`` ``Node`` into the ``Graph``. A ``call_module`` node
         represents a call to the forward() function of a ``Module`` in the ``Module``
@@ -1083,29 +965,21 @@ class Graph:
             The same insertion point and type expression rules apply for this method
             as :meth:`Graph.create_node`.
         """
-        if (
-            self.owning_module
-            and self.owning_module.get_submodule(module_name) is None
-        ):
-            warnings.warn(
-                "Attempted to insert a call_module Node with "
-                "no underlying reference in the owning "
-                "GraphModule! Call "
-                "GraphModule.add_submodule to add the "
-                "necessary submodule"
-            )
-        return self.create_node(
-            "call_module", module_name, args, kwargs, type_expr=type_expr
-        )
+        if (self.owning_module and
+                self.owning_module.get_submodule(module_name) is None):
+            warnings.warn("Attempted to insert a call_module Node with "
+                          "no underlying reference in the owning "
+                          "GraphModule! Call "
+                          "GraphModule.add_submodule to add the "
+                          "necessary submodule")
+        return self.create_node('call_module', module_name, args, kwargs, type_expr=type_expr)
 
     @compatibility(is_backward_compatible=True)
-    def call_method(
-        self,
-        method_name: str,
-        args: Optional[Tuple["Argument", ...]] = None,
-        kwargs: Optional[Dict[str, "Argument"]] = None,
-        type_expr: Optional[Any] = None,
-    ) -> Node:
+    def call_method(self,
+                    method_name: str,
+                    args: Optional[Tuple['Argument', ...]] = None,
+                    kwargs: Optional[Dict[str, 'Argument']] = None,
+                    type_expr: Optional[Any] = None) -> Node:
         """
         Insert a ``call_method`` ``Node`` into the ``Graph``. A ``call_method`` node
         represents a call to a given method on the 0th element of ``args``.
@@ -1133,18 +1007,14 @@ class Graph:
             The same insertion point and type expression rules apply for this method
             as :meth:`Graph.create_node`.
         """
-        return self.create_node(
-            "call_method", method_name, args, kwargs, type_expr=type_expr
-        )
+        return self.create_node('call_method', method_name, args, kwargs, type_expr=type_expr)
 
     @compatibility(is_backward_compatible=True)
-    def call_function(
-        self,
-        the_function: Callable[..., Any],
-        args: Optional[Tuple["Argument", ...]] = None,
-        kwargs: Optional[Dict[str, "Argument"]] = None,
-        type_expr: Optional[Any] = None,
-    ) -> Node:
+    def call_function(self,
+                      the_function: Callable[..., Any],
+                      args: Optional[Tuple['Argument', ...]] = None,
+                      kwargs: Optional[Dict[str, 'Argument']] = None,
+                      type_expr: Optional[Any] = None) -> Node:
         """
         Insert a ``call_function`` ``Node`` into the ``Graph``. A ``call_function`` node
         represents a call to a Python callable, specified by ``the_function``.
@@ -1172,16 +1042,10 @@ class Graph:
             The same insertion point and type expression rules apply for this method
             as :meth:`Graph.create_node`.
         """
-        return self.create_node(
-            "call_function", the_function, args, kwargs, type_expr=type_expr
-        )
+        return self.create_node('call_function', the_function, args, kwargs, type_expr=type_expr)
 
     @compatibility(is_backward_compatible=True)
-    def node_copy(
-        self,
-        node: Node,
-        arg_transform: Callable[[Node], "Argument"] = lambda x: x,
-    ) -> Node:
+    def node_copy(self, node: Node, arg_transform: Callable[[Node], 'Argument'] = lambda x: x) -> Node:
         """
         Copy a node from one graph into another. ``arg_transform`` needs to transform arguments from
         the graph of node to the graph of self. Example::
@@ -1207,14 +1071,12 @@ class Graph:
         kwargs = map_arg(node.kwargs, arg_transform)
         assert isinstance(args, tuple)
         assert isinstance(kwargs, dict)
-        result_node = self.create_node(
-            node.op, node.target, args, kwargs, node.name, node.type
-        )
+        result_node = self.create_node(node.op, node.target, args, kwargs, node.name, node.type)
         result_node.meta = copy.copy(node.meta)
         return result_node
 
     @compatibility(is_backward_compatible=True)
-    def output(self, result: "Argument", type_expr: Optional[Any] = None):
+    def output(self, result: 'Argument', type_expr: Optional[Any] = None):
         """
         Insert an ``output`` ``Node`` into the ``Graph``. An ``output`` node represents
         a ``return`` statement in Python code. ``result`` is the value that should
@@ -1232,11 +1094,9 @@ class Graph:
             The same insertion point and type expression rules apply for this method
             as ``Graph.create_node``.
         """
-        return self.create_node(
-            op="output", target="output", args=(result,), type_expr=type_expr
-        )
+        return self.create_node(op='output', target='output', args=(result,), type_expr=type_expr)
 
-    def _target_to_str(self, target: Target) -> str:
+    def _target_to_str(self, target : Target) -> str:
         if callable(target):
             op = target.__name__
         else:
@@ -1309,29 +1169,26 @@ class Graph:
         with override_node_repr(self):
             return self._python_code(root_module, namespace)
 
-    def _python_code(
-        self, root_module: str, namespace: _Namespace
-    ) -> PythonCode:
-        return self._codegen._gen_python_code(
-            self.nodes, root_module, namespace
-        )
+    def _python_code(self, root_module: str, namespace: _Namespace) -> PythonCode:
+        return self._codegen._gen_python_code(self.nodes, root_module, namespace)
+
 
     def __str__(self) -> str:
         """
         Return a human-readable (not machine-readable) string representation
         of this Graph
         """
-        placeholder_names: List[str] = []
+        placeholder_names : List[str] = []
         # This is a one-element array just so ``format_node`` can modify the closed
         # over value
-        maybe_return_typename: List[str] = [""]
+        maybe_return_typename : List[str] = ['']
 
         node_strs = [node.format_node(placeholder_names) for node in self.nodes]
-        param_str = ", ".join(placeholder_names)
-        s = f"graph({param_str}){maybe_return_typename[0]}:"
+        param_str = ', '.join(placeholder_names)
+        s = f'graph({param_str}){maybe_return_typename[0]}:'
         for node_str in node_strs:
             if node_str:
-                s += "\n    " + node_str
+                s += '\n    ' + node_str
         return s
 
     @compatibility(is_backward_compatible=True)
@@ -1344,20 +1201,13 @@ class Graph:
         try:
             from tabulate import tabulate  # type: ignore
         except ImportError:
-            print(
-                "`print_tabular` relies on the library `tabulate`, "
-                "which could not be found on this machine. Run `pip "
-                "install tabulate` to install the library."
-            )
-        node_specs = [
-            [n.op, n.name, n.target, n.args, n.kwargs] for n in self.nodes
-        ]
-        print(
-            tabulate(
-                node_specs,
-                headers=["opcode", "name", "target", "args", "kwargs"],
-            )
-        )
+            print("`print_tabular` relies on the library `tabulate`, "
+                  "which could not be found on this machine. Run `pip "
+                  "install tabulate` to install the library.")
+        node_specs = [[n.op, n.name, n.target, n.args, n.kwargs]
+                      for n in self.nodes]
+        print(tabulate(node_specs,
+              headers=['opcode', 'name', 'target', 'args', 'kwargs']))
 
     @compatibility(is_backward_compatible=True)
     def lint(self):
@@ -1371,88 +1221,62 @@ class Graph:
         """
 
         # Check topo order
-        def check_arg(arg: Node, n: Optional[Node] = None) -> None:
-            context_str = f" of Node '{n}' " if n else " "
+        def check_arg(arg : Node, n : Optional[Node] = None) -> None:
+            context_str = f' of Node \'{n}\' ' if n else ' '
             if arg.graph is not self:
-                raise RuntimeError(
-                    f"Argument '{arg}'{context_str}does not belong to this Graph, "
-                    f"but was used as an argument! If you are copying nodes from another graph, make "
-                    f"sure to use ``arg_transform`` on node_copy() to remap values\n{self}"
-                )
+                raise RuntimeError(f'Argument \'{arg}\'{context_str}does not belong to this Graph, '
+                                   f'but was used as an argument! If you are copying nodes from another graph, make '
+                                   f'sure to use ``arg_transform`` on node_copy() to remap values\n{self}')
             if arg not in seen_values:
-                raise RuntimeError(
-                    f"Argument '{arg}'{context_str}was used before it has been "
-                    f"defined! Please check that Nodes in the graph are topologically ordered\n{self}"
-                )
+                raise RuntimeError(f'Argument \'{arg}\'{context_str}was used before it has been '
+                                   f'defined! Please check that Nodes in the graph are topologically ordered\n{self}')
 
-        seen_names: Set[str] = set()
-        seen_values: Set[Node] = set()
+        seen_names : Set[str] = set()
+        seen_values : Set[Node] = set()
         for node in self.nodes:
-            if node.op not in [
-                "placeholder",
-                "call_method",
-                "call_module",
-                "call_function",
-                "get_attr",
-                "output",
-            ]:
-                raise RuntimeError(f"Node {node} had unknown opcode {node.op}!")
+            if node.op not in ['placeholder', 'call_method', 'call_module', 'call_function', 'get_attr', 'output']:
+                raise RuntimeError(f'Node {node} had unknown opcode {node.op}!')
             if node.graph is not self:
-                raise RuntimeError(
-                    f"Node '{node}' does not belong to this Graph!"
-                )
+                raise RuntimeError(f'Node \'{node}\' does not belong to this Graph!')
             map_arg(node.args, lambda arg: check_arg(arg, node))
             map_arg(node.kwargs, lambda arg: check_arg(arg, node))
             seen_values.add(node)
 
             if node.name in seen_names:
-                raise RuntimeError(f"Node redefined name {node.name}!")
+                raise RuntimeError(f'Node redefined name {node.name}!')
             seen_names.add(node.name)
 
         # Check targets are legit
         if self.owning_module:
             for node in self.nodes:
-                if node.op == "call_function":
+                if node.op == 'call_function':
                     if not callable(node.target):
-                        raise ValueError(
-                            f"Node {node} target {node.target} has type {torch.typename(node.target)} but "
-                            "a Callable is expected"
-                        )
+                        raise ValueError(f'Node {node} target {node.target} has type {torch.typename(node.target)} but '
+                                         'a Callable is expected')
                 else:
                     if not isinstance(node.target, str):
-                        raise ValueError(
-                            f"Node {node} target {node.target} has type {torch.typename(node.target)} but "
-                            "a str is expected"
-                        )
-                if node.op in ["get_attr", "call_module"]:
-                    target_atoms = node.target.split(".")
+                        raise ValueError(f'Node {node} target {node.target} has type {torch.typename(node.target)} but '
+                                         'a str is expected')
+                if node.op in ['get_attr', 'call_module']:
+                    target_atoms = node.target.split('.')
                     m_itr = self.owning_module
                     for i, atom in enumerate(target_atoms):
                         new_m_itr = getattr(m_itr, atom, None)
-                        seen_qualname = ".".join(target_atoms[:i])
+                        seen_qualname = '.'.join(target_atoms[:i])
                         if new_m_itr is None:
-                            raise RuntimeError(
-                                f"Node {node} target {node.target} references nonexistent attribute "
-                                f"{atom} of {seen_qualname}"
-                            )
-                        if node.op == "call_module" and not isinstance(
-                            new_m_itr, torch.nn.Module
-                        ):
-                            raise RuntimeError(
-                                f"Node {node} target {node.target} {atom} of {seen_qualname} does "
-                                "not reference an nn.Module"
-                            )
-                        elif (
-                            node.op == "get_attr"
-                            and not isinstance(new_m_itr, torch.nn.Module)
-                            and not isinstance(new_m_itr, torch.nn.Parameter)
-                            and atom not in m_itr._buffers
-                        ):
-                            warnings.warn(
-                                f"Node {node} target {node.target} {atom} of {seen_qualname} does "
-                                "not reference an nn.Module, nn.Parameter, or buffer, which is "
-                                "what 'get_attr' Nodes typically target"
-                            )
+                            raise RuntimeError(f'Node {node} target {node.target} references nonexistent attribute '
+                                               f'{atom} of {seen_qualname}')
+                        if (node.op == "call_module"
+                                and not isinstance(new_m_itr, torch.nn.Module)):
+                            raise RuntimeError(f'Node {node} target {node.target} {atom} of {seen_qualname} does '
+                                               'not reference an nn.Module')
+                        elif (node.op == "get_attr"
+                              and not isinstance(new_m_itr, torch.nn.Module)
+                              and not isinstance(new_m_itr, torch.nn.Parameter)
+                              and atom not in m_itr._buffers):
+                            warnings.warn(f'Node {node} target {node.target} {atom} of {seen_qualname} does '
+                                          'not reference an nn.Module, nn.Parameter, or buffer, which is '
+                                          'what \'get_attr\' Nodes typically target')
                         else:
                             m_itr = new_m_itr
 
@@ -1507,9 +1331,7 @@ class Graph:
     @compatibility(is_backward_compatible=False)
     def on_generate_code(
         self,
-        make_transformer: Callable[
-            [Optional[TransformCodeFunc]], TransformCodeFunc
-        ],
+        make_transformer: Callable[[Optional[TransformCodeFunc]], TransformCodeFunc]
     ):
         """Register a transformer function when python code is generated
 
@@ -1594,51 +1416,47 @@ class Graph:
 
 
 reflectable_magic_methods = {
-    "add": "{} + {}",
-    "sub": "{} - {}",
-    "mul": "{} * {}",
-    "floordiv": "{} // {}",
-    "truediv": "{} / {}",
-    "div": "{} / {}",
-    "mod": "{} % {}",
-    "pow": "{} ** {}",
-    "lshift": "{} << {}",
-    "rshift": "{} >> {}",
-    "and_": "{} & {}",
-    "or_": "{} | {}",
-    "xor": "{} ^ {}",
-    "getitem": "{}[{}]",
-    "matmul": "{} @ {}",
+    'add': '{} + {}',
+    'sub': '{} - {}',
+    'mul': '{} * {}',
+    'floordiv': '{} // {}',
+    'truediv': '{} / {}',
+    'div': '{} / {}',
+    'mod': '{} % {}',
+    'pow': '{} ** {}',
+    'lshift': '{} << {}',
+    'rshift': '{} >> {}',
+    'and_': '{} & {}',
+    'or_': '{} | {}',
+    'xor': '{} ^ {}',
+    'getitem': '{}[{}]',
+    'matmul': '{} @ {}',
 }
 
-magic_methods = dict(
-    {
-        "eq": "{} == {}",
-        "ne": "{} != {}",
-        "lt": "{} < {}",
-        "gt": "{} > {}",
-        "le": "{} <= {}",
-        "ge": "{} >= {}",
-        "pos": "+{}",
-        "neg": "-{}",
-        "invert": "~{}",
-    },
-    **reflectable_magic_methods,
-)
+magic_methods = dict({
+    'eq': '{} == {}',
+    'ne': '{} != {}',
+    'lt': '{} < {}',
+    'gt': '{} > {}',
+    'le': '{} <= {}',
+    'ge': '{} >= {}',
+    'pos': '+{}',
+    'neg': '-{}',
+    'invert': '~{}'}, **reflectable_magic_methods)
 
 inplace_methods = {
-    "iadd": "{} += {}",
-    "iand": "{} &= {}",
-    "ifloordiv": "{} //= {}",
-    "ilshift": "{} <<= {}",
-    "imod": "{} %= {}",
-    "imul": "{} *= {}",
-    "imatmul": "{} @= {}",
-    "ior": "{} |= {}",
-    "ipow": "{} **= {}",
-    "irshift": "{} >>= {}",
-    "isub": "{} -= {}",
-    "itruediv": "{} /= {}",
-    "ixor": "{} ^= {}",
-    "setitem": "{}[{}] = {}",
+    'iadd': '{} += {}',
+    'iand': '{} &= {}',
+    'ifloordiv': '{} //= {}',
+    'ilshift': '{} <<= {}',
+    'imod': '{} %= {}',
+    'imul': '{} *= {}',
+    'imatmul': '{} @= {}',
+    'ior': '{} |= {}',
+    'ipow': '{} **= {}',
+    'irshift': '{} >>= {}',
+    'isub': '{} -= {}',
+    'itruediv': '{} /= {}',
+    'ixor': '{} ^= {}',
+    'setitem': '{}[{}] = {}',
 }

@@ -6,8 +6,7 @@ from pippy.fx.graph import Graph
 from pippy.fx._compatibility import compatibility
 
 
-__all__ = ["HolderModule", "lift_subgraph_as_module"]
-
+__all__ = ['HolderModule', 'lift_subgraph_as_module']
 
 @compatibility(is_backward_compatible=False)
 class HolderModule(Module):
@@ -23,9 +22,7 @@ class HolderModule(Module):
 
 
 @compatibility(is_backward_compatible=False)
-def lift_subgraph_as_module(
-    gm: GraphModule, subgraph: Graph, class_name: str = "GraphModule"
-) -> GraphModule:
+def lift_subgraph_as_module(gm: GraphModule, subgraph: Graph, class_name: str = 'GraphModule') -> GraphModule:
     """
     Create a GraphModule for subgraph, which copies the necessory attributes from the original parent graph_module.
 

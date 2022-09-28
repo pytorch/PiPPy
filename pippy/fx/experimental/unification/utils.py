@@ -8,7 +8,7 @@ def hashable(x):
 
 
 def transitive_get(key, d):
-    """Transitive dict.get
+    """ Transitive dict.get
     >>> d = {1: 2, 2: 3, 3: 4}
     >>> d.get(1)
     2
@@ -31,7 +31,7 @@ def raises(err, lamda):
 # Taken from theano/theano/gof/sched.py
 # Avoids licensing issues because this was written by Matthew Rocklin
 def _toposort(edges):
-    """Topological sort algorithm by Kahn [1] - O(nodes + vertices)
+    """ Topological sort algorithm by Kahn [1] - O(nodes + vertices)
     inputs:
         edges - a dict of the form {a: {b, c}} where b and c depend on a
     outputs:
@@ -74,7 +74,7 @@ def reverse_dict(d):
     result = {}  # type: ignore[var-annotated]
     for key in d:
         for val in d[key]:
-            result[val] = result.get(val, tuple()) + (key,)
+            result[val] = result.get(val, tuple()) + (key, )
     return result
 
 
@@ -87,7 +87,7 @@ def xfail(func):
 
 
 def freeze(d):
-    """Freeze container to hashable form
+    """ Freeze container to hashable form
     >>> freeze(1)
     1
     >>> freeze([1, 2])

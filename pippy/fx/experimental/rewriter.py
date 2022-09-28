@@ -11,7 +11,6 @@ from pippy.fx.graph import Graph
 from torch._sources import normalize_source_lines
 import torch
 
-
 class AST_Rewriter(ast.NodeTransformer):
     """
     Take a FunctionType object representing a `forward` method, then
@@ -28,7 +27,7 @@ class AST_Rewriter(ast.NodeTransformer):
         # Normalize the source lines
         sourcelines, _ = inspect.getsourcelines(fn)
         sourcelines = normalize_source_lines(sourcelines)
-        source = "".join(sourcelines)
+        source = ''.join(sourcelines)
         normalized_str = textwrap.dedent(source)
 
         # Rewrite the original AST
@@ -59,7 +58,6 @@ class AST_Rewriter(ast.NodeTransformer):
             g = functools.update_wrapper(g, f)
             g.__kwdefaults__ = copy.copy(f.__kwdefaults__)
             return g
-
         # Return the correct FunctionType object
         return change_func_globals(fn_compiled, globals=fn.__globals__)
 
@@ -69,7 +67,7 @@ class AST_Rewriter(ast.NodeTransformer):
         symbolically-traceable torch._assert function
         """
         # Create the Call node
-        n = ast.parse("torch._assert()", mode="eval")
+        n = ast.parse('torch._assert()', mode='eval')
         assert isinstance(n, ast.Expression)
         call_node = n.body
         assert isinstance(call_node, ast.Call)
@@ -92,33 +90,22 @@ class AST_Rewriter(ast.NodeTransformer):
             Output:
              y = annotate(f2(x),Tensor_Type((1,2,3,Dyn)))
         """
-        return ast.Assign(
-            targets=[node.target],
-            value=ast.Call(
-                func=ast.Name(id="annotate", ctx=ast.Load()),
-                args=[node.value, node.annotation],
-                keywords=[],
-            ),
-        )
+        return ast.Assign(targets=[node.target], value=ast.Call(
+            func=ast.Name(id='annotate', ctx=ast.Load()),
+            args=[node.value, node.annotation], keywords=[]))
 
 
 class RewritingTracer(Tracer):
-    def trace(
-        self,
-        root: Union[torch.nn.Module, Callable],
-        concrete_args: Optional[Dict[str, Any]] = None,
-    ) -> Graph:
+    def trace(self, root: Union[torch.nn.Module, Callable], concrete_args: Optional[Dict[str, Any]] = None) -> Graph:
         return super().trace(_rewrite(root), concrete_args)
 
 
-def _rewrite(
-    fn: Union[torch.nn.Module, Callable]
-) -> Union[torch.nn.Module, Callable]:
+def _rewrite(fn: Union[torch.nn.Module, Callable]) -> Union[torch.nn.Module, Callable]:
     if isinstance(fn, torch.nn.Module):
         # Rewrite this module's `forward` as well as the `forward`s of
         # all of this module's recursive descendents. Return the new,
         # rewritten module hierarchy.
-        def rewrite_module(m: torch.nn.Module):
+        def rewrite_module(m : torch.nn.Module):
             class RewrittenModule(torch.nn.Module):
                 def __init__(self, orig):
                     super().__init__()
@@ -127,12 +114,8 @@ def _rewrite(
                             self.__dict__[k] = copy.copy(rewrite_module(v))
                         else:
                             self.__dict__[k] = copy.copy(v)
-
-            RewrittenModule.forward = AST_Rewriter().rewrite(
-                cast(FunctionType, m.forward)
-            )
+            RewrittenModule.forward = AST_Rewriter().rewrite(cast(FunctionType, m.forward))
             return RewrittenModule(m)
-
         return rewrite_module(fn)
     else:
         # Rewrite this single free function

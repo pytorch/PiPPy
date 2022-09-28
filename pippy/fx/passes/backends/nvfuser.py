@@ -21,14 +21,10 @@ import logging
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-
 def aten_to_dtype(self, dtype: torch.dtype, **kwargs):
     if len(kwargs) > 0 or not dtype:
-        raise RuntimeError(
-            "No support for other to.dtype() formats other than to.dtype(self, dtype)"
-        )
+        raise RuntimeError("No support for other to.dtype() formats other than to.dtype(self, dtype)")
     return torch._prims.convert_element_type(self, dtype)
-
 
 # decomposition_table currently contains both aten2aten and aten2prim decomposition
 # this is a hack to seperate them, as we only need aten2prim decomposition for nvfuser-supported aten graph lowering
@@ -43,8 +39,8 @@ for op, decomp_fn in decomposition_table.items():
 
 aten2aten_decomp_skips = {
     "aten.native_layer_norm_backward.default",
-    "aten.embedding_dense_backward.default",  # This is hurting nvfuser's perf
-    "aten.addmm.default",
+    "aten.embedding_dense_backward.default",   # This is hurting nvfuser's perf
+    "aten.addmm.default"
 }
 
 for op, decomp_fn in decomposition_table.items():
@@ -206,6 +202,7 @@ class NvFuserOperatorSupport(OperatorSupport):
             # "torch.ops.aten.reshape": None,
             # "torch.ops.aten.view": None,      # missing prim decomp
             "torch.ops.aten.flatten.using_ints": None,
+
             # ===============================================================
             # call_function builtins and operator
             # ===============================================================
@@ -243,9 +240,7 @@ class NvFuserBackend:
         # TODO: this is a naive implementation of cache without proper guard, this will only work for identical inputs
         self.prim_decomp_cache: Dict[GraphModule, GraphModule] = {}
 
-    def lower_to_prims_and_execute(
-        self, graph_module: GraphModule, *args, **kwargs
-    ):
+    def lower_to_prims_and_execute(self, graph_module: GraphModule, *args, **kwargs):
         # `graph_module` is an Aten-Fx graph
         # "lowering to prims" and "trace execution" are grouped into this function, as they are both input dependent
 
@@ -254,9 +249,7 @@ class NvFuserBackend:
             prim_module = self.prim_decomp_cache[graph_module]
         else:
             prim_graph = pippy.fx.Graph()
-            DecompositionInterpreter(
-                graph_module, prim_graph, decomposition_table=aten2prim_decomp
-            ).run(*args, **kwargs)
+            DecompositionInterpreter(graph_module, prim_graph, decomposition_table=aten2prim_decomp).run(*args, **kwargs)
             prim_module = pippy.fx.GraphModule(graph_module, prim_graph)
             self.prim_decomp_cache[graph_module] = prim_module
 
@@ -274,9 +267,7 @@ class NvFuserBackend:
             logging.debug("partitioner_cache hit!")
             fused_graph_module = self.partitioner_cache[graph_module]
         else:
-            partitioner = CapabilityBasedPartitioner(
-                graph_module, self.supported_ops
-            )
+            partitioner = CapabilityBasedPartitioner(graph_module, self.supported_ops)
             fused_graph_module = partitioner.partition_and_fuse()
 
             self.partitioner_cache[graph_module] = fused_graph_module

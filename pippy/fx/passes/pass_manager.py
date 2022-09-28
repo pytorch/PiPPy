@@ -26,9 +26,7 @@ def inplace_wrapper(fn: Callable) -> Callable:
     return wrapped_fn
 
 
-def loop_pass(
-    base_pass: Callable, n_iter: int = None, predicate: Callable = None
-):
+def loop_pass(base_pass: Callable, n_iter: int = None, predicate: Callable = None):
     """
     Convenience wrapper for passes which need to be applied multiple times.
 

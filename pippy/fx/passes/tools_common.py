@@ -7,13 +7,7 @@ import pippy.fx
 from pippy.fx.node import _get_qualified_name
 from pippy.fx._compatibility import compatibility
 
-__all__ = [
-    "get_acc_ops_name",
-    "get_node_target",
-    "is_node_output_tensor",
-    "FxNetAccFusionsFinder",
-    "legalize_graph",
-]
+__all__ = ['get_acc_ops_name', 'get_node_target', 'is_node_output_tensor', 'FxNetAccFusionsFinder', 'legalize_graph']
 
 Tensors = Union[Tuple[torch.Tensor], List[torch.Tensor]]
 TensorOrTensors = Union[torch.Tensor, Tensors]
@@ -35,9 +29,7 @@ def get_acc_ops_name(k):
 
 
 @compatibility(is_backward_compatible=False)
-def get_node_target(
-    submodules: Mapping[str, torch.nn.Module], node: pippy.fx.Node
-) -> str:
+def get_node_target(submodules: Mapping[str, torch.nn.Module], node: pippy.fx.Node) -> str:
     """
     Given a `node` returns its target typename.
 
@@ -53,9 +45,7 @@ def get_node_target(
     """
 
     assert node.op in CALLABLE_NODE_OPS, (
-        "Expect op types of "
-        + ", ".join(CALLABLE_NODE_OPS)
-        + f", but found {node.op}"
+        "Expect op types of " + ", ".join(CALLABLE_NODE_OPS) + f", but found {node.op}"
     )
 
     if node.op == "call_module":
@@ -74,7 +64,6 @@ def get_node_target(
         assert isinstance(node.target, str)
         return node.target
 
-
 @compatibility(is_backward_compatible=False)
 def is_node_output_tensor(node: pippy.fx.Node) -> bool:
     """Checks if the node output produces a Tensor or not.
@@ -85,7 +74,6 @@ def is_node_output_tensor(node: pippy.fx.Node) -> bool:
     """
     type_ = node.meta.get("type", None)
     return type_ is not None and issubclass(type_, torch.Tensor)
-
 
 @compatibility(is_backward_compatible=False)
 class FxNetAccFusionsFinder:
@@ -176,13 +164,11 @@ class FxNetAccFusionsFinder:
             if node not in self.acc_nodes:
                 continue
 
-            fusion_group: "FxNetAccFusionsFinder.FusionGroup" = (
-                self.FusionGroup(
-                    top_node_idx=self.nodes.index(node),
-                    nodes={node},
-                    inputs=set(node.all_input_nodes),
-                    nodes_need_process={node},
-                )
+            fusion_group: "FxNetAccFusionsFinder.FusionGroup" = self.FusionGroup(
+                top_node_idx=self.nodes.index(node),
+                nodes={node},
+                inputs=set(node.all_input_nodes),
+                nodes_need_process={node},
             )
             while fusion_group.nodes_need_process:
                 node = fusion_group.nodes_need_process.pop()
@@ -197,9 +183,7 @@ class FxNetAccFusionsFinder:
                             continue
 
                         fusion_group.add_node(user)
-                        self.recursive_add_node(
-                            fusion_group, fusion_group.inputs
-                        )
+                        self.recursive_add_node(fusion_group, fusion_group.inputs)
 
                 # Add some upstream nodes
                 for arg in node.all_input_nodes:
@@ -241,9 +225,7 @@ def legalize_graph(gm: pippy.fx.GraphModule):
     # Build an adjacency list representation of node dependencies in the graph. This also
     # serves as a list of nodes that still need to be inserted into the new, topologically
     # sorted graph.
-    dependencies = {
-        node: node.all_input_nodes.copy() for node in gm.graph.nodes
-    }
+    dependencies = {node: node.all_input_nodes.copy() for node in gm.graph.nodes}
 
     # Construct a new graph that will contain all nodes in topologically sorted order.
     new_graph = pippy.fx.Graph()
@@ -252,9 +234,7 @@ def legalize_graph(gm: pippy.fx.GraphModule):
     # Copy over all nodes with no dependencies.
     for node, deps in dependencies.items():
         if not deps:
-            value_remap[node] = new_graph.node_copy(
-                node, lambda n: value_remap[n]
-            )
+            value_remap[node] = new_graph.node_copy(node, lambda n: value_remap[n])
 
     # Remove the copied over nodes from the adjacency list.
     for copied_node in value_remap.keys():
@@ -272,9 +252,7 @@ def legalize_graph(gm: pippy.fx.GraphModule):
                     all_deps_copied = False
 
             if all_deps_copied:
-                value_remap[node] = new_graph.node_copy(
-                    node, lambda n: value_remap[n]
-                )
+                value_remap[node] = new_graph.node_copy(node, lambda n: value_remap[n])
                 copied_this_round.append(node)
 
         # Delete all nodes copied over in this iteration from dependencies.

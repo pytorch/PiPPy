@@ -15,7 +15,6 @@ import itertools
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-
 class Partition:
     def __init__(self, id: int = None, nodes: Iterable[Node] = None):
         self.id = id
@@ -33,14 +32,13 @@ class Partition:
     def size(self):
         return len(self.nodes)
 
-
 class CapabilityBasedPartitioner:
-    def __init__(
-        self,
-        graph_module: GraphModule,
-        operator_support: OperatorSupportBase,
-        allows_single_node_partition: bool = False,
-    ) -> None:
+
+    def __init__(self,
+                 graph_module: GraphModule,
+                 operator_support: OperatorSupportBase,
+                 allows_single_node_partition: bool = False
+                 ) -> None:
         self.graph_module = graph_module
         self.operator_support = operator_support
         self.allows_single_node_partition = allows_single_node_partition
@@ -74,9 +72,7 @@ class CapabilityBasedPartitioner:
         else:
             return 0
 
-    def __partition_depends_on(
-        self, partition_a: Partition, partition_b: Partition
-    ) -> int:
+    def __partition_depends_on(self, partition_a: Partition, partition_b: Partition) -> int:
         # Returns
         # 1 if b depends on a (,or equivalently a is an upstream depedency of b)
         # -1 if a depends on b (,or equivalently b is an upstream depedency of a)
@@ -95,9 +91,7 @@ class CapabilityBasedPartitioner:
         logging.debug("Collecting supported nodes...")
         supported_nodes = []
         for node in self.graph_module.graph.nodes:
-            if self.operator_support.is_node_supported(
-                dict(self.graph_module.named_modules()), node
-            ):
+            if self.operator_support.is_node_supported(dict(self.graph_module.named_modules()), node):
                 supported_nodes.append(node)
         return supported_nodes
 
@@ -105,10 +99,8 @@ class CapabilityBasedPartitioner:
         candidates: NodeList = self.__get_supported_nodes()
 
         # assumptions: nodes in candidate list is sorted in topological order
-        assignment: Dict[Node, int] = {}  # maping from node to partition_id
-        partitions_by_id: Dict[
-            int, Partition
-        ] = {}  # mapping from partition_id to partition
+        assignment: Dict[Node, int] = {}   # maping from node to partition_id
+        partitions_by_id: Dict[int, Partition] = {}  # mapping from partition_id to partition
         new_partition_id = itertools.count()
 
         def assign(node: Node, id: Optional[int] = None):
@@ -162,11 +154,7 @@ class CapabilityBasedPartitioner:
             #    merge the other partitions with first partition, since user_partitions doesn't have depedency between
             #    each other.
 
-            assigned_candidate_partition_ids = [
-                partition.id
-                for partition in user_partitions
-                if partition.id is not None
-            ]
+            assigned_candidate_partition_ids = [partition.id for partition in user_partitions if partition.id is not None]
 
             if len(assigned_candidate_partition_ids) == 0:
                 # create a new partition
@@ -188,25 +176,21 @@ class CapabilityBasedPartitioner:
                     assign(other_node, id)
 
         # post processing to re-assign "getitem" nodes into upstream partition
-        logger.debug(
-            "Reassigning getitem nodes to its producer node's partition..."
-        )
+        logger.debug("Reassigning getitem nodes to its producer node's partition...")
         nodes_reassignment: Dict[Node, int] = {}
         for node in self.graph_module.graph.nodes:
             is_tuple_output = True
             for user in node.users:
-                if (
-                    user.op != "call_function"
-                    or _get_qualified_name(user.target) != "_operator.getitem"
-                ):  # type: ignore[arg-type]
+                if user.op != "call_function" or \
+                   _get_qualified_name(user.target) != "_operator.getitem":     # type: ignore[arg-type]
                     is_tuple_output = False
                     break
 
             # node has tuple outputs, re-assign all following getitem node into node's partition
             if is_tuple_output:
-                id = assignment.get(node, None)  # type: ignore[arg-type]
+                id = assignment.get(node, None)     # type: ignore[arg-type]
                 for user in node.users:
-                    if assignment.get(user, None) != id:  # type: ignore[arg-type]
+                    if assignment.get(user, None) != id:    # type: ignore[arg-type]
                         nodes_reassignment[user] = id
         for node, id in nodes_reassignment.items():
             assign(node, id)
@@ -219,11 +203,8 @@ class CapabilityBasedPartitioner:
             for id, partition in partitions_by_id.items():
                 compute_node_count = 0
                 for node in partition.nodes:
-                    if (
-                        node.op == "call_function"
-                        and _get_qualified_name(node.target)
-                        not in non_compute_ops
-                    ):  # type: ignore[arg-type]
+                    if node.op == "call_function" and \
+                       _get_qualified_name(node.target) not in non_compute_ops:  # type: ignore[arg-type]
                         compute_node_count += 1
                 if compute_node_count <= 1:
                     partitions_to_remove.append(id)
@@ -232,19 +213,14 @@ class CapabilityBasedPartitioner:
 
         logging.debug("Partitions proposed:")
         for id, partition in partitions_by_id.items():
-            logging.debug(
-                f"partition #{id}", [node.name for node in partition.nodes]
-            )
+            logging.debug(f"partition #{id}", [node.name for node in partition.nodes])
 
         return list(partitions_by_id.values())
 
     def fuse_partitions(self, partitions: List[Partition]) -> GraphModule:
         logging.debug("Fusing partitions...")
         # fuse_by_partitions expects partitions in List[List[Node]]: [ [node0, node1], [node2, node3] ]
-        return fuse_by_partitions(
-            self.graph_module,
-            [list(partition.nodes) for partition in partitions],
-        )
+        return fuse_by_partitions(self.graph_module, [list(partition.nodes) for partition in partitions])
 
     def partition_and_fuse(self) -> GraphModule:
         partitions = self.propose_partitions()

@@ -1,10 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from pippy.fx.experimental.migrate_gradual_types.constraint import (
-    TVar,
-    DVar,
-    BinConstraintD,
-    BVar,
-)
+from pippy.fx.experimental.migrate_gradual_types.constraint import TVar, DVar, BinConstraintD, \
+    BVar
 from pippy.fx.experimental.migrate_gradual_types.operation import op_leq
 
 
@@ -27,7 +23,6 @@ def gen_dvar(curr):
     curr += 1
     return DVar(curr), curr
 
-
 def gen_bvar(curr):
     """
     Generate a boolean variable
@@ -36,7 +31,6 @@ def gen_bvar(curr):
     """
     curr += 1
     return BVar(curr), curr
-
 
 def gen_tensor_dims(n, curr):
     """

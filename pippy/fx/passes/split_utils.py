@@ -8,13 +8,7 @@ from .tools_common import NodeList, NodeSet
 from pippy.fx._compatibility import compatibility
 from pippy.fx.passes.utils import lift_subgraph_as_module, HolderModule
 
-__all__ = [
-    "getattr_recursive",
-    "setattr_recursive",
-    "Component",
-    "split_by_tags",
-]
-
+__all__ = ['getattr_recursive', 'setattr_recursive', 'Component', 'split_by_tags']
 
 @compatibility(is_backward_compatible=False)
 def getattr_recursive(obj, name):
@@ -56,17 +50,13 @@ class Component:
     orig_outputs: List = field(default_factory=list)
 
     # Mapping from get_attr node in original graph to get_attr node in `graph`.
-    getattr_maps: Dict[pippy.fx.Node, pippy.fx.Node] = field(
-        default_factory=dict
-    )
+    getattr_maps: Dict[pippy.fx.Node, pippy.fx.Node] = field(default_factory=dict)
     constructor_args: List[str] = field(default_factory=list)
     gm: Optional[pippy.fx.GraphModule] = None
 
 
 @compatibility(is_backward_compatible=False)
-def split_by_tags(
-    gm: pippy.fx.GraphModule, tags: List[str]
-) -> pippy.fx.GraphModule:
+def split_by_tags(gm: pippy.fx.GraphModule, tags: List[str]) -> pippy.fx.GraphModule:
     """
     Splits a GraphModule using tags on its graph nodes. We honor the order of
     tags. For example, we have tags = ["a", "b", "c"], the function will create
@@ -168,9 +158,7 @@ def split_by_tags(
 
         # Placeholders in the original graph get copied to main graph.
         if node.op == "placeholder":
-            main_remapping[node] = main_g.placeholder(
-                node.name, type_expr=node.type
-            )
+            main_remapping[node] = main_g.placeholder(node.name, type_expr=node.type)
             continue
 
         # Get_attr nodes are ignored because we are not tagging them.

@@ -31,6 +31,8 @@ Shape = Tuple[int, ...]
 class DimSpec:
     """Specifies how an output dimension maps to an input dimension."""
 
+    pass
+
 
 # Rules that map each dimension of the output to dimensions of the input tensor
 DimMap = Tuple[DimSpec, ...]
@@ -39,6 +41,8 @@ DimMap = Tuple[DimSpec, ...]
 @dataclass
 class Singleton(DimSpec):
     """Output dimension is a singleton"""
+
+    pass
 
 
 @dataclass
