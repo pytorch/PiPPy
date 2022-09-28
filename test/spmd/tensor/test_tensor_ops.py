@@ -12,6 +12,16 @@ from spmd.tensor.api import _Partial
 
 class DistTensorOpsTest(DistTensorTestBase):
     @with_comms
+    def test_aten_contiguous(self):
+        # this op not covered by dtensor_ops
+        mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        self._test_op(
+            mesh,
+            lambda x: torch.ops.aten.contiguous(x),
+            torch.randn(16, 32),
+        )
+
+    @with_comms
     def test_detach(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
