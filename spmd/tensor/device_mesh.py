@@ -378,8 +378,9 @@ class DeviceMesh(object):
         num_chunks = self.size(mesh_dim)
         _, rem = divmod(output_shape[tensor_dim], num_chunks)
         assert rem == 0, "output_shape must be divisible by num_chunks"
+        input_tensor = tensor.contiguous()
         gathered_list = [
-            CommTensor(torch.empty_like(tensor)) for _ in range(num_chunks)
+            CommTensor(torch.empty_like(input_tensor)) for _ in range(num_chunks)
         ]
 
         dim_group = self._dim_groups[mesh_dim]
@@ -387,10 +388,9 @@ class DeviceMesh(object):
         # makes sure communication result is properly waited before subsequent
         # read operations.
         # input tensor must be contiguous
-        tensor = CommTensor(tensor.contiguous())
         all_gather(
             gathered_list,
-            tensor,
+            CommTensor(input_tensor),
             group=dim_group,
         )
         return torch.cat(gathered_list, dim=tensor_dim)  # type: ignore
