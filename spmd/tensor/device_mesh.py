@@ -508,9 +508,9 @@ class DeviceMesh(object):
         elif self._backend == "gloo":
             # it's gloo, which does not have reduce_scatter
             # we have to do all_reduce + scatter
-            # warnings.warn(
-            #     "ProcessGroupGloo does not support reduce_scatter, falling back with all reduce!"
-            # )
+            warnings.warn(
+                "ProcessGroupGloo does not support reduce_scatter, falling back with all reduce!"
+            )
             reduced_tensor = self.all_reduce(input, op=op, mesh_dim=mesh_dim)
             chunks = reduced_tensor.tensor_split(num_chunks, dim=tensor_dim)
             return chunks[my_coordinate]
