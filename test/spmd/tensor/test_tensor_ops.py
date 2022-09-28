@@ -211,13 +211,16 @@ class DistTensorOpsTest(DistTensorTestBase):
             self.assertTrue(dtc.successful())
             d_out = op_call(*d_args, **d_kwargs)
             self.assertEqual(
-                d_out.redistribute(mesh, [Replicate()] * mesh.ndim).to_local(), out
+                d_out.redistribute(mesh, [Replicate()] * mesh.ndim).to_local(),
+                out,
             )
 
     @with_comms
     def test_index(self):
         meshes = [
-            DeviceMesh(self.device_type, list(range(self.world_size))),  # 1D mesh
+            DeviceMesh(
+                self.device_type, list(range(self.world_size))
+            ),  # 1D mesh
             # TODO(@azzolini): un-comment when DTensorConverter supports N-D mesh
             # DeviceMesh(self.device_type, torch.arange(self.world_size).reshape(2, -1)), # 2D mesh
         ]
@@ -232,13 +235,13 @@ class DistTensorOpsTest(DistTensorTestBase):
                 mesh,
                 lambda x, y: x.index_select(1, y),
                 torch.randn(16, 32, 16),
-                torch.randint(5, (4, )),
+                torch.randint(5, (4,)),
             )
             self._test_op(
                 mesh,
                 lambda x, y: x.index_select(0, y),
                 torch.randn(16, 32, 16),
-                torch.randint(5, (4, )),
+                torch.randint(5, (4,)),
             )
             self._test_op(
                 mesh,

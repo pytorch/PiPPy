@@ -290,9 +290,7 @@ def prop_index_select(op_schema: OpSchema) -> OutputSharding:
     assert isinstance(dim, int)
     assert isinstance(indices_spec, DTensorSpec)
 
-    all_indices_spec: List[Optional[DTensorSpec]] = [
-        None
-    ] * values_spec.ndim
+    all_indices_spec: List[Optional[DTensorSpec]] = [None] * values_spec.ndim
     all_indices_spec[dim] = indices_spec
 
     result = prop_index(
@@ -399,7 +397,9 @@ def prop_index(op_schema: OpSchema) -> OutputSharding:
                     vp.dim
                     if vp.dim < insert_dim
                     # accounts for the offset in output dimensions
-                    else vp.dim + indices_spec.ndim - sum(1 if vp.dim > v[0] else 0 for v in valid_indices_spec)
+                    else vp.dim
+                    + indices_spec.ndim
+                    - sum(1 if vp.dim > v[0] else 0 for v in valid_indices_spec)
                 )
             if isinstance(ip, Shard):
                 return Shard(ip.dim + insert_dim)
@@ -423,7 +423,7 @@ def prop_index(op_schema: OpSchema) -> OutputSharding:
         )
         return result
     else:
-        result =  OutputSharding(
+        result = OutputSharding(
             output_spec=None,
             schema_suggestions=[
                 OpSchema(
