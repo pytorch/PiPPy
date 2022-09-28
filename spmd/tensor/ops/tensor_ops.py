@@ -64,6 +64,8 @@ def new_no_arg_prop_rule(op_schema: OpSchema) -> OutputSharding:
     # Since we cannot do that yet, just return replicated
     input = op_schema.args_schema[0]
     size = op_schema.args_schema[1]
+    assert isinstance(input, DTensorSpec)
+    assert isinstance(size, torch.Size)
 
     return OutputSharding(
         output_spec=DTensorSpec(
