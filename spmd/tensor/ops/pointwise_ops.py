@@ -20,6 +20,7 @@ from spmd.tensor.ops.common_rules import linear_pointwise_rule, pointwise_rule
 
 
 linear_pointwise_ops = [
+    "aten.contiguous.default",
     "aten.div.Scalar",  # this op is linear on the first argument, and the second argument is scalar, so it fits as a linear op.
     "aten.to.dtype",
 ]
