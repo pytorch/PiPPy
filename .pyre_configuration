@@ -8,7 +8,7 @@
     },
     {
       "import_root": "test",
-      "source": "test/spmd"
+      "source": "spmd"
     }
   ]
 }

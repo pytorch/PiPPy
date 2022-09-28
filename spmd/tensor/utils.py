@@ -1,7 +1,8 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 
+from typing import Dict, Tuple, Union
+
 import torch
-from typing import Union, Dict, Tuple
 from torch.utils._pytree import tree_flatten, tree_unflatten
 
 import spmd.tensor.api as dtensor

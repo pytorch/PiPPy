@@ -1,6 +1,8 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-import torch
 from typing import Any
+
+import torch
+
 
 class MyNetworkBlock(torch.nn.Module):
     def __init__(self, in_dim, out_dim):
@@ -19,7 +21,7 @@ class MyNetwork(torch.nn.Module):
 
         prev_dim = in_dim
         for i, dim in enumerate(layer_dims):
-            setattr(self, f'layer{i}', MyNetworkBlock(prev_dim, dim))
+            setattr(self, f"layer{i}", MyNetworkBlock(prev_dim, dim))
             prev_dim = dim
 
         self.num_layers = len(layer_dims)
@@ -28,9 +30,10 @@ class MyNetwork(torch.nn.Module):
 
     def forward(self, x):
         for i in range(self.num_layers):
-            x = getattr(self, f'layer{i}')(x)
+            x = getattr(self, f"layer{i}")(x)
 
         return self.output_proj(x)
+
 
 mn = MyNetwork(512, [512, 1024, 256])
 
@@ -41,19 +44,24 @@ print(pipe)
 print(pipe.split_gm.submod_0)
 
 
-from pippy.IR import annotate_split_points, PipeSplitWrapper
+from pippy.IR import PipeSplitWrapper, annotate_split_points
 
-annotate_split_points(mn, {'layer0': PipeSplitWrapper.SplitPoint.END,
-                           'layer1': PipeSplitWrapper.SplitPoint.END})
+annotate_split_points(
+    mn,
+    {
+        "layer0": PipeSplitWrapper.SplitPoint.END,
+        "layer1": PipeSplitWrapper.SplitPoint.END,
+    },
+)
 
 pipe = Pipe.from_tracing(mn)
-print(' pipe '.center(80, '*'))
+print(" pipe ".center(80, "*"))
 print(pipe)
-print(' submod0 '.center(80, '*'))
+print(" submod0 ".center(80, "*"))
 print(pipe.split_gm.submod_0)
-print(' submod1 '.center(80, '*'))
+print(" submod1 ".center(80, "*"))
 print(pipe.split_gm.submod_1)
-print(' submod2 '.center(80, '*'))
+print(" submod2 ".center(80, "*"))
 print(pipe.split_gm.submod_2)
 
 
@@ -66,8 +74,9 @@ print(pipe.split_gm.submod_2)
 # To learn more about `torchrun`, see
 # https://pytorch.org/docs/stable/elastic/run.html
 import os
+
 local_rank = int(os.environ["LOCAL_RANK"])
-world_size = int(os.environ['WORLD_SIZE'])
+world_size = int(os.environ["WORLD_SIZE"])
 
 # PiPPy uses the PyTorch RPC interface. To use RPC, we must call `init_rpc`
 # and inform the RPC framework of this process's rank and the total world
@@ -76,7 +85,8 @@ world_size = int(os.environ['WORLD_SIZE'])
 # To learn more about the PyTorch RPC framework, see
 # https://pytorch.org/docs/stable/rpc.html
 import torch.distributed.rpc as rpc
-rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
+
+rpc.init_rpc(f"worker{local_rank}", rank=local_rank, world_size=world_size)
 
 # PiPPy relies on the concept of a "driver" process. The driver process
 # should be a single process within the RPC group that instantiates the
@@ -84,21 +94,22 @@ rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
 # in the RPC group will receive commands from this process and execute
 # the pipeline stages
 if local_rank == 0:
-    from pippy.PipelineDriver import PipelineDriverFillDrain
-    from pippy.microbatch import TensorChunkSpec
-
     # LossWrapper is a convenient base class you can use to compose your model
     # with the desired loss function for the purpose of pipeline parallel training.
     # Since the loss is executed as part of the pipeline, it cannot reside in the
     # training loop, so you must embed it like this
     from pippy.IR import LossWrapper
+    from pippy.microbatch import TensorChunkSpec
+    from pippy.PipelineDriver import PipelineDriverFillDrain
 
     class ModelLossWrapper(LossWrapper):
         def forward(self, x, target):
             return self.loss_fn(self.module(x), target)
 
     # TODO: mean reduction
-    loss_wrapper = ModelLossWrapper(module=mn, loss_fn=torch.nn.MSELoss(reduction='sum'))
+    loss_wrapper = ModelLossWrapper(
+        module=mn, loss_fn=torch.nn.MSELoss(reduction="sum")
+    )
 
     # Instantiate the `Pipe` similarly to before, but with two differences:
     #   1) We pass in the `loss_wrapper` module to include the loss in the
@@ -111,20 +122,26 @@ if local_rank == 0:
 
     # We now have two args: `x` and `target`, so specify batch dimension
     # for both.
-    args_chunk_spec : Any = (TensorChunkSpec(0), TensorChunkSpec(0))
-    kwargs_chunk_spec : Any = {}
+    args_chunk_spec: Any = (TensorChunkSpec(0), TensorChunkSpec(0))
+    kwargs_chunk_spec: Any = {}
     # The output of our model is now a `loss` value, which is a scalar tensor.
     # PiPPy's default is to concatenate outputs, but that will not
     # work with a scalar tensor. So we use a CustomReducer instead
     # to merge together the loss values from each microbatch into a
     # single unified loss.
     from pippy.microbatch import CustomReducer
-    output_chunk_spec : Any = CustomReducer(0.0, lambda a, b: a + b)
+
+    output_chunk_spec: Any = CustomReducer(0.0, lambda a, b: a + b)
 
     # Instantiate the driver as usual.
     driver = PipelineDriverFillDrain(
-        pipe, 64, args_chunk_spec=args_chunk_spec, kwargs_chunk_spec=kwargs_chunk_spec,
-        output_chunk_spec=output_chunk_spec, world_size=world_size)
+        pipe,
+        64,
+        args_chunk_spec=args_chunk_spec,
+        kwargs_chunk_spec=kwargs_chunk_spec,
+        output_chunk_spec=output_chunk_spec,
+        world_size=world_size,
+    )
 
     # Instantiate remote Adam optimizers. `instantiate_optimizer` takes the
     # optimizer class as the first argument, then additional arguments to that
@@ -133,7 +150,9 @@ if local_rank == 0:
     optimizer = driver.instantiate_optimizer(torch.optim.Adam)
     # Also instantiate a learning rate scheduler. Note that the `optimizer` argument is
     # omitted; PiPPy will populate that argument for each pipeline stage
-    lr_scheduler = driver.instantiate_lr_scheduler(torch.optim.lr_scheduler.LinearLR, total_iters=100)
+    lr_scheduler = driver.instantiate_lr_scheduler(
+        torch.optim.lr_scheduler.LinearLR, total_iters=100
+    )
 
     N_TRAINING_STEPS = 100
 
@@ -145,10 +164,9 @@ if local_rank == 0:
         optimizer.step()
         lr_scheduler.step()
 
-        log_info = f' Training step {i}, loss: {pipe_loss}, LR: {lr_scheduler.get_last_lr()} '
-        print(log_info.center(80, '*'))
+        log_info = f" Training step {i}, loss: {pipe_loss}, LR: {lr_scheduler.get_last_lr()} "
+        print(log_info.center(80, "*"))
 
-
-    print(' Pipeline parallel model ran successfully! '.center(80, '*'))
+    print(" Pipeline parallel model ran successfully! ".center(80, "*"))
 
 rpc.shutdown()

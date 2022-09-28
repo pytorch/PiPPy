@@ -1,23 +1,23 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+import functools
+import operator
 from dataclasses import dataclass
 from typing import (
     Callable,
     Dict,
     Iterable,
     Optional,
-    Tuple,
-    Set,
-    Union,
     Sequence,
+    Set,
+    Tuple,
+    Union,
     cast,
 )
 
-from spmd.tensor.placement_types import DTensorSpec, Placement
-import functools
-import operator
 from spmd.tensor.api import Shard
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.ops.utils import register_prop_rule
+from spmd.tensor.placement_types import DTensorSpec, Placement
 
 
 def _prod(xs: Iterable[int]) -> int:
@@ -31,8 +31,6 @@ Shape = Tuple[int, ...]
 class DimSpec:
     """Specifies how an output dimension maps to an input dimension."""
 
-    pass
-
 
 # Rules that map each dimension of the output to dimensions of the input tensor
 DimMap = Tuple[DimSpec, ...]
@@ -41,8 +39,6 @@ DimMap = Tuple[DimSpec, ...]
 @dataclass
 class Singleton(DimSpec):
     """Output dimension is a singleton"""
-
-    pass
 
 
 @dataclass

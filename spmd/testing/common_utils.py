@@ -5,27 +5,25 @@ from functools import wraps
 from typing import (
     Any,
     Callable,
-    Iterator,
-    Tuple,
     Dict,
-    Optional,
+    Iterator,
     List,
+    Optional,
     Sequence,
+    Tuple,
 )
 
 import torch
 import torch.distributed as dist
-
-from torch.utils._pytree import tree_flatten, tree_unflatten, TreeSpec
 from torch.testing._internal.common_distributed import (
-    MultiProcessTestCase,
     TEST_SKIPS,
+    MultiProcessTestCase,
 )
+from torch.utils._pytree import TreeSpec, tree_flatten, tree_unflatten
 
-from spmd import DeviceMesh, distribute_tensor, Shard, Replicate
+from spmd import DeviceMesh, Replicate, Shard, distribute_tensor
 from spmd.tensor.api import DTensor
 from spmd.tensor.placement_types import Placement
-
 
 # default GPU test size/world size
 TEST_GPU_NUM = 4
@@ -46,8 +44,8 @@ class DistTensorTestBase(MultiProcessTestCase):
         dist.init_process_group(
             backend=backend,
             world_size=self.world_size,
-            rank=self.rank,  # pyre-ignore[16]
-            init_method=f"file://{self.file_name}",  # pyre-ignore[16]
+            rank=self.rank,
+            init_method=f"file://{self.file_name}",
         )
 
         # set device for nccl pg for collectives

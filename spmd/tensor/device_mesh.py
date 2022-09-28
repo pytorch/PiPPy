@@ -1,6 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import warnings
-from typing import List, Optional, Iterable, Sequence
+from typing import Iterable, List, Optional, Sequence
+
 import torch
 import torch.nn.functional as F
 from torch.distributed._spmd.comm_tensor import CommTensor
@@ -8,16 +9,27 @@ from torch.distributed.distributed_c10d import (
     all_gather,
     all_reduce,
     broadcast,
+    _get_default_group,
+    get_global_rank,
+    get_global_rank,
+    get_rank,
     get_rank,
     get_world_size,
-    get_global_rank,
-    ReduceOp,
+    get_world_size,
     GroupMember,
-    scatter,
-    _get_default_group,
-    reduce_scatter,
     new_group,
     ProcessGroup,
+    ReduceOp,
+    reduce_scatter,
+    scatter,
+)
+
+# autograd enabled collective
+from torch.distributed.nn.functional import (
+    all_gather,
+    _all_gather_base,
+    all_reduce,
+    broadcast,
 )
 
 _global_device_mesh: Optional["DeviceMesh"] = None

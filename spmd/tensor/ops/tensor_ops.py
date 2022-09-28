@@ -1,5 +1,8 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+from typing import Sequence
+
 import torch
+
 from spmd.tensor.api import (
     DTensor,
     DTensorSpec,

@@ -11,11 +11,19 @@ import torch.distributed.rpc as rpc
 
 import pippy.fx
 from pippy import run_pippy
-from pippy.IR import MultiUseParameterConfig, Pipe, TrivialLossWrapper, pipe_split
-from pippy.PipelineDriver import (
-    PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverBase, PipelineDriverInterleaved1F1B
+from pippy.IR import (
+    MultiUseParameterConfig,
+    Pipe,
+    TrivialLossWrapper,
+    pipe_split,
 )
-from pippy.microbatch import TensorChunkSpec, CustomReducer
+from pippy.microbatch import CustomReducer, TensorChunkSpec
+from pippy.PipelineDriver import (
+    PipelineDriver1F1B,
+    PipelineDriverBase,
+    PipelineDriverFillDrain,
+    PipelineDriverInterleaved1F1B,
+)
 
 # TODOs for implementing forward/backward/loss with schedules:
 # * ability to switch between full-batch loss vs. per-microbatch loss. shen mentioned
@@ -26,12 +34,12 @@ PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
 
 schedules = {
-    'FillDrain': PipelineDriverFillDrain,
-    '1F1B': PipelineDriver1F1B,
-    'Interleaved1F1B': PipelineDriverInterleaved1F1B
+    "FillDrain": PipelineDriverFillDrain,
+    "1F1B": PipelineDriver1F1B,
+    "Interleaved1F1B": PipelineDriverInterleaved1F1B,
 }
 
-VERBOSE = bool(int(os.environ.get('VERBOSE', False)))
+VERBOSE = bool(int(os.environ.get("VERBOSE", False)))
 
 if VERBOSE:
     logging.getLogger().setLevel(logging.DEBUG)
@@ -55,8 +63,12 @@ def run_master(pp_ranks, args):
     bs = 503
     CHUNKS = 5
     DEBUG_MASK_MINIBATCHES = True
-    MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if args.replicate else MultiUseParameterConfig.TRANSMIT
-    print(f'REPLICATE config: {args.replicate} -> {MULTI_USE_PARAM_CONFIG}')
+    MULTI_USE_PARAM_CONFIG = (
+        MultiUseParameterConfig.REPLICATE
+        if args.replicate
+        else MultiUseParameterConfig.TRANSMIT
+    )
+    print(f"REPLICATE config: {args.replicate} -> {MULTI_USE_PARAM_CONFIG}")
 
     print("Using schedule:", args.schedule)
 
@@ -74,16 +86,22 @@ def run_master(pp_ranks, args):
     class ExampleCode(torch.nn.Module):
         def __init__(self):
             super().__init__()
-            self.mm_param = torch.nn.Parameter(rand_zeros_or_ones((d_hid, d_hid)))
-            self.mm_param2 = torch.nn.Parameter(rand_zeros_or_ones((d_hid, d_hid)))
+            self.mm_param = torch.nn.Parameter(
+                rand_zeros_or_ones((d_hid, d_hid))
+            )
+            self.mm_param2 = torch.nn.Parameter(
+                rand_zeros_or_ones((d_hid, d_hid))
+            )
             self.lin = ZeroOneLinear(d_hid, d_hid)
-            self.register_buffer('buffer', 0.00001 * rand_zeros_or_ones((bs + 100, d_hid)))
+            self.register_buffer(
+                "buffer", 0.00001 * rand_zeros_or_ones((bs + 100, d_hid))
+            )
 
         def forward(self, x):
             x = torch.mm(x, self.mm_param)
             skip_connection = x
             x = torch.relu(x)
-            x = torch.mm(x, self.mm_param) + self.buffer[:x.shape[0]]
+            x = torch.mm(x, self.mm_param) + self.buffer[: x.shape[0]]
             x = self.lin(x)
             pipe_split()
             x = torch.relu(x)
@@ -98,7 +116,7 @@ def run_master(pp_ranks, args):
     ec.train()
 
     # TODO: works with sum, need to define semantics for e.g. mean
-    mse_loss = torch.nn.MSELoss(reduction='sum')
+    mse_loss = torch.nn.MSELoss(reduction="sum")
     wrapper = TrivialLossWrapper(ec, mse_loss)
     ec_pipe = Pipe.from_tracing(wrapper, MULTI_USE_PARAM_CONFIG)
     if args.rank == 0:
@@ -108,13 +126,19 @@ def run_master(pp_ranks, args):
     kwargs_chunk_spec: Dict = {}
     output_chunk_spec = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
 
-    pipe_driver: PipelineDriverBase = schedules[args.schedule](ec_pipe, CHUNKS, args_chunk_spec, kwargs_chunk_spec,
-                                                               output_chunk_spec, args.pp_group_size,
-                                                               all_ranks=pp_ranks,
-                                                               _debug_mask_minibatches=DEBUG_MASK_MINIBATCHES,
-                                                               _record_mem_dumps=bool(args.record_mem_dumps),
-                                                               checkpoint=bool(args.checkpoint))
-    print(f'Rank {args.rank} Instantiated pipe with ranks {pp_ranks}')
+    pipe_driver: PipelineDriverBase = schedules[args.schedule](
+        ec_pipe,
+        CHUNKS,
+        args_chunk_spec,
+        kwargs_chunk_spec,
+        output_chunk_spec,
+        args.pp_group_size,
+        all_ranks=pp_ranks,
+        _debug_mask_minibatches=DEBUG_MASK_MINIBATCHES,
+        _record_mem_dumps=bool(args.record_mem_dumps),
+        checkpoint=bool(args.checkpoint),
+    )
+    print(f"Rank {args.rank} Instantiated pipe with ranks {pp_ranks}")
 
     pipe_driver.init_data_parallel(dp_group_size=args.dp_group_size)
 
@@ -125,23 +149,29 @@ def run_master(pp_ranks, args):
     # TODO: distributed optimizer
     out = pipe_driver(input, target)
 
-    print(f'Rank {args.rank} got loss value {out}')
+    print(f"Rank {args.rank} got loss value {out}")
 
     all_grad_qualnames = {k: None for k, v in ec_pipe.named_parameters()}
 
     pipe_grads = {}
 
     for name in all_grad_qualnames:
-        assert 'split_gm.' in name
-        _, module_name, param_qualname = name.split('.', maxsplit=2)
+        assert "split_gm." in name
+        _, module_name, param_qualname = name.split(".", maxsplit=2)
 
         assert module_name in pipe_driver.remote_stage_executor_rrefs
         rank, module_rref = pipe_driver.remote_stage_executor_rrefs[module_name]
-        grad_value = rpc.rpc_sync(module_rref.owner(), get_grad_from_executor, (module_rref, param_qualname))
+        grad_value = rpc.rpc_sync(
+            module_rref.owner(),
+            get_grad_from_executor,
+            (module_rref, param_qualname),
+        )
         pipe_grads[name] = copy.deepcopy(grad_value)
 
     # User driver group as the DDP reference group
-    wrapper_ddp = torch.nn.parallel.DistributedDataParallel(wrapper, process_group=args.driver_group)
+    wrapper_ddp = torch.nn.parallel.DistributedDataParallel(
+        wrapper, process_group=args.driver_group
+    )
 
     optim = torch.optim.SGD(wrapper_ddp.parameters(), lr=0.05)
     optim.zero_grad()
@@ -149,7 +179,7 @@ def run_master(pp_ranks, args):
         wrapper_out = wrapper_ddp(input, target)
         wrapper_out.backward()
     if prof:
-        prof.export_chrome_trace('ref.json')
+        prof.export_chrome_trace("ref.json")
 
     not_close_grads = []
     ref_grads = {}
@@ -157,20 +187,24 @@ def run_master(pp_ranks, args):
     for name in all_grad_qualnames:
         remapped_qualname = ec_pipe.remap_qualname(name)
         param = wrapper_ddp.module.get_parameter(remapped_qualname)
-        assert name in pipe_grads, f'{name} not in pipe_grads keys {pipe_grads.keys()}'
+        assert (
+            name in pipe_grads
+        ), f"{name} not in pipe_grads keys {pipe_grads.keys()}"
         ref_grads[name] = copy.deepcopy(param.grad)
         if not torch.allclose(pipe_grads[name], ref_grads[name]):
             not_close_grads.append(name)
 
     if len(not_close_grads):
-        raise AssertionError(f'Gradients not close: {not_close_grads}')
+        raise AssertionError(f"Gradients not close: {not_close_grads}")
 
-    print('Gradient equivalence test passed')
+    print("Gradient equivalence test passed")
 
 
 def main(args=None):
     parser = argparse.ArgumentParser()
-    parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 4)))
+    parser.add_argument(
+        "--world_size", type=int, default=int(os.getenv("WORLD_SIZE", 4))
+    )
     # in row-major
     # DP ranks are contiguous rows of size `args.dp_group_size`
     # PP ranks are non-contiguous columns of size `args.pp_group_size`
@@ -183,14 +217,30 @@ def main(args=None):
     #
     # DP ranks are [0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11]
     # PP ranks are [0, 4, 8], [1, 5, 9], [2, 6, 10], [3, 7, 11]
-    parser.add_argument('--rank', type=int, default=int(os.getenv("RANK", -1)))
-    parser.add_argument('--master_addr', type=str, default=os.getenv('MASTER_ADDR', 'localhost'))
-    parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
-    parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
-    parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
-    parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
-    parser.add_argument('--record_mem_dumps', type=int, default=0, choices=[0, 1])
-    parser.add_argument('--checkpoint', type=int, default=0, choices=[0, 1])
+    parser.add_argument("--rank", type=int, default=int(os.getenv("RANK", -1)))
+    parser.add_argument(
+        "--master_addr", type=str, default=os.getenv("MASTER_ADDR", "localhost")
+    )
+    parser.add_argument(
+        "--master_port", type=str, default=os.getenv("MASTER_PORT", "29500")
+    )
+    parser.add_argument(
+        "-s",
+        "--schedule",
+        type=str,
+        default=list(schedules.keys())[0],
+        choices=schedules.keys(),
+    )
+    parser.add_argument(
+        "--replicate", type=int, default=int(os.getenv("REPLICATE", "0"))
+    )
+    parser.add_argument(
+        "--cuda", type=int, default=int(torch.cuda.is_available())
+    )
+    parser.add_argument(
+        "--record_mem_dumps", type=int, default=0, choices=[0, 1]
+    )
+    parser.add_argument("--checkpoint", type=int, default=0, choices=[0, 1])
     args = parser.parse_args(args)
 
     # ExampleCode has two stages
@@ -199,7 +249,7 @@ def main(args=None):
 
     # Use world size to determine DDP size
     args.dp_group_size = args.world_size // args.pp_group_size
-    print(f'Using data parallel group size: {args.dp_group_size}')
+    print(f"Using data parallel group size: {args.dp_group_size}")
 
     run_pippy(run_master, args)
 
@@ -211,7 +261,12 @@ if __name__ == "__main__":
 class LocalTestDDP(unittest.TestCase):
     def test_ddp(self):
         import random
+
         port = random.randint(29500, 30000)
-        args = ['--cuda', os.getenv('USE_CUDA', '0'),
-                '--master_port', str(port)]
+        args = [
+            "--cuda",
+            os.getenv("USE_CUDA", "0"),
+            "--master_port",
+            str(port),
+        ]
         main(args)

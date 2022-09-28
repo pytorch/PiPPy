@@ -8,19 +8,28 @@ import torch
 
 import pippy.fx
 from pippy import run_pippy
-from pippy.IR import Pipe, TrivialLossWrapper, pipe_split, _null_coalesce_accumulate
-from pippy.PipelineDriver import PipelineDriverBase, PipelineDriverFillDrain, PipelineDriver1F1B
-from pippy.microbatch import TensorChunkSpec, CustomReducer
+from pippy.IR import (
+    Pipe,
+    TrivialLossWrapper,
+    _null_coalesce_accumulate,
+    pipe_split,
+)
+from pippy.microbatch import CustomReducer, TensorChunkSpec
+from pippy.PipelineDriver import (
+    PipelineDriver1F1B,
+    PipelineDriverBase,
+    PipelineDriverFillDrain,
+)
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
 
 schedules = {
-    'FillDrain': PipelineDriverFillDrain,
-    '1F1B': PipelineDriver1F1B,
+    "FillDrain": PipelineDriverFillDrain,
+    "1F1B": PipelineDriver1F1B,
 }
 
-VERBOSE = bool(int(os.environ.get('VERBOSE', False)))
+VERBOSE = bool(int(os.environ.get("VERBOSE", False)))
 
 if VERBOSE:
     logging.getLogger().setLevel(logging.DEBUG)
@@ -54,7 +63,10 @@ def run_master(_, args):
     wrapper = TrivialLossWrapper(c, mse_loss)
     accum_pipe = Pipe.from_tracing(wrapper)
     assert 4 == len(list(accum_pipe.split_gm.children()))
-    assert any(n.target == _null_coalesce_accumulate for n in accum_pipe.split_gm.graph.nodes)
+    assert any(
+        n.target == _null_coalesce_accumulate
+        for n in accum_pipe.split_gm.graph.nodes
+    )
 
     input = torch.randn(bs, hid_dim)
     target = torch.randn(bs, hid_dim)
@@ -63,27 +75,51 @@ def run_master(_, args):
     args_chunk_spec = (TensorChunkSpec(0), TensorChunkSpec(0))
     kwargs_chunk_spec = {}
     output_chunk_spec = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
-    pipe_driver: PipelineDriverBase = schedules[args.schedule](accum_pipe, chunks, args_chunk_spec, kwargs_chunk_spec,
-                                                               output_chunk_spec, args.world_size - 1,
-                                                               all_ranks=all_ranks,
-                                                               _debug_mask_minibatches=True,
-                                                               _record_mem_dumps=bool(args.record_mem_dumps),
-                                                               checkpoint=bool(args.checkpoint))
+    pipe_driver: PipelineDriverBase = schedules[args.schedule](
+        accum_pipe,
+        chunks,
+        args_chunk_spec,
+        kwargs_chunk_spec,
+        output_chunk_spec,
+        args.world_size - 1,
+        all_ranks=all_ranks,
+        _debug_mask_minibatches=True,
+        _record_mem_dumps=bool(args.record_mem_dumps),
+        checkpoint=bool(args.checkpoint),
+    )
 
     pipe_driver(input, target)
 
 
 def main(args=None):
     parser = argparse.ArgumentParser()
-    parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 5)))
-    parser.add_argument('--rank', type=int, default=int(os.getenv("RANK", -1)))
-    parser.add_argument('--master_addr', type=str, default=os.getenv('MASTER_ADDR', 'localhost'))
-    parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
-    parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
-    parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
-    parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
-    parser.add_argument('--record_mem_dumps', type=int, default=0, choices=[0, 1])
-    parser.add_argument('--checkpoint', type=int, default=0, choices=[0, 1])
+    parser.add_argument(
+        "--world_size", type=int, default=int(os.getenv("WORLD_SIZE", 5))
+    )
+    parser.add_argument("--rank", type=int, default=int(os.getenv("RANK", -1)))
+    parser.add_argument(
+        "--master_addr", type=str, default=os.getenv("MASTER_ADDR", "localhost")
+    )
+    parser.add_argument(
+        "--master_port", type=str, default=os.getenv("MASTER_PORT", "29500")
+    )
+    parser.add_argument(
+        "-s",
+        "--schedule",
+        type=str,
+        default=list(schedules.keys())[0],
+        choices=schedules.keys(),
+    )
+    parser.add_argument(
+        "--replicate", type=int, default=int(os.getenv("REPLICATE", "0"))
+    )
+    parser.add_argument(
+        "--cuda", type=int, default=int(torch.cuda.is_available())
+    )
+    parser.add_argument(
+        "--record_mem_dumps", type=int, default=0, choices=[0, 1]
+    )
+    parser.add_argument("--checkpoint", type=int, default=0, choices=[0, 1])
     args = parser.parse_args(args)
 
     run_pippy(run_master, args)
@@ -96,7 +132,12 @@ if __name__ == "__main__":
 class LocalTestNullCoalesceAccumulateTest(unittest.TestCase):
     def test_null_coalesce_accumulate(self):
         import random
+
         port = random.randint(29500, 30000)
-        args = ['--cuda', os.getenv('USE_CUDA', '0'),
-                '--master_port', str(port)]
+        args = [
+            "--cuda",
+            os.getenv("USE_CUDA", "0"),
+            "--master_port",
+            str(port),
+        ]
         main(args)

@@ -1,20 +1,22 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import copy
 import warnings
+from typing import Callable, Dict, Optional, Sequence
+
 import torch
 from torch.utils._pytree import tree_flatten
-from typing import Dict, Callable, Optional, Sequence
-from spmd.tensor.device_mesh import get_global_device_mesh, DeviceMesh
+
+from spmd.tensor.device_mesh import DeviceMesh, get_global_device_mesh
+from spmd.tensor.dispatch import OpSchema, OutputSharding, operator_dispatch
 from spmd.tensor.placement_types import (
-    Placement,
-    Shard,
-    Replicate,
-    _Partial,
     DTensorSpec,
+    Placement,
+    Replicate,
+    Shard,
+    _Partial,
 )
 from spmd.tensor.redistribute import Redistribute
 
-from spmd.tensor.dispatch import operator_dispatch, OpSchema, OutputSharding
 
 # NOTE [Autograd interaction between torch.Tensor]
 #

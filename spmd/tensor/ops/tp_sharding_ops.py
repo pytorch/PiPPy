@@ -1,11 +1,13 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 # implement matrix related ops for distributed tensor
+from typing import List
+
 import torch
 import torch.utils._pytree as pytree
-from typing import List
+
 from spmd.tensor.api import DTensor
+from spmd.tensor.ops.utils import register_impl, unwrap_single_placement
 from spmd.tensor.utils import unwrap_local_tensor
-from spmd.tensor.ops.utils import unwrap_single_placement, register_impl
 
 """
 The ops below were quickly hacked and needed to be polished down the road.

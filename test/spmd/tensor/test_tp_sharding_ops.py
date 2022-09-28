@@ -1,11 +1,10 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 from torch.testing._internal.common_utils import run_tests
-from spmd.testing.common_utils import (  # type: ignore
-    DistTensorTestBase,
-    with_comms,
-)
-from spmd import DeviceMesh, DTensor, Shard, Replicate, distribute_tensor
+
+from spmd import DeviceMesh, DTensor, Replicate, Shard, distribute_tensor
+from spmd.testing.common_utils import DistTensorTestBase  # type: ignore
+from spmd.testing.common_utils import with_comms
 
 
 class TPShardingOpsTest(DistTensorTestBase):

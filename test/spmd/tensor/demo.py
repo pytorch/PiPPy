@@ -1,7 +1,9 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import os
+
 import torch
-from spmd.tensor import DTensor, DeviceMesh, Shard, Replicate
+
+from spmd.tensor import DeviceMesh, DTensor, Replicate, Shard
 
 
 def synthetic_data(w, b, num_examples):

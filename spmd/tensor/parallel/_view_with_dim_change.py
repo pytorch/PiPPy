@@ -1,10 +1,11 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import math
+from typing import Tuple, Union
 
 import torch
+
 from spmd.tensor import DTensor as DT
 from spmd.tensor.placement_types import Shard
-from typing import Tuple, Union
 
 
 def _view_with_sharding_dim_change(

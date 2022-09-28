@@ -2,15 +2,17 @@
 import torch
 import torch.nn as nn
 from torch.testing._internal.common_utils import run_tests
-from spmd.testing.common_utils import DistTensorTestBase, with_comms  # type: ignore
+
 from spmd import (
-    distribute_tensor,
-    distribute_module,
     DeviceMesh,
     DTensor,
-    Shard,
     Replicate,
+    Shard,
+    distribute_module,
+    distribute_tensor,
 )
+from spmd.testing.common_utils import DistTensorTestBase  # type: ignore
+from spmd.testing.common_utils import with_comms
 
 
 class MyModel(nn.Module):

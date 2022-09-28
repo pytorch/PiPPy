@@ -1,11 +1,12 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import math
+from typing import Dict, List, Tuple, cast
 
 import torch
-from typing import List, Dict, Tuple, cast
+
 from spmd.tensor.dispatch import OpSchema, OutputSharding
-from spmd.tensor.placement_types import DTensorSpec
 from spmd.tensor.ops.utils import as_list
+from spmd.tensor.placement_types import DTensorSpec
 
 
 def _replace_char_in_str(string: str, new_char: str, idx: int) -> str:

@@ -1,17 +1,14 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import itertools
+
 import torch
-
 from torch.distributed.distributed_c10d import ReduceOp, new_group
-
 from torch.testing._internal.common_utils import run_tests
 
-from spmd.testing.common_utils import (  # type: ignore
-    DistTensorTestBase,
-    with_comms,
-)
-from spmd.tensor import DeviceMesh, DTensor, Replicate, Shard, _Partial
 from spmd import distribute_tensor
+from spmd.tensor import DeviceMesh, DTensor, Replicate, Shard, _Partial
+from spmd.testing.common_utils import DistTensorTestBase  # type: ignore
+from spmd.testing.common_utils import with_comms
 
 
 class RedistributeTest(DistTensorTestBase):

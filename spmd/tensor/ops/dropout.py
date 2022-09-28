@@ -1,8 +1,10 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-import torch
 from typing import Tuple
-from spmd.tensor.ops.utils import register_impl
+
+import torch
+
 from spmd.tensor.api import DTensor
+from spmd.tensor.ops.utils import register_impl
 
 
 @register_impl("aten.native_dropout.default")

@@ -1,29 +1,28 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 
+import itertools
 from typing import List, cast
-from spmd.tensor.placement_types import Placement
-from spmd.testing.common_utils import (  # type: ignore
-    DistTensorTestBase,
-    with_comms,
-)
-from spmd import DeviceMesh, Shard, Replicate, distribute_tensor
-from spmd.tensor.ops.view_ops import (
-    ops,
-    Singleton,
-    Broadcast,
-    Flatten,
-    Repeat,
-    Split,
-    InputDim,
-    view_groups,
-)
+
+import torch
+import torch.distributed as dist
 from torch import Tensor, rand, randn
 from torch.testing._internal.common_utils import run_tests
 from torch.utils._pytree import tree_flatten
 
-import itertools
-import torch
-import torch.distributed as dist
+from spmd import DeviceMesh, Replicate, Shard, distribute_tensor
+from spmd.tensor.ops.view_ops import (
+    Broadcast,
+    Flatten,
+    InputDim,
+    Repeat,
+    Singleton,
+    Split,
+    ops,
+    view_groups,
+)
+from spmd.tensor.placement_types import Placement
+from spmd.testing.common_utils import DistTensorTestBase  # type: ignore
+from spmd.testing.common_utils import with_comms
 
 
 class TestViewOps(DistTensorTestBase):

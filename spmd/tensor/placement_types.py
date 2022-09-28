@@ -1,9 +1,10 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+from dataclasses import dataclass
+from typing import List, Optional, Sequence, Tuple, Union, cast
+
 import torch
 import torch.distributed.distributed_c10d as c10d
 
-from dataclasses import dataclass
-from typing import Optional, List, Sequence, Union, Tuple, cast
 from spmd.tensor.device_mesh import DeviceMesh
 
 

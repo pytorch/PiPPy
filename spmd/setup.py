@@ -4,9 +4,9 @@ import glob
 import os
 import shutil
 import subprocess
-from typing import Dict, Union, List
+from typing import Dict, List, Union
 
-from setuptools import setup, find_namespace_packages
+from setuptools import find_namespace_packages, setup
 
 # install: run `python spmd/setup.py install`
 

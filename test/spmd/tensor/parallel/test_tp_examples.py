@@ -1,19 +1,22 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+import functools
+
 import torch
 import torch.nn as nn
-import functools
-from torch.testing._internal.common_utils import run_tests
 from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
-from spmd.testing.common_utils import DistTensorTestBase, with_comms, TEST_GPU_NUM  # type: ignore
+from torch.testing._internal.common_utils import run_tests
+
 from spmd import (
-    distribute_tensor,
-    distribute_module,
     DeviceMesh,
     DTensor,
-    Shard,
     Replicate,
+    Shard,
+    distribute_module,
+    distribute_tensor,
 )
 from spmd.tensor.parallel import TensorParallelMultiheadAttention
+from spmd.testing.common_utils import TEST_GPU_NUM  # type: ignore
+from spmd.testing.common_utils import DistTensorTestBase, with_comms
 
 
 class MLPModule(torch.nn.Module):

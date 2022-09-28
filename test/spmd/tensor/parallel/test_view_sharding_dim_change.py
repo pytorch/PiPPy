@@ -1,14 +1,13 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 from torch.testing._internal.common_utils import run_tests
-from spmd.testing.common_utils import (  # type: ignore
-    DistTensorTestBase,
-    with_comms,
-)
+
 from spmd import DeviceMesh, DTensor, Shard
 from spmd.tensor.parallel._view_with_dim_change import (
     _view_with_sharding_dim_change,
 )
+from spmd.testing.common_utils import DistTensorTestBase  # type: ignore
+from spmd.testing.common_utils import with_comms
 
 
 class TPViewShardingDimChangeTest(DistTensorTestBase):
