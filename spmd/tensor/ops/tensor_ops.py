@@ -342,26 +342,23 @@ def prop_index(op_schema: OpSchema) -> OutputSharding:
     Expect replicated on the first input; _mostly_ pointwise on the second input.
     TODO: exception: when the dtype of second input is "bool", then a torch.nonzero needs to be triggered first.
     """
+    # Current sharding constraints:
+    # For values:
+    #   1. We currently require that the dimension of values_spec be replicated or partial
+    #      if they are being indexed on.
+    #   2. Other dimensions of values_spec can remain sharded if they are so.
+    # For indices:
+    #   Indices can be either sharded or replicated. All index tensors need to be sharded
+    #   in a compatible way, following the pointwise rule (including resolving _Partial
+    #   into either sharded or replicated)
+
     values_spec, multi_indices_spec = op_schema.args_schema
     assert isinstance(values_spec, DTensorSpec)
-    multi_indices_spec = cast(
-        Union[DTensorSpec, List[Optional[DTensorSpec]]], multi_indices_spec
-    )
-
-    if isinstance(multi_indices_spec, list):
-        valid_indices_spec: List[Tuple[int, DTensorSpec]] = [
-            (i, a) for i, a in enumerate(multi_indices_spec) if a is not None
-        ]
-    else:
-        valid_indices_spec = [(0, multi_indices_spec)]
-        multi_indices_spec = [multi_indices_spec]
-
-    # TODO: not possible to check dtype for indices here, so assuming its not bool.
-
-    # we're good if
-    # 1. values[dim] is replicated for each dim
-    # 2. other dimensions of values is not sharded on a mesh dimension that indices is also sharded in.
-    # 3. no pending reduction on indices
+    assert isinstance(multi_indices_spec, list)
+    multi_indices_spec = cast(List[Optional[DTensorSpec]], multi_indices_spec)
+    valid_indices_spec: List[Tuple[int, DTensorSpec]] = [
+        (i, a) for i, a in enumerate(multi_indices_spec) if a is not None
+    ]
 
     # 1. All indices have to be sharded equally. Moreover, indices can be broadcast.
     #    Here, we piggyback on the pointwise sharding rule for indices.
@@ -373,10 +370,6 @@ def prop_index(op_schema: OpSchema) -> OutputSharding:
     )
     need_reshard_on_indices = indices_out.output_spec is None
 
-    # N.B.: the weird typing below is needed to make pyre happy.
-    indices_suggestion: Union[
-        List[Optional[DTensorSpec]], List[DTensorSpec]
-    ] = multi_indices_spec
     if not need_reshard_on_indices:
         # this means that our inputs are already sharded properly and we will use that as our indices_spec
         assert isinstance(indices_out.output_spec, DTensorSpec)
@@ -385,7 +378,7 @@ def prop_index(op_schema: OpSchema) -> OutputSharding:
         assert indices_out.schema_suggestions is not None
         valid_indices_suggestion = indices_out.schema_suggestions[0]
         for i, v in enumerate(valid_indices_suggestion.args_spec):
-            indices_suggestion[valid_indices_spec[i][0]] = v
+            multi_indices_spec[valid_indices_spec[i][0]] = v
         # we'll need to call pointwise_rule again to see what's our ideal indices_spec and then
         # use that to compute our ideal values_spec
         indices_output_spec = pointwise_rule(
@@ -421,8 +414,6 @@ def prop_index(op_schema: OpSchema) -> OutputSharding:
             insert_dim = 0
 
         def place(vp: Placement, ip: Placement) -> Placement:
-            # vp = values_spec.placements[mesh_dim]
-            # ip = indices_spec.placements[mesh_dim]
             if isinstance(vp, Shard):
                 return Shard(
                     vp.dim
@@ -471,7 +462,7 @@ def prop_index(op_schema: OpSchema) -> OutputSharding:
                             ndim=values_spec.ndim,
                             shape=values_spec.shape,
                         ),
-                        indices_suggestion,
+                        multi_indices_spec,
                     ),
                     kwargs_schema=op_schema.kwargs_schema,
                 )
