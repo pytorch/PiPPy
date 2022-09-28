@@ -298,7 +298,7 @@ class DeviceMesh(object):
             tensor_to_scatter.tensor_split(num_chunks, dim=tensor_dim)
         )
         # gloo does not support uneven scattering, nccl supports it, but it
-        # might be slow compare to even size collective, we need to pad tensor
+        # might be slow compared to even size collective, we need to pad tensor
         # before really calling scatter, and unpad/narrow it after the collective
         # TODO: consider if we should remove this logic once ProcessGroupGloo
         # suupport uneven list, and collective perfomance on par
@@ -511,7 +511,7 @@ class DeviceMesh(object):
         if self._backend == "nccl":
             input_list = list(input.tensor_split(num_chunks, dim=tensor_dim))
             # gloo does not support uneven scattering, nccl supports it, but it
-            # might be slow compare to even size collective, we need to pad tensor
+            # might be slow compared to even size collective, we need to pad tensor
             # before really calling scatter, and unpad/narrow it after the collective
             # TODO: consider if we should remove this logic once ProcessGroupGloo
             # suupport uneven list, and collective perfomance on par
