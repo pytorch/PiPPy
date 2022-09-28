@@ -480,18 +480,41 @@ class DeviceMesh(object):
         num_chunks = self.size(mesh_dim)
         if self._backend == "nccl":
             input_list = list(input.tensor_split(num_chunks, dim=tensor_dim))
-            to_scatter = [tensor.contiguous() for tensor in input_list]
-            output = torch.empty_like(input_list[my_coordinate])
+            # gloo does not support uneven scattering, nccl supports it, but it
+            # might be slow compared to even size collective, we need to pad tensor
+            # before really calling scatter, and unpad/narrow it after the collective
+            # TODO: consider if we should remove this logic once ProcessGroupGloo
+            # suupport uneven list, and collective perfomance on par
+            idx_start_to_pad = input.size(tensor_dim) % num_chunks
+            to_scatter = []
+            for i, scatter_tensor in enumerate(input_list):
+                if idx_start_to_pad != 0 and i >= idx_start_to_pad:
+                    scatter_tensor = self._pad_tensor_dim_by_1(
+                        scatter_tensor, tensor_dim
+                    )
+                scatter_tensor = scatter_tensor.contiguous()
+                to_scatter.append(CommTensor(scatter_tensor))
+
+            output = torch.empty_like(to_scatter[my_coordinate])
             dim_group = self._dim_groups[mesh_dim]
             reduce_scatter(output, to_scatter, op=op, group=dim_group)
+
+            # resize to uneven size if needed
+            if idx_start_to_pad != 0 and my_coordinate >= idx_start_to_pad:
+                # tensor = tensor.narrow(tensor_dim, start=0, length=tensor.size(tensor_dim) - 1)
+                output = self._unpad_tensor_dim_by_1(output, tensor_dim)
+
             return output
         elif self._backend == "gloo":
             # it's gloo, which does not have reduce_scatter
             # we have to do all_reduce + scatter
+            warnings.warn(
+                "ProcessGroupGloo does not support reduce_scatter, falling back with all reduce!"
+            )
             reduced_tensor = self.all_reduce(input, op=op, mesh_dim=mesh_dim)
             chunks = reduced_tensor.tensor_split(num_chunks, dim=tensor_dim)
             return chunks[my_coordinate]
         else:
             raise RuntimeError(
-                f"backend {self._backend} not supporting scatter!"
+                f"backend {self._backend} does not support reduce_scatter!"
             )
