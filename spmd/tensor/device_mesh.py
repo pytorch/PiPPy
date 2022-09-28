@@ -395,13 +395,12 @@ class DeviceMesh(object):
         )
         return torch.cat(gathered_list, dim=tensor_dim)  # type: ignore
 
-    # pyre-fixme[3]: Return type must be annotated.
     def all_reduce(
         self,
         tensor: torch.Tensor,
         op: ReduceOp = ReduceOp.SUM,  # type: ignore
         mesh_dim: int = 0,
-    ):
+    ) -> torch.Tensor:
         """
         all_reduce the tensor on each rank on a device mesh dimension, and
         return an output tensor on each rank after all_reduce.
@@ -420,21 +419,17 @@ class DeviceMesh(object):
         # CommTensor does not change eager mode behavior. During tracing, it
         # makes sure communication result is properly waited before subsequent
         # read operations.
-        if not tensor.is_contiguous():
-            tensor = CommTensor(tensor.contiguous())
-        else:
-            tensor = CommTensor(tensor.clone())
+        tensor = CommTensor(tensor.clone())
         all_reduce(tensor, op=op, group=dim_group)
         return tensor
 
-    # pyre-fixme[3]: Return type must be annotated.
     def reduce_scatter(
         self,
         input: torch.Tensor,
         op: ReduceOp = ReduceOp.SUM,  # type: ignore
         mesh_dim: int = 0,
         tensor_dim: int = 0,
-    ):
+    ) -> torch.Tensor:
         """
         reduce_scattter the tensor on each rank on a device mesh dimension, and
         return an output tensor that's scattered to each rank after reduce.
