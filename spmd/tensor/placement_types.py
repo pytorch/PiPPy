@@ -90,6 +90,12 @@ class DTensorSpec(object):
         for i, placement in enumerate(self.placements):
             if placement.is_shard():
                 shard_dim = cast(Shard, placement).dim
+                if r[shard_dim] > -1:
+                    raise ValueError(
+                        f"Tensor dim {shard_dim} is already sharded on mesh dim {r[shard_dim]},"
+                        " DTensor operator implementation does not support things like hybrid"
+                        " sharding strategies yet (i.e. [Shard(0), Shard(0)])"
+                    )
                 r[shard_dim] = i
         return r
 
@@ -105,6 +111,25 @@ class DTensorSpec(object):
             for idx, placement in enumerate(self.placements)
             if placement.is_partial()
         ]
+
+    @property
+    def local_shape(self) -> Tuple[int, ...]:
+        """
+        Compute the shape of a local shard of the given DTensor on its current
+        global rank.
+        """
+        # TODO: support uneven sharding
+        assert (
+            self.shape is not None
+        ), "DTensorSpec does not contain global shape."
+        local_shape = list(self.shape)  # start with global shape
+        for idx, placement in enumerate(self.placements):
+            if isinstance(placement, Shard):
+                assert (
+                    local_shape[placement.dim] % self.mesh.size(idx) == 0
+                ), f"Only even sharding supported for now. (Got {local_shape[placement.dim]} // {self.mesh.size(idx)} for mesh idx {idx}"
+                local_shape[placement.dim] //= self.mesh.size(idx)
+        return tuple(local_shape)
 
     @classmethod
     def from_dim_map(
