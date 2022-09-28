@@ -1,5 +1,7 @@
 #!/bin/bash
 
+source .venv/bin/activate
+
 DEFAULT_TARGETS=(
   $( git ls-files | \
 	  grep '\.py$' | \

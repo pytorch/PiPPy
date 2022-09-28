@@ -1,6 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 
-from typing import Dict, Tuple, Union
+from typing import Dict, Iterable, Tuple, TypeVar, Union
 
 import torch
 from torch.utils._pytree import tree_flatten, tree_unflatten
@@ -11,9 +11,10 @@ from spmd.tensor.redistribute import redistribute_dtensor
 
 ArgKwargsType = Union[Tuple[object, ...], Dict[str, object]]
 
-# pyre-fixme[3]: Return type must be annotated.
-# pyre-fixme[2]: Parameter must be annotated.
-def all_equal(xs):
+T = TypeVar("T")
+
+
+def all_equal(xs: Iterable[T]) -> bool:
     xs = list(xs)
     if not xs:
         return True

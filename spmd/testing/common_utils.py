@@ -30,6 +30,8 @@ TEST_GPU_NUM = 4
 
 
 class DistTensorTestBase(MultiProcessTestCase):
+    device_type: str = "unknown"
+
     @property
     def world_size(self) -> int:
         return TEST_GPU_NUM
@@ -64,13 +66,9 @@ class DistTensorTestBase(MultiProcessTestCase):
 
 # wrapper to initialize comms (processgroup)
 def with_comms(
-    func: Optional[  # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
-        Callable
-    ] = None,
+    func: Optional[Callable] = None,
     backend: Optional[str] = None,
-) -> Optional[  # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
-    Callable
-]:
+) -> Optional[Callable]:
     assert func is not None
 
     @wraps(func)  # pyre-ignore[6]

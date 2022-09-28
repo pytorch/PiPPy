@@ -7,8 +7,8 @@ import unittest
 import warnings
 
 import torch
+import transformers
 import transformers.utils.fx as fx
-from transformers import *
 
 from pippy.IR import (
     MultiUseParameterConfig,
@@ -35,7 +35,7 @@ def noop_splitter(model) -> int:
 
 
 def albert_splitter(model) -> int:
-    if isinstance(model, AlbertModel):
+    if isinstance(model, transformers.AlbertModel):
         for i in range(model.config.num_hidden_groups):
             for j in range(model.config.inner_group_num):
                 annotate_split_points(
@@ -58,7 +58,9 @@ def albert_splitter(model) -> int:
 
 
 def bert_splitter(model) -> int:
-    if isinstance(model, BertModel) or isinstance(model, MegatronBertModel):
+    if isinstance(model, transformers.BertModel) or isinstance(
+        model, transformers.MegatronBertModel
+    ):
         for i in range(model.config.num_hidden_layers):
             annotate_split_points(
                 model,
@@ -86,7 +88,7 @@ def bert_splitter(model) -> int:
 
 
 def distilbert_splitter(model) -> int:
-    if isinstance(model, DistilBertModel):
+    if isinstance(model, transformers.DistilBertModel):
         for i in range(model.config.n_layers):
             annotate_split_points(
                 model,
@@ -107,7 +109,7 @@ def distilbert_splitter(model) -> int:
 
 
 def mobilebert_splitter(model) -> int:
-    if isinstance(model, MobileBertModel):
+    if isinstance(model, transformers.MobileBertModel):
         for i in range(model.config.num_hidden_layers):
             annotate_split_points(
                 model,
@@ -126,7 +128,7 @@ def mobilebert_splitter(model) -> int:
 
 
 def electra_splitter(model) -> int:
-    if isinstance(model, ElectraModel):
+    if isinstance(model, transformers.ElectraModel):
         for i in range(model.config.num_hidden_layers):
             annotate_split_points(
                 model,
@@ -145,7 +147,7 @@ def electra_splitter(model) -> int:
 
 
 def transformer_splitter(model) -> int:
-    if isinstance(model, T5PreTrainedModel):
+    if isinstance(model, transformers.T5PreTrainedModel):
         for i in range(model.config.num_layers):
             annotate_split_points(
                 model,
@@ -157,8 +159,8 @@ def transformer_splitter(model) -> int:
                 {f"decoder.block.{i}": PipeSplitWrapper.SplitPoint.BEGINNING},
             )
         return model.config.num_layers + model.config.num_decoder_layers + 1
-    elif isinstance(model, GPTNeoPreTrainedModel):
-        if isinstance(model, GPTNeoModel):
+    elif isinstance(model, transformers.GPTNeoPreTrainedModel):
+        if isinstance(model, transformers.GPTNeoModel):
             for i in range(model.config.num_layers):
                 annotate_split_points(
                     model, {f"h.{i}": PipeSplitWrapper.SplitPoint.BEGINNING}
@@ -180,8 +182,8 @@ def transformer_splitter(model) -> int:
                 {"transformer.ln_f": PipeSplitWrapper.SplitPoint.BEGINNING},
             )
             return model.config.num_layers + 2
-    elif isinstance(model, BloomPreTrainedModel):  # type: ignore
-        if isinstance(model, BloomModel):  # type: ignore
+    elif isinstance(model, transformers.BloomPreTrainedModel):  # type: ignore
+        if isinstance(model, transformers.BloomModel):  # type: ignore
             for i in range(model.config.num_hidden_layers):
                 annotate_split_points(
                     model, {f"h.{i}": PipeSplitWrapper.SplitPoint.BEGINNING}
@@ -203,7 +205,7 @@ def transformer_splitter(model) -> int:
                 {"transformer.ln_f": PipeSplitWrapper.SplitPoint.BEGINNING},
             )
             return model.config.num_hidden_layers + 2
-    elif isinstance(model, (GPT2Model, GPTJModel)):
+    elif isinstance(model, (transformers.GPT2Model, transformers.GPTJModel)):
         for i in range(model.config.n_layer):
             annotate_split_points(
                 model, {f"h.{i}": PipeSplitWrapper.SplitPoint.BEGINNING}
@@ -225,7 +227,7 @@ def transformer_splitter(model) -> int:
 
 
 def roberta_splitter(model) -> int:
-    if isinstance(model, RobertaModel):
+    if isinstance(model, transformers.RobertaModel):
         for i in range(model.config.num_hidden_layers):
             annotate_split_points(
                 model,
@@ -253,7 +255,7 @@ def roberta_splitter(model) -> int:
 
 
 def vit_splitter(model) -> int:
-    if isinstance(model, ViTModel):
+    if isinstance(model, transformers.ViTModel):
         for i in range(model.config.num_hidden_layers):
             annotate_split_points(
                 model,
@@ -298,10 +300,10 @@ def generate_hf_model(model_cls):
     if (
         model_cls
         in [
-            GPT2ForSequenceClassification,
-            GPTNeoForSequenceClassification,
-            GPTJForSequenceClassification,
-            BloomForSequenceClassification,
+            transformers.GPT2ForSequenceClassification,
+            transformers.GPTNeoForSequenceClassification,
+            transformers.GPTJForSequenceClassification,
+            transformers.BloomForSequenceClassification,
         ]
         or model_cls.__name__.startswith("Roberta")
         or model_cls.__name__.startswith("Marian")
@@ -354,14 +356,14 @@ def generate_inputs_for_model(model_cls, model, include_loss_args=False):
         or model_cls.__name__.startswith("MT5")
         or model_cls
         in [
-            BlenderbotModel,
-            BlenderbotSmallModel,
-            BlenderbotForConditionalGeneration,
-            BlenderbotSmallForConditionalGeneration,
-            PegasusModel,
-            PegasusForConditionalGeneration,
-            MarianModel,
-            MarianMTModel,
+            transformers.BlenderbotModel,
+            transformers.BlenderbotSmallModel,
+            transformers.BlenderbotForConditionalGeneration,
+            transformers.BlenderbotSmallForConditionalGeneration,
+            transformers.PegasusModel,
+            transformers.PegasusForConditionalGeneration,
+            transformers.MarianModel,
+            transformers.MarianMTModel,
         ]
     ):
         input_dict.update({"decoder_input_ids": input})
@@ -371,7 +373,7 @@ def generate_inputs_for_model(model_cls, model, include_loss_args=False):
 
     if include_loss_args:
         if model_cls.__name__.endswith("PreTraining"):
-            if model_cls == ElectraForPreTraining:
+            if model_cls == transformers.ElectraForPreTraining:
                 input_dict.update(
                     {
                         "labels": torch.empty(
@@ -382,7 +384,7 @@ def generate_inputs_for_model(model_cls, model, include_loss_args=False):
             else:
                 label_name = (
                     "sentence_order_label"
-                    if model_cls in [AlbertForPreTraining]
+                    if model_cls in [transformers.AlbertForPreTraining]
                     else "next_sentence_label"
                 )
                 input_dict.update(
@@ -457,7 +459,7 @@ def generate_inputs_for_model(model_cls, model, include_loss_args=False):
                     ).random_(model.config.vocab_size - 1),
                 }
             )
-        elif model_cls == ViTForImageClassification:
+        elif model_cls == transformers.ViTForImageClassification:
             input_dict.update(
                 {
                     "labels": torch.empty(bs, dtype=torch.long).random_(
@@ -465,7 +467,7 @@ def generate_inputs_for_model(model_cls, model, include_loss_args=False):
                     ),
                 }
             )
-        elif model_cls == ViTForMaskedImageModeling:
+        elif model_cls == transformers.ViTForMaskedImageModeling:
             num_patches = (
                 model.config.image_size // model.config.patch_size
             ) ** 2
@@ -512,105 +514,114 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
         def test_case(self):
             # TODO: https://github.com/pytorch/PiPPy/issues/149
             if model_cls in [
-                MegatronBertForNextSentencePrediction,
-                BertForNextSentencePrediction,
-                MobileBertForNextSentencePrediction,
+                transformers.MegatronBertForNextSentencePrediction,
+                transformers.BertForNextSentencePrediction,
+                transformers.MobileBertForNextSentencePrediction,
             ]:
                 self.skipTest("Need to fix handling of kwargs")
 
             # TODO: support SWIN models https://github.com/pytorch/PiPPy/issues/243
             if model_cls in [
-                SwinForMaskedImageModeling,
-                SwinForImageClassification,
-                SwinModel,
+                transformers.SwinForMaskedImageModeling,
+                transformers.SwinForImageClassification,
+                transformers.SwinModel,
             ]:
                 self.skipTest("Need to support SWIN models")
 
             # TODO: support LayoutLM models https://github.com/pytorch/PiPPy/issues/247
             if model_cls in [
-                LayoutLMModel,
-                LayoutLMForMaskedLM,
-                LayoutLMForSequenceClassification,
-                LayoutLMForTokenClassification,
+                transformers.LayoutLMModel,
+                transformers.LayoutLMForMaskedLM,
+                transformers.LayoutLMForSequenceClassification,
+                transformers.LayoutLMForTokenClassification,
             ]:
                 self.skipTest("Need to support LayoutLM models")
 
             # TODO: support CLIP models https://github.com/pytorch/PiPPy/issues/248
-            if model_cls in [CLIPModel, CLIPVisionModel]:
+            if model_cls in [
+                transformers.CLIPModel,
+                transformers.CLIPVisionModel,
+            ]:
                 self.skipTest("Need to support CLIP models")
 
             # TODO: support Speech2Text models https://github.com/pytorch/PiPPy/issues/249
             if model_cls in [
-                Speech2TextModel,
-                Speech2TextForConditionalGeneration,
+                transformers.Speech2TextModel,
+                transformers.Speech2TextForConditionalGeneration,
             ]:
                 self.skipTest("Need to support Speech2Text models")
 
             # TODO: support Lxmert models https://github.com/pytorch/PiPPy/issues/253
             if model_cls in [
-                LxmertForPreTraining,
-                LxmertForQuestionAnswering,
-                LxmertModel,
+                transformers.LxmertForPreTraining,
+                transformers.LxmertForQuestionAnswering,
+                transformers.LxmertModel,
             ]:
                 self.skipTest("Need to support Lxmert models")
 
             # TODO: support Hubert models https://github.com/pytorch/PiPPy/issues/254
             if model_cls in [
-                HubertModel,
-                HubertForSequenceClassification,
-                HubertForCTC,
+                transformers.HubertModel,
+                transformers.HubertForSequenceClassification,
+                transformers.HubertForCTC,
             ]:
                 self.skipTest("Need to support Hubert models")
 
             # TODO: support DistilBert models https://github.com/pytorch/PiPPy/issues/272
             if model_cls in [
-                DistilBertModel,
-                DistilBertForMaskedLM,
-                DistilBertForQuestionAnswering,
-                DistilBertForSequenceClassification,
-                DistilBertForTokenClassification,
-                DistilBertForMultipleChoice,
+                transformers.DistilBertModel,
+                transformers.DistilBertForMaskedLM,
+                transformers.DistilBertForQuestionAnswering,
+                transformers.DistilBertForSequenceClassification,
+                transformers.DistilBertForTokenClassification,
+                transformers.DistilBertForMultipleChoice,
             ]:
                 self.skipTest("Need to support DistilBert models")
 
             # TODO: support Deberta models https://github.com/pytorch/PiPPy/issues/261
             if model_cls in [
-                DebertaModel,
-                DebertaV2ForMaskedLM,
-                DebertaV2ForSequenceClassification,
-                DebertaV2ForTokenClassification,
-                DebertaForQuestionAnswering,
-                DebertaForTokenClassification,
-                DebertaV2ForQuestionAnswering,
-                DebertaV2ForQuestionAnswering,
-                DebertaV2ForMultipleChoice,
-                DebertaV2ForMultipleChoice,
-                DebertaV2Model,
-                DebertaForMaskedLM,
-                DebertaForSequenceClassification,
+                transformers.DebertaModel,
+                transformers.DebertaV2ForMaskedLM,
+                transformers.DebertaV2ForSequenceClassification,
+                transformers.DebertaV2ForTokenClassification,
+                transformers.DebertaForQuestionAnswering,
+                transformers.DebertaForTokenClassification,
+                transformers.DebertaV2ForQuestionAnswering,
+                transformers.DebertaV2ForQuestionAnswering,
+                transformers.DebertaV2ForMultipleChoice,
+                transformers.DebertaV2ForMultipleChoice,
+                transformers.DebertaV2Model,
+                transformers.DebertaForMaskedLM,
+                transformers.DebertaForSequenceClassification,
             ]:
                 self.skipTest("Need to support Deberta models")
 
             # TODO: support Donut SWIN models https://github.com/pytorch/PiPPy/issues/361
-            if model_cls in [DonutSwinModel]:
+            if model_cls in [transformers.DonutSwinModel]:
                 self.skipTest("Need to support Donut SWIN models")
 
             # TODO: support ResNet models https://github.com/pytorch/tau/issues/484
-            if model_cls in [ResNetModel, ResNetForImageClassification]:
+            if model_cls in [
+                transformers.ResNetModel,
+                transformers.ResNetForImageClassification,
+            ]:
                 self.skipTest("Need to support ResNet models")
 
             # TODO: support Wav2Vec2 models https://github.com/pytorch/tau/issues/485
             if model_cls in [
-                Wav2Vec2Model,
-                Wav2Vec2ForPreTraining,
-                Wav2Vec2ForCTC,
-                Wav2Vec2ForSequenceClassification,
-                Wav2Vec2ForMaskedLM,
+                transformers.Wav2Vec2Model,
+                transformers.Wav2Vec2ForPreTraining,
+                transformers.Wav2Vec2ForCTC,
+                transformers.Wav2Vec2ForSequenceClassification,
+                transformers.Wav2Vec2ForMaskedLM,
             ]:
                 self.skipTest("Need to support Wav2Vec2 models")
 
             # TODO: support ConvNext models https://github.com/pytorch/tau/issues/486
-            if model_cls in [ConvNextModel, ConvNextForImageClassification]:
+            if model_cls in [
+                transformers.ConvNextModel,
+                transformers.ConvNextForImageClassification,
+            ]:
                 self.skipTest("Need to support ConvNext models")
 
             model, splitter = generate_hf_model(model_cls)
@@ -663,7 +674,10 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
 
 
 def get_output_loss_value_spec_for_model(model_cls):
-    if model_cls in [BartForQuestionAnswering, MBartForQuestionAnswering]:
+    if model_cls in [
+        transformers.BartForQuestionAnswering,
+        transformers.MBartForQuestionAnswering,
+    ]:
         return {
             "loss": True,
             "start_logits": False,
@@ -674,7 +688,7 @@ def get_output_loss_value_spec_for_model(model_cls):
     if model_cls.__name__.endswith("QuestionAnswering"):
         return {"loss": True, "start_logits": False, "end_logits": False}
 
-    if model_cls in [GPT2DoubleHeadsModel]:
+    if model_cls in [transformers.GPT2DoubleHeadsModel]:
         return {
             "loss": True,
             "logits": False,
@@ -683,36 +697,36 @@ def get_output_loss_value_spec_for_model(model_cls):
         }
 
     if model_cls in [
-        GPT2ForSequenceClassification,
-        GPT2LMHeadModel,
-        GPTNeoForCausalLM,
-        GPTNeoForSequenceClassification,
-        GPTJForCausalLM,
-        GPTJForSequenceClassification,
-        BlenderbotSmallForCausalLM,
-        BlenderbotForCausalLM,
-        BartForCausalLM,
-        MBartForCausalLM,
-        OPTForCausalLM,
-        MarianForCausalLM,
-        PLBartForCausalLM,
-        PegasusForCausalLM,
-        Speech2Text2ForCausalLM,
-        XGLMForCausalLM,
-        OPTForSequenceClassification,
-        BloomForSequenceClassification,
-        BloomForCausalLM,
-        TrOCRForCausalLM,
+        transformers.GPT2ForSequenceClassification,
+        transformers.GPT2LMHeadModel,
+        transformers.GPTNeoForCausalLM,
+        transformers.GPTNeoForSequenceClassification,
+        transformers.GPTJForCausalLM,
+        transformers.GPTJForSequenceClassification,
+        transformers.BlenderbotSmallForCausalLM,
+        transformers.BlenderbotForCausalLM,
+        transformers.BartForCausalLM,
+        transformers.MBartForCausalLM,
+        transformers.OPTForCausalLM,
+        transformers.MarianForCausalLM,
+        transformers.PLBartForCausalLM,
+        transformers.PegasusForCausalLM,
+        transformers.Speech2Text2ForCausalLM,
+        transformers.XGLMForCausalLM,
+        transformers.OPTForSequenceClassification,
+        transformers.BloomForSequenceClassification,
+        transformers.BloomForCausalLM,
+        transformers.TrOCRForCausalLM,
     ]:
         return {"loss": True, "logits": False, "past_key_values": False}
 
-    if model_cls in [AlbertForPreTraining]:
+    if model_cls in [transformers.AlbertForPreTraining]:
         return {"loss": True, "prediction_logits": False, "sop_logits": False}
 
     if model_cls in [
-        BertForPreTraining,
-        MegatronBertForPreTraining,
-        MobileBertForPreTraining,
+        transformers.BertForPreTraining,
+        transformers.MegatronBertForPreTraining,
+        transformers.MobileBertForPreTraining,
     ]:
         return {
             "loss": True,
@@ -721,10 +735,10 @@ def get_output_loss_value_spec_for_model(model_cls):
         }
 
     if model_cls in [
-        T5ForConditionalGeneration,
-        M2M100ForConditionalGeneration,
-        MT5ForConditionalGeneration,
-        PLBartForConditionalGeneration,
+        transformers.T5ForConditionalGeneration,
+        transformers.M2M100ForConditionalGeneration,
+        transformers.MT5ForConditionalGeneration,
+        transformers.PLBartForConditionalGeneration,
     ]:
         return {
             "loss": True,
@@ -734,14 +748,14 @@ def get_output_loss_value_spec_for_model(model_cls):
         }
 
     if model_cls in [
-        BartForSequenceClassification,
-        BlenderbotForConditionalGeneration,
-        MBartForConditionalGeneration,
-        BlenderbotSmallForConditionalGeneration,
-        MBartForSequenceClassification,
-        PLBartForSequenceClassification,
-        PegasusForConditionalGeneration,
-        BartForConditionalGeneration,
+        transformers.BartForSequenceClassification,
+        transformers.BlenderbotForConditionalGeneration,
+        transformers.MBartForConditionalGeneration,
+        transformers.BlenderbotSmallForConditionalGeneration,
+        transformers.MBartForSequenceClassification,
+        transformers.PLBartForSequenceClassification,
+        transformers.PegasusForConditionalGeneration,
+        transformers.BartForConditionalGeneration,
     ]:
         return {
             "loss": True,
@@ -749,7 +763,7 @@ def get_output_loss_value_spec_for_model(model_cls):
             "encoder_last_hidden_state": False,
         }
 
-    if model_cls in [NezhaForPreTraining]:
+    if model_cls in [transformers.NezhaForPreTraining]:
         return {
             "loss": True,
             "prediction_logits": False,
@@ -771,105 +785,114 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
         def test_case(self):
             # TODO: https://github.com/pytorch/PiPPy/issues/149
             if model_cls in [
-                MegatronBertForNextSentencePrediction,
-                BertForNextSentencePrediction,
-                MobileBertForNextSentencePrediction,
+                transformers.MegatronBertForNextSentencePrediction,
+                transformers.BertForNextSentencePrediction,
+                transformers.MobileBertForNextSentencePrediction,
             ]:
                 self.skipTest("Need to fix handling of kwargs")
 
             # TODO: support SWIN models https://github.com/pytorch/PiPPy/issues/243
             if model_cls in [
-                SwinForMaskedImageModeling,
-                SwinForImageClassification,
-                SwinModel,
+                transformers.SwinForMaskedImageModeling,
+                transformers.SwinForImageClassification,
+                transformers.SwinModel,
             ]:
                 self.skipTest("Need to support SWIN models")
 
             # TODO: support LayoutLM models https://github.com/pytorch/PiPPy/issues/247
             if model_cls in [
-                LayoutLMModel,
-                LayoutLMForMaskedLM,
-                LayoutLMForSequenceClassification,
-                LayoutLMForTokenClassification,
+                transformers.LayoutLMModel,
+                transformers.LayoutLMForMaskedLM,
+                transformers.LayoutLMForSequenceClassification,
+                transformers.LayoutLMForTokenClassification,
             ]:
                 self.skipTest("Need to support LayoutLM models")
 
             # TODO: support CLIP models https://github.com/pytorch/PiPPy/issues/248
-            if model_cls in [CLIPModel, CLIPVisionModel]:
+            if model_cls in [
+                transformers.CLIPModel,
+                transformers.CLIPVisionModel,
+            ]:
                 self.skipTest("Need to support CLIP models")
 
             # TODO: support Speech2Text models https://github.com/pytorch/PiPPy/issues/249
             if model_cls in [
-                Speech2TextModel,
-                Speech2TextForConditionalGeneration,
+                transformers.Speech2TextModel,
+                transformers.Speech2TextForConditionalGeneration,
             ]:
                 self.skipTest("Need to support Speech2Text models")
 
             # TODO: support Lxmert models https://github.com/pytorch/PiPPy/issues/253
             if model_cls in [
-                LxmertForPreTraining,
-                LxmertForQuestionAnswering,
-                LxmertModel,
+                transformers.LxmertForPreTraining,
+                transformers.LxmertForQuestionAnswering,
+                transformers.LxmertModel,
             ]:
                 self.skipTest("Need to support Lxmert models")
 
             # TODO: support Hubert models https://github.com/pytorch/PiPPy/issues/254
             if model_cls in [
-                HubertModel,
-                HubertForSequenceClassification,
-                HubertForCTC,
+                transformers.HubertModel,
+                transformers.HubertForSequenceClassification,
+                transformers.HubertForCTC,
             ]:
                 self.skipTest("Need to support Hubert models")
 
             # TODO: support DistilBert models https://github.com/pytorch/PiPPy/issues/272
             if model_cls in [
-                DistilBertModel,
-                DistilBertForMaskedLM,
-                DistilBertForQuestionAnswering,
-                DistilBertForSequenceClassification,
-                DistilBertForTokenClassification,
-                DistilBertForMultipleChoice,
+                transformers.DistilBertModel,
+                transformers.DistilBertForMaskedLM,
+                transformers.DistilBertForQuestionAnswering,
+                transformers.DistilBertForSequenceClassification,
+                transformers.DistilBertForTokenClassification,
+                transformers.DistilBertForMultipleChoice,
             ]:
                 self.skipTest("Need to support DistilBert models")
 
             # TODO: support Deberta models https://github.com/pytorch/PiPPy/issues/261
             if model_cls in [
-                DebertaModel,
-                DebertaV2ForMaskedLM,
-                DebertaV2ForSequenceClassification,
-                DebertaV2ForTokenClassification,
-                DebertaForQuestionAnswering,
-                DebertaForTokenClassification,
-                DebertaV2ForQuestionAnswering,
-                DebertaV2ForQuestionAnswering,
-                DebertaV2ForMultipleChoice,
-                DebertaV2ForMultipleChoice,
-                DebertaV2Model,
-                DebertaForMaskedLM,
-                DebertaForSequenceClassification,
+                transformers.DebertaModel,
+                transformers.DebertaV2ForMaskedLM,
+                transformers.DebertaV2ForSequenceClassification,
+                transformers.DebertaV2ForTokenClassification,
+                transformers.DebertaForQuestionAnswering,
+                transformers.DebertaForTokenClassification,
+                transformers.DebertaV2ForQuestionAnswering,
+                transformers.DebertaV2ForQuestionAnswering,
+                transformers.DebertaV2ForMultipleChoice,
+                transformers.DebertaV2ForMultipleChoice,
+                transformers.DebertaV2Model,
+                transformers.DebertaForMaskedLM,
+                transformers.DebertaForSequenceClassification,
             ]:
                 self.skipTest("Need to support Deberta models")
 
             # TODO: support Donut SWIN models https://github.com/pytorch/PiPPy/issues/361
-            if model_cls in [DonutSwinModel]:
+            if model_cls in [transformers.DonutSwinModel]:
                 self.skipTest("Need to support Donut SWIN models")
 
             # TODO: support ResNet models https://github.com/pytorch/tau/issues/484
-            if model_cls in [ResNetModel, ResNetForImageClassification]:
+            if model_cls in [
+                transformers.ResNetModel,
+                transformers.ResNetForImageClassification,
+            ]:
                 self.skipTest("Need to support ResNet models")
 
             # TODO: support Wav2Vec2 models https://github.com/pytorch/tau/issues/485
             if model_cls in [
-                Wav2Vec2Model,
-                Wav2Vec2ForPreTraining,
-                Wav2Vec2ForCTC,
-                Wav2Vec2ForSequenceClassification,
-                Wav2Vec2ForMaskedLM,
+                transformers.Wav2Vec2Model,
+                transformers.Wav2Vec2ForPreTraining,
+                transformers.Wav2Vec2ForCTC,
+                transformers.Wav2Vec2ForSequenceClassification,
+                transformers.Wav2Vec2ForMaskedLM,
             ]:
                 self.skipTest("Need to support Wav2Vec2 models")
 
             # TODO: support ConvNext models https://github.com/pytorch/tau/issues/486
-            if model_cls in [ConvNextModel, ConvNextForImageClassification]:
+            if model_cls in [
+                transformers.ConvNextModel,
+                transformers.ConvNextForImageClassification,
+            ]:
                 self.skipTest("Need to support ConvNext models")
 
             model, splitter = generate_hf_model(model_cls)
@@ -889,37 +912,37 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
                 )
 
                 if model_cls in [
-                    AlbertModel,
-                    BartModel,
-                    BertModel,
-                    DistilBertModel,
-                    ElectraModel,
-                    GPT2Model,
-                    GPTJModel,
-                    GPTNeoModel,
-                    MegatronBertModel,
-                    MobileBertModel,
-                    RobertaModel,
-                    T5Model,
-                    BlenderbotModel,
-                    BlenderbotSmallModel,
-                    M2M100Model,
-                    MT5Model,
-                    MarianMTModel,
-                    MarianModel,
-                    PegasusModel,
-                    OPTModel,
+                    transformers.AlbertModel,
+                    transformers.BartModel,
+                    transformers.BertModel,
+                    transformers.DistilBertModel,
+                    transformers.ElectraModel,
+                    transformers.GPT2Model,
+                    transformers.GPTJModel,
+                    transformers.GPTNeoModel,
+                    transformers.MegatronBertModel,
+                    transformers.MobileBertModel,
+                    transformers.RobertaModel,
+                    transformers.T5Model,
+                    transformers.BlenderbotModel,
+                    transformers.BlenderbotSmallModel,
+                    transformers.M2M100Model,
+                    transformers.MT5Model,
+                    transformers.MarianMTModel,
+                    transformers.MarianModel,
+                    transformers.PegasusModel,
+                    transformers.OPTModel,
                     Speech2Text2Decoder,
                     TrOCRDecoder,
-                    MBartModel,
-                    CLIPTextModel,
-                    PLBartModel,
-                    XGLMModel,
-                    ViTModel,
-                    DebertaModel,
-                    DebertaV2Model,
-                    NezhaModel,
-                    BloomModel,
+                    transformers.MBartModel,
+                    transformers.CLIPTextModel,
+                    transformers.PLBartModel,
+                    transformers.XGLMModel,
+                    transformers.ViTModel,
+                    transformers.DebertaModel,
+                    transformers.DebertaV2Model,
+                    transformers.NezhaModel,
+                    transformers.BloomModel,
                 ]:
                     self.skipTest("Base models do not have embedded loss")
                 else:
@@ -928,24 +951,24 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
             hf_tracer = fx.HFTracer()
 
             if model_cls in [
-                AlbertForSequenceClassification,
-                BertForSequenceClassification,
-                BartForSequenceClassification,
-                DistilBertForSequenceClassification,
-                ElectraForSequenceClassification,
-                GPT2ForSequenceClassification,
-                GPTJForSequenceClassification,
-                GPTNeoForSequenceClassification,
-                MegatronBertForSequenceClassification,
-                MobileBertForSequenceClassification,
-                RobertaForSequenceClassification,
-                MBartForSequenceClassification,
-                PLBartForSequenceClassification,
-                DebertaForSequenceClassification,
-                DebertaV2ForSequenceClassification,
-                NezhaForSequenceClassification,
-                OPTForSequenceClassification,
-                BloomForSequenceClassification,
+                transformers.AlbertForSequenceClassification,
+                transformers.BertForSequenceClassification,
+                transformers.BartForSequenceClassification,
+                transformers.DistilBertForSequenceClassification,
+                transformers.ElectraForSequenceClassification,
+                transformers.GPT2ForSequenceClassification,
+                transformers.GPTJForSequenceClassification,
+                transformers.GPTNeoForSequenceClassification,
+                transformers.MegatronBertForSequenceClassification,
+                transformers.MobileBertForSequenceClassification,
+                transformers.RobertaForSequenceClassification,
+                transformers.MBartForSequenceClassification,
+                transformers.PLBartForSequenceClassification,
+                transformers.DebertaForSequenceClassification,
+                transformers.DebertaV2ForSequenceClassification,
+                transformers.NezhaForSequenceClassification,
+                transformers.OPTForSequenceClassification,
+                transformers.BloomForSequenceClassification,
             ]:
                 model.config.problem_type = "single_label_classification"
 

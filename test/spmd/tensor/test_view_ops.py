@@ -1,7 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 
 import itertools
-from typing import List, cast
+from typing import Any, Callable, Dict, List, Sequence, cast
 
 import torch
 import torch.distributed as dist
@@ -9,9 +9,10 @@ from torch import Tensor, rand, randn
 from torch.testing._internal.common_utils import run_tests
 from torch.utils._pytree import tree_flatten
 
-from spmd import DeviceMesh, Replicate, Shard, distribute_tensor
+from spmd import DeviceMesh, DTensor, Replicate, Shard, distribute_tensor
 from spmd.tensor.ops.view_ops import (
     Broadcast,
+    DimMap,
     Flatten,
     InputDim,
     Repeat,
@@ -26,7 +27,7 @@ from spmd.testing.common_utils import with_comms
 
 
 class TestViewOps(DistTensorTestBase):
-    def test_view_groups(self):
+    def test_view_groups(self) -> None:
         self.assertEquals(
             view_groups([2, 3], [3, 2]),
             (
@@ -130,7 +131,13 @@ class TestViewOps(DistTensorTestBase):
     def world_size(self) -> int:
         return 6
 
-    def call_dt_test(self, op, args, kwargs, device_mesh: DeviceMesh):
+    def call_dt_test(
+        self,
+        op: Callable[..., torch.Tensor],
+        args: Sequence[Any],
+        kwargs: Dict[str, Any],
+        device_mesh: DeviceMesh,
+    ) -> None:
         spec = ops[op]
         rules = spec.dim_map(*args, **kwargs)
         outputs = op(*args, **kwargs)
@@ -147,8 +154,9 @@ class TestViewOps(DistTensorTestBase):
                     if isinstance(dim, InputDim):
                         no_shard_dims.add(dim.input_dim)
             elif isinstance(rule, Split):
-                if isinstance(rule.input_dim, Flatten):
-                    for dim in rule.input_dim.input_dims[1:]:
+                input_dim = rule.input_dim
+                if isinstance(input_dim, Flatten):
+                    for dim in input_dim.input_dims[1:]:
                         if isinstance(dim, InputDim):
                             no_shard_dims.add(dim.input_dim)
 
@@ -168,7 +176,7 @@ class TestViewOps(DistTensorTestBase):
         for in_shard in all_sharding_choices:
             # print(f'   |--- {in_shard}')
             in_dt = distribute_tensor(args[0], device_mesh, in_shard)
-            out_dt = op(in_dt, *args[1:], **kwargs)
+            out_dt = cast(DTensor, op(in_dt, *args[1:], **kwargs))
 
             full_out = out_dt.redistribute(
                 device_mesh, device_mesh.ndim * [Replicate()]
@@ -177,58 +185,60 @@ class TestViewOps(DistTensorTestBase):
             if dist.get_rank() == 0:
                 self.assertEqual(outputs, full_out)
 
-    def dimmap_test(self, op, args, expected_rule_output):
-        rules = ops[op].dim_map(*args)
-        self.assertEquals(rules, expected_rule_output)
-        self.call_dt_test(op, args, {}, self.device_mesh)
-
     @with_comms
-    def test_view_ops(self):
-        self.device_mesh = DeviceMesh(
-            self.device_type, torch.arange(dist.get_world_size()).view(-1, 2)
+    def test_view_ops(self) -> None:
+        device_mesh = DeviceMesh(
+            self.device_type,
+            torch.arange(dist.get_world_size()).view(-1, 2),  # type: ignore
         )
-        self.dimmap_test(torch.atleast_1d, (randn(()),), (Singleton(),))
-        self.dimmap_test(torch.atleast_1d, (randn(24),), (InputDim(0),))
-        self.dimmap_test(
+
+        def dimmap_test(
+            op: Callable[..., torch.Tensor],
+            args: Sequence,
+            expected_rule_output: DimMap,
+        ) -> None:
+            rules = ops[op].dim_map(*args)
+            self.assertEquals(rules, expected_rule_output)
+            self.call_dt_test(op, args, {}, device_mesh)
+
+        dimmap_test(torch.atleast_1d, (randn(()),), (Singleton(),))
+        dimmap_test(torch.atleast_1d, (randn(24),), (InputDim(0),))
+        dimmap_test(
             torch.atleast_1d, (randn(24, 36),), (InputDim(0), InputDim(1))
         )
 
-        self.dimmap_test(
-            torch.atleast_2d, (randn(()),), (Singleton(), Singleton())
-        )
-        self.dimmap_test(
-            torch.atleast_2d, (randn(24),), (Singleton(), InputDim(0))
-        )
-        self.dimmap_test(
+        dimmap_test(torch.atleast_2d, (randn(()),), (Singleton(), Singleton()))
+        dimmap_test(torch.atleast_2d, (randn(24),), (Singleton(), InputDim(0)))
+        dimmap_test(
             torch.atleast_2d, (randn(24, 36),), (InputDim(0), InputDim(1))
         )
-        self.dimmap_test(
+        dimmap_test(
             torch.atleast_2d,
             (randn(24, 36, 48),),
             (InputDim(0), InputDim(1), InputDim(2)),
         )
 
-        self.dimmap_test(
+        dimmap_test(
             torch.atleast_3d,
             (randn(()),),
             (Singleton(), Singleton(), Singleton()),
         )
-        self.dimmap_test(
+        dimmap_test(
             torch.atleast_3d,
             (randn(24),),
             (Singleton(), InputDim(0), Singleton()),
         )
-        self.dimmap_test(
+        dimmap_test(
             torch.atleast_3d,
             (randn(24, 36),),
             (InputDim(0), InputDim(1), Singleton()),
         )
-        self.dimmap_test(
+        dimmap_test(
             torch.atleast_3d,
             (randn(24, 36, 42),),
             (InputDim(0), InputDim(1), InputDim(2)),
         )
-        self.dimmap_test(
+        dimmap_test(
             torch.atleast_3d,
             (randn(24, 36, 42, 24),),
             (InputDim(0), InputDim(1), InputDim(2), InputDim(3)),
@@ -237,17 +247,17 @@ class TestViewOps(DistTensorTestBase):
         with self.assertRaises(AssertionError):
             ops[torch.broadcast_to].dim_map(randn(24, 36), (1, 2, 4))
 
-        self.dimmap_test(
+        dimmap_test(
             torch.broadcast_to,
             (rand(24, 36), (1, 24, 36)),
             (Singleton(), InputDim(0), InputDim(1)),
         )
-        self.dimmap_test(
+        dimmap_test(
             torch.broadcast_to,
             (rand(24, 36), (42, 24, 36)),
             (Broadcast(Singleton(), 42), InputDim(0), InputDim(1)),
         )
-        self.dimmap_test(
+        dimmap_test(
             torch.broadcast_to,
             (rand(24, 1, 36), (12, 24, 24, 36)),
             (
@@ -257,18 +267,18 @@ class TestViewOps(DistTensorTestBase):
                 InputDim(2),
             ),
         )
-        self.dimmap_test(
+        dimmap_test(
             torch.broadcast_to,
             (rand(24, 36), (-1, 36)),
             (InputDim(0), InputDim(1)),
         )
-        self.dimmap_test(
+        dimmap_test(
             torch.broadcast_to,
             (rand(24, 1, 36), (-1, 1, 36)),
             (InputDim(0), InputDim(1), InputDim(2)),
         )
 
-        self.dimmap_test(
+        dimmap_test(
             torch.broadcast_to,
             (randn(36, 1, 24), (12, 36, 42, 24)),
             (
@@ -279,7 +289,7 @@ class TestViewOps(DistTensorTestBase):
             ),
         )
 
-        self.dimmap_test(
+        dimmap_test(
             Tensor.expand,
             (randn(24, 1, 36, 1), 36, 24, 42, -1, 24),
             (
@@ -291,7 +301,7 @@ class TestViewOps(DistTensorTestBase):
             ),
         )
 
-        self.dimmap_test(
+        dimmap_test(
             Tensor.expand,
             (randn(24, 1, 36, 1), (36, 24, 42, -1, 24)),
             (
@@ -303,71 +313,71 @@ class TestViewOps(DistTensorTestBase):
             ),
         )
 
-        self.dimmap_test(
+        dimmap_test(
             torch.flatten,
             (randn(24, 36),),
             (Flatten((InputDim(0), InputDim(1))),),
         )
-        self.dimmap_test(torch.flatten, (randn(42),), (InputDim(0),))
-        self.dimmap_test(torch.flatten, (randn(()),), (Singleton(),))
+        dimmap_test(torch.flatten, (randn(42),), (InputDim(0),))
+        dimmap_test(torch.flatten, (randn(()),), (Singleton(),))
 
-        self.dimmap_test(
+        dimmap_test(
             torch.movedim,
             (randn(12, 24, 48, 96), 1, 2),
             (InputDim(0), InputDim(2), InputDim(1), InputDim(3)),
         )
-        self.dimmap_test(
+        dimmap_test(
             torch.movedim,
             (randn(6, 12, 24), 1, 0),
             (InputDim(1), InputDim(0), InputDim(2)),
         )
-        self.dimmap_test(
+        dimmap_test(
             torch.movedim,
             (randn(24, 12, 6), (1, 2), (0, 1)),
             (InputDim(1), InputDim(2), InputDim(0)),
         )
-        self.dimmap_test(
+        dimmap_test(
             torch.movedim,
             (randn(24, 6, 12), (0, 2, 1), (2, 1, 0)),
             (InputDim(1), InputDim(2), InputDim(0)),
         )
-        self.dimmap_test(
+        dimmap_test(
             torch.movedim,
             (randn(24, 12), (1, 0), (0, 1)),
             (InputDim(1), InputDim(0)),
         )
 
-        self.dimmap_test(
+        dimmap_test(
             torch.movedim,
             (randn(36, 24, 12), (1, 2), (0, 1)),
             (InputDim(1), InputDim(2), InputDim(0)),
         )
-        self.dimmap_test(
+        dimmap_test(
             torch.movedim,
             (randn(36, 24, 12), (1, 2), (-3, -2)),
             (InputDim(1), InputDim(2), InputDim(0)),
         )
 
-        self.dimmap_test(
+        dimmap_test(
             torch.permute,
             (randn(24, 36, 42), (2, 0, 1)),
             (InputDim(2), InputDim(0), InputDim(1)),
         )
-        self.dimmap_test(
+        dimmap_test(
             torch.permute,
             (randn(24, 36, 42), (-1, -3, -2)),
             (InputDim(2), InputDim(0), InputDim(1)),
         )
 
-        self.dimmap_test(
+        dimmap_test(
             torch.ravel,
             (randn(24, 36),),
             (Flatten((InputDim(0), InputDim(1))),),
         )
-        self.dimmap_test(torch.ravel, (randn(42),), (InputDim(0),))
-        self.dimmap_test(torch.ravel, (randn(()),), (Singleton(),))
+        dimmap_test(torch.ravel, (randn(42),), (InputDim(0),))
+        dimmap_test(torch.ravel, (randn(()),), (Singleton(),))
 
-        self.dimmap_test(
+        dimmap_test(
             Tensor.repeat,
             (randn(24, 36), 1, 2, 1, 1, 2),
             (
@@ -379,13 +389,13 @@ class TestViewOps(DistTensorTestBase):
             ),
         )
 
-        self.dimmap_test(
+        dimmap_test(
             torch.reshape,
             (randn(6, 12, 24), (72, 24)),
             (Flatten((InputDim(0), InputDim(1))), InputDim(2)),
         )
 
-        self.dimmap_test(
+        dimmap_test(
             torch.tile,
             (randn(24, 36), (1, 2, 1, 1, 2)),
             (
@@ -396,50 +406,50 @@ class TestViewOps(DistTensorTestBase):
                 Repeat(InputDim(1), 2),
             ),
         )
-        self.dimmap_test(
+        dimmap_test(
             torch.tile,
             (randn(42, 24, 36), (1, 3)),
             (InputDim(0), InputDim(1), Repeat(InputDim(2), 3)),
         )
 
-        self.dimmap_test(
+        dimmap_test(
             torch.transpose,
             (randn(24, 60, 42, 60), 2, 0),
             (InputDim(2), InputDim(1), InputDim(0), InputDim(3)),
         )
-        self.dimmap_test(
+        dimmap_test(
             torch.transpose,
             (randn(24, 60, 42, 60), -1, 0),
             (InputDim(3), InputDim(1), InputDim(2), InputDim(0)),
         )
 
-        self.dimmap_test(
+        dimmap_test(
             torch.unsqueeze,
             (randn(42, 24, 36), 1),
             (InputDim(0), Singleton(), InputDim(1), InputDim(2)),
         )
 
-        self.dimmap_test(
+        dimmap_test(
             Tensor.view,
             (randn(6, 12, 24), 72, 24),
             (Flatten((InputDim(0), InputDim(1))), InputDim(2)),
         )
 
-        self.dimmap_test(Tensor.view, (randn(1, 1, 12), -1), (InputDim(2),))
+        dimmap_test(Tensor.view, (randn(1, 1, 12), -1), (InputDim(2),))
 
-        self.dimmap_test(
+        dimmap_test(
             Tensor.view,
             (randn(1, 1, 42, 24), -1),
             (Flatten((InputDim(2), InputDim(3))),),
         )
 
-        self.dimmap_test(
+        dimmap_test(
             Tensor.view,
             (randn(1, 1, 42, 1, 24, 1), -1),
             (Flatten((InputDim(2), InputDim(4))),),
         )
 
-        self.dimmap_test(
+        dimmap_test(
             Tensor.view,
             (randn(48, 35, 26), (24, 4, 35, 13)),
             (

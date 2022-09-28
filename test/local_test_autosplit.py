@@ -81,7 +81,7 @@ def run_master(_, args):
     gm, nstages = pippy.ModelSplit.split_on_size_threshold(ec, threshold)
     print(f"Model is split into {nstages} stages")
 
-    print(f"\n======= GraphModule after Auto-split =======")
+    print("\n======= GraphModule after Auto-split =======")
     print(gm)
 
     ec_pipe = Pipe.from_tracing(gm, MULTI_USE_PARAM_CONFIG)

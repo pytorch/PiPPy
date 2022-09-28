@@ -186,7 +186,9 @@ def expand(input_shape: Shape, shape: Shape) -> DimMap:
     return tuple(mapping)
 
 
-def normalize_sizes(sizes: Union[Shape, Tuple[Shape]]) -> Shape:
+def normalize_sizes(
+    sizes: Union[Sequence[int], Sequence[Sequence[int]]],
+) -> Shape:
     if isinstance(sizes[0], int):
         return cast(Shape, sizes)
     elif len(sizes) == 1:
@@ -275,7 +277,7 @@ def infer_size(total_size: int, sizes: Shape) -> Shape:
     return sizes
 
 
-def view_groups(from_size: Shape, to_size: Shape) -> DimMap:
+def view_groups(from_size: Sequence[int], to_size: Sequence[int]) -> DimMap:
     """
     A view or reshape operation can be decomposed into a set of 3 types of smaller operations:
     1) Forward a dimension from input to output

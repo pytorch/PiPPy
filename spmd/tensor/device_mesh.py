@@ -218,7 +218,6 @@ class DeviceMesh(object):
         set_global_device_mesh(self)
         return self
 
-    # pyre-fixme[2]: Parameter must be annotated.
     def __exit__(self, exc_type, exc_value, exc_traceback) -> None:
         # unset global device mesh
         set_global_device_mesh(None)
@@ -236,8 +235,7 @@ class DeviceMesh(object):
     def get_dim_groups(self) -> List[ProcessGroup]:
         return self._dim_groups
 
-    # pyre-fixme[3]: Return type must be annotated.
-    def size(self, dim: int = 0):
+    def size(self, dim: int = 0) -> int:
         return self.mesh.size(dim)
 
     @property
@@ -346,7 +344,9 @@ class DeviceMesh(object):
         return tensor
 
     def broadcast(
-        self, tensor: torch.Tensor, mesh_dim: int = 0
+        self, tensor: torch.Tensor,
+        *,
+        mesh_dim: int = 0,
     ) -> torch.Tensor:
         """
         broadcast the tensor to a device mesh dimension. We by default

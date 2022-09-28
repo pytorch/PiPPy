@@ -1,12 +1,11 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import List, Union
+from typing import Callable, List, Optional, Union
 
+from spmd.tensor import Placement
 from spmd.tensor.api import DTensor
 
 
-# pyre-fixme[3]: Return type must be annotated.
-# pyre-fixme[2]: Parameter must be annotated.
-def unwrap_single_placement(e):
+def unwrap_single_placement(e) -> Optional[Placement]:
     if not isinstance(e, DTensor):
         return None
     assert len(e.placements) == 1, "more than one placement!"
@@ -14,13 +13,8 @@ def unwrap_single_placement(e):
 
 
 # convenient wrapper to register custom operator impls
-# pyre-fixme[3]: Return type must be annotated.
-# pyre-fixme[2]: Parameter must be annotated.
-def register_impl(func):
-    # pyre-fixme[53]: Captured variable `func` is not annotated.
-    # pyre-fixme[3]: Return type must be annotated.
-    # pyre-fixme[2]: Parameter must be annotated.
-    def wrapper(impl):
+def register_impl(func: str) -> Callable:
+    def wrapper(impl: Callable):
         DTensor._custom_dispatch_ops[func] = impl
         return impl
 
@@ -28,13 +22,8 @@ def register_impl(func):
 
 
 # convenient wrapper to register sharding propagation rules
-# pyre-fixme[3]: Return type must be annotated.
-# pyre-fixme[2]: Parameter must be annotated.
-def register_prop_rule(func):
-    # pyre-fixme[53]: Captured variable `func` is not annotated.
-    # pyre-fixme[3]: Return type must be annotated.
-    # pyre-fixme[2]: Parameter must be annotated.
-    def wrapper(impl):
+def register_prop_rule(func: str) -> Callable:
+    def wrapper(impl: Callable):
         DTensor._op_to_rules[func] = impl
         return impl
 

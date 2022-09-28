@@ -9,7 +9,9 @@ from spmd.tensor.ops.utils import register_impl
 
 @register_impl("aten.native_dropout.default")
 def _dist_dropout(
-    self: DTensor, p: float, train: bool
+    self: DTensor,
+    p: float,
+    train: bool,
 ) -> Tuple[DTensor, DTensor]:
     self_placement = self.placements[0]
     # TODO: To figure out why partial tensor does not dispatch here when in CPU.
