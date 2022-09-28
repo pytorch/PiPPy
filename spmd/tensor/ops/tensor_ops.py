@@ -59,7 +59,7 @@ def no_shard_prop_rule(op_schema: OpSchema) -> OutputSharding:
     return OutputSharding(tensor_spec)
 
 
-def new_no_arg_prop_rule(op_schema: OpSchema) -> OutputSharding:
+def new_factory_rule(op_schema: OpSchema) -> OutputSharding:
     # this op would benefit from backward sharding propagation!
     # Since we cannot do that yet, just return replicated
     input = op_schema.args_schema[0]
@@ -69,7 +69,7 @@ def new_no_arg_prop_rule(op_schema: OpSchema) -> OutputSharding:
     return OutputSharding(
         output_spec=DTensorSpec(
             mesh=input.mesh,
-            placements=(Replicate(),) * input.mesh.ndim,
+            placements=[Replicate()] * input.mesh.ndim,
             shape=size,
             ndim=len(size),
         )
@@ -94,7 +94,7 @@ create_like_ops = [
     "aten.zeros_like.default",
 ]
 
-create_no_arg_ops = [
+new_factory_ops = [
     "aten.new_full.default",
     "aten.new_ones.default",
     "aten.new_zeros.default",
@@ -111,8 +111,8 @@ for op in create_like_ops:
 for op in no_shard_prop_ops:
     DTensor._op_to_rules[op] = no_shard_prop_rule
 
-for op in create_no_arg_ops:
-    DTensor._op_to_rules[op] = new_no_arg_prop_rule
+for op in new_factory_ops:
+    DTensor._op_to_rules[op] = new_factory_rule
 
 
 @register_prop_rule("aten.bucketize.Tensor")
