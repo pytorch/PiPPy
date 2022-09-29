@@ -4,8 +4,7 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 from typing import List
-
-from torch.testing._internal.common_methods_invocations import OpInfo, op_db
+from torch.testing._internal.common_methods_invocations import op_db, OpInfo
 
 # Generated from test/gen_dtensor_op_db.py via
 # python spmd/test/gen_dtensor_lagging_op_db.py > spmd/test/dtensor_lagging_op_db.py

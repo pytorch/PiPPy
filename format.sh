@@ -15,14 +15,15 @@ DEFAULT_TARGETS=(
 function format() {
   local TARGET="$1"
 
+  # | autoflake \
+  #   --stdin-display-name "$TARGET" \
+  #   --remove-all-unused-imports \
+  #   - \
+  # | isort \
+  #   --filename "$TARGET" \
+  #   - \
+
   cat "$TARGET" \
-    | autoflake \
-      --stdin-display-name "$TARGET" \
-      --remove-all-unused-imports \
-      - \
-    | isort \
-      --filename "$TARGET" \
-      - \
     | black \
       -q \
       --stdin-filename "$TARGET" \

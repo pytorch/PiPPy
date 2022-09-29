@@ -1,23 +1,23 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-import functools
-import operator
 from dataclasses import dataclass
 from typing import (
     Callable,
     Dict,
     Iterable,
     Optional,
-    Sequence,
-    Set,
     Tuple,
+    Set,
     Union,
+    Sequence,
     cast,
 )
 
+from spmd.tensor.placement_types import DTensorSpec, Placement
+import functools
+import operator
 from spmd.tensor.api import Shard
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.ops.utils import register_prop_rule
-from spmd.tensor.placement_types import DTensorSpec, Placement
 
 
 def _prod(xs: Iterable[int]) -> int:
@@ -31,6 +31,8 @@ Shape = Tuple[int, ...]
 class DimSpec:
     """Specifies how an output dimension maps to an input dimension."""
 
+    pass
+
 
 # Rules that map each dimension of the output to dimensions of the input tensor
 DimMap = Tuple[DimSpec, ...]
@@ -39,6 +41,8 @@ DimMap = Tuple[DimSpec, ...]
 @dataclass
 class Singleton(DimSpec):
     """Output dimension is a singleton"""
+
+    pass
 
 
 @dataclass
@@ -186,9 +190,7 @@ def expand(input_shape: Shape, shape: Shape) -> DimMap:
     return tuple(mapping)
 
 
-def normalize_sizes(
-    sizes: Union[Sequence[int], Sequence[Sequence[int]]],
-) -> Shape:
+def normalize_sizes(sizes: Union[Shape, Tuple[Shape]]) -> Shape:
     if isinstance(sizes[0], int):
         return cast(Shape, sizes)
     elif len(sizes) == 1:
@@ -277,7 +279,7 @@ def infer_size(total_size: int, sizes: Shape) -> Shape:
     return sizes
 
 
-def view_groups(from_size: Sequence[int], to_size: Sequence[int]) -> DimMap:
+def view_groups(from_size: Shape, to_size: Shape) -> DimMap:
     """
     A view or reshape operation can be decomposed into a set of 3 types of smaller operations:
     1) Forward a dimension from input to output

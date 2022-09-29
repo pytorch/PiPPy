@@ -1,24 +1,23 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import warnings
-from typing import Iterable, List, Optional, Sequence
-
+from typing import List, Optional, Iterable, Sequence
 import torch
 import torch.nn.functional as F
 from torch.distributed._spmd.comm_tensor import CommTensor
 from torch.distributed.distributed_c10d import (
-    GroupMember,
-    ProcessGroup,
-    ReduceOp,
-    _get_default_group,
     all_gather,
     all_reduce,
     broadcast,
-    get_global_rank,
     get_rank,
     get_world_size,
-    new_group,
-    reduce_scatter,
+    get_global_rank,
+    ReduceOp,
+    GroupMember,
     scatter,
+    _get_default_group,
+    reduce_scatter,
+    new_group,
+    ProcessGroup,
 )
 
 _global_device_mesh: Optional["DeviceMesh"] = None
@@ -207,6 +206,7 @@ class DeviceMesh(object):
         set_global_device_mesh(self)
         return self
 
+    # pyre-fixme[2]: Parameter must be annotated.
     def __exit__(self, exc_type, exc_value, exc_traceback) -> None:
         # unset global device mesh
         set_global_device_mesh(None)
@@ -224,7 +224,8 @@ class DeviceMesh(object):
     def get_dim_groups(self) -> List[ProcessGroup]:
         return self._dim_groups
 
-    def size(self, dim: int = 0) -> int:
+    # pyre-fixme[3]: Return type must be annotated.
+    def size(self, dim: int = 0):
         return self.mesh.size(dim)
 
     @property
@@ -333,10 +334,7 @@ class DeviceMesh(object):
         return tensor
 
     def broadcast(
-        self,
-        tensor: torch.Tensor,
-        *,
-        mesh_dim: int = 0,
+        self, tensor: torch.Tensor, mesh_dim: int = 0
     ) -> torch.Tensor:
         """
         broadcast the tensor to a device mesh dimension. We by default

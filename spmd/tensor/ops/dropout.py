@@ -1,17 +1,13 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import Tuple
-
 import torch
-
-from spmd.tensor.api import DTensor
+from typing import Tuple
 from spmd.tensor.ops.utils import register_impl
+from spmd.tensor.api import DTensor
 
 
 @register_impl("aten.native_dropout.default")
 def _dist_dropout(
-    self: DTensor,
-    p: float,
-    train: bool,
+    self: DTensor, p: float, train: bool
 ) -> Tuple[DTensor, DTensor]:
     self_placement = self.placements[0]
     # TODO: To figure out why partial tensor does not dispatch here when in CPU.

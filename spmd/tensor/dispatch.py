@@ -1,6 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Tuple, cast
+from typing import List, Callable, Dict, Tuple, Optional, cast
 
 import torch
 from torch.utils._pytree import tree_map
@@ -12,11 +12,12 @@ from torchgen.model import (  # pyre-ignore[21]: Undefined import
 import spmd.tensor.api as dtensor
 from spmd.tensor.placement_types import DTensorSpec, OutputSpecType
 from spmd.tensor.utils import (
-    pack_args_kwargs_with_local_tensor,
     unwrap_local_tensor,
-    unwrap_schema,
     wrap,
+    unwrap_schema,
+    pack_args_kwargs_with_local_tensor,
 )
+
 
 """
 If _ENABLE_FALLBACK set to False, dispatch will fail when an op doesn't

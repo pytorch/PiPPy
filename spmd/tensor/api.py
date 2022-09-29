@@ -1,22 +1,20 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import copy
 import warnings
-from typing import Callable, Dict, Optional, Sequence
-
 import torch
 from torch.utils._pytree import tree_flatten
-
-from spmd.tensor.device_mesh import DeviceMesh, get_global_device_mesh
-from spmd.tensor.dispatch import OpSchema, OutputSharding, operator_dispatch
+from typing import Dict, Callable, Optional, Sequence
+from spmd.tensor.device_mesh import get_global_device_mesh, DeviceMesh
 from spmd.tensor.placement_types import (
-    DTensorSpec,
     Placement,
-    Replicate,
     Shard,
+    Replicate,
     _Partial,
+    DTensorSpec,
 )
 from spmd.tensor.redistribute import Redistribute
 
+from spmd.tensor.dispatch import operator_dispatch, OpSchema, OutputSharding
 
 # NOTE [Autograd interaction between torch.Tensor]
 #
@@ -122,6 +120,7 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
     # custom ops should appear in this table, and overriding the default
     # operators that's been covered by _op_to_rules or fallbacks.
     # (custom operator is the highest priority when dispatching).
+    # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
     _custom_dispatch_ops: Dict[str, Callable] = {}
 
     @staticmethod
@@ -130,6 +129,7 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         local_tensor: torch.Tensor,
         device_mesh: DeviceMesh,
         placements: Sequence[Placement],
+        # pyre-fixme[2]: Parameter must be annotated.
         **kwargs,
     ) -> "DTensor":
         # TODO: add a docstr about tensor constructor
@@ -186,11 +186,15 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         r._local_tensor = local_tensor.detach()
         return r
 
+    # pyre-fixme[14]: `__repr__` overrides method defined in `DTensor` inconsistently.
+    # pyre-fixme[3]: Return type must be annotated.
     def __repr__(self):
         # TODO: consider all_gather the local tensors for better debugging
         return f"DTensor(local_tensor={self._local_tensor}, device_mesh={self._spec.mesh}, placements={self._spec.placements})"
 
     @classmethod
+    # pyre-fixme[3]: Return type must be annotated.
+    # pyre-fixme[2]: Parameter must be annotated.
     def __torch_function__(cls, func, types, args=(), kwargs={}):
         # if we find nn.functional name in dispatch op, dispatch to it instead,
         # this allow us to override some python level behaviors that wouldn't be
@@ -204,6 +208,8 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
             return super().__torch_function__(func, types, args, kwargs)
 
     @classmethod
+    # pyre-fixme[3]: Return type must be annotated.
+    # pyre-fixme[2]: Parameter must be annotated.
     def __torch_dispatch__(cls, func, types, args=(), kwargs=None):
         # check that we are not getting mixed vanilla and Distributed tensors
         arg_list, _ = tree_flatten(args)

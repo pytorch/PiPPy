@@ -5,7 +5,6 @@
 # LICENSE file in the root directory of this source tree.
 
 from typing import List, Tuple
-
 from torch.testing._internal.common_methods_invocations import op_db
 
 

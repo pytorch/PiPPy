@@ -2,15 +2,15 @@
 # pyre-ignore-all-errors[6]
 
 import math
-from typing import Optional, Union
 
 import torch
-
 from spmd.tensor import DTensor as DT
+from spmd.tensor.placement_types import Shard
 from spmd.tensor.parallel._view_with_dim_change import (
     _view_with_sharding_dim_change,
 )
-from spmd.tensor.placement_types import Shard
+
+from typing import Optional, Union
 
 
 # TODO: Add a test to test equivalence between our Multihead Attention

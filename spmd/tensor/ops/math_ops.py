@@ -2,10 +2,11 @@
 from typing import cast
 
 from spmd.tensor.api import DTensor
-from spmd.tensor.dispatch import OpSchema, OutputSharding
-from spmd.tensor.ops.common_rules import pointwise_rule, reduction_rule
-from spmd.tensor.ops.utils import register_prop_rule
 from spmd.tensor.placement_types import DTensorSpec
+from spmd.tensor.dispatch import OpSchema, OutputSharding
+from spmd.tensor.ops.common_rules import reduction_rule, pointwise_rule
+from spmd.tensor.ops.utils import register_prop_rule
+
 
 reduction_ops = [
     "aten.all.default",

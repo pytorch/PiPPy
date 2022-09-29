@@ -1,8 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import List, Optional, Sequence, Tuple, cast
-
 import torch
-
 from spmd.tensor.api import (
     DTensor,
     DTensorSpec,
@@ -14,6 +11,7 @@ from spmd.tensor.api import (
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.ops.common_rules import pointwise_rule
 from spmd.tensor.ops.utils import register_prop_rule
+from typing import List, Optional, Sequence, Tuple, cast
 
 
 # NOTE: the default propagation rule should apply for

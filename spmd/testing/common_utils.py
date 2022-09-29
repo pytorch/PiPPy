@@ -5,33 +5,33 @@ from functools import wraps
 from typing import (
     Any,
     Callable,
-    Dict,
     Iterator,
-    List,
-    Optional,
-    Sequence,
     Tuple,
+    Dict,
+    Optional,
+    List,
+    Sequence,
 )
 
 import torch
 import torch.distributed as dist
-from torch.testing._internal.common_distributed import (
-    TEST_SKIPS,
-    MultiProcessTestCase,
-)
-from torch.utils._pytree import TreeSpec, tree_flatten, tree_unflatten
 
-from spmd import DeviceMesh, Replicate, Shard, distribute_tensor
+from torch.utils._pytree import tree_flatten, tree_unflatten, TreeSpec
+from torch.testing._internal.common_distributed import (
+    MultiProcessTestCase,
+    TEST_SKIPS,
+)
+
+from spmd import DeviceMesh, distribute_tensor, Shard, Replicate
 from spmd.tensor.api import DTensor
 from spmd.tensor.placement_types import Placement
+
 
 # default GPU test size/world size
 TEST_GPU_NUM = 4
 
 
 class DistTensorTestBase(MultiProcessTestCase):
-    device_type: str = "unknown"
-
     @property
     def world_size(self) -> int:
         return TEST_GPU_NUM
@@ -46,8 +46,8 @@ class DistTensorTestBase(MultiProcessTestCase):
         dist.init_process_group(
             backend=backend,
             world_size=self.world_size,
-            rank=self.rank,
-            init_method=f"file://{self.file_name}",
+            rank=self.rank,  # pyre-ignore[16]
+            init_method=f"file://{self.file_name}",  # pyre-ignore[16]
         )
 
         # set device for nccl pg for collectives
@@ -66,9 +66,13 @@ class DistTensorTestBase(MultiProcessTestCase):
 
 # wrapper to initialize comms (processgroup)
 def with_comms(
-    func: Optional[Callable] = None,
+    func: Optional[  # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
+        Callable
+    ] = None,
     backend: Optional[str] = None,
-) -> Optional[Callable]:
+) -> Optional[  # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
+    Callable
+]:
     assert func is not None
 
     @wraps(func)  # pyre-ignore[6]
