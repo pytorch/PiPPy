@@ -1,22 +1,23 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 from torch.testing._internal.common_utils import run_tests
-from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 
 from spmd.tensor.placement_types import Replicate
 from spmd.testing.common_utils import (  # type: ignore
     DistTensorTestBase,
     with_comms,
-    TEST_GPU_NUM,
 )
 from spmd import distribute_tensor, DeviceMesh, Shard
 import itertools
+
+from test.devices import skip_unless_torch_gpu, build_device_mesh
 
 
 class DistMathOpsTest(DistTensorTestBase):
     @with_comms
     def test_sum(self):
-        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        device_mesh = build_device_mesh()
+
         shard_spec = [Shard(0)]
 
         tensor_to_sum = torch.randn(12, 8, 8)
@@ -39,7 +40,8 @@ class DistMathOpsTest(DistTensorTestBase):
     # TODO: forward test can be removed once test_softmax_with_bwd passes on CPU
     @with_comms
     def test_softmax_fwd(self):
-        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        device_mesh = build_device_mesh()
+
         x = torch.rand(8, 12, 16, device=self.device_type)
         dims = range(3)  # used to convert -1 to the actual dim
         softmax_dims = [-1, 0, 1, 2]
@@ -70,9 +72,10 @@ class DistMathOpsTest(DistTensorTestBase):
     # DTensor's _softmax_backward_data produces wrong result on CPU on certain dimension.
     # fail_on_cpu_list = [(0, -1), (1, -1)]
     @with_comms
-    @skip_if_lt_x_gpu(TEST_GPU_NUM)
+    @skip_unless_torch_gpu
     def test_softmax_with_bwd(self):
-        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        device_mesh = build_device_mesh()
+
         dims = range(3)  # used to convert -1 to the actual dim
         softmax_dims = [-1, 0, 1, 2]
         shard_dims = [-1, 0, 1, 2]

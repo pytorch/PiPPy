@@ -4,7 +4,7 @@ import torch.nn as nn
 import functools
 from torch.testing._internal.common_utils import run_tests
 from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
-from spmd.testing.common_utils import DistTensorTestBase, with_comms, TEST_GPU_NUM  # type: ignore
+from spmd.testing.common_utils import DistTensorTestBase, with_comms  # type: ignore
 from spmd import (
     distribute_tensor,
     distribute_module,
@@ -14,6 +14,7 @@ from spmd import (
     Replicate,
 )
 from spmd.tensor.parallel import TensorParallelMultiheadAttention
+from test.devices import NUM_DEVICES, skip_unless_torch_gpu
 
 
 class MLPModule(torch.nn.Module):
@@ -193,7 +194,7 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
 
         # Shard module and initialize optimizer.
         LR = 0.25
-        shard_mlp(model_tp, self.device_type, TEST_GPU_NUM)
+        shard_mlp(model_tp, self.device_type, NUM_DEVICES)
         optim = torch.optim.SGD(model.parameters(), lr=LR)
         optim_tp = torch.optim.SGD(model_tp.parameters(), lr=LR)
 
@@ -273,7 +274,7 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
 
     # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
     @with_comms
-    @skip_if_lt_x_gpu(TEST_GPU_NUM)
+    @skip_unless_torch_gpu
     def test_self_attn_megatron_e2e(self):
         inp_size = [8, 12, 16]
         # Ensure all tp ranks have same input.
@@ -297,7 +298,7 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         self.assertEqual(model.proj.bias, model_tp.proj.bias)
 
         # Shard module and initialize optimizer.
-        shard_self_attn(model_tp, self.device_type, TEST_GPU_NUM)
+        shard_self_attn(model_tp, self.device_type, NUM_DEVICES)
         LR = 0.25
         optim = torch.optim.SGD(model.parameters(), lr=LR)
         optim_tp = torch.optim.SGD(model_tp.parameters(), lr=LR)
