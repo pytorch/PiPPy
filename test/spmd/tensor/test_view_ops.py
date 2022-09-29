@@ -148,8 +148,9 @@ class TestViewOps(DistTensorTestBase):
                     if isinstance(dim, InputDim):
                         no_shard_dims.add(dim.input_dim)
             elif isinstance(rule, Split):
-                if isinstance(rule.input_dim, Flatten):
-                    for dim in rule.input_dim.input_dims[1:]:
+                input_dim = rule.input_dim
+                if isinstance(input_dim, Flatten):
+                    for dim in input_dim.input_dims[1:]:
                         if isinstance(dim, InputDim):
                             no_shard_dims.add(dim.input_dim)
 

@@ -2,7 +2,7 @@
 # implement matrix related ops for distributed tensor
 import torch
 import torch.utils._pytree as pytree
-from typing import List
+from typing import List, Union
 from spmd.tensor.api import DTensor
 from spmd.tensor.utils import unwrap_local_tensor
 from spmd.tensor.ops.utils import unwrap_single_placement, register_impl
@@ -28,8 +28,11 @@ def dist_cat(tensor_list: List[DTensor], dim: int = 0) -> DTensor:
 
 
 @register_impl("aten.split.Tensor")
-# pyre-fixme[2]: Parameter must be annotated.
-def dist_split(self: DTensor, split_size_or_sections, dim=0) -> List[DTensor]:
+def dist_split(
+    self: DTensor,
+    split_size_or_sections: Union[int, List[int]],
+    dim: int = 0,
+) -> List[DTensor]:
     local_mat = pytree.tree_map(unwrap_local_tensor, self)
     mat_placement = pytree.tree_map(unwrap_single_placement, self)
     sharding_dim = mat_placement.dim
@@ -39,7 +42,7 @@ def dist_split(self: DTensor, split_size_or_sections, dim=0) -> List[DTensor]:
     if sharding_dim < 0:
         sharding_dim = self.dim() + sharding_dim
     if dim == sharding_dim:
-        if type(split_size_or_sections) is list:
+        if isinstance(split_size_or_sections, list):
             split_size_or_sections[sharding_dim] //= world_size
         else:
             split_size_or_sections //= world_size

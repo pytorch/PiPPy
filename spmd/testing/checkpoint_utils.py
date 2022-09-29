@@ -8,12 +8,8 @@ import torch.distributed as dist
 
 # wrapper to initialize temp directory for checkpoint
 def with_temp_dir(
-    func: Optional[  # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
-        Callable
-    ] = None,
-) -> Optional[  # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
-    Callable
-]:
+    func: Optional[Callable] = None,
+) -> Optional[Callable]:
     assert func is not None
 
     @wraps(func)  # pyre-ignore[6]

@@ -46,8 +46,8 @@ class DistTensorTestBase(MultiProcessTestCase):
         dist.init_process_group(
             backend=backend,
             world_size=self.world_size,
-            rank=self.rank,  # pyre-ignore[16]
-            init_method=f"file://{self.file_name}",  # pyre-ignore[16]
+            rank=self.rank,
+            init_method=f"file://{self.file_name}",
         )
 
         # set device for nccl pg for collectives
@@ -66,13 +66,9 @@ class DistTensorTestBase(MultiProcessTestCase):
 
 # wrapper to initialize comms (processgroup)
 def with_comms(
-    func: Optional[  # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
-        Callable
-    ] = None,
+    func: Optional[Callable] = None,
     backend: Optional[str] = None,
-) -> Optional[  # pyre-fixme[24]: Generic type `Callable` expects 2 type parameters.
-    Callable
-]:
+) -> Optional[Callable]:
     assert func is not None
 
     @wraps(func)  # pyre-ignore[6]

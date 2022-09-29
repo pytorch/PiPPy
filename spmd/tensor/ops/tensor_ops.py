@@ -329,7 +329,11 @@ def prop_index_select(op_schema: OpSchema) -> OutputSharding:
     if result.schema_suggestions:
         result.schema_suggestions = [
             OpSchema(
-                args_schema=(s.args_schema[0], dim, s.args_schema[1][dim]),
+                args_schema=(
+                    s.args_schema[0],
+                    dim,
+                    cast(torch.Tensor, s.args_schema[1])[dim],
+                ),
                 kwargs_schema=op_schema.kwargs_schema,
             )
             for s in result.schema_suggestions

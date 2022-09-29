@@ -180,7 +180,6 @@ def redistribute_dtensor(
 class Redistribute(torch.autograd.Function):
     @staticmethod
     def forward(  # type: ignore
-        # pyre-fixme[2]: Parameter must be annotated.
         ctx,
         input: "dtensor.DTensor",
         device_mesh: DeviceMesh,
