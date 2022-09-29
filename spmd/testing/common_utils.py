@@ -12,6 +12,7 @@ from typing import (
     List,
     Sequence,
 )
+from unittest import TestCase
 
 import torch
 import torch.distributed as dist
@@ -31,7 +32,14 @@ from spmd.tensor.placement_types import Placement
 TEST_GPU_NUM = 4
 
 
-class DistTensorTestBase(MultiProcessTestCase):
+class DistTensorTestBase(MultiProcessTestCase, TestCase):
+    _device_type: Optional[str] = None
+
+    @property
+    def device_type(self) -> str:
+        assert self._device_type is not None, "device_type is unset"
+        return self._device_type
+
     @property
     def world_size(self) -> int:
         return TEST_GPU_NUM
@@ -43,11 +51,16 @@ class DistTensorTestBase(MultiProcessTestCase):
         if backend not in ["nccl", "gloo", "mpi"]:
             raise RuntimeError(f"Backend {backend} not supported!")
 
+        assert self.rank is not None, "self.rank is unset"
+        rank = self.rank
+        assert self.file_name is not None, "self.file_name is unset"
+        file_name = self.file_name
+
         dist.init_process_group(
             backend=backend,
             world_size=self.world_size,
-            rank=self.rank,
-            init_method=f"file://{self.file_name}",
+            rank=rank,
+            init_method=f"file://{file_name}",
         )
 
         # set device for nccl pg for collectives
@@ -82,10 +95,11 @@ def with_comms(
         if pg_backend == "nccl" and torch.cuda.device_count() < self.world_size:
             sys.exit(TEST_SKIPS[f"multi-gpu-{self.world_size}"].exit_code)
 
-        self.device_type = "cuda" if pg_backend == "nccl" else "cpu"
+        self._device_type = "cuda" if pg_backend == "nccl" else "cpu"
         self.init_pg(backend=pg_backend)
         func(self)  # type: ignore
         self.destroy_pg()
+        self._device_type = None
 
     return wrapper
 
