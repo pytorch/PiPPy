@@ -13,12 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from dataclasses import dataclass
-from enum import Enum
 from typing import List, Tuple
 
 import numpy as np
-
 import pippy.fx
+from enum import Enum
+
 from pippy import pipe_split
 
 try:
@@ -75,10 +75,7 @@ NUMPY_RANDOM_SEED = 42
 
 
 def estimate_intra_costs(
-    n_submesh_choices,
-    n_layers,
-    max_n_succ_stages=4096,
-    n_autosharding_configs=1,
+    n_submesh_choices, n_layers, max_n_succ_stages=4096, n_autosharding_configs=1
 ):
     np.random.seed(NUMPY_RANDOM_SEED)
     intra_costs = np.random.rand(
@@ -115,11 +112,7 @@ def get_optimal_submesh_assignments(
         ]
         assert next_start_layer != -1 and current_devices != -1
         optimal_layer_submesh_assignments.append(
-            (
-                (current_layer, next_start_layer),
-                submesh_shape_idx,
-                sharding_config_idx,
-            )
+            ((current_layer, next_start_layer), submesh_shape_idx, sharding_config_idx)
         )
         current_s -= 1
         current_layer = next_start_layer
@@ -140,9 +133,7 @@ def inter_op_dp_inner_loop(
     of each stage placement (if s - 1 > max_n_succ_stages check then placing that stage
     would lead to OOM and thus continue).
     """
-    F = np.full(
-        (n_layers + 1, n_layers + 1, n_devices + 1), np.inf, dtype=np.float32
-    )
+    F = np.full((n_layers + 1, n_layers + 1, n_devices + 1), np.inf, dtype=np.float32)
     F_stage_max = np.full(
         (n_layers + 1, n_layers + 1, n_devices + 1), 0.0, dtype=np.float32
     )
@@ -174,9 +165,7 @@ def inter_op_dp_inner_loop(
                     ):
                         continue
 
-                    new_cost = (
-                        F[s - 1, i + 1, d - n_submesh_devices] + stage_cost
-                    )
+                    new_cost = F[s - 1, i + 1, d - n_submesh_devices] + stage_cost
                     if new_cost < F[s, l, d]:
                         F[s, l, d] = new_cost
                         F_argmin[s, l, d] = (
@@ -185,8 +174,7 @@ def inter_op_dp_inner_loop(
                             sharding_config_idx,
                         )
                         F_stage_max[s, l, d] = max(
-                            F_stage_max[s - 1, i + 1, d - n_submesh_devices],
-                            stage_cost,
+                            F_stage_max[s - 1, i + 1, d - n_submesh_devices], stage_cost
                         )
 
     return F, F_stage_max, F_argmin
@@ -222,17 +210,13 @@ def inter_op_dp(
         # Optimization that lifts a check for stage_cost <= t_max_stage_cost
         # out of the inner dp loop (see alpa/~/stage_construction.py#L121).
         # This yields a ~100-200x improvement over the baseline implementation.
-        valid_cost_idxs = np.transpose(
-            (intra_compute_costs <= intra_cost).nonzero()
-        )
+        valid_cost_idxs = np.transpose((intra_compute_costs <= intra_cost).nonzero())
         # This corresponds to the i of k <= i <= K from eqn. 3 in the alpa paper.
         valid_cost_idxs = valid_cost_idxs[
             valid_cost_idxs[:, 0] <= valid_cost_idxs[:, 1]
         ]
         valid_costs = intra_compute_costs[tuple(valid_cost_idxs.T)]
-        valid_idxs_costs = np.hstack(
-            [valid_cost_idxs, valid_costs[:, np.newaxis]]
-        )
+        valid_idxs_costs = np.hstack([valid_cost_idxs, valid_costs[:, np.newaxis]])
 
         F, F_stage_max, F_argmin = inter_op_dp_inner_loop(
             n_layers,

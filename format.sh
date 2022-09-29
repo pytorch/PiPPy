@@ -6,7 +6,7 @@ DEFAULT_TARGETS=(
   $( git ls-files | \
 	  grep '\.py$' | \
 	  grep -v '^examples' | \
-	  grep -v '^pippy/fx' | \
+	  grep -v '^pippy' | \
 	  grep -v '^test/test_fx' | \
 	  grep -v '^test/fx' )
 )

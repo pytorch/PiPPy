@@ -12,17 +12,13 @@ import torch.distributed
 import transformers
 import transformers.utils.fx as fx
 from transformers import (
-    Seq2SeqTrainer,
-    Seq2SeqTrainingArguments,
-    Trainer,
-    TrainingArguments,
+    TrainingArguments, Seq2SeqTrainingArguments, Trainer, Seq2SeqTrainer
 )
 from transformers.modeling_utils import ModuleUtilsMixin
 from transformers.utils import (
-    cached_property,
     is_torch_available,
-    torch_required,
 )
+from transformers.utils import torch_required, cached_property
 
 import pippy.hf.bart as bart
 import pippy.hf.bert as bert
@@ -38,7 +34,9 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class PiPPyTrainingArguments(TrainingArguments):
-    dp_group_size: int = field(default=-1, metadata={"help": "DP group size."})
+    dp_group_size: int = field(
+        default=-1, metadata={"help": "DP group size."}
+    )
 
     pp_group_size: int = field(
         default=-1, metadata={"help": "Pipeline group size."}
@@ -49,38 +47,28 @@ class PiPPyTrainingArguments(TrainingArguments):
     )
 
     driver_index: int = field(
-        default=-1,
-        metadata={
-            "help": "Index of current pipeline driver in all pipeline drivers."
-        },
+        default=-1, metadata={"help": "Index of current pipeline driver in all pipeline drivers."}
     )
 
     local_driver_index: int = field(
-        default=-1,
-        metadata={
-            "help": "Index of current pipeline driver in local pipeline drivers."
-        },
+        default=-1, metadata={"help": "Index of current pipeline driver in local pipeline drivers."}
     )
 
     master_addr: str = field(
-        default=os.getenv("MASTER_ADDR", "localhost"),
-        metadata={"help": "Master address."},
+        default=os.getenv('MASTER_ADDR', 'localhost'), metadata={"help": "Master address."},
     )
 
     master_port: str = field(
-        default=os.getenv("MASTER_PORT", "29500"),
-        metadata={"help": "Master port."},
+        default=os.getenv('MASTER_PORT', '29500'), metadata={"help": "Master port."},
     )
 
     exclude_master: int = field(
-        default=0,
-        metadata={"help": "Exclude master.", "choices": [0, 1]},
+        default=0, metadata={"help": "Exclude master.", "choices": [0, 1]},
     )
 
     # TODO: use `no_cuda` instead?
     cuda: int = field(
-        default=int(torch.cuda.is_available()),
-        metadata={"help": "Exclude master.", "choices": [0, 1]},
+        default=int(torch.cuda.is_available()), metadata={"help": "Exclude master.", "choices": [0, 1]},
     )
 
     chunks: Optional[int] = field(
@@ -91,7 +79,9 @@ class PiPPyTrainingArguments(TrainingArguments):
         default=0, metadata={"help": "Record memory dumps flag."}
     )
 
-    checkpoint: int = field(default=1, metadata={"help": "Checkpoint flag."})
+    checkpoint: int = field(
+        default=1, metadata={"help": "Checkpoint flag."}
+    )
 
     _device: Optional[torch.device] = None
 
@@ -99,9 +89,9 @@ class PiPPyTrainingArguments(TrainingArguments):
     def device(self):
         if self.rank == -1:
             if self.cuda and torch.cuda.is_available():
-                return torch.device("cuda")
+                return torch.device('cuda')
             else:
-                return torch.device("cpu")
+                return torch.device('cpu')
         else:
             return super().device
 
@@ -127,12 +117,12 @@ class PiPPyTrainingArguments(TrainingArguments):
             n_devs = torch.cuda.device_count()
             if n_devs > 0:
                 dev_id = self.rank % n_devs
-                self._device = torch.device(f"cuda:{dev_id}")
+                self._device = torch.device(f'cuda:{dev_id}')
             else:
                 self.cuda = 0
-                self._device = torch.device("cpu")
+                self._device = torch.device('cpu')
         else:
-            self._device = torch.device("cpu")
+            self._device = torch.device('cpu')
         return self._device
 
     # Overriding property `world_size` in TrainingArguments
@@ -155,9 +145,7 @@ class PiPPyTrainingArguments(TrainingArguments):
 
     def __post_init__(self):
         super().__post_init__()
-        self.local_rank = (
-            -1
-        )  # must be -1 to disable automatic DDP in the HF trainer
+        self.local_rank = -1  # must be -1 to disable automatic DDP in the HF trainer
 
     @contextlib.contextmanager
     def main_process_first(self, local=True, desc="work"):
@@ -174,9 +162,7 @@ class PiPPyTrainingArguments(TrainingArguments):
             try:
                 if not is_main_process:
                     # tell all replicas to wait
-                    logger.debug(
-                        f"{self.process_index}: waiting for the {main_process_desc} to perform {desc}"
-                    )
+                    logger.debug(f"{self.process_index}: waiting for the {main_process_desc} to perform {desc}")
                     # if is_torch_tpu_available():
                     #     xm.rendezvous(desc)
                     # elif is_sagemaker_dp_enabled():
@@ -199,49 +185,34 @@ class PiPPyTrainingArguments(TrainingArguments):
 
 
 @dataclass
-class PiPPySeq2SeqTrainingArguments(
-    PiPPyTrainingArguments, Seq2SeqTrainingArguments
-):
+class PiPPySeq2SeqTrainingArguments(PiPPyTrainingArguments, Seq2SeqTrainingArguments):
     pass
 
 
-def _backward(
-    self, gradient=None, retain_graph=None, create_graph=False, inputs=None
-):
+def _backward(self, gradient=None, retain_graph=None, create_graph=False, inputs=None):
     # No-op backward for pipe mode, because otherwise HF Trainer will call loss.backward second time and will crash
     pass
 
 
 class PiPPyTrainer(Trainer):
+
     def create_optimizer(self):
-        optimizer_cls, optimizer_kwargs = Trainer.get_optimizer_cls_and_kwargs(
-            self.args
-        )
-        self.optimizer = self.model.instantiate_optimizer(
-            optimizer_cls, **optimizer_kwargs
-        )
+        optimizer_cls, optimizer_kwargs = Trainer.get_optimizer_cls_and_kwargs(self.args)
+        self.optimizer = self.model.instantiate_optimizer(optimizer_cls, **optimizer_kwargs)
         return self.optimizer
 
-    def create_scheduler(
-        self, num_training_steps: int, optimizer: torch.optim.Optimizer = None
-    ):
+    def create_scheduler(self, num_training_steps: int, optimizer: torch.optim.Optimizer = None):
         if self.lr_scheduler is None:
             self.lr_scheduler = self.model.instantiate_lr_scheduler(
-                transformers.optimization.TYPE_TO_SCHEDULER_FUNCTION[
-                    self.args.lr_scheduler_type
-                ],
-                num_warmup_steps=self.args.get_warmup_steps(
-                    self.args.max_steps
-                ),
-                num_training_steps=self.args.max_steps,
+                transformers.optimization.TYPE_TO_SCHEDULER_FUNCTION[self.args.lr_scheduler_type],
+                num_warmup_steps=self.args.get_warmup_steps(self.args.max_steps),
+                num_training_steps=self.args.max_steps
             )
         return self.lr_scheduler
 
     def compute_loss(self, model, inputs, return_outputs=False):
         if return_outputs:
-            loss, outputs = Trainer.compute_loss(
-                self, model, inputs, return_outputs
-            )
+            loss, outputs = Trainer.compute_loss(self, model, inputs, return_outputs)
             loss.backward = types.MethodType(_backward, loss)
             return loss, outputs
         else:
@@ -255,11 +226,11 @@ class PiPPySeq2SeqTrainer(PiPPyTrainer, Seq2SeqTrainer):
 
 
 model_to_wrap = {
-    "BertForSequenceClassification": bert.wrap,
-    "GPT2LMHeadModel": gpt2.wrap,
-    "RobertaForMaskedLM": roberta.wrap,
-    "T5ForConditionalGeneration": t5.wrap,
-    "BartForConditionalGeneration": bart.wrap,
+    'BertForSequenceClassification': bert.wrap,
+    'GPT2LMHeadModel': gpt2.wrap,
+    'RobertaForMaskedLM': roberta.wrap,
+    'T5ForConditionalGeneration': t5.wrap,
+    'BartForConditionalGeneration': bart.wrap
 }
 
 
@@ -276,9 +247,7 @@ def torch_full_like_wrapper(*args, **kwargs):
 
 
 def torch_create_extended_attention_mask_for_decoder_wrapper(*args, **kwargs):
-    return ModuleUtilsMixin.create_extended_attention_mask_for_decoder(
-        *args, **kwargs
-    )
+    return ModuleUtilsMixin.create_extended_attention_mask_for_decoder(*args, **kwargs)
 
 
 def torch_zeros_wrapper(*args, **kwargs):
@@ -289,75 +258,47 @@ class PiPPyHFTracer(fx.HFTracer):
     def trace(self, *args, **kwargs):
         graph = super().trace(*args, **kwargs)
         for node in graph.nodes:
-            if node.op == "call_function":
-                if getattr(node.target, "_orig", None) == torch.ones:
+            if node.op == 'call_function':
+                if getattr(node.target, '_orig', None) == torch.ones:
                     node.target = torch_ones_wrapper
-                elif getattr(node.target, "_orig", None) == torch.arange:
+                elif getattr(node.target, '_orig', None) == torch.arange:
                     node.target = torch_arange_wrapper
-                elif getattr(node.target, "_orig", None) == torch.full_like:
+                elif getattr(node.target, '_orig', None) == torch.full_like:
                     node.target = torch_full_like_wrapper
-                elif (
-                    getattr(node.target, "_orig", None)
-                    == ModuleUtilsMixin.create_extended_attention_mask_for_decoder
-                ):
-                    node.target = (
-                        torch_create_extended_attention_mask_for_decoder_wrapper
-                    )
-                elif getattr(node.target, "_orig", None) == torch.zeros:
+                elif getattr(node.target, '_orig', None) == ModuleUtilsMixin.create_extended_attention_mask_for_decoder:
+                    node.target = torch_create_extended_attention_mask_for_decoder_wrapper
+                elif getattr(node.target, '_orig', None) == torch.zeros:
                     node.target = torch_zeros_wrapper
         return graph
 
 
-def wrap(
-    model,
-    training_args,
-    pp_ranks,
-    args_chunk_spec,
-    kwargs_chunk_spec,
-    output_chunk_spec,
-):
+def wrap(model, training_args, pp_ranks, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec):
     model.to(training_args.device)
-    logger.info("[PiPPy] Splitting model ...")
+    logger.info('[PiPPy] Splitting model ...')
     model_to_wrap[model.__class__.__name__](model, training_args, pp_ranks)
 
-    all_worker_ranks = pp_ranks[training_args.exclude_master :]
+    all_worker_ranks = pp_ranks[training_args.exclude_master:]
 
     input_names = list(kwargs_chunk_spec.keys())
     sig = inspect.signature(model.forward)
-    concrete_args = {
-        p.name: p.default
-        for p in sig.parameters.values()
-        if p.name not in input_names
-    }
+    concrete_args = {p.name: p.default for p in sig.parameters.values() if p.name not in input_names}
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.TRANSMIT
-    output_loss_value_spec = {
-        k: isinstance(v, CustomReducer) for k, v in output_chunk_spec.items()
-    }
+    output_loss_value_spec = {k: isinstance(v, CustomReducer) for k, v in output_chunk_spec.items()}
     model_config = model.config
 
-    logger.info("[PiPPy] Creating pipeline ...")
-    model = Pipe.from_tracing(
-        model,
-        MULTI_USE_PARAM_CONFIG,
-        tracer=PiPPyHFTracer(),
-        concrete_args=concrete_args,
-        output_loss_value_spec=output_loss_value_spec,
-    )
+    logger.info('[PiPPy] Creating pipeline ...')
+    model = Pipe.from_tracing(model, MULTI_USE_PARAM_CONFIG, tracer=PiPPyHFTracer(), concrete_args=concrete_args,
+                              output_loss_value_spec=output_loss_value_spec)
     model.config = model_config
 
-    logger.info("[PiPPy] Initializing pipeline driver ...")
-    model = PipelineDriverFillDrain(
-        model,
-        training_args.chunks or len(all_worker_ranks),
-        args_chunk_spec,
-        kwargs_chunk_spec,
-        output_chunk_spec,
-        world_size=len(all_worker_ranks),
-        all_ranks=all_worker_ranks,
-        _debug_mask_minibatches=False,
-        _record_mem_dumps=bool(training_args.record_mem_dumps),
-        checkpoint=bool(training_args.checkpoint),
-    )
+    logger.info('[PiPPy] Initializing pipeline driver ...')
+    model = PipelineDriverFillDrain(model, training_args.chunks or len(all_worker_ranks),
+                                    args_chunk_spec, kwargs_chunk_spec, output_chunk_spec,
+                                    world_size=len(all_worker_ranks),
+                                    all_ranks=all_worker_ranks,
+                                    _debug_mask_minibatches=False,
+                                    _record_mem_dumps=bool(training_args.record_mem_dumps),
+                                    checkpoint=bool(training_args.checkpoint))
     model.config = model_config
 
     model.init_data_parallel(dp_group_size=training_args.dp_group_size)
