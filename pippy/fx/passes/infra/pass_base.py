@@ -1,6 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import abc
 from collections import namedtuple
+from typing import Optional
 
 from pippy.fx.graph_module import GraphModule
 from pippy.fx._compatibility import compatibility
@@ -34,7 +35,7 @@ class PassBase(abc.ABC):
     def __init__(self) -> None:
         pass
 
-    def __call__(self, graph_module: GraphModule) -> PassResult:
+    def __call__(self, graph_module: GraphModule) -> Optional[PassResult]:
         """
         Runs the precondition check, the pass itself, and the postcondition check.
         """
@@ -45,7 +46,7 @@ class PassBase(abc.ABC):
         return res
 
     @abc.abstractmethod
-    def call(self, graph_module: GraphModule) -> PassResult:
+    def call(self, graph_module: GraphModule) -> Optional[PassResult]:
         """
         The pass that is run through the given graph module. To implement a
         pass, it is required to implement this function.

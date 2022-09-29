@@ -1,18 +1,18 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from functools import reduce
-import torch
+import itertools
 import operator
-import pippy.fx
-from pippy.fx.tensor_type import Dyn, is_consistent, TensorType, is_more_precise
+from functools import reduce
 from typing import Callable, Dict
-from pippy.fx.node import Target, Node
+
+import torch
 from torch.nn.modules.batchnorm import BatchNorm2d
 from torch.nn.modules.conv import Conv2d
+
+import pippy
 from pippy.fx.experimental.refinement_types import Equality
-import itertools
-
 from pippy.fx.experimental.unification import Var  # type: ignore[attr-defined]
-
+from pippy.fx.node import Target, Node
+from pippy.fx.tensor_type import Dyn, is_consistent, TensorType, is_more_precise
 
 try:
     import sympy  # type: ignore[import]

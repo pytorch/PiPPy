@@ -22,7 +22,7 @@ jobs:
       run: |
         pip install --upgrade pip
         pip install -r docs/requirements.txt
-        pip install types-docutils types-setuptools tqdm
+        pip install types-docutils types-setuptools tqdm types-tabulate
         if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
         pip install --pre torchvision -f https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html
         pip install git+https://github.com/pbelevich/transformers.git@compatible_with_pt_master
