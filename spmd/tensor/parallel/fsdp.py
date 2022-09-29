@@ -273,11 +273,11 @@ def _pre_load_state_dict(
 
 
 try:
-    from torch.distributed.fsdp._tensor_flattener import (
-        _set_tensor_flattener,
-        TensorFlattener,
+    from torch.distributed.fsdp._fsdp_extensions import (
+        _set_fsdp_extensions,
+        FSDPExtensions,
     )
-    class TensorFlattener2DParallel(TensorFlattener):
+    class DTensorExtensions(FSDPExtensions):
         def pre_flatten_transform(
             self,
             tensor: torch.Tensor,
@@ -311,7 +311,7 @@ try:
         ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
             return _pre_load_state_dict(tensor)
 
-    _set_tensor_flattener(TensorFlattener2DParallel())
+    _set_fsdp_extensions(DTensorExtensions())
 
     def is_available():
         return True

@@ -16,7 +16,7 @@ import torch.distributed.distributed_c10d as distributed_c10d
 
 from torch.testing._internal.common_utils import run_tests
 from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
-from spmd.fsdp import is_available
+from spmd.tensor.parallel.fsdp import is_available
 
 from spmd.testing.common_utils import (
     DistTensorTestBase,
@@ -182,8 +182,7 @@ class Test2dParallelIntegration(DistTensorTestBase):
             self.assertTrue(is_nested_tensor(state_dict["net1.weight"]))
             self.assertFalse(is_nested_tensor(state_dict["net3.bias"]))
 
-        optim_input = list(model_tp.parameters())
-        optim = torch.optim.Adam(optim_input, lr=0.0001)
+        optim = torch.optim.Adam(model_tp.parameters(), lr=0.0001)
 
         # Create Input
         input_seed = self.rank
@@ -193,7 +192,7 @@ class Test2dParallelIntegration(DistTensorTestBase):
         model_tp(input).sum().backward()
         optim.step()
 
-        optim_state = FSDP.sharded_optim_state_dict(model_tp, optim, optim_input)
+        optim_state = FSDP.sharded_optim_state_dict(model_tp, optim)
         # TODO once 2D is out, validate the nesting
         self.assertTrue(is_nested_tensor(optim_state["state"]["net1.weight"]["exp_avg"]))
         self.assertFalse(is_nested_tensor(optim_state["state"]["net3.bias"]["exp_avg"]))
