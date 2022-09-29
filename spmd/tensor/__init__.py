@@ -3,11 +3,12 @@ from typing import Optional, Sequence, cast
 
 import torch
 
+# Import all builtin dist tensor ops
+# This import has register side-effects.
+import spmd.tensor.ops  # noqa
 from spmd.tensor.api import DTensor
 from spmd.tensor.device_mesh import DeviceMesh, get_global_device_mesh
 from spmd.tensor.placement_types import Placement, Replicate, Shard, _Partial
-
-# Import all builtin dist tensor ops
 
 
 def distribute_tensor(
