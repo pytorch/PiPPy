@@ -1,7 +1,7 @@
 import warnings
 import functools
 import copy
-from typing import Any, List, NamedTuple, Optional, Tuple, cast
+from typing import List, NamedTuple, Optional, Tuple, cast
 
 import torch
 import torch.distributed as dist
@@ -167,7 +167,7 @@ def _rewrite_spec_if_needed(
 
 def _flatten_tensor(
     tensor: torch.Tensor,
-) -> Tuple[torch.Tensor, Optional[Any]]:
+) -> Tuple[torch.Tensor, Optional[_STShardingInfo]]:
     if type(tensor) is ShardedTensor:
         return tensor.local_tensor(), _STShardingInfo(
             tensor.sharding_spec(),
@@ -203,13 +203,13 @@ def _unflatten_tensor(
                 dist.get_rank(sharding_info.process_group),
             ),
             sharding_info.global_size,
-            process_group=sharding_info.process_group,
+            process_group=cast(dist.ProcessGroup, sharding_info.process_group),
         )
     else:
 
         def _dt_gradient_hook(
             param: DistributedTensor, grad: DistributedTensor
-        ):
+        ) -> None:
             param.grad = grad
             param._local_tensor.grad = grad._local_tensor
 
@@ -242,7 +242,7 @@ def _chunk_tensor(
             rank,
             world_size,
             num_devices_per_node,
-            pg,
+            cast(dist.ProcessGroup, pg),
         )
 
         outer_local_shard = tensor.local_shards()[0]
@@ -270,7 +270,7 @@ def _chunk_tensor(
             rank,
             world_size,
             torch.cuda.device_count(),
-            pg,
+            cast(dist.ProcessGroup, pg),
         )
 
         dt_pg = _get_dt_pg(tensor)
@@ -294,7 +294,7 @@ def _chunk_tensor(
         return st_outer
     else:
         return _create_chunk_sharded_tensor(
-            tensor, rank, world_size, num_devices_per_node, pg
+            tensor, rank, world_size, num_devices_per_node, cast(dist.ProcessGroup, pg)
         )
 
 
@@ -303,8 +303,8 @@ def _pre_load_state_dict(
 ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
     shards = cast(ShardedTensor, tensor).local_shards()
     if len(shards) == 1 and type(shards[0].tensor) is ShardedTensor:
-        tensor = shards[0].tensor
-        shards = tensor.local_shards()
+        inner_tensor = cast(ShardedTensor, shards[0].tensor)
+        shards = inner_tensor.local_shards()
 
     return (tensor, [shards[0].tensor] if len(shards) > 0 else [])
 
@@ -320,13 +320,13 @@ try:
         def pre_flatten_transform(
             self,
             tensor: torch.Tensor,
-        ) -> Tuple[torch.Tensor, Optional[Any]]:
+        ) -> Tuple[torch.Tensor, Optional[_STShardingInfo]]:
             return _flatten_tensor(tensor)
 
         def post_unflatten_transform(
-            self, tensor: torch.Tensor, sharding_info: _STShardingInfo
+            self, tensor: torch.Tensor, param_extension: _STShardingInfo
         ) -> torch.Tensor:
-            return _unflatten_tensor(tensor, sharding_info)
+            return _unflatten_tensor(tensor, param_extension)
 
         def chunk_tensor(
             self,
@@ -334,7 +334,7 @@ try:
             rank: int,
             world_size: int,
             num_devices_per_node: int,
-            pg: c10d.ProcessGroup,
+            pg: dist.ProcessGroup,
         ) -> torch.Tensor:
             return _chunk_tensor(
                 tensor, rank, world_size, num_devices_per_node, pg
