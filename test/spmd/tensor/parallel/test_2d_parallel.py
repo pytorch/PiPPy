@@ -1,9 +1,7 @@
-import os
 import functools
 from typing import Any
 
 
-from torch.distributed._shard.api import _shard_tensor
 import torch
 import torch.nn.functional as F
 import torch.distributed as dist
@@ -21,7 +19,6 @@ from spmd.tensor.parallel.fsdp import is_available
 from spmd.testing.common_utils import (
     DistTensorTestBase,
     with_comms,
-    TEST_GPU_NUM,
 )
 
 # Tensor-Parallel degree
@@ -39,6 +36,7 @@ SHARD_PARAMS = [
     "net2.weight",
 ]
 
+
 class SimpleModel(torch.nn.Module):
     def __init__(self):
         super(SimpleModel, self).__init__()
@@ -53,6 +51,7 @@ class SimpleModel(torch.nn.Module):
         x = F.relu(self.net3(x))
         return x
 
+
 def _aggregate_local_tensor(module: torch.nn.Module) -> torch.nn.Module:
     def hook_func(_module, _input, output):
         if isinstance(output, DT):
@@ -64,6 +63,7 @@ def _aggregate_local_tensor(module: torch.nn.Module) -> torch.nn.Module:
     module.register_forward_hook(hook_func)
     return module
 
+
 def _replicate_input_tensor(
     module: torch.nn.Module, device_mesh, replica_placement
 ) -> torch.nn.Module:
@@ -74,8 +74,10 @@ def _replicate_input_tensor(
     module.register_forward_pre_hook(hook_func)
     return module
 
+
 def _gradient_hook(param, grad):
     param._local_tensor.grad = grad._local_tensor
+
 
 def shard_module(m, pg):
     start_idx = distributed_c10d.get_global_rank(pg, 0)
@@ -105,12 +107,9 @@ def shard_module(m, pg):
     m.net2.weight.register_hook(
         functools.partial(_gradient_hook, m.net2.weight)
     )
-    m.net1.bias.register_hook(
-        functools.partial(_gradient_hook, m.net1.bias)
-    )
-    m.net2.bias.register_hook(
-        functools.partial(_gradient_hook, m.net2.bias)
-    )
+    m.net1.bias.register_hook(functools.partial(_gradient_hook, m.net1.bias))
+    m.net2.bias.register_hook(functools.partial(_gradient_hook, m.net2.bias))
+
 
 def _shard_wrap_module(module, module_shard, fsdp_wrap, tp_pg, fsdp_pg):
     if module_shard:
@@ -123,7 +122,8 @@ def _shard_wrap_module(module, module_shard, fsdp_wrap, tp_pg, fsdp_pg):
         return FSDP(module, process_group=distributed_c10d._get_default_group())
     return module
 
-def init_model(model_parallel_size = TP_DEGREE):
+
+def init_model(model_parallel_size=TP_DEGREE):
     rank = dist.get_rank()
     torch.cuda.set_device(rank)
     world_size = dist.get_world_size()
@@ -148,10 +148,9 @@ def init_model(model_parallel_size = TP_DEGREE):
     fsdp_pg = data_parallel_pgs[rank % model_parallel_size]
 
     # Create Input
-    model = _shard_wrap_module(
-        model, True, True, tp_pg, fsdp_pg
-    )
+    model = _shard_wrap_module(model, True, True, tp_pg, fsdp_pg)
     return model, tp_pg, fsdp_pg
+
 
 def is_nested_tensor(val: Any) -> bool:
     if isinstance(val, ShardedTensor):
@@ -162,7 +161,9 @@ def is_nested_tensor(val: Any) -> bool:
         if isinstance(val.local_shards()[0].tensor, DT):
             raise ValueError("Cannot handle DT nested insided ST")
     # Safety valve for when this eventually happen
-    elif isinstance(val, DT) and isinstance(val._local_tensor, (DT, ShardedTensor)):
+    elif isinstance(val, DT) and isinstance(
+        val._local_tensor, (DT, ShardedTensor)
+    ):
         raise ValueError("Cannot handle nested DT")
     return False
 
@@ -187,15 +188,20 @@ class Test2dParallelIntegration(DistTensorTestBase):
         # Create Input
         input_seed = self.rank
         torch.manual_seed(input_seed + 1)
-        input = torch.rand(4,5).cuda(self.rank)
+        input = torch.rand(4, 5).cuda(self.rank)
 
         model_tp(input).sum().backward()
         optim.step()
 
         optim_state = FSDP.sharded_optim_state_dict(model_tp, optim)
         # TODO once 2D is out, validate the nesting
-        self.assertTrue(is_nested_tensor(optim_state["state"]["net1.weight"]["exp_avg"]))
-        self.assertFalse(is_nested_tensor(optim_state["state"]["net3.bias"]["exp_avg"]))
+        self.assertTrue(
+            is_nested_tensor(optim_state["state"]["net1.weight"]["exp_avg"])
+        )
+        self.assertFalse(
+            is_nested_tensor(optim_state["state"]["net3.bias"]["exp_avg"])
+        )
+
 
 if __name__ == "__main__":
     run_tests()
