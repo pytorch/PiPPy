@@ -231,7 +231,7 @@ def _chunk_tensor(
     rank: int,
     world_size: int,
     num_devices_per_node: int,
-    pg: c10d.ProcessGroup,
+    pg: dist.ProcessGroup,
 ) -> torch.Tensor:
     if type(tensor) is ShardedTensor:
         assert len(tensor.local_shards()) == 1
@@ -242,7 +242,7 @@ def _chunk_tensor(
             rank,
             world_size,
             num_devices_per_node,
-            cast(dist.ProcessGroup, pg),
+            pg,
         )
 
         outer_local_shard = tensor.local_shards()[0]
@@ -270,7 +270,7 @@ def _chunk_tensor(
             rank,
             world_size,
             torch.cuda.device_count(),
-            cast(dist.ProcessGroup, pg),
+            pg,
         )
 
         dt_pg = _get_dt_pg(tensor)
