@@ -130,22 +130,14 @@ def init_model(model_parallel_size=TP_DEGREE):
 
     model = SimpleModel().cuda(rank)
 
-    tp_ids = []
-    fsdp_ids = []
-    for i in range(world_size):
-        idx = i // model_parallel_size
-        if len(tp_ids) <= idx:
-            tp_ids.append([])
-        tp_ids[idx].append(i)
-        idx = i % model_parallel_size
-        if len(fsdp_ids) <= idx:
-            fsdp_ids.append([])
-        fsdp_ids[idx].append(i)
+    # 2-D mesh is [dp, tp]
+    twod_mesh = DeviceMesh(
+        device_type="cuda",
+        mesh=torch.arange(0, world_size).view(model_parallel_size, -1),
+    )
 
-    tp_pgs = [dist.new_group(ids) for ids in tp_ids]
-    data_parallel_pgs = [dist.new_group(ids) for ids in fsdp_ids]
-    tp_pg = tp_pgs[rank // model_parallel_size]
-    fsdp_pg = data_parallel_pgs[rank % model_parallel_size]
+    fsdp_pg = twod_mesh.get_dim_groups()[0]
+    tp_pg = twod_mesh.get_dim_groups()[1]
 
     # Create Input
     model = _shard_wrap_module(model, True, True, tp_pg, fsdp_pg)
