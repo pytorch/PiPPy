@@ -6,30 +6,19 @@ import torch
 import torch.nn.functional as F
 from torch.distributed._spmd.comm_tensor import CommTensor
 from torch.distributed.distributed_c10d import (
-    all_gather,
-    all_reduce,
-    broadcast,
-    _get_default_group,
-    get_global_rank,
-    get_global_rank,
-    get_rank,
-    get_rank,
-    get_world_size,
-    get_world_size,
     GroupMember,
-    new_group,
     ProcessGroup,
     ReduceOp,
-    reduce_scatter,
-    scatter,
-)
-
-# autograd enabled collective
-from torch.distributed.nn.functional import (
+    _get_default_group,
     all_gather,
-    _all_gather_base,
     all_reduce,
     broadcast,
+    get_global_rank,
+    get_rank,
+    get_world_size,
+    new_group,
+    reduce_scatter,
+    scatter,
 )
 
 _global_device_mesh: Optional["DeviceMesh"] = None
@@ -344,7 +333,8 @@ class DeviceMesh(object):
         return tensor
 
     def broadcast(
-        self, tensor: torch.Tensor,
+        self,
+        tensor: torch.Tensor,
         *,
         mesh_dim: int = 0,
     ) -> torch.Tensor:
@@ -454,11 +444,11 @@ class DeviceMesh(object):
         # makes sure communication result is properly waited before subsequent
         # read operations.
         if not tensor.is_contiguous():
-            tensor =
-            CommTensor(tensor.contiguous())else:
+            tensor = CommTensor(tensor.contiguous())
+        else:
             tensor = CommTensor(tensor.clone())
-        all_reduce(tensor, op=op, group=dim_group
-        )return tensor
+        all_reduce(tensor, op=op, group=dim_group)
+        return tensor
 
     def reduce_scatter(
         self,
@@ -506,14 +496,16 @@ class DeviceMesh(object):
                     )
                 scatter_tensor = scatter_tensor.contiguous()
                 to_scatter.append(CommTensor(scatter_tensor))
-                output= torch.empty_like(to_scatter[my_coordinate])
-            dim_group=self._dim_groups[mesh_dim]
+
+            output = torch.empty_like(to_scatter[my_coordinate])
+            dim_group = self._dim_groups[mesh_dim]
             reduce_scatter(output, to_scatter, op=op, group=dim_group)
 
             # resize to uneven size if needed
             if idx_start_to_pad != 0 and my_coordinate >= idx_start_to_pad:
                 # tensor = tensor.narrow(tensor_dim, start=0, length=tensor.size(tensor_dim) - 1)
                 output = self._unpad_tensor_dim_by_1(output, tensor_dim)
+
             return output
         elif self._backend == "gloo":
             # it's gloo, which does not have reduce_scatter

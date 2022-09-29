@@ -71,7 +71,7 @@ class TestProcessGroupAwarePlanner(DistTensorTestBase):
     @skip_if_lt_x_gpu(TEST_GPU_NUM)
     @with_temp_dir
     def test_process_group_aware_planner(self) -> None:
-        CHECKPOINT_DIR = self.temp_dir
+        CHECKPOINT_DIR = self.temp_dir  # pyre-ignore[16]
 
         model = MyModule(
             rank=dist.get_rank(),

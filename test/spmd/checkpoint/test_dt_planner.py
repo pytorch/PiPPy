@@ -5,6 +5,9 @@ from typing import Dict, Union
 import torch
 import torch.distributed as dist
 import torch.distributed._shard.checkpoint as dist_cp
+from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
+from torch.testing._internal.common_utils import run_tests
+
 from spmd import DeviceMesh, DTensor, Replicate
 from spmd import Shard as DShard
 from spmd import distribute_tensor
@@ -18,8 +21,6 @@ from spmd.testing.common_utils import (
     DistTensorTestBase,
     with_comms,
 )
-from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
-from torch.testing._internal.common_utils import run_tests
 
 
 class MyModule(torch.nn.Module):
@@ -70,13 +71,13 @@ class DistributedTensorPlanner(DistTensorTestBase):
     @skip_if_lt_x_gpu(TEST_GPU_NUM)
     @with_temp_dir
     def test_distributed_tensor_planner(self) -> None:
-        CHECKPOINT_DIR = self.temp_dir
+        CHECKPOINT_DIR = self.temp_dir  # pyre-ignore[16]
 
         local_tensor = torch.arange(0, 4, dtype=torch.float32)
         local_tensor_2 = torch.arange(4, 8, dtype=torch.float32)
         mesh = DeviceMesh(
             device_type="cuda",
-            mesh=range(dist.get_world_size()),
+            mesh=list(range(dist.get_world_size())),  # type: ignore
         )
 
         sharded_dt = distribute_tensor(

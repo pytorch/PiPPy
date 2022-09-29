@@ -2,8 +2,8 @@
 from typing import Dict, List, Tuple, cast
 
 import torch
+
 import spmd.tensor.api as dtensor
-from spmd.tensor.placement_types import Placement, _Partial, Shard, Replicate
 from spmd.tensor.device_mesh import DeviceMesh
 from spmd.tensor.placement_types import Placement, Replicate, Shard, _Partial
 

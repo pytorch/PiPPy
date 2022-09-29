@@ -53,7 +53,7 @@ dLogger: logging.Logger = init_logger()
 
 
 class DistributedTensorSavePlanner(DefaultSavePlanner):
-    def __init__(self, dedup_replicated_tensors: bool = True):  # pyre-ignore[3]
+    def __init__(self, dedup_replicated_tensors: bool = True):
         self.dedup_replicated_tensors: bool = dedup_replicated_tensors
         super().__init__()
 
@@ -72,7 +72,7 @@ class DistributedTensorSavePlanner(DefaultSavePlanner):
 
         return SavePlan(requests)
 
-    def lookup_object(self, index: MetadataIndex) -> Any:  # pyre-ignore[3]
+    def lookup_object(self, index: MetadataIndex) -> Any:
         obj = self.state_dict[index.fqn]  # pyre-ignore[16]
         if isinstance(obj, DTensor):
             return obj.to_local()
@@ -194,7 +194,7 @@ def _create_shard_from_dtensor(tensor: DTensor) -> Shard:
 
 
 def _create_read_items_for_dtensor(
-    fqn: str, md: STORAGE_TYPES, obj: Any  # pyre-ignore[2]
+    fqn: str, md: STORAGE_TYPES, obj: Any
 ) -> List[ReadItem]:
     if isinstance(obj, DTensor):
         local_shards = [_create_shard_from_dtensor(obj)]

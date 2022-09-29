@@ -40,16 +40,14 @@ def wrap(res: object, spec: OutputSpecType) -> object:
             spec, list
         ), f"output spec does not match with output! Expected list, got {spec}."
         return list(
-            dtensor.DTensor(e, s.mesh, s.placements)
-            for e, s in zip(res, spec)
+            dtensor.DTensor(e, s.mesh, s.placements) for e, s in zip(res, spec)
         )
     elif isinstance(res, tuple):
         assert spec is not None and isinstance(
             spec, tuple
         ), f"output spec does not match with output! Expected tuple, got {spec}"
         return tuple(
-            dtensor.DTensor(e, s.mesh, s.placements)
-            for e, s in zip(res, spec)
+            dtensor.DTensor(e, s.mesh, s.placements) for e, s in zip(res, spec)
         )
     else:
         # if the res contains only non tensor values, we simply return it without rewrapping

@@ -1,5 +1,4 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import List
 
 import torch
 from torch.distributed.distributed_c10d import get_global_rank, get_world_size
@@ -93,12 +92,12 @@ class TraceDeviceMeshTestBase(DistTensorTestBase):
             tensor_to_scatter = torch.cat(scattered_tensors)
 
             def fn(
-                tensors_to_scatter: List[torch.Tensor],
+                tensor_to_scatter: torch.Tensor,
                 *,
                 m: DeviceMesh = mesh,
                 d: int = dim,
             ) -> torch.Tensor:
-                received_tensor = m.scatter(tensors_to_scatter, mesh_dim=d)
+                received_tensor = m.scatter(tensor_to_scatter, mesh_dim=d)
                 # multiply with 1 to trigger wait on read during tracing.
                 return received_tensor * 1
 
@@ -127,7 +126,7 @@ class TraceDeviceMeshTestBase(DistTensorTestBase):
                 *,
                 m: DeviceMesh = mesh,
                 d: int = dim,
-            ) -> List[torch.Tensor]:
+            ) -> torch.Tensor:
                 return m.all_gather(tensor, output_shape, mesh_dim=d)
 
             # use a local_tensor + 1 for tracing to make sure that we are not
@@ -137,8 +136,10 @@ class TraceDeviceMeshTestBase(DistTensorTestBase):
 
             exp_tensor = torch.ones(3 * dim_group_size, 3)
             for i in range(len(global_ranks)):
-                exp_tensor[i * 3 : (i + 1) * 3] =( torch.ones(3, 3) * global_ranks[i])self.assertEqual(gathered_tensor, exp_tensor
+                exp_tensor[i * 3 : (i + 1) * 3] = (
+                    torch.ones(3, 3) * global_ranks[i]
                 )
+            self.assertEqual(gathered_tensor, exp_tensor)
 
 
 class TraceDeviceMesh3DTest(TraceDeviceMeshTestBase):
