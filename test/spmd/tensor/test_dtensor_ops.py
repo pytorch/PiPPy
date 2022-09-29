@@ -31,7 +31,7 @@ from spmd.testing.common_utils import (
 
 
 DEVICE_TYPE = "cuda" if torch.cuda.is_available() else "cpu"
-NUM_DEVICES = 4
+NUM_DEVICES = min(4, torch.cuda.device_count())
 
 # rewrite common size variables to sth can be sharded evenly
 # we can enable uneven shards later, but need to adjust more on
@@ -691,7 +691,9 @@ class TestDTensorOps(DistTensorTestBase):
 
 
 # only instantiate tests for DEVICE_TYPE alone (i.e. either CPU or GPU)
-instantiate_device_type_tests(TestDTensorOps, globals(), only_for=(DEVICE_TYPE))
+instantiate_device_type_tests(
+    TestDTensorOps, globals(), only_for=(DEVICE_TYPE,)
+)
 
 
 if __name__ == "__main__":
