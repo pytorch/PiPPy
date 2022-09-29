@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 import shutil
 import tempfile
 from functools import wraps

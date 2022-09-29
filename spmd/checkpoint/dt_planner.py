@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 import dataclasses
 import logging
 from typing import Any, List, Optional, Tuple
