@@ -12,11 +12,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import logging
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import Callable, Any
 
 import numpy as np
-import pippy.fx
+import torch
 from enum import Enum
 
 from pippy import pipe_split
@@ -24,6 +25,7 @@ from pippy import pipe_split
 try:
     from numba import njit  # type: ignore
     from numba.typed import List as NumbaList  # type: ignore
+    from numba import prange
 except ImportError:
 
     def njit(*args, **kwargs):
@@ -33,6 +35,7 @@ except ImportError:
         return wrapper
 
     NumbaList = list
+    prange = range
 
 
 class SubmeshSpace(Enum):
@@ -43,7 +46,7 @@ class SubmeshSpace(Enum):
 
 def get_possible_submesh_shapes(
     n_compute_nodes: int, n_devices_per_node: int, submesh_space: SubmeshSpace
-):
+) -> tuple[tuple[int, int]]:
     submeshes = []
     i = 1
     while i <= n_devices_per_node:
@@ -68,27 +71,10 @@ def get_possible_submesh_shapes(
     else:
         raise ValueError(f"Invalid submesh space: {submesh_space}")
 
-    return submeshes
+    return tuple(submeshes)
 
 
-NUMPY_RANDOM_SEED = 42
-
-
-def estimate_intra_costs(
-    n_submesh_choices, n_layers, max_n_succ_stages=4096, n_autosharding_configs=1
-):
-    np.random.seed(NUMPY_RANDOM_SEED)
-    intra_costs = np.random.rand(
-        n_layers, n_layers, n_submesh_choices, n_autosharding_configs
-    )
-    max_n_succ_stages = np.full(
-        (n_layers, n_layers, n_submesh_choices, n_autosharding_configs),
-        max_n_succ_stages,
-    )
-    return intra_costs, max_n_succ_stages
-
-
-@njit(fastmath=True)
+@njit(fastmath=True, nogil=True, cache=True)
 def get_optimal_submesh_assignments(
     best_n_stages, F_argmin, n_devices, n_ops, submesh_sizes
 ):
@@ -123,7 +109,7 @@ def get_optimal_submesh_assignments(
     return optimal_layer_submesh_assignments
 
 
-@njit(fastmath=True)
+@njit(fastmath=True, parallel=True, nogil=True, cache=True)
 def inter_op_dp_inner_loop(
     n_layers, n_devices, submesh_sizes, valid_idxs_costs, max_n_succ_stages
 ):
@@ -142,7 +128,7 @@ def inter_op_dp_inner_loop(
     )
     F[0, n_layers, 0] = 0
 
-    for d in range(1, n_devices + 1):
+    for d in prange(1, n_devices + 1):
         for (
             l,
             i,
@@ -156,7 +142,7 @@ def inter_op_dp_inner_loop(
 
             n_submesh_devices = submesh_sizes[submesh_shape_idx]
             if n_submesh_devices <= d:
-                for s in range(1, n_layers + 1):
+                for s in prange(1, n_layers + 1):
                     if (
                         s - 1
                         > max_n_succ_stages[
@@ -181,10 +167,9 @@ def inter_op_dp_inner_loop(
 
 
 def inter_op_dp(
-    n_layers: int,
     n_devices: int,
     n_microbatches: int,
-    submesh_shapes: List[Tuple[int, int]],
+    submesh_shapes: tuple[tuple[int, int]],
     intra_compute_costs,
     max_n_succ_stages,
 ):
@@ -196,12 +181,13 @@ def inter_op_dp(
     best_solution = None
     prev_intra_cost = 0.0
     gap = 1e-6
+    num_layers = len(intra_compute_costs)
 
     submesh_sizes: list = NumbaList()
     for n, m in submesh_shapes:
         submesh_sizes.append(n * m)
 
-    for intra_cost in np.sort(np.unique(intra_compute_costs)):
+    for loop_i, intra_cost in enumerate(np.sort(np.unique(intra_compute_costs))):
         if intra_cost - prev_intra_cost < gap:
             continue
         if intra_cost * n_microbatches >= min_cost:
@@ -215,15 +201,16 @@ def inter_op_dp(
         valid_cost_idxs = valid_cost_idxs[
             valid_cost_idxs[:, 0] <= valid_cost_idxs[:, 1]
         ]
+        if len(valid_cost_idxs) == 0:
+            continue
         valid_costs = intra_compute_costs[tuple(valid_cost_idxs.T)]
         valid_idxs_costs = np.hstack([valid_cost_idxs, valid_costs[:, np.newaxis]])
+        # sort by descending layer idx because DP initializes F[0, n_layers, 0] = 0
+        valid_idxs_costs = valid_idxs_costs[np.flip(valid_cost_idxs[:, 1].argsort())]
 
+        logging.info(f"DP outer loop {loop_i}")
         F, F_stage_max, F_argmin = inter_op_dp_inner_loop(
-            n_layers,
-            n_devices,
-            submesh_sizes,
-            valid_idxs_costs,
-            max_n_succ_stages,
+            num_layers, n_devices, submesh_sizes, valid_idxs_costs, max_n_succ_stages
         )
 
         best_n_stages = F[:, 0, n_devices].argmin()
@@ -236,13 +223,18 @@ def inter_op_dp(
         if all_stages_cost + slowest_stage_total_cost < min_cost:
             min_cost = all_stages_cost + slowest_stage_total_cost
             best_solution = best_n_stages, F_argmin
+            logging.info(f"DP updating best_n_stages {best_n_stages}")
         prev_intra_cost = intra_cost
 
     assert best_solution is not None
     best_n_stages, F_argmin = best_solution
     optimal_layer_submesh_assignments = get_optimal_submesh_assignments(
-        best_n_stages, F_argmin, n_devices, n_layers, submesh_sizes
+        best_n_stages, F_argmin, n_devices, num_layers, submesh_sizes
     )
+    optimal_layer_submesh_assignments = [
+        ((a, b), submesh_shapes[c], d)
+        for (a, b), c, d in optimal_layer_submesh_assignments
+    ]
     return optimal_layer_submesh_assignments
 
 
@@ -251,38 +243,86 @@ class AutoParallelConfig:
     n_compute_nodes: int
     n_devices_per_node: int
     n_microbatches: int
+    intra_op_costs_estimator: Callable[
+        [
+            torch.nn.Module,
+            torch.fx.GraphModule,
+            # example inputs,
+            tuple[torch.Tensor, ...],
+            # submesh shapes,
+            tuple[tuple[int, int], ...],
+            torch.fx.Tracer,
+            # tracer kwargs,
+            dict[str, Any],
+        ],
+        tuple[np.ndarray, np.ndarray, tuple[tuple[str, int]]],
+    ]
+    n_autosharding_configs: int = 1
     submesh_space: SubmeshSpace = SubmeshSpace.ALL
 
 
 def dp_auto_parallel(config: AutoParallelConfig):
-    def _dp_auto_parallel(fx_mod: pippy.fx.GraphModule):
-        n_graph_nodes = len(fx_mod.graph.nodes)
+    def _dp_auto_parallel(
+        mod: torch.nn.Module,
+        fx_mod: torch.fx.GraphModule,
+        example_inputs,
+        tracer,
+        tracer_kwargs,
+    ):
         submesh_shapes = get_possible_submesh_shapes(
             n_compute_nodes=config.n_compute_nodes,
             n_devices_per_node=config.n_devices_per_node,
             submesh_space=config.submesh_space,
         )
-        intra_costs, max_n_succ_stages = estimate_intra_costs(
-            len(submesh_shapes), n_layers=n_graph_nodes
+        logging.info("Estimating intra-op latencies")
+        (
+            intra_costs,
+            max_n_succ_stages,
+            node_name_graph_idx,
+        ) = config.intra_op_costs_estimator(
+            mod,
+            fx_mod,
+            example_inputs,
+            submesh_shapes,
+            tracer,
+            tracer_kwargs,
         )
+        logging.info("Computing optimal split using DP")
+
+        # optimal_layer_submesh_assignments is a tuple of 
+        # ([ith node, jth node), (num_hosts_i, num_devices_i), autosharding_config)
+        # where (num_hosts_i, num_devices_i) describes the ith submesh slice and
+        # such that Σi (num_hosts_i, num_devices_i) = total_num_hosts * devices_per_host
+        # (i.e., total # of devices). Note that mapping submeshes to physical devices can (and should)
+        # be specified by the user (in the alpa paper they use a greedy heuristic - devices are assigned to 
+        # larger submeshes first and then to smaller ones and ties are broken by physically clustering
+        # pipeline stages.
         optimal_layer_submesh_assignments = inter_op_dp(
-            n_layers=n_graph_nodes,
             n_devices=config.n_compute_nodes * config.n_devices_per_node,
             n_microbatches=config.n_microbatches,
             submesh_shapes=submesh_shapes,
             intra_compute_costs=intra_costs,
             max_n_succ_stages=max_n_succ_stages,
         )
-        split_points = {
-            current_layer
+        logging.info(
+            f"DP optimal layer submesh assignments {optimal_layer_submesh_assignments}"
+        )
+        # node_name_graph_idx is a tuple (node_name, j) where j is in the index in the
+        # original toposort order of the fx graph. The reason for this level of indirection
+        # (i.e., ith entry in node_name_graph_idx actually maps to jth in graph is because not all
+        # nodes have valid latencies (e.g., inputholder) and thus the DP does not take those into consideration
+        split_points = [
+            node_name_graph_idx[next_start_layer][1]
             for (
-                (current_layer, _next_start_layer),
+                (_current_layer, next_start_layer),
                 _submesh_choice,
                 _autosharding_choice,
-            ) in optimal_layer_submesh_assignments
-        }
-        for i, node in reversed(list(enumerate(fx_mod.graph.nodes))):
+            ) in optimal_layer_submesh_assignments[:-1]
+        ]
+        nodes = list(enumerate(fx_mod.graph.nodes))
+        for i, node in reversed(nodes):
             if i in split_points:
+                nodes.insert(i, (i, "split"))
                 with fx_mod.graph.inserting_before(node):
                     fx_mod.graph.call_function(pipe_split, (), {})
         fx_mod.recompile()

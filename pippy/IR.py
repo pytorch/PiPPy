@@ -759,12 +759,9 @@ class Pipe(torch.nn.Module):
         return Pipe(split, qualname_map, num_stages, has_loss_and_backward)
 
     @staticmethod
-    def from_tracing(mod : torch.nn.Module, multi_use_param_spec : Optional[MultiUseParamSpec] = None,
-                     tracer=None, output_loss_value_spec=None, deep_copy_module=False,
-                     auto_parallel_strategy : Optional[Callable[[pippy.fx.GraphModule], pippy.fx.GraphModule]] = None,
-                     **kwargs):
-        # TODO: abstract partitioning policy
-
+    def from_tracing(mod: torch.nn.Module, multi_use_param_spec: Optional[MultiUseParamSpec] = None,
+                     example_inputs=None, tracer=None, output_loss_value_spec=None, deep_copy_module=False,
+                     auto_parallel_strategy: Optional[Callable] = None, **kwargs):
         global _pipeline_tracer
         old__pipeline_tracer = _pipeline_tracer
         _pipeline_tracer = tracer or pippy.fx.Tracer()
@@ -790,11 +787,10 @@ class Pipe(torch.nn.Module):
                 graph = g_new
 
             traced = pippy.fx.GraphModule(mod, graph)
+            if auto_parallel_strategy is not None:
+                traced = auto_parallel_strategy(mod, traced, example_inputs, _pipeline_tracer, kwargs)
         finally:
             _pipeline_tracer = old__pipeline_tracer
-
-        if auto_parallel_strategy is not None:
-            traced = auto_parallel_strategy(traced)
 
         return Pipe._from_traced(mod, traced, multi_use_param_spec, output_loss_value_spec=output_loss_value_spec)
 

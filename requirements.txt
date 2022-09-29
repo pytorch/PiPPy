@@ -1,2 +1,3 @@
-torch >= 1.12.0.dev0, <= 1.13.0dev20220825
+torch >= 1.12.0.dev0
+torchvision >= 0.13.0
 packaging >= 21.3
