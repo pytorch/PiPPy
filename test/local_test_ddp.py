@@ -17,13 +17,13 @@ from pippy.IR import (
     TrivialLossWrapper,
     pipe_split,
 )
-from pippy.microbatch import CustomReducer, TensorChunkSpec
 from pippy.PipelineDriver import (
+    PipelineDriverFillDrain,
     PipelineDriver1F1B,
     PipelineDriverBase,
-    PipelineDriverFillDrain,
     PipelineDriverInterleaved1F1B,
 )
+from pippy.microbatch import TensorChunkSpec, CustomReducer
 
 # TODOs for implementing forward/backward/loss with schedules:
 # * ability to switch between full-batch loss vs. per-microbatch loss. shen mentioned

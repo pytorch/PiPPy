@@ -6,7 +6,7 @@ import time
 import unittest
 from collections import defaultdict
 from functools import reduce
-from typing import Any, Dict, List
+from typing import List, Dict, Any
 
 import torch
 import torch.nn as nn
@@ -14,22 +14,22 @@ from torch.autograd import Function
 
 import pippy.fx
 from pippy import run_pippy
-from pippy.events import Event
 from pippy.IR import (
     MultiUseParameterConfig,
     Pipe,
-    TrivialLossWrapper,
     pipe_split,
+    TrivialLossWrapper,
 )
-from pippy.microbatch import CustomReducer, TensorChunkSpec
 from pippy.PipelineDriver import (
-    EventsContext,
-    Phase,
-    PipelineDriver1F1B,
-    PipelineDriverBase,
     PipelineDriverFillDrain,
+    PipelineDriver1F1B,
+    Phase,
+    PipelineDriverBase,
+    EventsContext,
     PipelineDriverInterleaved1F1B,
 )
+from pippy.events import Event
+from pippy.microbatch import TensorChunkSpec, CustomReducer
 from pippy.visualizer import events_to_json
 
 PROFILING_ENABLED = True

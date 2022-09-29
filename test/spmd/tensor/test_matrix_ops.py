@@ -1,16 +1,17 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-import itertools
-from typing import List, Optional, cast
-
 import torch
-from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 from torch.testing._internal.common_utils import run_tests
-
-from spmd import DeviceMesh, distribute_tensor
+from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 from spmd.tensor.api import DTensor
-from spmd.tensor.placement_types import Placement, Replicate, Shard, _Partial
-from spmd.testing.common_utils import TEST_GPU_NUM  # type: ignore
-from spmd.testing.common_utils import DistTensorTestBase, with_comms
+from spmd.testing.common_utils import (  # type: ignore
+    DistTensorTestBase,
+    with_comms,
+    TEST_GPU_NUM,
+)
+from spmd import distribute_tensor, DeviceMesh
+from spmd.tensor.placement_types import Placement, Shard, Replicate, _Partial
+from typing import List, Optional, cast
+import itertools
 
 
 class DistMatrixOpsTest(DistTensorTestBase):

@@ -12,13 +12,13 @@ import pippy.fx
 import pippy.ModelSplit
 from pippy import run_pippy
 from pippy.IR import MultiUseParameterConfig, Pipe
-from pippy.microbatch import TensorChunkSpec
 from pippy.PipelineDriver import (
-    PipelineDriver1F1B,
     PipelineDriverBase,
     PipelineDriverFillDrain,
+    PipelineDriver1F1B,
     PipelineDriverInterleaved1F1B,
 )
+from pippy.microbatch import TensorChunkSpec
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
@@ -81,7 +81,7 @@ def run_master(_, args):
     gm, nstages = pippy.ModelSplit.split_on_size_threshold(ec, threshold)
     print(f"Model is split into {nstages} stages")
 
-    print("\n======= GraphModule after Auto-split =======")
+    print(f"\n======= GraphModule after Auto-split =======")
     print(gm)
 
     ec_pipe = Pipe.from_tracing(gm, MULTI_USE_PARAM_CONFIG)

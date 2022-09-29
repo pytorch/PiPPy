@@ -1,33 +1,30 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-import functools
-from typing import Union
-
 import torch
 import torch.nn as nn
-from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
+import functools
 from torch.testing._internal.common_utils import run_tests
-
+from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
+from spmd.testing.common_utils import DistTensorTestBase, with_comms, TEST_GPU_NUM  # type: ignore
 from spmd import (
+    distribute_tensor,
+    distribute_module,
     DeviceMesh,
     DTensor,
-    Replicate,
     Shard,
-    distribute_module,
-    distribute_tensor,
+    Replicate,
 )
 from spmd.tensor.parallel import TensorParallelMultiheadAttention
-from spmd.testing.common_utils import TEST_GPU_NUM  # type: ignore
-from spmd.testing.common_utils import DistTensorTestBase, with_comms
 
 
 class MLPModule(torch.nn.Module):
-    def __init__(self, device: Union[str, torch.device]):
+    def __init__(self, device):
         super(MLPModule, self).__init__()
+        torch.manual_seed(5)
         self.net1 = torch.nn.Linear(10, 16, device=device)
         self.relu = torch.nn.ReLU()
         self.net2 = torch.nn.Linear(16, 12, device=device)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x):
         return self.net2(self.relu(self.net1(x)))
 
 
@@ -185,8 +182,6 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         # Ensure all tp ranks have same input.
         torch.manual_seed(0)
         inp = torch.rand(*inp_size, device=self.device_type)
-
-        torch.manual_seed(5)
         model = MLPModule(self.device_type)
         model_tp = MLPModule(self.device_type)
 

@@ -1,8 +1,8 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-import logging
-
+from pippy.IR import Pipe, annotate_split_points, PipeSplitWrapper
 import pippy.fx
-from pippy.IR import Pipe, PipeSplitWrapper, annotate_split_points
+
+import logging
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
@@ -16,6 +16,7 @@ set_seed(42)
 
 import numpy as np
 import torch
+
 from torch.utils.data import Dataset
 
 

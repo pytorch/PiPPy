@@ -1,15 +1,18 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
+from torch.testing._internal.common_utils import run_tests
+from spmd.testing.common_utils import (  # type: ignore
+    DistTensorTestBase,
+    with_comms,
+    TEST_GPU_NUM,
+)
+from spmd.tensor.dispatch import OpSchema
+
+from spmd.tensor.ops.pointwise_ops import pointwise_rule
+from spmd import DeviceMesh, DTensor
+from spmd.tensor.placement_types import Shard, Replicate, _Partial, DTensorSpec
 from torch.distributed.distributed_c10d import ReduceOp
 from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
-from torch.testing._internal.common_utils import run_tests
-
-from spmd import DeviceMesh, DTensor
-from spmd.tensor.dispatch import OpSchema
-from spmd.tensor.ops.pointwise_ops import pointwise_rule
-from spmd.tensor.placement_types import DTensorSpec, Replicate, Shard, _Partial
-from spmd.testing.common_utils import TEST_GPU_NUM  # type: ignore
-from spmd.testing.common_utils import DistTensorTestBase, with_comms
 
 
 class DistElementwiseOpsTest(DistTensorTestBase):

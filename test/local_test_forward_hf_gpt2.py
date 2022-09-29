@@ -7,23 +7,23 @@ from typing import Dict
 
 import torch
 import torch.autograd.profiler_legacy
-from transformers import GPT2Config, GPT2Model
+from transformers import GPT2Model, GPT2Config
 
 import pippy.fx
 from pippy import run_pippy
-from pippy.hf import PiPPyHFTracer
 from pippy.IR import (
     MultiUseParameterConfig,
     Pipe,
     PipeSplitWrapper,
     annotate_split_points,
 )
-from pippy.microbatch import TensorChunkSpec
 from pippy.PipelineDriver import (
+    PipelineDriverFillDrain,
     PipelineDriver1F1B,
     PipelineDriverBase,
-    PipelineDriverFillDrain,
 )
+from pippy.hf import PiPPyHFTracer
+from pippy.microbatch import TensorChunkSpec
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True

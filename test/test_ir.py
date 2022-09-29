@@ -2,27 +2,27 @@
 import copy
 import pickle
 import tempfile
+import torch
 import unittest
 from typing import NamedTuple
 
-import torch
-
-import pippy.fx
 from pippy.IR import (
-    MultiUseParameterConfig,
     Pipe,
     PipeSequential,
-    PipeSplitWrapper,
     TrivialLossWrapper,
-    _null_coalesce_accumulate,
-    annotate_split_points,
     pipe_split,
+    MultiUseParameterConfig,
+    annotate_split_points,
+    PipeSplitWrapper,
+    _null_coalesce_accumulate,
 )
 from pippy.microbatch import (
     TensorChunkSpec,
-    merge_chunks,
     split_args_kwargs_into_chunks,
+    merge_chunks,
 )
+
+import pippy.fx
 
 
 @pippy.fx.wrap

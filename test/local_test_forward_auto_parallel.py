@@ -10,15 +10,15 @@ import torch.autograd.profiler_legacy
 
 import pippy.fx
 from pippy import run_pippy
-from pippy.auto_parallelization import AutoParallelConfig, dp_auto_parallel
 from pippy.IR import MultiUseParameterConfig, Pipe
-from pippy.microbatch import TensorChunkSpec
 from pippy.PipelineDriver import (
-    PipelineDriver1F1B,
     PipelineDriverBase,
     PipelineDriverFillDrain,
+    PipelineDriver1F1B,
     PipelineDriverInterleaved1F1B,
 )
+from pippy.auto_parallelization import AutoParallelConfig, dp_auto_parallel
+from pippy.microbatch import TensorChunkSpec
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True

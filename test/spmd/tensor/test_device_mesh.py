@@ -1,16 +1,18 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
+
 from torch.distributed.distributed_c10d import (
     ProcessGroup,
+    new_group,
     get_global_rank,
     get_world_size,
-    new_group,
 )
 from torch.testing._internal.common_utils import run_tests
-
-from spmd.tensor import DeviceMesh, DTensor, Replicate, Shard
-from spmd.testing.common_utils import DistTensorTestBase  # type: ignore
-from spmd.testing.common_utils import with_comms
+from spmd.testing.common_utils import (  # type: ignore
+    DistTensorTestBase,
+    with_comms,
+)
+from spmd.tensor import DeviceMesh, DTensor, Shard, Replicate
 
 
 class DeviceMeshTest(DistTensorTestBase):
@@ -247,8 +249,7 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
             # make the random seed same across rank
             torch.manual_seed(0)
             global_tensor = torch.randn(
-                scatter_tensor_shape,
-                device=self.device_type,
+                scatter_tensor_shape, device=self.device_type
             )
             splitted_list = global_tensor.tensor_split(mesh.size(), scatter_dim)
             # scatter on dim > 0 would generate non-contiguous tensor, verify that works
@@ -287,16 +288,9 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
             output_size = [3, 3]
             output_size[dim] *= self.world_size
             # each rank have its own tensor, all_gather gives a list
-            local_tensor = torch.ones(
-                3,
-                3,
-                device=self.device_type,
-            )
+            local_tensor = torch.ones(3, 3, device=self.device_type)
             gathered_tensor = mesh.all_gather(
-                local_tensor,
-                output_size,
-                mesh_dim=0,
-                tensor_dim=dim,
+                local_tensor, output_size, mesh_dim=0, tensor_dim=dim
             )
             self.assertEqual(gathered_tensor, torch.ones(output_size))
 
