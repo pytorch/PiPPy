@@ -21,7 +21,10 @@ def distribute_tensor(
     specified. The rank of `device_mesh` and `placements` must be the same.
 
     Args:
-        tensor (torch.Tensor): torch.Tensor to be distributed
+        tensor (torch.Tensor): torch.Tensor to be distributed. Note that if you
+            want to shard a tensor on a dimension that is not evenly divisible by
+            the number of devices in that mesh dimension, we use `torch.tensor_split`
+            semantic to shard the tensor and scatter the shards.
         device_mesh (:class:`DeviceMesh`, optional): DeviceMesh to distribute the
             tensor, if not specified, must be called under a DeviceMesh context
             manager, default: None
@@ -52,18 +55,10 @@ def distribute_tensor(
             assert (
                 shard_dim <= tensor.ndim
             ), f"Sharding dim {shard_dim} greater than tensor ndim {tensor.ndim}"
-            # TODO: handle uneven shard sizes
-            num_chunks = device_mesh.size(dim=idx)
-            assert tensor.size(shard_dim) % num_chunks == 0, (
-                f"Only support chunk sharding evenly now, but tensor got "
-                f"dimension {shard_dim} of size {tensor.size(shard_dim)}, "
-                f"which does not divide number of shards {num_chunks}."
+
+            local_tensor = device_mesh.scatter(
+                tensor, mesh_dim=idx, tensor_dim=shard_dim
             )
-            chunk_size = tensor.size(shard_dim) // num_chunks
-            tensor_list = list(tensor.chunk(num_chunks, dim=shard_dim))
-            scatter_shape = list(tensor.size())
-            scatter_shape[shard_dim] = chunk_size
-            local_tensor = device_mesh.scatter(tensor_list, mesh_dim=idx)
             # scatter call could not return a tensor with correct requires_grad
             # field, as ProcessGroupNCCL refuse to take a tensor with requires_grad
             # to do inplace update! So we manually set it here
@@ -72,7 +67,9 @@ def distribute_tensor(
         elif placement.is_replicate():
             tensor = device_mesh.broadcast(tensor, mesh_dim=idx)
         else:
-            raise RuntimeError("Not supported!")
+            raise RuntimeError(
+                f"Trying to distribute tensor with unsupported placements {placement} on device mesh dimension {idx}!"
+            )
 
     return DTensor(
         tensor,
