@@ -12,7 +12,6 @@ from typing import (
     List,
     Sequence,
 )
-from unittest import TestCase
 
 import torch
 import torch.distributed as dist
@@ -32,7 +31,7 @@ from spmd.tensor.placement_types import Placement
 TEST_GPU_NUM = 4
 
 
-class DistTensorTestBase(MultiProcessTestCase, TestCase):
+class DistTensorTestBase(MultiProcessTestCase):
     _device_type: Optional[str] = None
 
     @property
@@ -51,10 +50,8 @@ class DistTensorTestBase(MultiProcessTestCase, TestCase):
         if backend not in ["nccl", "gloo", "mpi"]:
             raise RuntimeError(f"Backend {backend} not supported!")
 
-        assert self.rank is not None, "self.rank is unset"
-        rank = self.rank
-        assert self.file_name is not None, "self.file_name is unset"
-        file_name = self.file_name
+        rank = getattr(self, "rank")
+        file_name = getattr(self, "file_name")
 
         dist.init_process_group(
             backend=backend,

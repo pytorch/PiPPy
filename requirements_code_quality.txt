@@ -1,6 +1,8 @@
 autoflake
 black
 isort
+flake8
+autoflake
 mypy==0.902
 pylint==3.0.0a5
 pyre-check==0.9.15

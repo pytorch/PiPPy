@@ -2,6 +2,7 @@
 black
 expecttest
 flake8
+hypothesis
 numpy
 pyre-check
 pytest
