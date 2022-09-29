@@ -65,7 +65,7 @@ def deepcopy_convert_from_dtensor(val: Any) -> Any:
         if isinstance(x, DTensor):
             return x.redistribute(
                 device_mesh=x.device_mesh,
-                placements=[Replicate()],
+                placements=[Replicate()] * x.device_mesh.ndim,
             ).to_local()
         return x
 
