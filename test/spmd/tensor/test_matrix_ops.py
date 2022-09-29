@@ -73,8 +73,11 @@ class DistMatrixOpsTest(DistTensorTestBase):
         self.assertEqual(mat2_grad.to_local(), tensor_to_shard0.grad)
 
     @with_comms
-    def test_mm(self):
-        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+    def test_mm(self: "DistMatrixOpsTest"):
+        device_mesh = DeviceMesh(
+            self.device_type,
+            list(range(self.world_size)),  # type: ignore
+        )
         shard0_spec = Shard(0)
         shard1_spec = Shard(1)
         replica_spec = Replicate()
@@ -251,8 +254,11 @@ class DistMatrixOpsTest(DistTensorTestBase):
                     )
 
     @with_comms
-    def test_bmm(self):
-        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+    def test_bmm(self: "DistTensorTestBase"):
+        device_mesh = DeviceMesh(
+            self.device_type,
+            list(range(self.world_size)),  # type: ignore
+        )
         mat1 = torch.rand(4, 8, 4, device=self.device_type, requires_grad=True)
         mat2 = torch.rand(4, 4, 8, device=self.device_type, requires_grad=True)
         local_result = torch.bmm(mat1, mat2)
