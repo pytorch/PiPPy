@@ -1,12 +1,12 @@
 import warnings
 import functools
 import copy
-from typing import Any, List, NamedTuple, Optional, Tuple
+from typing import Any, List, NamedTuple, Optional, Tuple, cast
 
 import torch
 import torch.distributed as dist
+import torch.distributed.distributed_c10d as c10d
 
-from torch.distributed.fsdp._utils import _set_fsdp_flattened
 from torch.distributed.fsdp._shard_utils import _create_chunk_sharded_tensor
 
 import torch.distributed._shard.sharding_spec as shard_spec
@@ -39,7 +39,7 @@ class _STShardingInfo(NamedTuple):
     device_mesh: Optional[DeviceMesh]
     placements: Optional[List[Placement]]
 
-def _get_box(tensor: DistributedTensor) -> Tuple:
+def _get_box(tensor: DistributedTensor) -> Tuple[torch.Size, torch.Size]:
     device_mesh = tensor.device_mesh
     assert device_mesh.ndim == 1, f"Only 1D DeviceMeshes currently handled"
 
@@ -48,22 +48,24 @@ def _get_box(tensor: DistributedTensor) -> Tuple:
     num_chunks = device_mesh.size(dim=0)
 
     if tensor.placements[0].is_shard():
-        shard_dim = placement.dim
+        shard_dim = cast(Shard, placement).dim
         chunk_size = tensor.size(shard_dim) // num_chunks
         offsets[shard_dim] = chunk_size
 
     return (torch.Size(offsets), tensor._local_tensor.size())
 
-def _get_box_for(tensor: DistributedTensor, idx: int) -> Tuple:
+def _get_box_for(tensor: DistributedTensor, idx: int) -> Tuple[torch.Size, torch.Size]:
     offsets, size = _get_box(tensor)
     offsets = [val * idx for val in offsets]
     return (torch.Size(offsets), size)
 
-def _get_local_box(tensor: DistributedTensor) -> Tuple:
+def _get_local_box(tensor: DistributedTensor) -> Tuple[torch.Size, torch.Size]:
     device_mesh = tensor.device_mesh
-    return _get_box_for(tensor, device_mesh.get_coordinate_on_dim(0))
+    dim_0_coord = device_mesh.get_coordinate_on_dim(0)
+    assert dim_0_coord is not None
+    return _get_box_for(tensor, dim_0_coord)
 
-def _create_shard_md_from_dt(dt: DistributedTensor, current_rank) -> ShardMetadata:
+def _create_shard_md_from_dt(dt: DistributedTensor, current_rank: int) -> ShardMetadata:
     mesh = dt.device_mesh
     assert mesh.ndim == 1, f"Only 1D DeviceMeshes currently handled"
 
@@ -74,7 +76,7 @@ def _create_shard_md_from_dt(dt: DistributedTensor, current_rank) -> ShardMetada
         placement=f"rank:{current_rank}/{dt._local_tensor.device}"
     )
 
-def _create_sharded_tensor_md_from_dt(dt: DistributedTensor, dt_pg) -> ShardedTensorMetadata:
+def _create_sharded_tensor_md_from_dt(dt: DistributedTensor, dt_pg: dist.ProcessGroup) -> ShardedTensorMetadata:
     # This is where it gets tricky, we have to produce a ShardedTensor that has full coverage
     # and yet has only one valid shard for the current rank.
 
@@ -106,13 +108,13 @@ def _create_sharded_tensor_md_from_dt(dt: DistributedTensor, dt_pg) -> ShardedTe
         )
     )
 
-def _get_dt_pg(dt: DistributedTensor) -> dist.ProcessGroup:
+def _get_dt_pg(dt: DistributedTensor) -> c10d.ProcessGroup:
     mesh = dt.device_mesh
     assert mesh.ndim == 1, f"Only 1D DeviceMeshes currently handled"
     return mesh.get_dim_groups()[0]
 
 
-def _rewrite_spec_if_needed(spec: shard_spec.ShardingSpec, tensor: torch.Tensor, rank: int):
+def _rewrite_spec_if_needed(spec: shard_spec.ShardingSpec, tensor: torch.Tensor, rank: int) -> shard_spec.ShardingSpec:
     """
     Rewrite ``spec`` to match the device of ``tensor``.
 
@@ -157,6 +159,8 @@ def _flatten_tensor(tensor: torch.Tensor,) -> Tuple[torch.Tensor, Optional[Any]]
     return tensor, None
 
 def _unflatten_tensor(tensor: torch.Tensor, sharding_info: _STShardingInfo) -> torch.Tensor:
+    from torch.distributed.fsdp._utils import _set_fsdp_flattened
+
     if sharding_info.sharding_spec is not None:
         sharded_tensor = ShardedTensor._init_from_local_tensor(
             tensor,
@@ -277,6 +281,7 @@ try:
         _set_fsdp_extensions,
         FSDPExtensions,
     )
+    from torch.distributed.fsdp._utils import _set_fsdp_flattened
     class DTensorExtensions(FSDPExtensions):
         def pre_flatten_transform(
             self,
@@ -313,7 +318,7 @@ try:
 
     _set_fsdp_extensions(DTensorExtensions())
 
-    def is_available():
+    def is_available() -> bool:
         return True
 except BaseException as e:
     warnings.warn(
@@ -321,5 +326,5 @@ except BaseException as e:
         "2D parallelism won't work with FSDP"
         f"exception: {e}"
     )
-    def is_available():
+    def is_available() -> bool:
         return False
