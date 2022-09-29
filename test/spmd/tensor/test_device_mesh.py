@@ -259,6 +259,28 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
             self.assertEqual(scattered_tensor, splitted_list[mesh.get_rank()])
 
     @with_comms
+    def test_scatter_uneven(self):
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        my_rank = device_mesh.get_rank()
+        tensor_to_split = torch.randn(
+            device_mesh.size() + 3, device_mesh.size() + 1
+        )
+
+        for shard_dim in range(tensor_to_split.ndim):
+            tensor_to_scatter = tensor_to_split.clone()
+            tensor_splitted_list = tensor_to_split.tensor_split(
+                device_mesh.size(), dim=shard_dim
+            )
+
+            scattered_tensor = device_mesh.scatter(
+                tensor_to_scatter, tensor_dim=shard_dim
+            )
+            self.assertEqual(
+                scattered_tensor.size(), tensor_splitted_list[my_rank].size()
+            )
+            self.assertEqual(scattered_tensor, tensor_splitted_list[my_rank])
+
+    @with_comms
     def test_all_gather_1d(self):
         mesh = DeviceMesh(self.device_type, torch.arange(self.world_size))
         dims_to_gather = [0, 1]
@@ -289,6 +311,37 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
             )
             self.assertEqual(
                 reduce_scattered_tensor, torch.ones(3, 3) * res_num
+            )
+
+    @with_comms
+    def test_reduce_scatter_uneven(self):
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        my_rank = device_mesh.get_rank()
+        tensor_to_split = (
+            torch.ones(
+                device_mesh.size() + 3,
+                device_mesh.size() + 1,
+                device=self.device_type,
+            )
+            * self.rank
+        )
+
+        for shard_dim in range(tensor_to_split.ndim):
+            tensor_to_scatter = tensor_to_split.clone()
+            tensor_splitted_list = tensor_to_split.tensor_split(
+                device_mesh.size(), dim=shard_dim
+            )
+
+            res_num = ((0 + self.world_size - 1) * self.world_size) / 2
+            scattered_tensor = device_mesh.reduce_scatter(
+                tensor_to_scatter, tensor_dim=shard_dim
+            )
+            self.assertEqual(
+                scattered_tensor.size(), tensor_splitted_list[my_rank].size()
+            )
+            self.assertEqual(
+                scattered_tensor,
+                torch.ones_like(tensor_splitted_list[my_rank]) * res_num,
             )
 
     @with_comms

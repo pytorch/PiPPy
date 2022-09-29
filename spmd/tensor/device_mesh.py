@@ -2,6 +2,7 @@
 import warnings
 from typing import List, Optional, Iterable, Sequence
 import torch
+import torch.nn.functional as F
 from torch.distributed._spmd.comm_tensor import CommTensor
 from torch.distributed.distributed_c10d import (
     all_gather,
@@ -83,6 +84,7 @@ class DeviceMesh(object):
 
     device_type: str
     mesh: torch.Tensor
+    _backend: str
 
     def __init__(
         self,
@@ -97,19 +99,19 @@ class DeviceMesh(object):
             else torch.tensor(mesh, dtype=torch.int)
         )
         default_pg = _get_default_group()
-        backend_name = default_pg._get_backend_name()
+        self._backend = default_pg._get_backend_name()
         # TODO: if user want to pass pg_options, offer a way to do it
         # check default pg backend, should support device_type
         if device_type == "cpu":
             assert (
-                backend_name == "gloo"
-            ), f"ProcessGroup backend: {backend_name} not supporting CPU!"
+                self._backend == "gloo"
+            ), f"ProcessGroup backend: {self._backend} not supporting CPU!"
         elif device_type == "cuda":
-            if backend_name == "gloo":
+            if self._backend == "gloo":
                 warnings.warn(
                     "We recommend using nccl backend for cuda device type, gloo backend might only have partial support!"
                 )
-            assert backend_name == "gloo" or backend_name == "nccl"
+            assert self._backend == "gloo" or self._backend == "nccl"
         else:
             raise RuntimeError(
                 f"DeviceMesh only support cpu or cuda device type, but got {device_type}"
@@ -190,7 +192,7 @@ class DeviceMesh(object):
                     # pg or not, it's required that all ranks participate
                     # in subgroup construction
                     new_subgroup = new_group(
-                        ranks=subgroup_ranks, backend=backend_name
+                        ranks=subgroup_ranks, backend=self._backend
                     )
                     # only add to dim_groups if the current rank in the subgroup
                     if self.get_rank() in subgroup_ranks:
@@ -232,7 +234,7 @@ class DeviceMesh(object):
         return self.mesh.ndim
 
     def backend(self) -> str:
-        return _get_default_group()._get_backend_name()
+        return self._backend
 
     def get_rank(self) -> int:
         return get_rank()
@@ -243,6 +245,18 @@ class DeviceMesh(object):
         dimension of the mesh. If this rank is not part of the mesh, return None.
         """
         return self._coordinate_on_dim[dim] if self._coordinate_on_dim else None
+
+    def _pad_tensor_dim_by_1(
+        self, tensor: torch.Tensor, dim: int
+    ) -> torch.Tensor:
+        pad = [0, 0] * (tensor.ndim - dim)
+        pad[-1] = 1
+        return F.pad(tensor, pad)
+
+    def _unpad_tensor_dim_by_1(
+        self, tensor: torch.Tensor, dim: int
+    ) -> torch.Tensor:
+        return tensor.narrow(dim, start=0, length=tensor.size(dim) - 1)
 
     def scatter(
         self,
@@ -275,27 +289,29 @@ class DeviceMesh(object):
         ), "Rank if not part of mesh"  # TODO: figure out behavior here
 
         num_chunks = self.size(mesh_dim)
-        # TODO: handle uneven shard sizes
-        assert tensor_to_scatter.size(tensor_dim) % num_chunks == 0, (
-            f"Only support chunk sharding evenly now, but tensor got "
-            f"dimension {tensor_dim} of size {tensor_to_scatter.size(tensor_dim)}, "
-            f"which does not divide number of shards {num_chunks}."
-        )
-
-        scatter_list = list(
-            tensor_to_scatter.tensor_split(num_chunks, dim=tensor_dim)
-        )
-        # CommTensor does not change eager mode behavior. During tracing, it
-        # makes sure communication result is properly waited before subsequent
-        # read operations.
-        to_scatter = [
-            CommTensor(tensor.contiguous()) for tensor in scatter_list
-        ]
         dim_group = self._dim_groups[mesh_dim]
         # src need to be global rank
         src_for_dim = 0
         if dim_group is not GroupMember.WORLD:
             src_for_dim = get_global_rank(dim_group, 0)
+
+        scatter_list = list(
+            tensor_to_scatter.tensor_split(num_chunks, dim=tensor_dim)
+        )
+        # gloo does not support uneven scattering, nccl supports it, but it
+        # might be slow compared to even size collective, we need to pad tensor
+        # before really calling scatter, and unpad/narrow it after the collective
+        # TODO: consider if we should remove this logic once ProcessGroupGloo
+        # suupport uneven list, and collective perfomance on par
+        idx_start_to_pad = tensor_to_scatter.size(tensor_dim) % num_chunks
+        to_scatter = []
+        for i, scatter_tensor in enumerate(scatter_list):
+            if idx_start_to_pad != 0 and i >= idx_start_to_pad:
+                scatter_tensor = self._pad_tensor_dim_by_1(
+                    scatter_tensor, tensor_dim
+                )
+            scatter_tensor = scatter_tensor.contiguous()
+            to_scatter.append(CommTensor(scatter_tensor))
 
         # N.B.: the `tensor` below will be a CommTensor too due to CommTensor's
         # propagation rule: propagte wrapping until communication is called.
@@ -311,6 +327,11 @@ class DeviceMesh(object):
             )
         else:
             scatter(tensor, scatter_list=None, src=src_for_dim, group=dim_group)
+
+        # resize to uneven size if needed
+        if idx_start_to_pad != 0 and my_coordinate >= idx_start_to_pad:
+            # tensor = tensor.narrow(tensor_dim, start=0, length=tensor.size(tensor_dim) - 1)
+            tensor = self._unpad_tensor_dim_by_1(tensor, tensor_dim)
         return tensor
 
     def broadcast(
@@ -458,17 +479,46 @@ class DeviceMesh(object):
         ), "Rank if not part of mesh"  # TODO: figure out behavior here
 
         num_chunks = self.size(mesh_dim)
-        if self.backend() == "nccl":
+        if self._backend == "nccl":
             input_list = list(input.tensor_split(num_chunks, dim=tensor_dim))
-            to_scatter = [tensor.contiguous() for tensor in input_list]
-            output = torch.empty_like(input_list[my_coordinate])
+            # gloo does not support uneven scattering, nccl supports it, but it
+            # might be slow compared to even size collective, we need to pad tensor
+            # before really calling scatter, and unpad/narrow it after the collective
+            # TODO: consider if we should remove this logic once ProcessGroupGloo
+            # suupport uneven list, and collective perfomance on par
+            idx_start_to_pad = input.size(tensor_dim) % num_chunks
+            to_scatter = []
+            for i, scatter_tensor in enumerate(input_list):
+                if idx_start_to_pad != 0 and i >= idx_start_to_pad:
+                    scatter_tensor = self._pad_tensor_dim_by_1(
+                        scatter_tensor, tensor_dim
+                    )
+                scatter_tensor = scatter_tensor.contiguous()
+                to_scatter.append(CommTensor(scatter_tensor))
+
+            output = torch.empty_like(to_scatter[my_coordinate])
             dim_group = self._dim_groups[mesh_dim]
             reduce_scatter(output, to_scatter, op=op, group=dim_group)
+
+            # resize to uneven size if needed
+            if idx_start_to_pad != 0 and my_coordinate >= idx_start_to_pad:
+                # tensor = tensor.narrow(tensor_dim, start=0, length=tensor.size(tensor_dim) - 1)
+                output = self._unpad_tensor_dim_by_1(output, tensor_dim)
+
             return output
-        else:
+        elif self._backend == "gloo":
+            # it's gloo, which does not have reduce_scatter
+            # we have to do all_reduce + scatter
+            warnings.warn(
+                "ProcessGroupGloo does not support reduce_scatter, falling back with all reduce!"
+            )
             reduced_tensor = self.all_reduce(input, op=op, mesh_dim=mesh_dim)
             chunks = reduced_tensor.tensor_split(num_chunks, dim=tensor_dim)
             return chunks[my_coordinate]
+        else:
+            raise RuntimeError(
+                f"backend {self._backend} does not support reduce_scatter!"
+            )
 
     # TODO: rewrite interface to adopt PR #491, #492
     # TODO: Now input_tensor_list is assumed evenly splitted before being passed
