@@ -7,10 +7,10 @@ from spmd.testing.common_utils import (  # type: ignore
     DistTensorTestBase,
     with_comms,
 )
-from spmd import distribute_tensor, DeviceMesh, Shard
+from spmd import distribute_tensor, Shard
 import itertools
 
-from test.devices import skip_unless_torch_gpu, build_device_mesh
+from spmd.testing.devices import skip_unless_torch_gpu, build_device_mesh
 
 
 class DistMathOpsTest(DistTensorTestBase):

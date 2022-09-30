@@ -1,7 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 from torch.testing._internal.common_utils import run_tests
-from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 from spmd.tensor.api import DTensor
 from spmd.testing.common_utils import (  # type: ignore
     DistTensorTestBase,
@@ -12,7 +11,7 @@ from spmd.tensor.placement_types import Placement, Shard, Replicate, _Partial
 from typing import List, Optional, cast
 import itertools
 
-from test.devices import skip_unless_torch_gpu
+from spmd.testing.devices import skip_unless_torch_gpu
 
 
 class DistMatrixOpsTest(DistTensorTestBase):

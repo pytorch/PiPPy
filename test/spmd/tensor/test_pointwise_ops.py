@@ -23,7 +23,7 @@ from spmd.tensor.placement_types import (
 )
 from torch.distributed.distributed_c10d import ReduceOp
 
-from test.devices import skip_unless_torch_gpu, build_device_mesh
+from spmd.testing.devices import skip_unless_torch_gpu, build_device_mesh
 
 import torch.utils._pytree as pytree
 

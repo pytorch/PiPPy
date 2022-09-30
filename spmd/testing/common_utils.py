@@ -25,7 +25,7 @@ from torch.testing._internal.common_distributed import (
 from spmd import DeviceMesh, distribute_tensor, Shard, Replicate
 from spmd.tensor.api import DTensor
 from spmd.tensor.placement_types import Placement
-from test.devices import NUM_DEVICES
+from spmd.testing.devices import NUM_DEVICES
 
 
 class DistTensorTestBase(MultiProcessTestCase):

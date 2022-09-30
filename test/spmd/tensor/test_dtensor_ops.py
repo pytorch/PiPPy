@@ -28,7 +28,7 @@ from spmd.testing.common_utils import (
     TEST_SKIPS,
     DTensorConverter,
 )
-from test.devices import DEVICE_TYPE, NUM_DEVICES
+from spmd.testing.devices import DEVICE_TYPE, NUM_DEVICES
 
 # rewrite common size variables to sth can be sharded evenly
 # we can enable uneven shards later, but need to adjust more on

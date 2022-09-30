@@ -19,7 +19,7 @@ from spmd.testing.common_utils import (
 )
 from torch.testing._internal.common_utils import run_tests
 
-from test.devices import skip_unless_torch_gpu
+from spmd.testing.devices import skip_unless_torch_gpu
 
 
 class MyModule(torch.nn.Module):

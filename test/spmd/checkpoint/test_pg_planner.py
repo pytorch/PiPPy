@@ -19,7 +19,7 @@ from spmd.testing.common_utils import (
     DistTensorTestBase,
     with_comms,
 )
-from test.devices import skip_unless_torch_gpu
+from spmd.testing.devices import skip_unless_torch_gpu
 
 
 class MyModule(torch.nn.Module):

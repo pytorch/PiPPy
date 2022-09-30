@@ -1,4 +1,5 @@
 from functools import wraps
+from typing import Callable, TypeVar, cast, Any
 
 import torch
 from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
@@ -13,8 +14,9 @@ if torch.cuda.is_available() and torch.cuda.device_count() > 1:
     # when we actually have multiple GPUs, relax the requirement to smaller counts.
     NUM_DEVICES = min(NUM_DEVICES, torch.cuda.device_count())
 
+T = TypeVar('T')
 
-def skip_unless_torch_gpu(method):
+def skip_unless_torch_gpu(method: T) -> T:
     """
     Test decorator which skips the test unless there's a GPU available to torch.
 
@@ -22,11 +24,11 @@ def skip_unless_torch_gpu(method):
     >>> def test_some_method(self) -> None:
     >>>   ...
     """
-    return skip_if_lt_x_gpu(1)(method)
+    return cast(T, skip_if_lt_x_gpu(1)(method))
 
 
 def build_device_mesh() -> DeviceMesh:
     """
     Build a testing device mesh.
     """
-    return DeviceMesh(DEVICE_TYPE, list(range(NUM_DEVICES)))
+    return DeviceMesh(DEVICE_TYPE, list(range(NUM_DEVICES)))  # type: ignore
