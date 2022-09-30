@@ -534,11 +534,7 @@ class DeviceMesh(object):
                 f"backend {self._backend} does not support reduce_scatter!"
             )
 
-    # TODO: rewrite interface to adopt PR #491, #492
-    # TODO: Now input_tensor_list is assumed evenly splitted before being passed
-    # to all_to_all, add test for uneven split case to see if current code
-    # work for GLOO/NCCL. I believe that this should work for NCCL but not
-    # for GLOO until PR #498 gets landed.
+    # TODO: test uneven split on GLOO and NCCL
     def all_to_all(
         self, input_tensor: torch.Tensor, mesh_dim: int = 0, tensor_dim: int = 0
     ) -> torch.Tensor:
@@ -560,7 +556,12 @@ class DeviceMesh(object):
             # TODO: pull the handle of uneven case in #492
             dim_group_size = get_world_size(dim_group)
             for i in range(dim_group_size):
-                gathered_tensor = self.all_gather(input_tensor_list[i], input_tensor.shape, mesh_dim, tensor_dim)
+                gathered_tensor = self.all_gather(
+                    input_tensor_list[i],
+                    input_tensor.shape,
+                    mesh_dim,
+                    tensor_dim,
+                )
                 if i == my_coordinate:
                     output_tensor = gathered_tensor
         elif self.backend() == "nccl":
@@ -572,8 +573,10 @@ class DeviceMesh(object):
             # TODO: BE - code refactor
             idx_start_to_pad = input_tensor.size(tensor_dim) % num_chunks
             if idx_start_to_pad != 0 and my_coordinate >= idx_start_to_pad:
-                for i in len(output_tensor_list):
-                    output_tensor_list[i] = self._unpad_tensor_dim_by_1(output_tensor_list[i], tensor_dim)
+                for i in range(len(output_tensor_list)):
+                    output_tensor_list[i] = self._unpad_tensor_dim_by_1(
+                        output_tensor_list[i], tensor_dim
+                    )
             output_tensor = torch.cat(output_tensor_list, dim=tensor_dim)
         else:
             raise RuntimeError(

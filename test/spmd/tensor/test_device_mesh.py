@@ -467,8 +467,6 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
             expected_tensor = torch.cat(expected_tensor_list, dim=scatter_dim)
             self.assertEqual(output_tensor, expected_tensor)
 
-
-
     @with_comms
     def test_all_to_all_nd(self):
         mesh_tensor = torch.arange(8).reshape(2, 2, 2)
@@ -483,11 +481,15 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
                 get_global_rank(dim_group, i) for i in range(dim_group_size)
             ]
             input_tensor_list = [
-                torch.ones(*tensor_shape, device=self.device_type) * (i + self.rank * dim_group_size)
+                torch.ones(*tensor_shape, device=self.device_type)
+                * (i + self.rank * dim_group_size)
                 for i in range(dim_group_size)
             ]
             expected_tensor_list = [
-                torch.ones(*tensor_shape, device=self.device_type) * (my_coordinate + global_rank * dim_group_size)  # i.e. transpose
+                torch.ones(*tensor_shape, device=self.device_type)
+                * (
+                    my_coordinate + global_rank * dim_group_size
+                )  # i.e. transpose
                 for global_rank in global_ranks
             ]
             for scatter_dim in range(len(tensor_shape)):
@@ -496,7 +498,9 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
                 output_tensor = mesh.all_to_all(
                     input_tensor, mesh_dim=dim, tensor_dim=scatter_dim
                 )
-                expected_tensor = torch.cat(expected_tensor_list, dim=scatter_dim)
+                expected_tensor = torch.cat(
+                    expected_tensor_list, dim=scatter_dim
+                )
                 self.assertEqual(output_tensor, expected_tensor)
 
 
