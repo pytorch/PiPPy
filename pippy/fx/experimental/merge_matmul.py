@@ -1,14 +1,15 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-import torch
-
-import pippy.fx
-from pippy.fx.node import Node
-from pippy.fx._symbolic_trace import symbolic_trace
-from pippy.fx.passes.tools_common import legalize_graph
 import itertools
 import operator
-
 from typing import Dict, List
+
+import torch
+
+import pippy
+import pippy.fx
+from pippy.fx._symbolic_trace import symbolic_trace
+from pippy.fx.node import Node
+from pippy.fx.passes.tools_common import legalize_graph
 
 
 def split_result_tensors(result: torch.Tensor, inputs: List[torch.Tensor]) -> List[torch.Tensor]:
