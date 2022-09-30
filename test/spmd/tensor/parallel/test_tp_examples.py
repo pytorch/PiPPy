@@ -13,8 +13,7 @@ from spmd import (
     Replicate,
 )
 from spmd.tensor.parallel import TensorParallelMultiheadAttention
-from spmd.testing.devices import NUM_DEVICES
-from torch.testing._internal.common_distributed import skip_if_no_gpu
+from spmd.testing.devices import NUM_DEVICES, skip_unless_torch_gpu
 
 
 class MLPModule(torch.nn.Module):
@@ -274,7 +273,7 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
 
     # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
     @with_comms
-    @skip_if_no_gpu
+    @skip_unless_torch_gpu
     def test_self_attn_megatron_e2e(self):
         inp_size = [8, 12, 16]
         # Ensure all tp ranks have same input.

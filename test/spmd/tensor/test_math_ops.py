@@ -10,7 +10,7 @@ from spmd.testing.common_utils import (  # type: ignore
 from spmd import distribute_tensor, Shard
 import itertools
 
-from torch.testing._internal.common_distributed import skip_if_no_gpu
+from spmd.testing.devices import skip_unless_torch_gpu
 
 
 class DistMathOpsTest(DistTensorTestBase):
@@ -72,7 +72,7 @@ class DistMathOpsTest(DistTensorTestBase):
     # DTensor's _softmax_backward_data produces wrong result on CPU on certain dimension.
     # fail_on_cpu_list = [(0, -1), (1, -1)]
     @with_comms
-    @skip_if_no_gpu
+    @skip_unless_torch_gpu
     def test_softmax_with_bwd(self):
         device_mesh = self.build_device_mesh()
 

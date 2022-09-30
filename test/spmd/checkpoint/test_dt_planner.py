@@ -17,8 +17,9 @@ from spmd.testing.common_utils import (
     DistTensorTestBase,
     with_comms,
 )
-from torch.testing._internal.common_distributed import skip_if_no_gpu
 from torch.testing._internal.common_utils import run_tests
+
+from spmd.testing.devices import skip_unless_torch_gpu
 
 
 class MyModule(torch.nn.Module):
@@ -66,7 +67,7 @@ class MyModule(torch.nn.Module):
 
 class DistributedTensorPlanner(DistTensorTestBase):
     @with_comms
-    @skip_if_no_gpu
+    @skip_unless_torch_gpu
     @with_temp_dir
     def test_distributed_tensor_planner(self) -> None:
         CHECKPOINT_DIR = self.temp_dir
