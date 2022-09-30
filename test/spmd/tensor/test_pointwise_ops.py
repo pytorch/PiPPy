@@ -82,7 +82,6 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         pre_op_reset: Optional[Callable] = None,
         args: Sequence[Any] = tuple(),
         kwargs: Optional[Dict[str, Any]] = None,
-        verify_args: bool = True,
     ):
         if pre_op_reset is None:
             pre_op_reset = lambda: None
@@ -101,15 +100,15 @@ class DistElementwiseOpsTest(DistTensorTestBase):
             placements=placements,
         )
 
-        if verify_args:
-            self.assertEqual(
-                args,
-                deepcopy_convert_from_dtensor(args),
-            )
-            self.assertEqual(
-                kwargs,
-                deepcopy_convert_from_dtensor(dkwargs),
-            )
+        # These could be skipped.
+        self.assertEqual(
+            args,
+            deepcopy_convert_from_dtensor(args),
+        )
+        self.assertEqual(
+            kwargs,
+            deepcopy_convert_from_dtensor(dkwargs),
+        )
 
         pre_op_reset()
 
