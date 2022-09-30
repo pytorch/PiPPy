@@ -31,7 +31,8 @@ Shape = Tuple[int, ...]
 class DimSpec:
     """Specifies how an output dimension maps to an input dimension."""
 
-    pass
+    def inputs(self) -> Iterable['DimSpec']:
+        return ()
 
 
 # Rules that map each dimension of the output to dimensions of the input tensor
@@ -63,6 +64,9 @@ class Broadcast(DimSpec):
     def new(cls, dim: DimSpec, dim_size: int) -> DimSpec:
         return Broadcast(dim, dim_size)
 
+    def inputs(self) -> Iterable[DimSpec]:
+        return (self.dim, )
+
 
 @dataclass
 class NewDim(DimSpec):
@@ -92,6 +96,9 @@ class Repeat(DimSpec):
         else:
             return Repeat(dim, times)
 
+    def inputs(self) -> Iterable[DimSpec]:
+        return (self.input_dim, )
+
 
 @dataclass
 class Flatten(DimSpec):
@@ -112,6 +119,9 @@ class Flatten(DimSpec):
             return dims[0]
         else:
             return Flatten(dims)
+
+    def inputs(self) -> Iterable[DimSpec]:
+        return self.input_dims
 
 
 @dataclass
@@ -145,6 +155,9 @@ class Split(DimSpec):
             new_group_shape = tuple(m[1][0] for m in group_mapping)
             new_idx = next(filter(lambda x: x[1][1] == idx, group_mapping))[0]
             return Split(dim, new_group_shape, new_idx)
+
+    def inputs(self) -> Iterable[DimSpec]:
+        return (self.input_dim, )
 
 
 def dim_pad_left(ndim: int, min_dims: int) -> DimMap:
@@ -482,19 +495,40 @@ def propagate_shape_and_sharding(
     sharded_in_dims: Set[int] = set(
         s.dim for s in in_shard if isinstance(s, Shard)
     )
+    # for each input dim, for each mesh dim, provides a list of possible shardable dimensions
+    shardable_dims: torch.Tensor = torch.ones((len(local_in_shape), len(mesh_sizes)), dtype=torch.bool)
+
+    # in case an input dimension disappears (e.g. collapsing, reduction)
+    # we cannot shard in that dimension (we need a replication fall-back rule)
+
+    seen_input_dims: Set[int] = set()
+
+    def collect_used_inputs(cmd: DimSpec):
+        if isinstance(cmd, InputDim):
+            seen_input_dims.add(cmd.input_dim)
+        for inp in cmd.inputs():
+            collect_used_inputs(inp)
+    
+    for cmd in rule:
+        collect_used_inputs(cmd)
+    for dim in range(len(local_in_shape)):
+        shardable_dims[dim, :] = dim in seen_input_dims
 
     def get_dim_size(cmd: DimSpec) -> Tuple[int, Optional[InputDim]]:
         if isinstance(cmd, InputDim):
+            seen_input_dims.add(cmd.input_dim)
             return (
                 local_in_shape[cmd.input_dim],
                 cmd if cmd.input_dim in sharded_in_dims else None,
             )
         elif isinstance(cmd, Flatten):
             for dim in cmd.input_dims[1:]:
-                assert (
-                    not isinstance(dim, InputDim)
-                    or dim.input_dim not in sharded_in_dims
-                ), "Only the first member of a Flatten dimension group can be sharded"
+                if isinstance(dim, InputDim):
+                    shardable_dims[dim.input_dim, :] = False
+                #assert (
+                #    not isinstance(dim, InputDim)
+                #    or dim.input_dim not in sharded_in_dims
+                #), "Only the first member of a Flatten dimension group can be sharded"
             dim0 = cmd.input_dims[0]
             return (
                 _prod(get_dim_size(a)[0] for a in cmd.input_dims),
@@ -509,6 +543,18 @@ def propagate_shape_and_sharding(
             if cmd.split_id == 0 and in_dim is not None:
                 # we need to check that the input dimension is divisble
                 # by the size of the submesh we're sharding it on
+                # NOTE: it would be possible to shard the same input dimension
+                # on more than one mesh dimension. In that case, the dimension
+                # needs to be divisible by the product of mesh sizes.
+                # In order to keep the problem more tractable, we will not consider
+                # double resharding as a suggestion (e.g. [Shard(0), Shard(0) ])
+                # but we will allow it if that's the input and it's compatible
+
+                # 1. is this dimension shardable on each individual mesh dim?
+                for mesh_dim, mesh_dim_size in enumerate(mesh_sizes):
+                    shardable_dims[in_dim.input_dim, mesh_dim] = out_size % mesh_dim_size == 0
+
+                # 2. here we special case things like [Shard(0), Shard(0)]
                 submesh_size = 1
                 for size, shard in zip(mesh_sizes, in_shard):
                     if isinstance(shard, Shard) and shard.dim == in_dim:
@@ -516,6 +562,7 @@ def propagate_shape_and_sharding(
                 assert (
                     out_size % submesh_size == 0
                 ), f"Resulting dimension size {out_size} is not divisible by its mesh dimension {submesh_size}."
+
             # we will only shard our first component of the split
             return out_size, in_dim if cmd.split_id == 0 else None
         elif isinstance(cmd, Singleton):
@@ -526,9 +573,11 @@ def propagate_shape_and_sharding(
             return cmd.size, None
         elif isinstance(cmd, Repeat):
             size, in_dim = get_dim_size(cmd.input_dim)
-            assert (
-                in_dim is None or in_dim.input_dim not in sharded_in_dims
-            ), "Cannot tile sharded dimension."
+            # assert (
+            #     in_dim is None or in_dim.input_dim not in sharded_in_dims
+            # ), "Cannot tile sharded dimension."
+            if in_dim is not None:
+                shardable_dims[in_dim.input_dim, :] = False
             return size * cmd.times, None
         else:
             raise RuntimeError(f"cmd not found: {cmd}, in rule: {rule}")
@@ -541,6 +590,12 @@ def propagate_shape_and_sharding(
         if in_dim is not None:
             dim_map[in_dim.input_dim] = dim
 
+    if torch.distributed.get_rank() == 0:
+        print('----------------')
+        print(rule)
+        print(in_shard)
+
+    print(shardable_dims)
     return (
         tuple(out_shape),
         [
