@@ -100,16 +100,6 @@ class DistElementwiseOpsTest(DistTensorTestBase):
             placements=placements,
         )
 
-        # These could be skipped.
-        self.assertEqual(
-            args,
-            deepcopy_convert_from_dtensor(args),
-        )
-        self.assertEqual(
-            kwargs,
-            deepcopy_convert_from_dtensor(dkwargs),
-        )
-
         pre_op_fn()
 
         # run the reference first, in case the call is broken;
