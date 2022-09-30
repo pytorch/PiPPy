@@ -23,8 +23,6 @@ from spmd.tensor.placement_types import (
 )
 from torch.distributed.distributed_c10d import ReduceOp
 
-from spmd.testing.devices import skip_unless_torch_gpu
-
 import torch.utils._pytree as pytree
 
 from spmd.testing.devices import skip_unless_torch_gpu
@@ -145,14 +143,10 @@ class DistElementwiseOpsTest(DistTensorTestBase):
             kwargs=kwargs,
         )
 
-    def common_device_mesh(self) -> DeviceMesh:
-        mesh: Sequence[int] = list(range(self.world_size))
-        return DeviceMesh(self.device_type, mesh)  # type: ignore
-
     @with_comms
     @skip_unless_torch_gpu
     def test_activations(self):
-        device_mesh = self.common_device_mesh()
+        device_mesh = self.build_device_mesh()
         self._run_sharded_elementwise_ops(
             device_mesh=device_mesh,
             placements=[Shard(0)],
@@ -196,7 +190,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
     @with_comms
     @skip_unless_torch_gpu
     def test_dropout(self):
-        device_mesh = self.common_device_mesh()
+        device_mesh = self.build_device_mesh()
 
         def _reset_random_seed():
             torch.manual_seed(self.rank + 4)
@@ -223,7 +217,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
     @with_comms
     @skip_unless_torch_gpu
     def test_dropout_backward(self):
-        device_mesh = self.common_device_mesh()
+        device_mesh = self.build_device_mesh()
         placements = [Shard(0)]
 
         input_size = (8, 5)
@@ -256,7 +250,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
     @with_comms
     @skip_unless_torch_gpu
     def test_dropout_errors(self):
-        device_mesh = self.common_device_mesh()
+        device_mesh = self.build_device_mesh()
         with self.assertRaisesRegex(RuntimeError, "Not supported!"):
             self._run_sharded_elementwise_ops(
                 device_mesh=device_mesh,
@@ -268,7 +262,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
     @with_comms
     @skip_unless_torch_gpu
     def test_mul_out(self):
-        device_mesh = self.common_device_mesh()
+        device_mesh = self.build_device_mesh()
         torch.manual_seed(self.rank)
         shard_spec = [Shard(0)]
         input_size = (8, 4)
@@ -292,7 +286,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
     @with_comms
     @skip_unless_torch_gpu
     def test_pointwise_rules_suggestion(self):
-        device_mesh = self.common_device_mesh()
+        device_mesh = self.build_device_mesh()
 
         # propagate point-wise sharding
         inp1, inp2 = [-1, -1], [-1, 0]
