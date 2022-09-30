@@ -4,7 +4,7 @@ from typing import List, Optional, Dict
 
 import pippy.fx
 from pippy.fx.graph import map_arg
-from .tools_common import NodeList, NodeSet
+from .tools_common import NodeList
 from pippy.fx._compatibility import compatibility
 from pippy.fx.passes.utils import lift_subgraph_as_module, HolderModule
 
@@ -131,7 +131,7 @@ def split_by_tags(gm: pippy.fx.GraphModule, tags: List[str]) -> pippy.fx.GraphMo
     all_components: List[Component] = []
 
     # Stores nodes that will be used in main graph.
-    used_in_main: NodeSet = set()
+    used_in_main: Dict[pippy.fx.Node, None] = {}
 
     # Main graph after split.
     main_g = pippy.fx.Graph()
@@ -209,7 +209,7 @@ def split_by_tags(gm: pippy.fx.GraphModule, tags: List[str]) -> pippy.fx.GraphMo
                 comp.input_placeholders.append(
                     comp.graph.placeholder(x.name, type_expr=x.type)
                 )
-                used_in_main.add(x)
+                used_in_main[x] = None
 
             return comp.input_placeholders[
                 next(i for i, y in enumerate(comp.orig_inputs) if x is y)
@@ -232,7 +232,7 @@ def split_by_tags(gm: pippy.fx.GraphModule, tags: List[str]) -> pippy.fx.GraphMo
         else:
             # All component results consumed by the output node should be
             # marked as "used in main".
-            used_in_main.add(x)
+            used_in_main[x] = None
 
     # If a node is used in main graph then we mark it as an output in the component
     # it belongs to.
