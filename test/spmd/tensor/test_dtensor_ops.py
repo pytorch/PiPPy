@@ -691,7 +691,9 @@ class TestDTensorOps(DistTensorTestBase):
 
 
 # only instantiate tests for DEVICE_TYPE alone (i.e. either CPU or GPU)
-instantiate_device_type_tests(TestDTensorOps, globals(), only_for=(DEVICE_TYPE))
+instantiate_device_type_tests(
+    TestDTensorOps, globals(), only_for=(DEVICE_TYPE,)
+)
 
 
 if __name__ == "__main__":

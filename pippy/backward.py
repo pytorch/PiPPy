@@ -79,8 +79,8 @@ def stage_backward(stage_output, output_grads, input_values, stage_info: str, ou
     return grad_inputs, barrier_token
 
 
-def sync_barrier(loss, barrier_tokens):
-    return loss
+def sync_barrier(loss, barrier_tokens, last_grads):
+    return loss, last_grads
 
 
 # TODO: handling requires_grad=False dynamically. Can we analyze this during initial

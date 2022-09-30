@@ -1,15 +1,14 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 from .graph_module import GraphModule
 from .graph import Graph
-from .node import Argument, Node, map_arg, map_aggregate
-from typing import TYPE_CHECKING
-if TYPE_CHECKING:
-    from .node import Target
+from .node import Argument, Node, Target, map_arg, map_aggregate  # pylint: disable=unused-import
 from .proxy import Proxy
 from ._symbolic_trace import Tracer
 from ._compatibility import compatibility
+import pippy.fx.traceback as fx_traceback
 from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 import inspect
+from contextlib import contextmanager
 
 __all__ = ['Interpreter', 'Transformer']
 
@@ -128,7 +127,16 @@ class Interpreter:
                 # values for a subset of the program.
                 continue
 
-            self.env[node] = self.run_node(node)
+            try:
+                self.env[node] = self.run_node(node)
+            except Exception as e:
+                msg = f"While executing {node.format_node()}"
+                msg = '{}\n\n{}'.format(e.args[0], msg) if e.args else str(msg)
+                msg += f"\nOriginal traceback:\n{node.stack_trace}"
+                e.args = (msg,) + e.args[1:]
+                if isinstance(e, KeyError):
+                    raise RuntimeError(*e.args)
+                raise
 
             if self.garbage_collect_values:
                 for to_delete in self.user_to_last_uses.get(node, []):
@@ -137,6 +145,11 @@ class Interpreter:
             if node.op == 'output':
                 output_val = self.env[node]
                 return self.module.graph.process_outputs(output_val) if enable_io_processing else output_val
+
+    @contextmanager
+    def _set_current_node(self, node):
+        with fx_traceback.append_stack_trace(node.stack_trace):
+            yield
 
     @compatibility(is_backward_compatible=True)
     def run_node(self, n : Node) -> Any:
@@ -152,10 +165,11 @@ class Interpreter:
         Returns:
             Any: The result of executing ``n``
         """
-        args, kwargs = self.fetch_args_kwargs_from_env(n)
-        assert isinstance(args, tuple)
-        assert isinstance(kwargs, dict)
-        return getattr(self, n.op)(n.target, args, kwargs)
+        with fx_traceback.append_stack_trace(n.stack_trace):
+            args, kwargs = self.fetch_args_kwargs_from_env(n)
+            assert isinstance(args, tuple)
+            assert isinstance(kwargs, dict)
+            return getattr(self, n.op)(n.target, args, kwargs)
 
     # Main Node running APIs
     @compatibility(is_backward_compatible=True)
@@ -401,6 +415,7 @@ class Transformer(Interpreter):
 
             def is_leaf_module(self, _, __) -> bool:
                 return True
+
         self.tracer = TransformerTracer(self.new_graph)
         self.tracer.root = module
 
@@ -457,7 +472,8 @@ class Transformer(Interpreter):
         Transform ``self.module`` and return the transformed
         ``GraphModule``.
         """
-        result = super().run(enable_io_processing=False)
+        with fx_traceback.override_stack_trace():
+            result = super().run(enable_io_processing=False)
         if result is not None:
             def strip_proxy(a : Union[Argument, Proxy]) -> Any:
                 return a.node if isinstance(a, Proxy) else a
