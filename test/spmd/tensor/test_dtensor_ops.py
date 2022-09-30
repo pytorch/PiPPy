@@ -31,7 +31,7 @@ from spmd.testing.common_utils import (
 
 
 DEVICE_TYPE = "cuda" if torch.cuda.is_available() else "cpu"
-NUM_DEVICES = min(4, torch.cuda.device_count())
+NUM_DEVICES = 4
 
 # rewrite common size variables to sth can be sharded evenly
 # we can enable uneven shards later, but need to adjust more on
