@@ -1,5 +1,4 @@
-from functools import wraps
-from typing import Callable, TypeVar, cast, Any
+from typing import TypeVar, cast
 
 import torch
 from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
@@ -14,7 +13,8 @@ if torch.cuda.is_available() and torch.cuda.device_count() > 1:
     # when we actually have multiple GPUs, relax the requirement to smaller counts.
     NUM_DEVICES = min(NUM_DEVICES, torch.cuda.device_count())
 
-T = TypeVar('T')
+T = TypeVar("T")
+
 
 def skip_unless_torch_gpu(method: T) -> T:
     """
