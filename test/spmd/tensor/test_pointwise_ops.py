@@ -264,7 +264,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
     @skip_if_lt_x_gpu(TEST_GPU_NUM)
     def test_dropout_errors(self):
         device_mesh = self.common_device_mesh()
-        with self.assertRaisesRegex(RuntimeError, "Not supported!"):
+        with self.assertRaisesRegex(RuntimeError, "unsupported placements"):
             self._run_sharded_elementwise_ops(
                 device_mesh=device_mesh,
                 placements=[_Partial(ReduceOp.SUM)],
