@@ -25,16 +25,13 @@ from torch.testing._internal.common_distributed import (
 from spmd import DeviceMesh, distribute_tensor, Shard, Replicate
 from spmd.tensor.api import DTensor
 from spmd.tensor.placement_types import Placement
-
-
-# default GPU test size/world size
-TEST_GPU_NUM = 4
+from test.devices import NUM_DEVICES
 
 
 class DistTensorTestBase(MultiProcessTestCase):
     @property
     def world_size(self) -> int:
-        return TEST_GPU_NUM
+        return NUM_DEVICES
 
     def init_pg(self, backend: str = "nccl") -> None:
         if backend == "nccl" and torch.cuda.device_count() < self.world_size:

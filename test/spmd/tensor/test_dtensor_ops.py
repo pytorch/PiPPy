@@ -28,10 +28,7 @@ from spmd.testing.common_utils import (
     TEST_SKIPS,
     DTensorConverter,
 )
-
-
-DEVICE_TYPE = "cuda" if torch.cuda.is_available() else "cpu"
-NUM_DEVICES = 4
+from test.devices import DEVICE_TYPE, NUM_DEVICES
 
 # rewrite common size variables to sth can be sharded evenly
 # we can enable uneven shards later, but need to adjust more on

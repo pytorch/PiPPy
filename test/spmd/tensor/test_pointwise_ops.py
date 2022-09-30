@@ -8,13 +8,12 @@ from torch.testing._internal.common_utils import run_tests
 from spmd.testing.common_utils import (  # type: ignore
     DistTensorTestBase,
     with_comms,
-    TEST_GPU_NUM,
 )
 from spmd.tensor.dispatch import OpSchema
 
 from spmd.tensor import distribute_tensor
 from spmd.tensor.ops.pointwise_ops import pointwise_rule
-from spmd import DeviceMesh, DTensor
+from spmd import DTensor
 from spmd.tensor.placement_types import (
     Shard,
     Replicate,
@@ -23,7 +22,8 @@ from spmd.tensor.placement_types import (
     Placement,
 )
 from torch.distributed.distributed_c10d import ReduceOp
-from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
+
+from test.devices import skip_unless_torch_gpu, build_device_mesh
 
 import torch.utils._pytree as pytree
 
@@ -148,6 +148,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         return DeviceMesh(self.device_type, mesh)  # type: ignore
 
     @with_comms
+    @skip_unless_torch_gpu
     def test_activations(self):
         device_mesh = self.common_device_mesh()
         self._run_sharded_elementwise_ops(
@@ -191,7 +192,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         "testing RNG based ops is broken: https://github.com/pytorch/tau/issues/494"
     )
     @with_comms
-    @skip_if_lt_x_gpu(TEST_GPU_NUM)
+    @skip_unless_torch_gpu
     def test_dropout(self):
         device_mesh = self.common_device_mesh()
 
@@ -218,7 +219,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         )
 
     @with_comms
-    @skip_if_lt_x_gpu(TEST_GPU_NUM)
+    @skip_unless_torch_gpu
     def test_dropout_backward(self):
         device_mesh = self.common_device_mesh()
         placements = [Shard(0)]
@@ -251,10 +252,10 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         )
 
     @with_comms
-    @skip_if_lt_x_gpu(TEST_GPU_NUM)
+    @skip_unless_torch_gpu
     def test_dropout_errors(self):
         device_mesh = self.common_device_mesh()
-        with self.assertRaisesRegex(RuntimeError, "unsupported placements"):
+        with self.assertRaisesRegex(RuntimeError, "Not supported!"):
             self._run_sharded_elementwise_ops(
                 device_mesh=device_mesh,
                 placements=[_Partial(ReduceOp.SUM)],
@@ -263,6 +264,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
             )
 
     @with_comms
+    @skip_unless_torch_gpu
     def test_mul_out(self):
         device_mesh = self.common_device_mesh()
         torch.manual_seed(self.rank)
@@ -286,6 +288,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         self.assertEqual(expected, dt.to_local())
 
     @with_comms
+    @skip_unless_torch_gpu
     def test_pointwise_rules_suggestion(self):
         device_mesh = self.common_device_mesh()
 
