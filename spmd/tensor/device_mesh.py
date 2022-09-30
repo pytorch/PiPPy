@@ -258,6 +258,21 @@ class DeviceMesh(object):
     ) -> torch.Tensor:
         return tensor.narrow(dim, start=0, length=tensor.size(dim) - 1)
 
+    def _tensor_split_and_pad(
+        self, tensor: torch.Tensor, n: int, dim: int
+    ) -> List[torch.Tensor]:
+        # split tensor over dimension `dim` into n slices with padding if necessary
+        tensor_list = list(tensor.tensor_split(n, dim))
+        idx_start_to_pad = tensor.size(dim) % n
+        tensor_padded_list = []
+        for i, tensor_to_pad in enumerate(tensor_list):
+            if idx_start_to_pad != 0 and i >= idx_start_to_pad:
+                tensor_to_pad = self._pad_tensor_dim_by_1(tensor_to_pad, dim)
+            # input tensors are expected to be congtiguous by the collective backend
+            tensor_to_pad = tensor_to_pad.contiguous()
+            tensor_padded_list.append(CommTensor(tensor_to_pad))
+        return tensor_padded_list
+
     def scatter(
         self,
         tensor_to_scatter: torch.Tensor,
@@ -302,7 +317,7 @@ class DeviceMesh(object):
         # might be slow compared to even size collective, we need to pad tensor
         # before really calling scatter, and unpad/narrow it after the collective
         # TODO: consider if we should remove this logic once ProcessGroupGloo
-        # suupport uneven list, and collective perfomance on par
+        # support uneven list, and collective perfomance on par
         idx_start_to_pad = tensor_to_scatter.size(tensor_dim) % num_chunks
         to_scatter = []
         for i, scatter_tensor in enumerate(scatter_list):
@@ -330,7 +345,6 @@ class DeviceMesh(object):
 
         # resize to uneven size if needed
         if idx_start_to_pad != 0 and my_coordinate >= idx_start_to_pad:
-            # tensor = tensor.narrow(tensor_dim, start=0, length=tensor.size(tensor_dim) - 1)
             tensor = self._unpad_tensor_dim_by_1(tensor, tensor_dim)
         return tensor
 
@@ -526,39 +540,43 @@ class DeviceMesh(object):
     # work for GLOO/NCCL. I believe that this should work for NCCL but not
     # for GLOO until PR #498 gets landed.
     def all_to_all(
-        self, input_tensor_list: List[torch.Tensor], mesh_dim: int = 0
-    ) -> List[torch.Tensor]:
-        # input tensors are expected to be congtiguous by the collective backend
-        to_scatter = [
-            CommTensor(tensor.contiguous()) for tensor in input_tensor_list
-        ]
-        output_tensor_list = [torch.empty_like(to_scatter[0])] * len(to_scatter)
-        dim_group = self._dim_groups[mesh_dim]
+        self, input_tensor: torch.Tensor, mesh_dim: int = 0, tensor_dim: int = 0
+    ) -> torch.Tensor:
+        my_coordinate = self.get_coordinate_on_dim(mesh_dim)
+        # borrow the same logic with scatter()
+        # TODO: what should happen if rank is not in the mesh?
+        assert (
+            my_coordinate is not None
+        ), "Rank if not part of mesh"  # TODO: figure out behavior here
 
+        dim_group = self._dim_groups[mesh_dim]
+        num_chunks = self.size(mesh_dim)
+        input_tensor_list = self._tensor_split_and_pad(
+            input_tensor, num_chunks, tensor_dim
+        )
+        output_tensor = torch.empty_like(input_tensor)
         # no direct dist.all_to_all support on 'gloo' so we manually do scatters
         if self.backend() == "gloo":
+            # TODO: pull the handle of uneven case in #492
             dim_group_size = get_world_size(dim_group)
             for i in range(dim_group_size):
-                tensor = output_tensor_list[i]
-                src_for_dim = get_global_rank(dim_group, i)
-                if src_for_dim == get_rank():
-                    scatter(
-                        tensor,
-                        scatter_list=to_scatter,
-                        src=src_for_dim,
-                        group=dim_group,
-                    )
-                else:
-                    scatter(
-                        tensor,
-                        scatter_list=None,
-                        src=src_for_dim,
-                        group=dim_group,
-                    )
+                gathered_tensor = self.all_gather(input_tensor_list[i], input_tensor.shape, mesh_dim, tensor_dim)
+                if i == my_coordinate:
+                    output_tensor = gathered_tensor
         elif self.backend() == "nccl":
-            all_to_all(output_tensor_list, to_scatter, dim_group)
+            # we assume that the tensors gathered from each node are of the same shape
+            output_tensor_list = [
+                torch.empty_like(input_tensor_list[my_coordinate])
+            ] * len(input_tensor_list)
+            all_to_all(output_tensor_list, input_tensor_list, dim_group)
+            # TODO: BE - code refactor
+            idx_start_to_pad = input_tensor.size(tensor_dim) % num_chunks
+            if idx_start_to_pad != 0 and my_coordinate >= idx_start_to_pad:
+                for i in len(output_tensor_list):
+                    output_tensor_list[i] = self._unpad_tensor_dim_by_1(output_tensor_list[i], tensor_dim)
+            output_tensor = torch.cat(output_tensor_list, dim=tensor_dim)
         else:
             raise RuntimeError(
                 f"DeviceMesh does not support all-to-all collective operations on {self.backend()} backend."
             )
-        return output_tensor_list
+        return output_tensor
