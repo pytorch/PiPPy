@@ -98,10 +98,6 @@ class DeviceMesh(object):
     mesh: torch.Tensor
     _backend: str
 
-    @classmethod
-    def _copy_mesh(cls, mesh: MeshExprT) -> torch.Tensor:
-        return torch.as_tensor(mesh, dtype=torch.int).clone().detach()
-
     def __init__(
         self,
         device_type: str,
@@ -109,8 +105,11 @@ class DeviceMesh(object):
         dim_groups: Optional[List[ProcessGroup]] = None,
     ) -> None:
         self.device_type = device_type
-        self.mesh = self._copy_mesh(mesh)
-
+        self.mesh = (
+            mesh.detach()
+            if isinstance(mesh, torch.Tensor)
+            else torch.tensor(mesh, dtype=torch.int)
+        )
         default_pg = _get_default_group()
         self._backend = default_pg._get_backend_name()
         # TODO: if user want to pass pg_options, offer a way to do it
