@@ -294,7 +294,11 @@ def _chunk_tensor(
         return st_outer
     else:
         return _create_chunk_sharded_tensor(
-            tensor, rank, world_size, num_devices_per_node, cast(dist.ProcessGroup, pg)
+            tensor,
+            rank,
+            world_size,
+            num_devices_per_node,
+            pg,
         )
 
 
