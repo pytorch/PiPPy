@@ -1,7 +1,7 @@
 from typing import TypeVar, cast
 
 import torch
-from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
+from torch.testing._internal.common_distributed import skip_if_no_gpu
 
 from spmd import DeviceMesh
 
@@ -24,7 +24,7 @@ def skip_unless_torch_gpu(method: T) -> T:
     >>> def test_some_method(self) -> None:
     >>>   ...
     """
-    return cast(T, skip_if_lt_x_gpu(1)(method))
+    return skip_if_no_gpu(method)
 
 
 def build_device_mesh() -> DeviceMesh:

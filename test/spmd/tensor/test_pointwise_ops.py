@@ -23,9 +23,11 @@ from spmd.tensor.placement_types import (
 )
 from torch.distributed.distributed_c10d import ReduceOp
 
-from spmd.testing.devices import skip_unless_torch_gpu, build_device_mesh
+from torch.testing._internal.common_distributed import skip_if_no_gpu
 
 import torch.utils._pytree as pytree
+
+from spmd.testing.devices import skip_unless_torch_gpu
 
 
 def deepcopy_convert_to_dtensor(
@@ -148,7 +150,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         return DeviceMesh(self.device_type, mesh)  # type: ignore
 
     @with_comms
-    @skip_unless_torch_gpu
+    @skip_if_no_gpu
     def test_activations(self):
         device_mesh = self.common_device_mesh()
         self._run_sharded_elementwise_ops(
@@ -192,7 +194,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         "testing RNG based ops is broken: https://github.com/pytorch/tau/issues/494"
     )
     @with_comms
-    @skip_unless_torch_gpu
+    @skip_if_no_gpu
     def test_dropout(self):
         device_mesh = self.common_device_mesh()
 
@@ -252,7 +254,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         )
 
     @with_comms
-    @skip_unless_torch_gpu
+    @skip_if_no_gpu
     def test_dropout_errors(self):
         device_mesh = self.common_device_mesh()
         with self.assertRaisesRegex(RuntimeError, "Not supported!"):
@@ -264,7 +266,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
             )
 
     @with_comms
-    @skip_unless_torch_gpu
+    @skip_if_no_gpu
     def test_mul_out(self):
         device_mesh = self.common_device_mesh()
         torch.manual_seed(self.rank)
@@ -288,7 +290,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         self.assertEqual(expected, dt.to_local())
 
     @with_comms
-    @skip_unless_torch_gpu
+    @skip_if_no_gpu
     def test_pointwise_rules_suggestion(self):
         device_mesh = self.common_device_mesh()
 

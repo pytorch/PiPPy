@@ -11,7 +11,7 @@ from spmd.tensor.placement_types import Placement, Shard, Replicate, _Partial
 from typing import List, Optional, cast
 import itertools
 
-from spmd.testing.devices import skip_unless_torch_gpu
+from torch.testing._internal.common_distributed import skip_if_no_gpu
 
 
 class DistMatrixOpsTest(DistTensorTestBase):
@@ -143,7 +143,7 @@ class DistMatrixOpsTest(DistTensorTestBase):
 
     # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
     @with_comms
-    @skip_unless_torch_gpu
+    @skip_if_no_gpu
     def test_baddbmm(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         tensor = torch.rand(

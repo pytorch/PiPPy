@@ -25,13 +25,16 @@ from torch.testing._internal.common_distributed import (
 from spmd import DeviceMesh, distribute_tensor, Shard, Replicate
 from spmd.tensor.api import DTensor
 from spmd.tensor.placement_types import Placement
-from spmd.testing.devices import NUM_DEVICES
+from spmd.testing.devices import NUM_DEVICES, build_device_mesh
 
 
 class DistTensorTestBase(MultiProcessTestCase):
     @property
     def world_size(self) -> int:
         return NUM_DEVICES
+
+    def build_device_mesh(self) -> DeviceMesh:
+        return build_device_mesh()
 
     def init_pg(self, backend: str = "nccl") -> None:
         if backend == "nccl" and torch.cuda.device_count() < self.world_size:
