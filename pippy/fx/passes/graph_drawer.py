@@ -12,7 +12,7 @@ from itertools import chain
 
 __all__ = ['FxGraphDrawer']
 try:
-    import pydot  # type: ignore
+    import pydot
     HAS_PYDOT = True
 except ImportError:
     HAS_PYDOT = False
@@ -141,12 +141,16 @@ if HAS_PYDOT:
 
         def _typename(self, target: Any) -> str:
             if isinstance(target, torch.nn.Module):
-                return torch.typename(target)
+                ret = torch.typename(target)
+            elif isinstance(target, str):
+                ret = target
+            else:
+                ret = _get_qualified_name(target)
 
-            if isinstance(target, str):
-                return target
-
-            return _get_qualified_name(target)
+            # Escape "{" and "}" to prevent dot files like:
+            # https://gist.github.com/SungMinCho/1a017aab662c75d805c5954d62c5aabc
+            # which triggers `Error: bad label format (...)` from dot
+            return ret.replace("{", r"\{").replace("}", r"\}")
 
         def _get_node_label(
             self,

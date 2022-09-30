@@ -6,50 +6,42 @@ import contextlib
 import copy
 import functools
 import inspect
+import io
 import math
 import numbers
-import io
 import operator
 import os
 import pickle
 import sys
-import torch
 import traceback
-import typing
 import types
-import warnings
+import typing
 import unittest
-import torch.nn.utils._stateless as _stateless
+import warnings
+from collections import namedtuple
+from copy import deepcopy
 from math import sqrt
+
+import torch
+import torch.nn.utils._stateless as _stateless
+import torch.utils._pytree as pytree
 from torch.multiprocessing import Process
 from torch.testing import FileCheck
-from torch.testing._internal.common_methods_invocations import op_db
 from torch.testing._internal.common_device_type import ops, onlyCPU, instantiate_device_type_tests
-import torch.utils._pytree as pytree
-import pippy.fx
+from torch.testing._internal.common_methods_invocations import op_db
+
+import pippy
 import pippy.fx._pytree as fx_pytree
-from pippy.fx import symbolic_trace, Proxy, Node, GraphModule, Interpreter, Tracer, Transformer, Graph, wrap, PH, CodeGen
-from pippy.fx.node import Target, Argument, _format_arg
-from pippy.fx.passes import shape_prop
-from pippy.fx.immutable_collections import immutable_dict, immutable_list
-from pippy.fx.experimental.rewriter import RewritingTracer
-from pippy.fx.operator_schemas import get_signature_for_torch_op
-from copy import deepcopy
-from collections import namedtuple
-
-from pippy.fx.proxy import TraceError
+from pippy.fx import symbolic_trace, Proxy, Node, GraphModule, Interpreter, Tracer, Transformer, Graph, wrap, PH, \
+    CodeGen
 from pippy.fx._compatibility import _BACK_COMPAT_OBJECTS, _MARKED_WITH_COMATIBLITY
+from pippy.fx.experimental.rewriter import RewritingTracer
+from pippy.fx.immutable_collections import immutable_dict, immutable_list
+from pippy.fx.node import Target, Argument, _format_arg
+from pippy.fx.operator_schemas import get_signature_for_torch_op
+from pippy.fx.passes import shape_prop
+from pippy.fx.proxy import TraceError
 
-from fx.test_subgraph_rewriter import TestSubgraphRewriter  # noqa: F401  # pylint: disable=unused-import
-from fx.test_dce_pass import TestDCE  # noqa: F401  # pylint: disable=unused-import
-from fx.test_fx_const_fold import TestConstFold  # noqa: F401  # pylint: disable=unused-import
-from fx.test_fx_param_shape_control_flow import TestConstParamShapeInControlFlow  # noqa: F401  # pylint: disable=unused-import
-from fx.test_pass_infra import TestPassManager  # noqa: F401  # pylint: disable=unused-import
-
-if sys.version_info >= (3, 7):
-    from fx.test_gradual_type import AnnotationsTest  # noqa: F401  # pylint: disable=unused-import
-if sys.version_info >= (3, 7):
-    from fx.test_gradual_type import TypeCheckerTest  # noqa: F401  # pylint: disable=unused-import
 from typing import Any, Callable, Dict, NamedTuple, List, Optional, Tuple, Union
 from torch.testing._internal.common_utils import (
     IS_FBCODE,
@@ -57,6 +49,7 @@ from torch.testing._internal.common_utils import (
     IS_WINDOWS,
     find_library_location,
     run_tests,
+    skipIfSlowGradcheckEnv,
 )
 from torch.testing._internal.jit_utils import JitTestCase
 
@@ -119,6 +112,16 @@ wrap('wrapped_with_submodule')
 def wrapped_with_submodule(x: torch.Tensor, batchnorm1d: torch.nn.BatchNorm1d):
     return batchnorm1d(x)
 
+def my_decorator(f):
+    @functools.wraps(f)
+    def wrapper_inside_decorator(*args, **kwargs):
+        return f(*args, **kwargs)
+    return wrapper_inside_decorator
+
+@wrap
+@my_decorator
+def wrapped_decorated_fn(x):
+    return x
 
 real_wrapped_via_decorator = wrapped_via_decorator
 real_a_lifed_leaf = a_lifted_leaf
@@ -447,6 +450,14 @@ class TestFX(JitTestCase):
         self.assertIn('wrapped_via_decorator', retraced.code)
         self.assertEqual(retraced(0), 1)
 
+    def test_wrap_decorated_function(self):
+        def to_trace(y):
+            return wrapped_decorated_fn(y)
+
+        m = symbolic_trace(to_trace)
+        self.assertIn('wrapped_decorated_fn', m.code)
+        self.assertEqual(m(1), 1)
+
     def test_graph_edit_with_proxy(self):
         class M(torch.nn.Module):
             def forward(self, a, b):
@@ -551,6 +562,25 @@ class TestFX(JitTestCase):
             new_node = graph.node_copy(node)
             self.assertTrue(new_node.stack_trace is not None)
             assert 'test_fx.py' in new_node.stack_trace
+
+    def test_stack_traces_with_transformer(self):
+        class M(torch.nn.Module):
+            def forward(self, a, b):
+                return a + b
+
+        tracer = pippy.fx.Tracer()
+        tracer.record_stack_traces = True
+
+        graph = tracer.trace(M())
+        gm = GraphModule(tracer.root, graph)
+        new_gm = Transformer(gm).transform()
+
+        # nodes after Transformer should still preserve the original node's stack trace
+        for node in new_gm.graph.nodes:
+            if node.op in {'placeholder', 'output'}:
+                continue
+            self.assertTrue(node.stack_trace is not None)
+            assert 'test_fx.py' in node.stack_trace
 
     def test_graph_unique_names_manual(self):
         graph : pippy.fx.Graph = pippy.fx.Graph()
@@ -1659,18 +1689,6 @@ class TestFX(JitTestCase):
         input = torch.randn(3, 4)
         self.assertEqual(interpreter.run(input), gm(input))
         self.assertEqual(interpreter.run(input), m(input))
-
-    def test_pytree_unpack_annotations(self):
-        def foo(x : torch.Tensor, y : torch.Tensor, l : List[torch.Tensor]):
-            return torch.cat([x, y] + l)
-
-        concrete_args = {'l': [pippy.fx._symbolic_trace.PH] * 10}
-        traced = pippy.fx.symbolic_trace(foo, concrete_args=concrete_args)
-        x = torch.randn(5, 3)
-        y = torch.randn(5, 3)
-        l = [torch.randn(5, 3)] * 10
-
-        torch.testing.assert_close(traced(x, y, l), foo(x, y, l))
 
     def test_interpreter_run_node_override(self):
         class MyModule(torch.nn.Module):
@@ -3294,6 +3312,7 @@ class TestFX(JitTestCase):
             .run(scripted.code)
 
     @unittest.skipIf(IS_WINDOWS, "Python Windows bug? https://bugs.python.org/issue45108")
+    @unittest.skipIf(sys.version_info >= (3, 10), "Does not work on Python-3.10")
     def test_assert(self):
         def f(x):
             assert x > 1
@@ -3413,7 +3432,7 @@ class TestFX(JitTestCase):
             def gen_fn_def(self, free_vars, maybe_return_annotation):
                 lst_unpack = f"""
 def forward(self, args_list: List[torch.Tensor]){maybe_return_annotation}:
-    {', '.join(var.name for var in free_vars)} = args_list"""
+    {', '.join(free_vars)} = args_list"""
                 return lst_unpack
 
             def additional_globals(self):
@@ -3448,7 +3467,7 @@ def forward(self, args_list: List[torch.Tensor]){maybe_return_annotation}:
             def gen_fn_def(self, free_vars, maybe_return_annotation):
                 lst_unpack = f"""
 def forward(self, args_list: List[torch.Tensor]){maybe_return_annotation}:
-    {', '.join(var.name for var in free_vars)} = args_list"""
+    {', '.join(free_vars)} = args_list"""
                 return lst_unpack
 
             def additional_globals(self):
@@ -3477,7 +3496,7 @@ def forward(self, args_list: List[torch.Tensor]){maybe_return_annotation}:
             def gen_fn_def(self, free_vars, maybe_return_annotation):
                 lst_unpack = f"""
 def forward(self, args_list: List[torch.Tensor]){maybe_return_annotation}:
-    {', '.join(var.name for var in free_vars)} = args_list"""
+    {', '.join(free_vars)} = args_list"""
                 return lst_unpack
 
             def additional_globals(self):
@@ -3515,43 +3534,17 @@ def forward(self, args_list: List[torch.Tensor]){maybe_return_annotation}:
         self.assertEqual(gm(2, 3), 6)
         self.assertIn("a *= b", gm.code)
 
-    def test_map_aggregate_doesnt_traverse_size(self):
-        def dont_traverse_size(a):
-            return type(a) != torch.Size
+    def test_deepcopy_tracer(self):
+        def fn(x, y):
+            return (x + y).relu().sin()
 
-        size = torch.Size([1, 2, 3])
+        tracer = Tracer()
+        tracer_before = copy.deepcopy(tracer)
+        tracer.trace(fn)
+        tracer_after = copy.deepcopy(tracer)
 
-        res = pippy.fx.node.map_aggregate(size, lambda a: a)
-        self.assertEqual(type(res), tuple)
-        self.assertEqual(res, (1, 2, 3))
-
-        res = pippy.fx.node.map_aggregate(size, lambda a: a, dont_traverse_size)
-        self.assertEqual(type(res), torch.Size)
-        self.assertEqual(res, size)
-
-        data = (torch.empty(3, 4), size,
-                {'tensor': torch.empty(4, 5), 'size': size, 'list': [size, (size,), torch.empty(5, 6)]})
-
-        res = pippy.fx.node.map_aggregate(data, lambda a: a)
-        self.assertEqual(type(res[1]), tuple)
-        self.assertEqual(res[1], (1, 2, 3))
-        self.assertEqual(type(res[2]['size']), tuple)
-        self.assertEqual(res[2]['size'], (1, 2, 3))
-        self.assertEqual(type(res[2]['list'][0]), tuple)
-        self.assertEqual(res[2]['list'][0], (1, 2, 3))
-        self.assertEqual(type(res[2]['list'][1][0]), tuple)
-        self.assertEqual(res[2]['list'][1][0], (1, 2, 3))
-
-        res = pippy.fx.node.map_aggregate(data, lambda a: a, dont_traverse_size)
-        self.assertEqual(type(res[1]), torch.Size)
-        self.assertEqual(res[1], size)
-        self.assertEqual(type(res[2]['size']), torch.Size)
-        self.assertEqual(res[2]['size'], size)
-        self.assertEqual(type(res[2]['list'][0]), torch.Size)
-        self.assertEqual(res[2]['list'][0], size)
-        self.assertEqual(type(res[2]['list'][1][0]), torch.Size)
-        self.assertEqual(res[2]['list'][1][0], size)
-
+        self.assertEqual(str(tracer.graph), str(tracer_after.graph))
+        self.assertTrue(not hasattr(tracer_before, 'graph') or str(tracer.graph) != str(tracer_before.graph))
 
 def run_getitem_target():
     from pippy.fx._symbolic_trace import _wrapped_methods_to_patch
@@ -3771,7 +3764,7 @@ class TestFXAPIBackwardCompatibility(JitTestCase):
         signature_strs.sort()
 
         try:
-            self.assertExpected('\n'.join(signature_strs), 'fx_backcompat_function_signatures')
+            self.assertExpected('\n'.join(signature_strs) + '\n', 'fx_backcompat_function_signatures')
         except AssertionError as e:
             msg = f"{e}\n****** ERROR ******\nAn FX function that has been marked " \
                   f"as backwards-compatible has experienced a signature change. See the " \
@@ -3826,8 +3819,8 @@ class TestFXAPIBackwardCompatibility(JitTestCase):
                     if v not in _MARKED_WITH_COMATIBLITY:
                         non_back_compat_objects.setdefault(v)
 
-        check_symbols_have_bc_designation(pippy.fx, ['pippy', 'fx'])
-        check_symbols_have_bc_designation(pippy.fx.passes, ['pippy', 'fx', 'passes'])
+        check_symbols_have_bc_designation(pippy.fx, ['torch', 'fx'])
+        check_symbols_have_bc_designation(pippy.fx.passes, ['torch', 'fx', 'passes'])
 
         non_back_compat_strs = [torch.typename(obj) for obj in non_back_compat_objects.keys()]
         # Only want objects in pippy.fx
@@ -4068,7 +4061,7 @@ class TestFunctionalTracing(JitTestCase):
 
         def functional_test(self):
             if func_name in self.UNTRACEABLE_FUNCTIONALS_PY38 and \
-                    sys.version_info >= (3, 8) and sys.version_info < (3, 10):
+                    sys.version_info >= (3, 8) and sys.version_info < (3, 11):
                 exc, err = self.UNTRACEABLE_FUNCTIONALS_PY38[func_name]
                 with self.assertRaisesRegex(exc, err):
                     symbolic_trace(fn)
@@ -4109,6 +4102,7 @@ TestFunctionalTracing.generate_tests()
 instantiate_device_type_tests(TestOperatorSignatures, globals())
 
 @skipIfNoTorchVision
+@skipIfSlowGradcheckEnv
 class TestVisionTracing(JitTestCase):
     def setUp(self):
         # Checking for mutable operations while tracing is feature flagged
@@ -4160,9 +4154,9 @@ class TestVisionTracing(JitTestCase):
     }
 
     @classmethod
-    def generate_test_fn(cls, name, model_fn, x, kwargs):
+    def generate_test_fn(cls, name, x, kwargs):
         def run_test(self):
-            model = model_fn(**kwargs)
+            model = torchvision_models.get_model(name, **kwargs)
             model = model.eval()
             if name in self.UNTRACEABLE_MODELS:
                 err, exc = self.UNTRACEABLE_MODELS[name]
@@ -4188,43 +4182,43 @@ class TestVisionTracing(JitTestCase):
 
     @classmethod
     def generate_classification_tests(cls):
-        for k, v in torchvision_models.__dict__.items():
-            if callable(v) and k[0].lower() == k[0] and k[0] != "_" and k != 'get_weight':
-                test_name = 'test_torchvision_models_' + k
-                x = torch.rand(1, 3, 299, 299) if k in ['inception_v3'] else torch.rand(1, 3, 224, 224)
-                kwargs = dict(num_classes=50)
-                model_test = cls.generate_test_fn(k, v, x, kwargs)
-                setattr(cls, test_name, model_test)
+        for k in torchvision_models.list_models(module=torchvision_models):
+            test_name = 'test_torchvision_models_' + k
+            x = torch.rand(1, 3, 299, 299) if k in ['inception_v3'] else torch.rand(1, 3, 224, 224)
+            kwargs = dict(num_classes=50)
+            model_test = cls.generate_test_fn(k, x, kwargs)
+            setattr(cls, test_name, model_test)
 
     @classmethod
     def generate_segmentation_tests(cls):
-        for k, v in torchvision_models.segmentation.__dict__.items():
-            if callable(v) and k[0].lower() == k[0] and k[0] != "_":
-                test_name = 'test_torchvision_models_segmentation_' + k
-                x = torch.rand(1, 3, 32, 32)
-                kwargs = dict(num_classes=10, pretrained_backbone=False)
-                model_test = cls.generate_test_fn(k, v, x, kwargs)
-                setattr(cls, test_name, model_test)
+        for k in torchvision_models.list_models(module=torchvision_models.segmentation):
+            test_name = 'test_torchvision_models_segmentation_' + k
+            x = torch.rand(1, 3, 32, 32)
+            kwargs = dict(num_classes=10, pretrained_backbone=False)
+            model_test = cls.generate_test_fn(k, x, kwargs)
+            setattr(cls, test_name, model_test)
 
     @classmethod
     def generate_detection_tests(cls):
-        for k, v in torchvision_models.detection.__dict__.items():
-            if callable(v) and k[0].lower() == k[0] and k[0] != "_":
-                test_name = 'test_torchvision_models_detection_' + k
-                x = [torch.rand(3, 300, 300)]
-                kwargs = dict(num_classes=10, pretrained_backbone=False)
-                model_test = cls.generate_test_fn(k, v, x, kwargs)
-                setattr(cls, test_name, model_test)
+        for k in torchvision_models.list_models(module=torchvision_models.detection):
+            test_name = 'test_torchvision_models_detection_' + k
+            x = [torch.rand(3, 300, 300)]
+            kwargs = dict(num_classes=10, pretrained_backbone=False)
+            model_test = cls.generate_test_fn(k, x, kwargs)
+            setattr(cls, test_name, model_test)
 
     @classmethod
     def generate_video_tests(cls):
-        for k, v in torchvision_models.video.__dict__.items():
-            if callable(v) and k[0].lower() == k[0] and k[0] != "_":
-                test_name = 'test_torchvision_models_video_' + k
-                x = torch.rand(1, 3, 4, 112, 112) if k != 'mvit_v1_b' else torch.rand(1, 3, 16, 224, 224)
-                kwargs = dict(num_classes=50)
-                model_test = cls.generate_test_fn(k, v, x, kwargs)
-                setattr(cls, test_name, model_test)
+        for k in torchvision_models.list_models(module=torchvision_models.video):
+            test_name = 'test_torchvision_models_video_' + k
+            x = (
+                torch.rand(1, 3, 4, 112, 112)
+                if k not in {"mvit_v1_b", "mvit_v2_s", "s3d"}
+                else torch.rand(1, 3, 16, 224, 224)
+            )
+            kwargs = dict(num_classes=50)
+            model_test = cls.generate_test_fn(k, x, kwargs)
+            setattr(cls, test_name, model_test)
 
     @classmethod
     def generate_tests(cls):

@@ -22,7 +22,7 @@ pippy.fx.graph.Graph.node_copy(self, node: pippy.fx.node.Node, arg_transform: Ca
 pippy.fx.graph.Graph.output(self, result: 'Argument', type_expr: Optional[Any] = None)
 pippy.fx.graph.Graph.placeholder(self, name: str, type_expr: Optional[Any] = None, default_value: Any) -> pippy.fx.node.Node
 pippy.fx.graph.Graph.print_tabular(self)
-pippy.fx.graph.Graph.python_code(self, root_module: str) -> pippy.fx.graph.PythonCode
+pippy.fx.graph.Graph.python_code(self, root_module: str, verbose: bool = False) -> pippy.fx.graph.PythonCode
 pippy.fx.graph_module.GraphModule.__init__(self, root: Union[torch.nn.modules.module.Module, Dict[str, Any]], graph: pippy.fx.graph.Graph, class_name: str = 'GraphModule')
 pippy.fx.graph_module.GraphModule.add_submodule(self, target: str, m: torch.nn.modules.module.Module) -> bool
 pippy.fx.graph_module.GraphModule.delete_all_unused_submodules(self) -> None
@@ -59,7 +59,8 @@ pippy.fx.node.Node.update_arg(self, idx: int, arg: pippy.fx.node.Argument) -> No
 pippy.fx.node.Node.update_kwarg(self, key: str, arg: pippy.fx.node.Argument) -> None
 pippy.fx.node.map_aggregate(a: pippy.fx.node.Argument, fn: Callable[[pippy.fx.node.Argument], pippy.fx.node.Argument], should_traverse_fn: Optional[Callable[[pippy.fx.node.Argument], bool]] = None) -> pippy.fx.node.Argument
 pippy.fx.node.map_arg(a: pippy.fx.node.Argument, fn: Callable[[pippy.fx.node.Node], pippy.fx.node.Argument]) -> pippy.fx.node.Argument
-pippy.fx.passes.split_module.split_module(m: pippy.fx.graph_module.GraphModule, root_m: torch.nn.modules.module.Module, split_callback: Callable[[pippy.fx.node.Node], int], qualname_map: Optional[Dict[str, str]] = None)
+pippy.fx.passes.reinplace.reinplace(gm, *sample_args)
+pippy.fx.passes.split_module.split_module(m: pippy.fx.graph_module.GraphModule, root_m: torch.nn.modules.module.Module, split_callback: Callable[[pippy.fx.node.Node], int], qualname_map: Optional[Dict[str, str]] = None, keep_original_order: Optional[bool] = False)
 pippy.fx.proxy.Attribute.__init__(self, root: pippy.fx.proxy.Proxy, attr: str)
 pippy.fx.proxy.Proxy.__init__(self, node: pippy.fx.node.Node, tracer: 'Optional[TracerBase]' = None)
 pippy.fx.proxy.Proxy.keys(self)
