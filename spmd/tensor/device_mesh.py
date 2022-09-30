@@ -299,6 +299,7 @@ class DeviceMesh(object):
         """
         my_coordinate = self.get_coordinate_on_dim(mesh_dim)
         # TODO: what should happen if rank is not in the mesh?
+        # see issue https://github.com/pytorch/tau/pull/492
         assert (
             my_coordinate is not None
         ), "Rank if not part of mesh"  # TODO: figure out behavior here
@@ -411,14 +412,36 @@ class DeviceMesh(object):
         Returns:
             A :class:`torch.Tensor` object
         """
+        my_coordinate = self.get_coordinate_on_dim(mesh_dim)
+        # TODO: what should happen if rank is not in the mesh?
+        # see issue https://github.com/pytorch/tau/pull/492
+        assert (
+            my_coordinate is not None
+        ), "Rank if not part of mesh"  # TODO: figure out behavior here
+
         num_chunks = self.size(mesh_dim)
-        _, rem = divmod(output_shape[tensor_dim], num_chunks)
-        assert rem == 0, "output_shape must be divisible by num_chunks"
-        input_tensor = tensor.contiguous()
-        gathered_list = [
-            CommTensor(torch.empty_like(input_tensor))
-            for _ in range(num_chunks)
-        ]
+        quot, rem = divmod(output_shape[tensor_dim], num_chunks)
+        gathered_list = []
+        for _ in range(num_chunks):
+            recv_shape = list(output_shape)
+            # create recv tensor with padded shape
+            recv_shape[tensor_dim] = quot + (1 if rem > 0 else 0)
+            gathered_list.append(
+                CommTensor(
+                    torch.empty(
+                        recv_shape,
+                        dtype=tensor.dtype,
+                        layout=tensor.layout,
+                        device=tensor.device,
+                    )
+                )
+            )
+
+        tensor = (
+            self._pad_tensor_dim_by_1(tensor, tensor_dim)
+            if rem != 0 and my_coordinate >= rem
+            else tensor
+        )
 
         dim_group = self._dim_groups[mesh_dim]
         # N.B. CommTensor does not change eager mode behavior. During tracing, it
@@ -427,9 +450,18 @@ class DeviceMesh(object):
         # input tensor must be contiguous
         all_gather(
             gathered_list,
-            CommTensor(input_tensor),
+            CommTensor(tensor.contiguous()),
             group=dim_group,
         )
+
+        # resize to uneven size if needed
+        if rem != 0:
+            gathered_list = [
+                self._unpad_tensor_dim_by_1(gathered_tensor, tensor_dim)  # type: ignore
+                if i >= rem
+                else gathered_tensor
+                for i, gathered_tensor in enumerate(gathered_list)
+            ]
         return torch.cat(gathered_list, dim=tensor_dim)  # type: ignore
 
     def all_reduce(
@@ -443,7 +475,7 @@ class DeviceMesh(object):
         return an output tensor on each rank after all_reduce.
 
         Args:
-            input (torch.Tensor): tensor to be all_reduced on each rank.
+            tensor (torch.Tensor): tensor to be all_reduced on each rank.
             op (:class:`torch.distributed.distributed_c10d.ReduceOp, optional):
                 the reduction op of all_reduce (i.e. ReduceOp.SUM)
             mesh_dim (int, optional): indicate which mesh dimension we want
@@ -488,6 +520,7 @@ class DeviceMesh(object):
         """
         my_coordinate = self.get_coordinate_on_dim(mesh_dim)
         # TODO: what should happen if rank is not in the mesh?
+        # see issue https://github.com/pytorch/tau/pull/492
         assert (
             my_coordinate is not None
         ), "Rank if not part of mesh"  # TODO: figure out behavior here
@@ -541,6 +574,7 @@ class DeviceMesh(object):
         my_coordinate = self.get_coordinate_on_dim(mesh_dim)
         # borrow the same logic with scatter()
         # TODO: what should happen if rank is not in the mesh?
+        # see issue https://github.com/pytorch/tau/pull/492
         assert (
             my_coordinate is not None
         ), "Rank if not part of mesh"  # TODO: figure out behavior here
