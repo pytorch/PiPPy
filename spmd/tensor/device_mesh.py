@@ -260,7 +260,7 @@ class DeviceMesh(object):
 
     def _tensor_split_and_pad(
         self, tensor: torch.Tensor, n: int, dim: int
-    ) -> List[torch.Tensor]:
+    ) -> Sequence[torch.Tensor]:
         # split tensor over dimension `dim` into n slices with padding if necessary
         tensor_list = list(tensor.tensor_split(n, dim))
         idx_start_to_pad = tensor.size(dim) % n
