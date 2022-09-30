@@ -29,9 +29,6 @@ from spmd.tensor.placement_types import Placement
 
 # default GPU test size/world size
 TEST_GPU_NUM = 4
-if torch.cuda.device_count() > 1:
-    # this value is used both for a world size, and as a "multi-gpu available test" gate.
-    TEST_GPU_NUM = min(torch.cuda.device_count(), TEST_GPU_NUM)
 
 
 class DistTensorTestBase(MultiProcessTestCase):

@@ -1,6 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import warnings
-from typing import List, Optional, Sequence, Union, TypeVar
+from typing import List, Optional, Iterable, Sequence
 import torch
 import torch.nn.functional as F
 from torch.distributed._spmd.comm_tensor import CommTensor
@@ -34,16 +34,6 @@ def get_global_device_mesh() -> "DeviceMesh":
 def set_global_device_mesh(mesh: Optional["DeviceMesh"]) -> None:
     global _global_device_mesh
     _global_device_mesh = mesh
-
-
-T = TypeVar("T")
-_L = Union[T, Sequence[T]]
-DeepList = _L[_L[_L[_L[_L[int]]]]]
-
-MeshExprT = Union[
-    torch.Tensor,
-    DeepList,
-]
 
 
 class DeviceMesh(object):
@@ -95,18 +85,18 @@ class DeviceMesh(object):
     mesh: torch.Tensor
     _backend: str
 
-    @classmethod
-    def _copy_mesh(cls, mesh: MeshExprT) -> torch.Tensor:
-        return torch.as_tensor(mesh, dtype=torch.int).clone().detach()
-
     def __init__(
         self,
         device_type: str,
-        mesh: MeshExprT,
+        mesh: Iterable[Sequence[int]],
         dim_groups: Optional[List[ProcessGroup]] = None,
     ) -> None:
         self.device_type = device_type
-        self.mesh = self._copy_mesh(mesh)
+        self.mesh = (
+            mesh.detach()
+            if isinstance(mesh, torch.Tensor)
+            else torch.tensor(mesh, dtype=torch.int)
+        )
         default_pg = _get_default_group()
         self._backend = default_pg._get_backend_name()
         # TODO: if user want to pass pg_options, offer a way to do it
