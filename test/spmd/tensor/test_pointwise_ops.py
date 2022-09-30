@@ -13,7 +13,7 @@ from spmd.tensor.dispatch import OpSchema
 
 from spmd.tensor import distribute_tensor
 from spmd.tensor.ops.pointwise_ops import pointwise_rule
-from spmd import DTensor
+from spmd import DTensor, DeviceMesh
 from spmd.tensor.placement_types import (
     Shard,
     Replicate,
