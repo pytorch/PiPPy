@@ -28,7 +28,7 @@ from spmd.tensor.placement_types import Placement
 
 
 # default GPU test size/world size
-TEST_GPU_NUM = 2
+TEST_GPU_NUM = 4
 
 
 class DistTensorTestBase(MultiProcessTestCase):

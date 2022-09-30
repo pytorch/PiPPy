@@ -155,7 +155,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
 
     def common_device_mesh(self) -> DeviceMesh:
         mesh: Sequence[int] = list(range(self.world_size))
-        return DeviceMesh(self.device_type, mesh)
+        return DeviceMesh(self.device_type, mesh)  # type: ignore
 
     @with_comms
     def test_activations(self):
