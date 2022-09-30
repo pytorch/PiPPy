@@ -80,6 +80,7 @@ def new_factory_rule(op_schema: OpSchema) -> OutputSharding:
 default_prop_ops = [
     "aten._to_copy.default",
     "aten.clone.default",
+    "aten.contiguous.default",
     "aten.copy_.default",
     "aten.detach.default",
     "aten.is_same_size.default",

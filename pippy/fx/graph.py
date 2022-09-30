@@ -1,23 +1,26 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from .node import Node, Argument, Target, map_arg, _type_repr, _get_qualified_name
+import builtins
+import contextlib
+import copy
+import inspect
+import keyword
+import math
+import re
+import warnings
+from contextlib import contextmanager
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Callable, Any, List, Dict, NamedTuple, Optional, Tuple, Set, FrozenSet, Type
+
+import torch
 import torch.utils._pytree as pytree
+
+import pippy
+import pippy.fx
 from . import _pytree as fx_pytree
 from ._compatibility import compatibility
-import contextlib
-import pippy.fx
+from .node import Node, Argument, Target, map_arg, _type_repr, _get_qualified_name
 
-from typing import TYPE_CHECKING, Callable, Any, List, Dict, NamedTuple, Optional, Tuple, Set, FrozenSet, Type
-from dataclasses import dataclass
-from contextlib import contextmanager
-import copy
-import torch
-import keyword
-import re
-import builtins
-import math
-import warnings
-import inspect
-
+__all__ = ["PythonCode", "CodeGen", "Graph"]
 
 if TYPE_CHECKING:
     from .graph_module import GraphModule  # noqa: F401
@@ -243,41 +246,29 @@ class _node_list:
     def __reversed__(self):
         return _node_list(self.graph, '_next' if self.direction == '_prev' else '_prev')
 
-
-class _ParamDescr(NamedTuple):
-    name : str
-    maybe_type_annotation : str
-    maybe_default_arg : str
-
-
 class _PyTreeInfo(NamedTuple):
     """
     Contains extra info stored when we're using Pytrees
     """
-    orig_args: List[_ParamDescr]
+    orig_args: List[str]
     in_spec: pytree.TreeSpec
     out_spec: Optional[pytree.TreeSpec]
-
-
 
 @compatibility(is_backward_compatible=False)
 class CodeGen(object):
     def __init__(self):
         self._body_transformer: Optional[TransformCodeFunc] = None
 
-    def gen_fn_def(self, free_vars: List[_ParamDescr], maybe_return_annotation: str) -> str:
+    def gen_fn_def(self, free_vars: List[str], maybe_return_annotation: str) -> str:
         """
         Given the free variables and a return annotation, generates the beginning of the FX function.
         By default, `gen_fn_def(['a', 'b'], '') == 'def forward(a, b):'`
         """
         # If the original function didn't have self as its first argument, we
         # would have added it.
-        if len(free_vars) == 0 or free_vars[0].name != 'self':
-            free_vars.insert(0, _ParamDescr('self', '', ''))
-        return f"def forward({', '.join(self._param_descr_to_param_for_sig(var) for var in free_vars)}){maybe_return_annotation}:"
-
-    def _param_descr_to_param_for_sig(self, descr : _ParamDescr):
-        return f'{descr.name}{descr.maybe_type_annotation}{descr.maybe_default_arg}'
+        if len(free_vars) == 0 or free_vars[0] != 'self':
+            free_vars.insert(0, 'self')
+        return f"def forward({', '.join(free_vars)}){maybe_return_annotation}:"
 
     def generate_output(self, output_args: Argument) -> str:
         """
@@ -312,8 +303,8 @@ class CodeGen(object):
         """
         return []
 
-    def _gen_python_code(self, nodes, root_module: str, namespace: _Namespace) -> PythonCode:
-        free_vars: List[_ParamDescr] = []
+    def _gen_python_code(self, nodes, root_module: str, namespace: _Namespace, *, verbose: bool = False) -> PythonCode:
+        free_vars: List[str] = []
         body: List[str] = []
         globals_: Dict[str, Any] = {}
         wrapped_fns: Dict[str, None] = {}
@@ -426,13 +417,58 @@ class CodeGen(object):
             else:
                 body.append('\n')
 
+        prev_stacktrace = None
+
+        def append_stacktrace_summary(node : Node):
+            """
+            Append a summary of the stacktrace to the generated code. This is
+            useful for debugging.
+            """
+            nonlocal prev_stacktrace
+            pattern = re.compile(r"^File \"(.+)\", line (\d+), in (.+)$")
+
+            if node.op not in {'placeholder', 'output'}:
+                if node.stack_trace:
+                    if node.stack_trace != prev_stacktrace:
+                        prev_stacktrace = node.stack_trace
+
+                        lines = node.stack_trace.strip().split('\n')
+                        idx = 0
+                        context_lines = []
+                        while idx < len(lines):
+                            line = lines[idx].strip()
+                            if line.startswith('File '):
+                                break
+                            context_lines.append(line)
+                            idx += 1
+
+                        summary_lines = []
+                        if context_lines:
+                            summary_lines.append(', '.join(context_lines))
+
+                        if idx + 1 < len(lines):
+                            matches = pattern.match(lines[idx].strip())
+                            if matches:
+                                file = matches.group(1)
+                                lineno = matches.group(2)
+                                lineage = f'File: {file}:{lineno}'
+                                summary_lines.append(lineage)
+
+                            code = f"code: {lines[idx + 1].strip()}"
+                            summary_lines.append(code)
+
+                        summary_str = ', '.join(summary_lines)
+                        body.append(f'\n# {summary_str}\n')
+                elif prev_stacktrace != "":
+                    prev_stacktrace = ""
+                    body.append('\n# No stacktrace found for following nodes \n')
 
         def emit_node(node : Node):
             maybe_type_annotation = '' if node.type is None else f' : {type_repr(node.type)}'
             if node.op == 'placeholder':
                 assert isinstance(node.target, str)
                 maybe_default_arg = '' if not node.args else f' = {repr(node.args[0])}'
-                free_vars.append(_ParamDescr(node.target, maybe_type_annotation, maybe_default_arg))
+                free_vars.append(f'{node.target}{maybe_type_annotation}{maybe_default_arg}')
                 raw_name = node.target.replace('*', '')
                 if raw_name != repr(node):
                     body.append(f'{repr(node)} = {raw_name}\n')
@@ -493,6 +529,8 @@ class CodeGen(object):
         for node in nodes:
             # NOTE: emit_node does not emit a string with newline. It depends
             # on delete_unused_values to append one
+            if verbose:
+                append_stacktrace_summary(node)
             emit_node(node)
             delete_unused_values(node)
 
@@ -551,18 +589,17 @@ class _PyTreeCodeGen(CodeGen):
         assert(self.pytree_info.out_spec is not None)
         return pytree.tree_unflatten(out, self.pytree_info.out_spec)
 
-    def gen_fn_def(self, free_vars : List[_ParamDescr], maybe_return_annotation):
+    def gen_fn_def(self, free_vars, maybe_return_annotation):
         if self.pytree_info is None:
             return super().gen_fn_def(free_vars, maybe_return_annotation)
         function_args = self.pytree_info.orig_args
-        has_orig_self = (function_args[0].name == 'self')
+        has_orig_self = (function_args[0] == 'self')
         if has_orig_self:
-            free_vars.insert(0, _ParamDescr('self', '', ''))
+            free_vars.insert(0, 'self')
         function_definition = super().gen_fn_def(function_args[:], maybe_return_annotation)
         if len(free_vars) > 0:  # pytree has placeholders in it
             function_definition += f"""
-    {', '.join(var.name for var in free_vars)}, = fx_pytree.tree_flatten_spec\
-([{', '.join(arg.name for arg in function_args)}], self._in_spec)"""
+    {', '.join(free_vars)}, = fx_pytree.tree_flatten_spec([{', '.join(function_args)}], self._in_spec)"""
         return function_definition
 
     def generate_output(self, output_args):
@@ -1108,7 +1145,7 @@ class Graph:
         return op
 
     @compatibility(is_backward_compatible=True)
-    def python_code(self, root_module: str) -> PythonCode:
+    def python_code(self, root_module: str, *, verbose: bool = False) -> PythonCode:
         """
         Turn this ``Graph`` into valid Python code.
 
@@ -1167,10 +1204,10 @@ class Graph:
                     node._repr_fn = orig_repr_fns[node]
 
         with override_node_repr(self):
-            return self._python_code(root_module, namespace)
+            return self._python_code(root_module, namespace, verbose=verbose)
 
-    def _python_code(self, root_module: str, namespace: _Namespace) -> PythonCode:
-        return self._codegen._gen_python_code(self.nodes, root_module, namespace)
+    def _python_code(self, root_module: str, namespace: _Namespace, *, verbose: bool = False) -> PythonCode:
+        return self._codegen._gen_python_code(self.nodes, root_module, namespace, verbose=verbose)
 
 
     def __str__(self) -> str:
@@ -1199,7 +1236,7 @@ class Graph:
         installed.
         """
         try:
-            from tabulate import tabulate  # type: ignore
+            from tabulate import tabulate
         except ImportError:
             print("`print_tabular` relies on the library `tabulate`, "
                   "which could not be found on this machine. Run `pip "
@@ -1308,6 +1345,14 @@ class Graph:
 
             def forward(self, x):
                 return x + self.attr_1
+
+        .. warning::
+
+            Dead code elimination has some heuristics to avoid removing
+            side-effectful nodes (see Node.is_impure) but in general coverage
+            is very bad, so you should assume that this method is not sound
+            to call unless you know that your FX graph consists entirely
+            of functional operations.
         """
         # Lint the graph first to make sure its topologically sorted, otherwise
         # DCE below will not behave as expected.
