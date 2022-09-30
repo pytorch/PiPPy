@@ -1,6 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import warnings
-from typing import List, Optional, Iterable, Sequence
+from typing import List, Optional, Sequence, TypeVar, Union
 import torch
 import torch.nn.functional as F
 from torch.distributed._spmd.comm_tensor import CommTensor
@@ -35,6 +35,19 @@ def get_global_device_mesh() -> "DeviceMesh":
 def set_global_device_mesh(mesh: Optional["DeviceMesh"]) -> None:
     global _global_device_mesh
     _global_device_mesh = mesh
+
+
+# We want a type for "can be passed to torch.as_tensor()";
+# this is a recursive sequence type, which isn't fully supported
+# yet in python. This construct simulates that up to depth 7.
+T = TypeVar("T")
+_L = Union[T, Sequence[T]]
+NDIntList = _L[_L[_L[_L[_L[_L[_L[int]]]]]]]
+
+MeshExprT = Union[
+    torch.Tensor,
+    NDIntList,
+]
 
 
 class DeviceMesh(object):
@@ -89,7 +102,7 @@ class DeviceMesh(object):
     def __init__(
         self,
         device_type: str,
-        mesh: Iterable[Sequence[int]],
+        mesh: MeshExprT,
         dim_groups: Optional[List[ProcessGroup]] = None,
     ) -> None:
         self.device_type = device_type
