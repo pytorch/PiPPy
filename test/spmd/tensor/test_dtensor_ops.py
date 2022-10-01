@@ -513,7 +513,6 @@ dtensor_fails = {
     xfail("var_mean"),
     xfail("vdot"),
     xfail("view_as_complex"),
-    xfail("view_as"),
     xfail("vstack"),
     # ops inside this might even fail without dtensor
     # tests, as we rescale op db common test size factor (i.e. L, M, S)

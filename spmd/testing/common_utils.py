@@ -103,7 +103,8 @@ class DistTensorTestBase(MultiProcessTestCase):
             out = op_call(*args, **kwargs)
             dtc = DTensorConverter(mesh, args, kwargs)
             for d_args, d_kwargs in dtc:
-                self.assertTrue(dtc.successful())
+                # pyre can't find assertTrue anymore?
+                self.assertEqual(dtc.successful(), True)
                 d_out = op_call(*d_args, **d_kwargs)
                 self.assertEqual(
                     d_out.redistribute(
