@@ -184,11 +184,11 @@ class DistElementwiseOpsTest(DistTensorTestBase):
             op=torch.sigmoid,
         )
 
+    @with_comms
+    @skip_unless_torch_gpu
     @skip(
         "testing RNG based ops is broken: https://github.com/pytorch/tau/issues/494"
     )
-    @with_comms
-    @skip_unless_torch_gpu
     def test_dropout(self):
         device_mesh = self.build_device_mesh()
 
