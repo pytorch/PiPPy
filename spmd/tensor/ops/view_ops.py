@@ -419,12 +419,14 @@ def dim_unsqueeze(ndim: int, dim: int) -> DimMap:
 
 
 def dim_reduction(
-    ndim: int, dim_or_dims: Union[int, Sequence[int]], keepdim: bool
+    ndim: int, dim_or_dims: Optional[Union[int, Sequence[int]]], keepdim: bool
 ) -> DimMap:
     """
     General fallback for reduction ops where _Partial() does not apply.
     This will cause incoming tensor to be replicated on the reducing dimensions.
     """
+    if dim_or_dims is None:
+        dim_or_dims = tuple(range(ndim))
     if isinstance(dim_or_dims, int):
         dim_or_dims = (dim_or_dims,)
     dim_or_dims = tuple(d if d >= 0 else d + ndim for d in dim_or_dims)
@@ -485,7 +487,7 @@ ops: Dict[Callable[..., torch.Tensor], Op] = {
         dim_map=lambda input, dim: dim_unsqueeze(input.ndim, dim)
     ),
     torch.var: Op(
-        dim_map=lambda input, dim, correction=None, keepdim=False: dim_reduction(
+        dim_map=lambda input, dim=None, correction=None, keepdim=False: dim_reduction(
             input.ndim, dim, keepdim
         )
     ),

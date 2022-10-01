@@ -509,7 +509,6 @@ dtensor_fails = {
     xfail("unflatten"),
     xfail("unique_consecutive"),
     xfail("unique"),
-    xfail("var"),
     xfail("var_mean"),
     xfail("vdot"),
     xfail("view_as_complex"),
