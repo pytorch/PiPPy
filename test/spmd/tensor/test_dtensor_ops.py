@@ -434,8 +434,6 @@ dtensor_fails = {
     xfail("randn_like"),
     xfail("renorm"),
     xfail("repeat_interleave"),
-    xfail("reshape_as"),
-    xfail("reshape"),
     xfail("resize_"),
     xfail("resize_as_"),
     xfail("roll"),
@@ -653,6 +651,8 @@ class TestDTensorOps(DistTensorTestBase):
     @property
     def world_size(self) -> int:
         return NUM_DEVICES
+
+    # dtensor_fails = {x for x in dtensor_fails if not x[0].startswith('masked.') }
 
     # only allow float dytpe for now, we can relax this constraint
     # when feel necessary later (i.e when adding quantization support).

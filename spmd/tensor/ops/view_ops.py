@@ -404,6 +404,10 @@ def dim_transpose(ndim: int, dim1: int, dim2: int) -> DimMap:
 
 
 def dim_squeeze(shape: Shape, dim: Optional[int] = None) -> DimMap:
+    # FIXME: this is wrong when dim=None and one of the dimensions
+    # equals size of the mesh. For example squeeze(DTensor(tensor(4), Shard[0])) could
+    # end up as squeeze(tensor(1)) if we have 4 devices; this would lead to
+    # removal of a dimension that is not acutally a singleton.
     return tuple(
         InputDim(i)
         for i, s in enumerate(shape)
