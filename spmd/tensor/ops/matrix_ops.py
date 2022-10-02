@@ -8,8 +8,7 @@ from spmd.tensor.ops.utils import register_prop_rule
 
 def _update_schema_suggestion_for_addmm(
     output_sharding: OutputSharding,
-    args_schema: Tuple[object, ...],
-    kwargs_schema: Dict[str, object],
+    op_schema: OpSchema,
     pointwise_add_update: bool = True,
 ) -> OutputSharding:
     # schema suggestion coming from output sharding could be:
@@ -22,21 +21,22 @@ def _update_schema_suggestion_for_addmm(
         # update with pointwise suggestion
         args_schema = (
             suggestion.args_schema[0],
-            args_schema[1],
-            args_schema[2],
+            op_schema.args_schema[1],
+            op_schema.args_schema[2],
         )
     else:
         # update with mm suggestion
         args_schema = (
-            args_schema[0],
+            op_schema.args_schema[0],
             suggestion.args_schema[0],
             suggestion.args_schema[1],
         )
 
     output_sharding.schema_suggestions = [
         OpSchema(
+            func_schema=op_schema.func_schema,
             args_schema=args_schema,
-            kwargs_schema=kwargs_schema,
+            kwargs_schema=op_schema.kwargs_schema,
         )
     ]
     return output_sharding
@@ -50,15 +50,16 @@ def mm_rules(op_schema: OpSchema) -> OutputSharding:
 @register_prop_rule("aten.addmm.default")
 def addmm_rules(op_schema: OpSchema) -> OutputSharding:
     input_spec, mat1_spec, mat2_spec = op_schema.args_spec
-    mm_out_sharding = mm_rules(OpSchema((mat1_spec, mat2_spec), {}))
+    mm_out_sharding = mm_rules(
+        OpSchema(op_schema.func_schema, (mat1_spec, mat2_spec), {})
+    )
     if mm_out_sharding.output_spec is None:
         # non-eligible input, suggest addmm input specs
         if mm_out_sharding.schema_suggestions is not None:
             # TODO: add more suggestions for resharding
             return _update_schema_suggestion_for_addmm(
                 mm_out_sharding,
-                op_schema.args_schema,
-                op_schema.kwargs_schema,
+                op_schema,
                 pointwise_add_update=False,
             )
         else:
@@ -66,7 +67,10 @@ def addmm_rules(op_schema: OpSchema) -> OutputSharding:
 
     # run point wise rule on input + (mm_out) with linearity
     output_sharding = pointwise_rule(
-        OpSchema((input_spec, mm_out_sharding.output_spec), {}), linearity=True
+        OpSchema(
+            op_schema.func_schema, (input_spec, mm_out_sharding.output_spec), {}
+        ),
+        linearity=True,
     )
     # if propagation failed, edit the schema suggestion from pointwise rules
     # to return addmm suggestion instead as it's a chained suggestion.
@@ -74,9 +78,7 @@ def addmm_rules(op_schema: OpSchema) -> OutputSharding:
         output_sharding.output_spec is None
         and output_sharding.schema_suggestions is not None
     ):
-        return _update_schema_suggestion_for_addmm(
-            output_sharding, op_schema.args_schema, op_schema.kwargs_schema
-        )
+        return _update_schema_suggestion_for_addmm(output_sharding, op_schema)
 
     return output_sharding
 
@@ -94,14 +96,15 @@ def bmm_rules(op_schema: OpSchema) -> OutputSharding:
 @register_prop_rule("aten.baddbmm.default")
 def baddbmm_rules(op_schema: OpSchema) -> OutputSharding:
     input_spec, mat1_spec, mat2_spec = op_schema.args_spec
-    bmm_output_sharding = bmm_rules(OpSchema((mat1_spec, mat2_spec), {}))
+    bmm_output_sharding = bmm_rules(
+        OpSchema(op_schema.func_schema, (mat1_spec, mat2_spec), {})
+    )
     if bmm_output_sharding.output_spec is None:
         # TODO: add more suggestions
         if bmm_output_sharding.schema_suggestions is not None:
             return _update_schema_suggestion_for_addmm(
                 bmm_output_sharding,
-                op_schema.args_schema,
-                op_schema.kwargs_schema,
+                op_schema,
                 pointwise_add_update=False,
             )
         else:
@@ -109,7 +112,11 @@ def baddbmm_rules(op_schema: OpSchema) -> OutputSharding:
 
     # run point wise rule on input + (bmm_out) with linearity
     output_sharding = pointwise_rule(
-        OpSchema((input_spec, bmm_output_sharding.output_spec), {}),
+        OpSchema(
+            op_schema.func_schema,
+            (input_spec, bmm_output_sharding.output_spec),
+            {},
+        ),
         linearity=True,
     )
     # if propagation failed, edit the schema suggestion from pointwise rules
@@ -118,8 +125,6 @@ def baddbmm_rules(op_schema: OpSchema) -> OutputSharding:
         output_sharding.output_spec is None
         and output_sharding.schema_suggestions is not None
     ):
-        return _update_schema_suggestion_for_addmm(
-            output_sharding, op_schema.args_schema, op_schema.kwargs_schema
-        )
+        return _update_schema_suggestion_for_addmm(output_sharding, op_schema)
 
     return output_sharding

@@ -46,6 +46,7 @@ class OpSchema(object):
     Here are some basic rules about what can be used and what can be changed.
 
     Args:
+        func_schema: the function schema of the operator
         args_schema: contains args except that the DTensor args have been replaced
             with its DTensorSpec
         kwargs_schema: contains kwargs except that the DTensor kwargs have been replaced
@@ -55,6 +56,7 @@ class OpSchema(object):
         - every attribute within this class could be read to conduct
           sharding propagation.
     What can be changed:
+        - only the args_schema and kwargs_schema could be changed.
         - every non-tensor args could be changed to accomodate for local tensor
           operations (i.e. for ops like view/reshape/...)
         - every "DTensorSpec" attribute inside `args_schema`, `kwargs_schema` and
@@ -63,8 +65,16 @@ class OpSchema(object):
           placements will get implicitly changed and it's error-prone.
     """
 
+    func_schema: FunctionSchema
     args_schema: Tuple[object, ...]
     kwargs_schema: Dict[str, object]
+    is_inplace: bool = False
+    is_out_variant: bool = False
+
+    def __post_init__(self) -> None:
+        schema_kind = self.func_schema.kind()
+        self.is_inplace = schema_kind == SchemaKind.inplace  # pyre-ignore [16] pyre bad at enum
+        self.is_out_variant = schema_kind == SchemaKind.out  # pyre-ignore [16] pyre bad at enum
 
     @property
     def args_spec(self) -> Tuple[DTensorSpec, ...]:
@@ -77,6 +87,13 @@ class OpSchema(object):
         # this would mainly be used by sharding propagation rules
         return tuple(
             item for item in self.args_schema if isinstance(item, DTensorSpec)
+        )
+
+    def __repr__(self):
+        return (
+            f"OpSchema(func_schema={self.func_schema},"
+            f" args_schema={self.args_schema},"
+            f" kwargs_schema={self.kwargs_schema})"
         )
 
 
@@ -119,14 +136,13 @@ def operator_dispatch(
     if op_call in _CURRENT_DECOMPOSITION_TABLE:
         return _CURRENT_DECOMPOSITION_TABLE[op_call](*args, **kwargs)
 
+    # parse the operator schema
     func_schema = FunctionSchema.parse(str(op_call._schema))
-    schema_kind = func_schema.kind()
-
     # unwrap the args/kwargs schema
     args_schema = tree_map(unwrap_schema, args)
     kwargs_schema = tree_map(unwrap_schema, kwargs)
 
-    op_schema = OpSchema(args_schema, kwargs_schema)
+    op_schema = OpSchema(func_schema, args_schema, kwargs_schema)
 
     if _DEBUG_VERBOSE and torch.distributed.get_rank() == 0:
         print(f"{op_call}({op_schema})")
@@ -204,12 +220,12 @@ def operator_dispatch(
         local_tensor_kwargs = cast(Dict[str, object], local_tensor_kwargs)
         local_results = op_call(*local_tensor_args, **local_tensor_kwargs)
 
-        if schema_kind == SchemaKind.inplace:  # pyre-ignore [16] pyre bad at enum
+        if op_schema.is_inplace:
             # inplace op should return self instead of re-wrapping
             self = cast(dtensor.DTensor, args[0])
             self._spec = cast(DTensorSpec, output_sharding.output_spec)
             return self
-        elif schema_kind == SchemaKind.out:  # pyre-ignore [16] pyre bad at enum
+        elif op_schema.is_out_variant:
             # out variant could possibly have multiple out args (i.e. lu_unpack.out)
             output_specs = (
                 (output_sharding.output_spec,)
