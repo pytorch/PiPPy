@@ -4,10 +4,7 @@ from typing import List, Callable, Dict, Tuple, Optional, cast
 
 import torch
 from torch.utils._pytree import tree_map
-from torchgen.model import (  # pyre-ignore[21]: Undefined import
-    FunctionSchema,
-    SchemaKind,
-)
+from torchgen.model import FunctionSchema, SchemaKind
 
 import spmd.tensor.api as dtensor
 from spmd.tensor.placement_types import DTensorSpec, OutputSpecType
@@ -207,12 +204,12 @@ def operator_dispatch(
         local_tensor_kwargs = cast(Dict[str, object], local_tensor_kwargs)
         local_results = op_call(*local_tensor_args, **local_tensor_kwargs)
 
-        if schema_kind == SchemaKind.inplace:
+        if schema_kind == SchemaKind.inplace:  # pyre-ignore [16] pyre bad at enum
             # inplace op should return self instead of re-wrapping
             self = cast(dtensor.DTensor, args[0])
             self._spec = cast(DTensorSpec, output_sharding.output_spec)
             return self
-        elif schema_kind == SchemaKind.out:
+        elif schema_kind == SchemaKind.out:  # pyre-ignore [16] pyre bad at enum
             # out variant could possibly have multiple out args (i.e. lu_unpack.out)
             output_specs = (
                 (output_sharding.output_spec,)
