@@ -412,29 +412,29 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         output_tp.sum().backward()
 
         replicate = [Replicate()]
-        device_mesh = model_tp.qkv.weight.device_mesh
+        device_mesh = model_tp.attn.qkv.weight.device_mesh
         # Ensure gradients are same.
         self.assertEqual(
             model.qkv.weight.grad,
-            model_tp.qkv.weight.grad.redistribute(
+            model_tp.attn.qkv.weight.grad.redistribute(
                 device_mesh=device_mesh, placements=replicate
             ).to_local(),
         )
         self.assertEqual(
             model.qkv.bias.grad,
-            model_tp.qkv.bias.grad.redistribute(
+            model_tp.attn.qkv.bias.grad.redistribute(
                 device_mesh=device_mesh, placements=replicate
             ).to_local(),
         )
         self.assertEqual(
             model.proj.weight.grad,
-            model_tp.proj.weight.grad.redistribute(
+            model_tp.attn.proj.weight.grad.redistribute(
                 device_mesh=device_mesh, placements=replicate
             ).to_local(),
         )
         self.assertEqual(
             model.proj.bias.grad,
-            model_tp.proj.bias.grad.redistribute(
+            model_tp.attn.proj.bias.grad.redistribute(
                 device_mesh=device_mesh, placements=replicate
             ).to_local(),
         )
@@ -445,25 +445,25 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         # Ensure model weights are still same after update.
         self.assertEqual(
             model.qkv.weight,
-            model_tp.qkv.weight.redistribute(
+            model_tp.attn.qkv.weight.redistribute(
                 device_mesh=device_mesh, placements=replicate
             ).to_local(),
         )
         self.assertEqual(
             model.qkv.bias,
-            model_tp.qkv.bias.redistribute(
+            model_tp.attn.qkv.bias.redistribute(
                 device_mesh=device_mesh, placements=replicate
             ).to_local(),
         )
         self.assertEqual(
             model.proj.weight,
-            model_tp.proj.weight.redistribute(
+            model_tp.attn.proj.weight.redistribute(
                 device_mesh=device_mesh, placements=replicate
             ).to_local(),
         )
         self.assertEqual(
             model.proj.bias,
-            model_tp.proj.bias.redistribute(
+            model_tp.attn.proj.bias.redistribute(
                 device_mesh=device_mesh, placements=replicate
             ).to_local(),
         )
