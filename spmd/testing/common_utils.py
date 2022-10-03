@@ -11,6 +11,8 @@ from typing import (
     Optional,
     List,
     Sequence,
+    TypeVar,
+    cast,
 )
 
 import torch
@@ -20,21 +22,43 @@ from torch.utils._pytree import tree_flatten, tree_unflatten, TreeSpec
 from torch.testing._internal.common_distributed import (
     MultiProcessTestCase,
     TEST_SKIPS,
+    skip_if_lt_x_gpu,
 )
 
 from spmd import DeviceMesh, distribute_tensor, Shard, Replicate
 from spmd.tensor.api import DTensor
 from spmd.tensor.placement_types import Placement
 
+DEVICE_TYPE = "cuda" if torch.cuda.is_available() else "cpu"
+NUM_DEVICES = 4
 
-# default GPU test size/world size
-TEST_GPU_NUM = 4
+# We use this as a proxy for "multiple GPUs exist"
+if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+    # when we actually have multiple GPUs, relax the requirement to smaller counts.
+    NUM_DEVICES = min(NUM_DEVICES, torch.cuda.device_count())
+
+T = TypeVar("T")
+
+
+def skip_unless_torch_gpu(method: T) -> T:
+    """
+    Test decorator which skips the test unless there's a GPU available to torch.
+
+    >>> @skip_unless_torch_gpu
+    >>> def test_some_method(self) -> None:
+    >>>   ...
+    """
+    # The builtin @skip_if_no_gpu relies on os.environ['WORLD_SIZE'] being set.
+    return cast(T, skip_if_lt_x_gpu(NUM_DEVICES)(method))
 
 
 class DistTensorTestBase(MultiProcessTestCase):
     @property
     def world_size(self) -> int:
-        return TEST_GPU_NUM
+        return NUM_DEVICES
+
+    def build_device_mesh(self) -> DeviceMesh:
+        return DeviceMesh(DEVICE_TYPE, list(range(NUM_DEVICES)))  # type: ignore
 
     def init_pg(self, backend: str = "nccl") -> None:
         if backend == "nccl" and torch.cuda.device_count() < self.world_size:
