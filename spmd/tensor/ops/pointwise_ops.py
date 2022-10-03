@@ -247,6 +247,8 @@ pointwise_ops = [
     "aten.mvlgamma.default",
     "aten.mvlgamma.out",
     "aten.mvlgamma_.default",
+    "aten.native_dropout_backward.default",
+    "aten.native_dropout_backward.out",
     "aten.nan_to_num.default",
     "aten.nan_to_num.out",
     "aten.nan_to_num_.default",

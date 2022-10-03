@@ -2,16 +2,17 @@
 # Owner(s): ["module: fx"]
 
 import torch
+from torch.testing._internal.common_utils import TestCase
+
 import pippy
 import pippy.fx as fx
-
-from torch.testing._internal.common_utils import TestCase
 from pippy.fx.passes.infra.pass_base import PassResult
 from pippy.fx.passes.infra.pass_manager import (
     PassManager,
     this_before_that_pass_constraint,
     _topological_sort_passes,
 )
+
 
 def replace_add_with_mul_pass(gm):
     modified = False
@@ -158,3 +159,18 @@ class TestPassManager(TestCase):
             _topological_sort_passes(passes, constraints)
         expected_error_msg = f"Circular dependency detected within the following passes: {passes}"
         self.assertEqual(e.exception.args[0], expected_error_msg)
+
+    def test_pass_manager_error(self):
+        """
+        Tests error catching + debug
+        """
+        def pass_fail(graph_module):
+            raise RuntimeError("bad")
+
+        m = AddModule()
+        traced_m = pippy.fx.symbolic_trace(m)
+        pm = PassManager(passes=[replace_add_with_mul_pass, replace_mul_with_div_pass, pass_fail])
+
+        # Comment out this line to see the actual error message
+        with self.assertRaises(RuntimeError):
+            pm(traced_m)

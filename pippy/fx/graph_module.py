@@ -1,23 +1,24 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+import copy
+import itertools
+import linecache
+import os
+import sys
+import traceback
+import warnings
+from pathlib import Path
+from typing import Type, Dict, List, Any, Union, Optional, Set  # pylint: disable=unused-import
+
 import torch
 import torch.nn as nn
 import torch.overrides
 from torch.nn.modules.module import _addindent
-from torch.package import PackageImporter, PackageExporter
-import linecache
-from typing import Dict, List, Any, Union, Optional, Set, TYPE_CHECKING
-if TYPE_CHECKING:
-    from typing import Type
-from .graph import Graph, _PyTreeCodeGen, _is_from_torch, _custom_builtins, PythonCode
-from ._compatibility import compatibility
 from torch.package import Importer, sys_importer
-import copy
-import itertools
-import sys
-import traceback
-from pathlib import Path
-import os
-import warnings
+from torch.package import PackageImporter, PackageExporter
+
+from ._compatibility import compatibility
+from .graph import Graph, _PyTreeCodeGen, _is_from_torch, _custom_builtins, PythonCode
+
 
 # Normal exec loses the source code, however we can work with
 # the linecache module to recover it.
@@ -119,7 +120,7 @@ def reduce_package_graph_module(
 def reduce_deploy_graph_module(
     importer: PackageImporter, body: Dict[Any, Any], import_block: str
 ) -> torch.nn.Module:
-    ns = dict()
+    ns = {}
     ns["__builtins__"] = importer.patched_builtins
     fn_src = body.get('_code')
     assert fn_src is not None
@@ -380,6 +381,9 @@ class GraphModule(torch.nn.Module):
         self._tracer_extras = {}
         if self.graph._tracer_extras:
             self._tracer_extras = self.graph._tracer_extras
+
+        # Dictionary to store metadata
+        self.meta : Dict[str, Any] = {}
 
     # TorchScript breaks trying to compile the graph setter because of the
     # continued string literal. Issue here: https://github.com/pytorch/pytorch/issues/44842
@@ -710,11 +714,12 @@ class {module_name}(torch.nn.Module):
         return GraphModule(self, self.graph)
 
     @compatibility(is_backward_compatible=False)
-    def nested_str(self) -> str:
+    def print_readable(self):
         """
         Return the Python code generated for current GraphModule and its children GraphModules
         """
-        module_code = self.code
+        verbose_python_code = self._graph.python_code(root_module='self', verbose=True)
+        module_code = verbose_python_code.src
         module_code = module_code.lstrip('\n')
         module_code = f"class {self._get_name()}(torch.nn.Module):\n" + module_code
         module_code = _addindent(module_code, 4)
@@ -726,11 +731,12 @@ class {module_name}(torch.nn.Module):
         submodule_code = "\n".join(submodule_code_list)
         submodule_code = _addindent(submodule_code, 4)
 
-        return module_code + submodule_code
+        print(module_code + submodule_code)
 
     def __str__(self) -> str:
         orig_str = super().__str__()
-        return '\n'.join([orig_str, self._code])
+        print_readable_reminder = "# To see more debug info, please use `graph_module.print_readable()`"
+        return '\n'.join([orig_str, self._code, print_readable_reminder])
 
     def _replicate_for_data_parallel(self):
         new_gm = self.__copy__()

@@ -371,6 +371,11 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
             if model_cls in [ConvNextModel, ConvNextForImageClassification]:
                 self.skipTest('Need to support ConvNext models')
 
+            # TODO: BART models flakiness https://github.com/pytorch/tau/issues/308
+            if model_cls in [BartForSequenceClassification, MBartForSequenceClassification,
+                             PLBartForSequenceClassification]:
+                self.skipTest('BART models flakiness')
+
             model, splitter = generate_hf_model(model_cls)
 
             submodules_cnt = splitter(model)
@@ -509,6 +514,11 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
             # TODO: support ConvNext models https://github.com/pytorch/tau/issues/486
             if model_cls in [ConvNextModel, ConvNextForImageClassification]:
                 self.skipTest('Need to support ConvNext models')
+
+            # TODO: BART models flakiness https://github.com/pytorch/tau/issues/308
+            if model_cls in [BartForSequenceClassification, MBartForSequenceClassification,
+                             PLBartForSequenceClassification]:
+                self.skipTest('BART models flakiness')
 
             model, splitter = generate_hf_model(model_cls)
             model.eval()  # Disable nondeterminism for testing

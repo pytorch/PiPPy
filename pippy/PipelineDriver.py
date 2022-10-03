@@ -1358,6 +1358,8 @@ class PipelineDriverFillDrain(PipelineDriverBase):
                          checkpoint=checkpoint)
         self.single_loss = single_loss
 
+        self.last_grads = None
+
         self._init_remote_executors()
 
     def forward(self, *args, **kwargs):
@@ -1422,7 +1424,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         last_nodes = [interp.node_list[interp.pc] for interp in self.microbatch_interpreters]
         assert all(node.op == 'output' for node in last_nodes)
 
-        local_results = self._retrieve_output_values(self.microbatch_interpreters, last_nodes)
+        local_results_and_last_grads = self._retrieve_output_values(self.microbatch_interpreters, last_nodes)
 
         if self.pipe.has_loss_and_backwards:
             # Shared parameter sync
@@ -1432,6 +1434,17 @@ class PipelineDriverFillDrain(PipelineDriverBase):
 
         if DEBUG:
             self._check_stages_cleanup()
+
+        if self.pipe.has_loss_and_backwards:
+            local_results = []
+            last_grads = []
+            for local_result in local_results_and_last_grads:
+                local_results.append(local_result[0])
+                last_grads.append(local_result[1])
+
+            self.last_grads = last_grads
+        else:
+            local_results = local_results_and_last_grads
 
         return merge_chunks(local_results, self.output_chunk_spec, self._debug_mask_minibatches)
 
