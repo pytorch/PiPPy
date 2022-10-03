@@ -1,6 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 # implement matrix related ops for distributed tensor
-from typing import Tuple, Dict
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.ops.common_rules import einop_rule, pointwise_rule
 from spmd.tensor.ops.utils import register_prop_rule

@@ -74,11 +74,12 @@ class OpSchema(object):
     def __post_init__(self) -> None:
         schema_kind = self.func_schema.kind()
         self.is_inplace = (
-            schema_kind == SchemaKind.inplace
-        )  # pyre-ignore [16] pyre bad at enum
+            schema_kind
+            == SchemaKind.inplace  # pyre-ignore [16] pyre bad at enum
+        )
         self.is_out_variant = (
-            schema_kind == SchemaKind.out
-        )  # pyre-ignore [16] pyre bad at enum
+            schema_kind == SchemaKind.out  # pyre-ignore [16] pyre bad at enum
+        )
 
     @property
     def args_spec(self) -> Tuple[DTensorSpec, ...]:
