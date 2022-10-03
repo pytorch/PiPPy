@@ -13,7 +13,7 @@ from spmd import (
     Shard,
     Replicate,
 )
-from spmd.tensor.parallel import TensorParallelMultiheadAttention
+from spmd.tensor.parallel import TensorParallelMultiheadAttention, my_shard_self_attn
 
 
 class MLPModule(torch.nn.Module):
@@ -174,6 +174,15 @@ def shard_self_attn(m, device_type, tp_size):
     )
     return dist_mod
 
+
+class MultiheadAttnWrap(nn.Module):
+    # TODO: complete the interface
+    def __init__(self, embed_dim, num_heads, add_bias_kv=False):
+        super().__init__()
+        self.attn = nn.MultiheadAttention(embed_dim, num_heads, add_bias_kv=add_bias_kv)
+
+    def forward(self, query, key, value):
+        self.attn(query, key, value)
 
 class DistTensorParallelExampleTest(DistTensorTestBase):
     @with_comms
@@ -371,6 +380,34 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         output_tp = model_tp(inp, inp, inp)
         self.assertEqual(output, output_tp)
 
+    # note: test our new shard_self_attn api
+    # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
+    @with_comms
+    def test_self_attn_megatron_e2e_2(self):
+        device_mesh = DeviceMesh(self.device_type, 4)
+        inp_size = [8, 12, 16]
+        # Ensure all tp ranks have same input.
+        torch.manual_seed(0)
+        inp = torch.rand(*inp_size, device=self.device_type)
+
+        # Initialize model using same seed.
+        torch.manual_seed(5)
+        model = TensorParallelMultiheadAttention(
+            16, 8, self.device_type, tp_size=4, add_bias_kv=True
+        )
+        torch.manual_seed(5)
+        # TODO: our sharding function cannot shard the root node
+        model_tp = MultiheadAttnWrap(16, 8, add_bias_kv=True)
+        # TODO: input/output fn
+        distribute_module(model_tp, device_mesh, partition_fn=my_shard_self_attn(self.device_type, 4), input_fn=None, output_fn=None)
+
+        LR = 0.25
+        optim = torch.optim.SGD(model.parameters(), lr=LR)
+        optim_tp = torch.optim.SGD(model_tp.parameters(), lr=LR)
+
+        output = model(inp, inp, inp)
+        output_tp = model_tp(inp, inp, inp)
+        self.assertEqual(output, output_tp)
 
 if __name__ == "__main__":
     run_tests()
