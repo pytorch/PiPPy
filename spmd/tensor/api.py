@@ -98,8 +98,9 @@ class FromTorchTensor(torch.autograd.Function):
         # so that the gradient layout matches, and we could return
         # local gradients directly
         if grad_output.placements != previous_placement:
-            grad_output = grad_output.redistribute(
-                previous_device_mesh, previous_placement
+            # pyre-fixme[16]: `Redistribute` has no attribute `apply`.
+            grad_output = Redistribute.apply(
+                grad_output, previous_device_mesh, previous_placement
             )
 
         # TODO: backward is also differentiable now, add a test
@@ -132,9 +133,16 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # pyre-fixme[2]: Parameter must be annotated.
         **kwargs,
     ) -> "DTensor":
-        # TODO: add a docstr about tensor constructor
-        # from_local, and distribute_tensor difference.
-
+        """
+        Construct a DTensor from a local tensor, device mesh, and placement and
+        other tensor properties (i.e. shape, requires_grad, strides, etc).
+        Note: This is not a public API and it's only supposed to be used by the
+            operator implementations and internals. If you want to construct a
+            DTensor from a local tensor, consider using `DTensor.from_local`, if
+            you want to construct a DTensor from a "global" tensor (where you
+            already have tensor initialized and want to shard this tensor),
+            consider using `distribute_tensor`.
+        """
         # recover tensor shape and strides in the case of sharding
         tensor_shape = list(local_tensor.size())
         tensor_stride = list(local_tensor.stride())
