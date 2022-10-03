@@ -68,7 +68,7 @@ jobs:
           sudo yum remove -y cuda-drivers || true
           sudo yum remove -y "*nvidia*" || true
       - name: Setup SSH (Click me for login details)
-        uses: pytorch/pytorch/.github/actions/setup-ssh@master
+        uses: pytorch/test-infra/.github/actions/setup-ssh@main
         with:
           github-secret: ${{ secrets.GITHUB_TOKEN }}
       - name: Install nvidia driver, nvidia-docker runtime, set GPU_FLAG
