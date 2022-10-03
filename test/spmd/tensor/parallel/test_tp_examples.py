@@ -181,7 +181,7 @@ class MultiheadAttnWrap(nn.Module):
         self.attn = nn.MultiheadAttention(embed_dim, num_heads, add_bias_kv=add_bias_kv)
 
     def forward(self, query, key, value):
-        self.attn(query, key, value)
+        return self.attn(query, key, value)
 
 class DistTensorParallelExampleTest(DistTensorTestBase):
     @with_comms
@@ -407,6 +407,72 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         output = model(inp, inp, inp)
         output_tp = model_tp(inp, inp, inp)
         self.assertEqual(output, output_tp)
+
+        output.sum().backward()
+        output_tp.sum().backward()
+
+        replicate = [Replicate()]
+        device_mesh = model_tp.qkv.weight.device_mesh
+        # Ensure gradients are same.
+        self.assertEqual(
+            model.qkv.weight.grad,
+            model_tp.qkv.weight.grad.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.qkv.bias.grad,
+            model_tp.qkv.bias.grad.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.proj.weight.grad,
+            model_tp.proj.weight.grad.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.proj.bias.grad,
+            model_tp.proj.bias.grad.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+
+        optim.step()
+        optim_tp.step()
+
+        # Ensure model weights are still same after update.
+        self.assertEqual(
+            model.qkv.weight,
+            model_tp.qkv.weight.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.qkv.bias,
+            model_tp.qkv.bias.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.proj.weight,
+            model_tp.proj.weight.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.proj.bias,
+            model_tp.proj.bias.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+
+        inp = torch.rand(*inp_size, device=self.device_type)
+        output = model(inp, inp, inp)
+        output_tp = model_tp(inp, inp, inp)
+        self.assertEqual(output, output_tp)
+
 
 if __name__ == "__main__":
     run_tests()
