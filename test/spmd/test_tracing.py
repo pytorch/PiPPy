@@ -21,7 +21,7 @@ from spmd.tensor import (
 from spmd.tensor.dispatch import operator_dispatch, propagate_input_sharding
 
 from functools import partial
-from typing import Any, Callable, Dict, List, Sequence, Tuple
+from typing import Any, Callable, Dict, Sequence, Tuple
 
 
 class TraceDeviceMeshTestBase:
@@ -265,7 +265,11 @@ class TraceDistTensorTest(DistTensorTestBase):
                 node_to_obj[node] = out
 
                 # get DTensor specs for inputs and outputs
-                target_schema, redistribute, output_sharding = propagate_input_sharding(
+                (
+                    target_schema,
+                    redistribute,
+                    output_sharding,
+                ) = propagate_input_sharding(
                     node.target,
                     args,
                     kwargs,
