@@ -5,7 +5,7 @@ from unittest import skip
 import torch
 from torch import Tensor
 from torch.testing._internal.common_utils import run_tests
-from spmd.testing.common_utils import (  # type: ignore
+from spmd.testing.common_utils import (
     DistTensorTestBase,
     with_comms,
     TEST_GPU_NUM,
