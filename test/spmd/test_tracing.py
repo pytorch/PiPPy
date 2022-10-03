@@ -18,7 +18,7 @@ from spmd.tensor import (
     Replicate,
     Shard,
 )
-from spmd.tensor.dispatch import operator_dispatch, prepare_inputs
+from spmd.tensor.dispatch import operator_dispatch, propagate_input_sharding
 
 from functools import partial
 from typing import Any, Callable, Dict, List, Sequence, Tuple
@@ -53,7 +53,6 @@ class TraceDeviceMeshTestBase:
 
     def _test_broadcast_nd(self, mesh_tensor):
         mesh = DeviceMesh(self.device_type, mesh_tensor)
-        local_tensor = torch.ones(3, 3, device=self.device_type) * self.rank
 
         # check all dim groups
         dim_to_subgroups = mesh.get_dim_groups()
@@ -68,6 +67,7 @@ class TraceDeviceMeshTestBase:
                 # multiply with 1 to trigger wait on read during tracing.
                 return received_tensor * 1
 
+            local_tensor = torch.ones(3, 3, device=self.device_type) * self.rank
             # use a local_tensor + 1 for tracing to make sure that we are not
             # simply replaying recorded tensor value
             traced_fn = make_fx(fn)(local_tensor + 1)
@@ -91,22 +91,23 @@ class TraceDeviceMeshTestBase:
                 torch.ones(3, 3, device=self.device_type) * global_rank
                 for global_rank in global_ranks
             ]
+            tensor_to_scatter = torch.cat(scattered_tensors)
 
-            def fn(tensors: List[torch.Tensor]):
-                received_tensor = mesh.scatter(tensors, mesh_dim=dim)
+            def fn(tensor_to_scatter: torch.Tensor):
+                received_tensor = mesh.scatter(tensor_to_scatter, mesh_dim=dim)
                 # multiply with 1 to trigger wait on read during tracing.
                 return received_tensor * 1
 
             # use a local_tensor + 1 for tracing to make sure that we are not
             # simply replaying recorded tensor value
-            traced_fn = make_fx(fn)([t + 1 for t in scattered_tensors])
+            traced_fn = make_fx(fn)(tensor_to_scatter + 1)
 
-            received_tensor = traced_fn(scattered_tensors)
+            received_tensor = traced_fn(tensor_to_scatter)
             self.assertEqual(received_tensor, torch.ones(3, 3) * self.rank)
 
     def _test_all_gather_nd(self, mesh_tensor):
         mesh = DeviceMesh(self.device_type, mesh_tensor)
-        # each rank have its own tensor, all_gather gives a list
+        # each rank have its own tensor, all_gather gives a big tensor
         local_tensor = torch.ones(3, 3, device=self.device_type) * self.rank
 
         dim_to_subgroups = mesh.get_dim_groups()
@@ -116,21 +117,20 @@ class TraceDeviceMeshTestBase:
                 get_global_rank(dim_group, i) for i in range(dim_group_size)
             ]
 
-            def fn(tensor: torch.Tensor):
-                gathered_tensors = mesh.all_gather(tensor, mesh_dim=dim)
-                # multiply with 1 to trigger wait on read during tracing.
-                return [t * 1 for t in gathered_tensors]
+            def fn(tensor: torch.Tensor, output_shape):
+                return mesh.all_gather(tensor, output_shape, mesh_dim=dim)
 
             # use a local_tensor + 1 for tracing to make sure that we are not
             # simply replaying recorded tensor value
-            traced_fn = make_fx(fn)(local_tensor + 1)
+            traced_fn = make_fx(fn)(local_tensor + 1, (dim_group_size * 3, 3))
+            gathered_tensor = traced_fn(local_tensor, (dim_group_size * 3, 3))
 
-            gathered_tensors = traced_fn(local_tensor)
-            self.assertEqual(len(gathered_tensors), dim_group_size)
-            for idx, gathered_tensor in enumerate(gathered_tensors):
-                self.assertEqual(
-                    gathered_tensor, torch.ones(3, 3) * global_ranks[idx]
+            exp_tensor = torch.ones(3 * dim_group_size, 3)
+            for i in range(len(global_ranks)):
+                exp_tensor[i * 3 : (i + 1) * 3] = (
+                    torch.ones(3, 3) * global_ranks[i]
                 )
+            self.assertEqual(gathered_tensor, exp_tensor)
 
 
 class TraceDeviceMesh3DTest(DistTensorTestBase, TraceDeviceMeshTestBase):
@@ -265,7 +265,7 @@ class TraceDistTensorTest(DistTensorTestBase):
                 node_to_obj[node] = out
 
                 # get DTensor specs for inputs and outputs
-                target_schema, redistribute, output_sharding = prepare_inputs(
+                target_schema, redistribute, output_sharding = propagate_input_sharding(
                     node.target,
                     args,
                     kwargs,
