@@ -2,13 +2,25 @@
 import torch
 from torch.testing._internal.common_utils import run_tests
 from spmd.testing.common_utils import (  # type: ignore
+    DTensorConverter,
     DistTensorTestBase,
     with_comms,
 )
 from spmd import distribute_tensor, DeviceMesh, DTensor, Shard, Replicate
+from spmd.tensor.api import _Partial
 
 
 class DistTensorOpsTest(DistTensorTestBase):
+    @with_comms
+    def test_aten_contiguous(self):
+        # this op not covered by dtensor_ops
+        mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        self._test_op(
+            mesh,
+            lambda x: torch.ops.aten.contiguous(x),
+            torch.randn(16, 32),
+        )
+
     @with_comms
     def test_detach(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
@@ -130,6 +142,56 @@ class DistTensorOpsTest(DistTensorTestBase):
         self.assertEqual(ones_expected, ones_like_dt.to_local())
 
     @with_comms
+    def test_ones_like_partial_sum(self):
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        shard_spec = [_Partial()]
+
+        input_tensor = torch.randn(4, 8, requires_grad=True)
+        dist_tensor = DTensor.from_local(input_tensor, device_mesh, shard_spec)
+        assert dist_tensor.shape == (4, 8)
+
+        ones_like_dt = torch.ones_like(dist_tensor)
+        ones_expected = torch.ones(dist_tensor.shape)
+        self.assertEqual(
+            ones_expected,
+            ones_like_dt.redistribute(device_mesh, [Replicate()]).to_local(),
+        )
+
+    @with_comms
+    def test_fill_inplace_partial_sum(self):
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        shard_spec = [_Partial()]
+
+        input_tensor = torch.randn(4, 8, requires_grad=True)
+        dist_tensor = DTensor.from_local(input_tensor, device_mesh, shard_spec)
+        assert dist_tensor.shape == (4, 8)
+
+        torch.fill_(dist_tensor, 42)
+        fill_expected = torch.full(
+            dist_tensor.shape, 42, dtype=input_tensor.dtype
+        )
+        self.assertEqual(
+            fill_expected,
+            dist_tensor.redistribute(device_mesh, [Replicate()]).to_local(),
+        )
+
+    @with_comms
+    def test_zeros_like_partial_sum(self):
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        shard_spec = [_Partial()]
+
+        input_tensor = torch.randn(4, 8, requires_grad=True)
+        dist_tensor = DTensor.from_local(input_tensor, device_mesh, shard_spec)
+        assert dist_tensor.shape == (4, 8)
+
+        zeros_like_dt = torch.zeros_like(dist_tensor)
+        zeros_expected = torch.zeros(dist_tensor.shape)
+        self.assertEqual(
+            zeros_expected,
+            zeros_like_dt.redistribute(device_mesh, [Replicate()]).to_local(),
+        )
+
+    @with_comms
     def test_zero_inplace(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
@@ -151,6 +213,128 @@ class DistTensorOpsTest(DistTensorTestBase):
         zeros_like_dt = torch.zeros_like(dist_tensor)
         zeros_expected = torch.zeros(4, 8)
         self.assertEqual(zeros_expected, zeros_like_dt.to_local())
+
+    def _test_op(self, mesh, op_call, *args, **kwargs):
+        out = op_call(*args, **kwargs)
+        dtc = DTensorConverter(mesh, args, kwargs)
+        for d_args, d_kwargs in dtc:
+            self.assertTrue(dtc.successful())
+            d_out = op_call(*d_args, **d_kwargs)
+            self.assertEqual(
+                d_out.redistribute(mesh, [Replicate()] * mesh.ndim).to_local(),
+                out,
+            )
+
+    @with_comms
+    def test_index(self):
+        meshes = [
+            DeviceMesh(
+                self.device_type, list(range(self.world_size))
+            ),  # 1D mesh
+            # TODO(@azzolini): un-comment when DTensorConverter supports N-D mesh
+            # DeviceMesh(self.device_type, torch.arange(self.world_size).reshape(2, -1)), # 2D mesh
+        ]
+        for mesh in meshes:
+            self._test_op(
+                mesh,
+                lambda x, y: x[y],
+                torch.randn(16, 32, 16),
+                torch.randint(5, (4, 8)),
+            )
+            self._test_op(
+                mesh,
+                lambda x, y: x.index_select(1, y),
+                torch.randn(16, 32, 16),
+                torch.randint(5, (4,)),
+            )
+            self._test_op(
+                mesh,
+                lambda x, y: x.index_select(0, y),
+                torch.randn(16, 32, 16),
+                torch.randint(5, (4,)),
+            )
+            self._test_op(
+                mesh,
+                lambda x, y: x[y],
+                torch.randn(16, 32, 16),
+                torch.randint(5, (12,)),
+            )
+            self._test_op(
+                mesh,
+                lambda x, y: x[:, y],
+                torch.randn(16, 32, 16),
+                torch.randint(5, (4, 8)),
+            )
+            self._test_op(
+                mesh,
+                lambda x, y: x[..., y],
+                torch.randn(16, 32, 16),
+                torch.randint(5, (4, 12)),
+            )
+            self._test_op(
+                mesh,
+                lambda x, y: x[..., y],
+                torch.randn(16, 32, 16),
+                torch.randint(5, (4, 8, 16)),
+            )
+            self._test_op(
+                mesh,
+                lambda x, y, z: x[z, y],
+                torch.randn(16, 32, 16),
+                torch.randint(5, (12, 8, 12)),
+                torch.randint(2, (12, 8, 12)),
+            )
+            self._test_op(
+                mesh,
+                lambda x, y, z: x[z, :, y],
+                torch.randn(16, 32, 16),
+                torch.randint(5, (12, 8, 12)),
+                torch.randint(2, (12, 8, 12)),
+            )
+            self._test_op(
+                mesh,
+                lambda x, y, z: x[:, z, :, y],
+                torch.randn(16, 32, 16, 12),
+                torch.randint(5, (12, 8, 12)),
+                torch.randint(2, (12, 8, 12)),
+            )
+            # broadcast in inner dimensions
+            self._test_op(
+                mesh,
+                lambda x, y, z: x[:, z, :, y],
+                torch.randn(16, 32, 16, 12),
+                torch.randint(5, (12, 8, 12)),
+                torch.randint(2, (12, 1, 12)),
+            )
+            # implicit (left-padded) broadcast
+            self._test_op(
+                mesh,
+                lambda x, y, z: x[:, z, :, y],
+                torch.randn(16, 32, 16, 12),
+                torch.randint(5, (12, 8, 12)),
+                torch.randint(2, (8, 12)),
+            )
+            self._test_op(
+                mesh,
+                lambda x, y, z: x[z, y, :, :],
+                torch.randn(16, 32, 16, 12),
+                torch.randint(2, (8, 12)),
+                torch.randint(5, (12, 8, 12)),
+            )
+            self._test_op(
+                mesh,
+                lambda x, y, z: x[z, :, y, :],
+                torch.randn(16, 32, 16, 12),
+                torch.randint(2, (8, 12)),
+                torch.randint(5, (12, 8, 12)),
+            )
+            self._test_op(
+                mesh,
+                lambda x, y, z: x[z, :, :, y],
+                torch.randn(16, 32, 16, 12),
+                torch.randint(2, (8, 1)),
+                torch.randint(5, (12, 8, 12)),
+            )
 
 
 if __name__ == "__main__":

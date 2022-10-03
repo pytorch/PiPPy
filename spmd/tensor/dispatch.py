@@ -9,7 +9,7 @@ from torchgen.model import (  # pyre-ignore[21]: Undefined import
     SchemaKind,
 )
 
-import spmd.tensor.api as spmd_tensor
+import spmd.tensor.api as dtensor
 from spmd.tensor.placement_types import DTensorSpec, OutputSpecType
 from spmd.tensor.utils import (
     unwrap_local_tensor,
@@ -111,7 +111,7 @@ _CURRENT_DECOMPOSITION_TABLE: Dict[
 ] = {torch.ops.aten._reshape_alias.default: _reshape_alias}
 
 
-def prepare_inputs(
+def propagate_input_sharding(
     op_call: torch._ops.OpOverload,
     args: Tuple[object, ...],
     kwargs: Dict[str, object],
@@ -127,7 +127,7 @@ def prepare_inputs(
         print(f"{op_call}({op_schema})")
         local_shapes = tree_map(
             lambda t: t.to_local().shape
-            if isinstance(t, spmd_tensor.DTensor)
+            if isinstance(t, dtensor.DTensor)
             else None,
             args,
         )
@@ -151,7 +151,14 @@ def prepare_inputs(
 
     # step 2. there's sharding propagation rule, run
     # sharding propagation to get output sharding
-    output_sharding = sharding_prop_func(op_schema)
+    try:
+        output_sharding = sharding_prop_func(op_schema)
+    except Exception as e:
+        raise RuntimeError(
+            f"Sharding propagation failed on op {op_key}.\n"
+            f"Input schema: {op_schema}.\n"
+            f"Error: {e}"
+        ) from e
 
     # step 3. if can't get output_spec from sharding
     # propagation (i.e. no rules apply for input
@@ -197,7 +204,7 @@ def operator_dispatch(
         # dispatch to user defined custom distributed tensor ops
         return custom_dispatch_ops[str(op_call)](*args, **kwargs)
 
-    target_schema, redistribute, output_sharding = prepare_inputs(
+    target_schema, redistribute, output_sharding = propagate_input_sharding(
         op_call, args, kwargs, op_to_rules
     )
 
@@ -232,7 +239,7 @@ def operator_dispatch(
 
     if schema_kind == SchemaKind.inplace:
         # inplace op should return self instead of re-wrapping
-        self = cast(spmd_tensor.DTensor, args[0])
+        self = cast(dtensor.DTensor, args[0])
         self._spec = cast(DTensorSpec, output_sharding.output_spec)
         return self
     elif schema_kind == SchemaKind.out:
@@ -244,7 +251,7 @@ def operator_dispatch(
         )
         out_dts = []
         for i, out in enumerate(func_schema.arguments.out):
-            out_dt = cast(spmd_tensor.DTensor, kwargs[out.name])
+            out_dt = cast(dtensor.DTensor, kwargs[out.name])
             out_dt._spec = cast(DTensorSpec, output_specs[i])
             out_dts.append(out_dt)
         return tuple(out_dts) if len(out_dts) > 1 else out_dts[0]
