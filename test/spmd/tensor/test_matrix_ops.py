@@ -5,13 +5,12 @@ from spmd.tensor.api import DTensor
 from spmd.testing.common_utils import (  # type: ignore
     DistTensorTestBase,
     with_comms,
+    skip_unless_torch_gpu,
 )
 from spmd import distribute_tensor, DeviceMesh
 from spmd.tensor.placement_types import Placement, Shard, Replicate, _Partial
 from typing import List, Optional, cast
 import itertools
-
-from spmd.testing.devices import skip_unless_torch_gpu
 
 
 class DistMatrixOpsTest(DistTensorTestBase):

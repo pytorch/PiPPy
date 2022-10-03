@@ -8,6 +8,7 @@ from torch.testing._internal.common_utils import run_tests
 from spmd.testing.common_utils import (  # type: ignore
     DistTensorTestBase,
     with_comms,
+    skip_unless_torch_gpu,
 )
 from spmd.tensor.dispatch import OpSchema
 
@@ -24,8 +25,6 @@ from spmd.tensor.placement_types import (
 from torch.distributed.distributed_c10d import ReduceOp
 
 import torch.utils._pytree as pytree
-
-from spmd.testing.devices import skip_unless_torch_gpu
 
 
 def deepcopy_convert_to_dtensor(

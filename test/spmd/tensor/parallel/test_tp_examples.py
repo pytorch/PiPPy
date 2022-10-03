@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import functools
 from torch.testing._internal.common_utils import run_tests
-from spmd.testing.common_utils import DistTensorTestBase, with_comms  # type: ignore
+from spmd.testing.common_utils import DistTensorTestBase, with_comms, NUM_DEVICES, skip_unless_torch_gpu  # type: ignore
 from spmd import (
     distribute_tensor,
     distribute_module,
@@ -13,7 +13,6 @@ from spmd import (
     Replicate,
 )
 from spmd.tensor.parallel import TensorParallelMultiheadAttention
-from spmd.testing.devices import NUM_DEVICES, skip_unless_torch_gpu
 
 
 class MLPModule(torch.nn.Module):

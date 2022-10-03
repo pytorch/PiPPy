@@ -18,8 +18,8 @@ from spmd.testing.checkpoint_utils import with_temp_dir
 from spmd.testing.common_utils import (
     DistTensorTestBase,
     with_comms,
+    skip_unless_torch_gpu,
 )
-from spmd.testing.devices import skip_unless_torch_gpu
 
 
 class MyModule(torch.nn.Module):

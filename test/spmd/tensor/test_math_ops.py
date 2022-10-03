@@ -6,11 +6,10 @@ from spmd.tensor.placement_types import Replicate
 from spmd.testing.common_utils import (  # type: ignore
     DistTensorTestBase,
     with_comms,
+    skip_unless_torch_gpu,
 )
 from spmd import distribute_tensor, Shard
 import itertools
-
-from spmd.testing.devices import skip_unless_torch_gpu
 
 
 class DistMathOpsTest(DistTensorTestBase):
