@@ -176,8 +176,7 @@ def einop_rule(
                 for input_dim, input_spec in zip(input_dims, input_specs):
                     if (
                         d in input_dim
-                        and input_spec.dim_map[input_dim.index(d)]
-                        == mesh_dim
+                        and input_spec.dim_map[input_dim.index(d)] == mesh_dim
                     ):
                         cost += math.prod(
                             input_spec.local_shape

@@ -1,7 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 from torch.testing._internal.common_utils import run_tests
-from torchgen.model import FunctionSchema  # pyre-ignore[21]: Undefined import
+from torchgen.model import FunctionSchema
 from spmd.tensor.dispatch import OpSchema
 
 from spmd.tensor.ops.common_rules import (
@@ -10,7 +10,7 @@ from spmd.tensor.ops.common_rules import (
     pointwise_rule,
 )
 from spmd.tensor.placement_types import DTensorSpec
-from spmd.testing.common_utils import (  # type: ignore
+from spmd.testing.common_utils import (
     DistTensorTestBase,
     with_comms,
 )

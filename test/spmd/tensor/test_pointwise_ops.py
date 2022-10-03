@@ -5,21 +5,18 @@ from unittest import skip
 import torch
 from torch import Tensor
 from torch.testing._internal.common_utils import run_tests
-from spmd.testing.common_utils import (  # type: ignore
+from spmd.testing.common_utils import (
     DistTensorTestBase,
     with_comms,
     TEST_GPU_NUM,
 )
-from spmd.tensor.dispatch import OpSchema
 
 from spmd.tensor import distribute_tensor
-from spmd.tensor.ops.pointwise_ops import pointwise_rule
 from spmd import DeviceMesh, DTensor
 from spmd.tensor.placement_types import (
     Shard,
     Replicate,
     _Partial,
-    DTensorSpec,
     Placement,
 )
 from torch.distributed.distributed_c10d import ReduceOp
