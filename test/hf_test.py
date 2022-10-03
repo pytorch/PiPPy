@@ -358,6 +358,19 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
             if model_cls in [DonutSwinModel]:
                 self.skipTest('Need to support Donut SWIN models')
 
+            # TODO: support ResNet models https://github.com/pytorch/tau/issues/484
+            if model_cls in [ResNetModel, ResNetForImageClassification]:
+                self.skipTest('Need to support ResNet models')
+
+            # TODO: support Wav2Vec2 models https://github.com/pytorch/tau/issues/485
+            if model_cls in [Wav2Vec2Model, Wav2Vec2ForPreTraining, Wav2Vec2ForCTC, Wav2Vec2ForSequenceClassification,
+                             Wav2Vec2ForMaskedLM]:
+                self.skipTest('Need to support Wav2Vec2 models')
+
+            # TODO: support ConvNext models https://github.com/pytorch/tau/issues/486
+            if model_cls in [ConvNextModel, ConvNextForImageClassification]:
+                self.skipTest('Need to support ConvNext models')
+
             model, splitter = generate_hf_model(model_cls)
 
             submodules_cnt = splitter(model)
@@ -399,7 +412,8 @@ def get_output_loss_value_spec_for_model(model_cls):
                      GPTNeoForSequenceClassification, GPTJForCausalLM, GPTJForSequenceClassification,
                      BlenderbotSmallForCausalLM, BlenderbotForCausalLM, BartForCausalLM, MBartForCausalLM,
                      OPTForCausalLM, MarianForCausalLM, PLBartForCausalLM, PegasusForCausalLM, Speech2Text2ForCausalLM,
-                     XGLMForCausalLM, OPTForSequenceClassification]:
+                     XGLMForCausalLM, OPTForSequenceClassification, BloomForSequenceClassification, BloomForCausalLM,
+                     TrOCRForCausalLM]:
         return {'loss': True, 'logits': False, 'past_key_values': False}
 
     if model_cls in [AlbertForPreTraining]:
@@ -482,6 +496,19 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
             # TODO: support Donut SWIN models https://github.com/pytorch/PiPPy/issues/361
             if model_cls in [DonutSwinModel]:
                 self.skipTest('Need to support Donut SWIN models')
+
+            # TODO: support ResNet models https://github.com/pytorch/tau/issues/484
+            if model_cls in [ResNetModel, ResNetForImageClassification]:
+                self.skipTest('Need to support ResNet models')
+
+            # TODO: support Wav2Vec2 models https://github.com/pytorch/tau/issues/485
+            if model_cls in [Wav2Vec2Model, Wav2Vec2ForPreTraining, Wav2Vec2ForCTC, Wav2Vec2ForSequenceClassification,
+                             Wav2Vec2ForMaskedLM]:
+                self.skipTest('Need to support Wav2Vec2 models')
+
+            # TODO: support ConvNext models https://github.com/pytorch/tau/issues/486
+            if model_cls in [ConvNextModel, ConvNextForImageClassification]:
+                self.skipTest('Need to support ConvNext models')
 
             model, splitter = generate_hf_model(model_cls)
             model.eval()  # Disable nondeterminism for testing

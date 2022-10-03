@@ -2,8 +2,12 @@
 import warnings
 from typing import List, Optional, Iterable, Sequence
 import torch
+import torch.nn.functional as F
 from torch.distributed._spmd.comm_tensor import CommTensor
 from torch.distributed.distributed_c10d import (
+    all_gather,
+    all_reduce,
+    broadcast,
     get_rank,
     get_world_size,
     get_global_rank,
@@ -11,17 +15,9 @@ from torch.distributed.distributed_c10d import (
     GroupMember,
     scatter,
     _get_default_group,
-    _reduce_scatter_base,
+    reduce_scatter,
     new_group,
     ProcessGroup,
-)
-
-# autograd enabled collective
-from torch.distributed.nn.functional import (
-    all_gather,
-    _all_gather_base,
-    all_reduce,
-    broadcast,
 )
 
 _global_device_mesh: Optional["DeviceMesh"] = None
@@ -87,6 +83,7 @@ class DeviceMesh(object):
 
     device_type: str
     mesh: torch.Tensor
+    _backend: str
 
     def __init__(
         self,
@@ -101,19 +98,19 @@ class DeviceMesh(object):
             else torch.tensor(mesh, dtype=torch.int)
         )
         default_pg = _get_default_group()
-        backend_name = default_pg._get_backend_name()
+        self._backend = default_pg._get_backend_name()
         # TODO: if user want to pass pg_options, offer a way to do it
         # check default pg backend, should support device_type
         if device_type == "cpu":
             assert (
-                backend_name == "gloo"
-            ), f"ProcessGroup backend: {backend_name} not supporting CPU!"
+                self._backend == "gloo"
+            ), f"ProcessGroup backend: {self._backend} not supporting CPU!"
         elif device_type == "cuda":
-            if backend_name == "gloo":
+            if self._backend == "gloo":
                 warnings.warn(
                     "We recommend using nccl backend for cuda device type, gloo backend might only have partial support!"
                 )
-            assert backend_name == "gloo" or backend_name == "nccl"
+            assert self._backend == "gloo" or self._backend == "nccl"
         else:
             raise RuntimeError(
                 f"DeviceMesh only support cpu or cuda device type, but got {device_type}"
@@ -194,7 +191,7 @@ class DeviceMesh(object):
                     # pg or not, it's required that all ranks participate
                     # in subgroup construction
                     new_subgroup = new_group(
-                        ranks=subgroup_ranks, backend=backend_name
+                        ranks=subgroup_ranks, backend=self._backend
                     )
                     # only add to dim_groups if the current rank in the subgroup
                     if self.get_rank() in subgroup_ranks:
@@ -236,7 +233,7 @@ class DeviceMesh(object):
         return self.mesh.ndim
 
     def backend(self) -> str:
-        return _get_default_group()._get_backend_name()
+        return self._backend
 
     def get_rank(self) -> int:
         return get_rank()
@@ -248,41 +245,78 @@ class DeviceMesh(object):
         """
         return self._coordinate_on_dim[dim] if self._coordinate_on_dim else None
 
+    def _pad_tensor_dim_by_1(
+        self, tensor: torch.Tensor, dim: int
+    ) -> torch.Tensor:
+        pad = [0, 0] * (tensor.ndim - dim)
+        pad[-1] = 1
+        return F.pad(tensor, pad)
+
+    def _unpad_tensor_dim_by_1(
+        self, tensor: torch.Tensor, dim: int
+    ) -> torch.Tensor:
+        return tensor.narrow(dim, start=0, length=tensor.size(dim) - 1)
+
     def scatter(
-        self, scatter_list: List[torch.Tensor], mesh_dim: int = 0
+        self,
+        tensor_to_scatter: torch.Tensor,
+        mesh_dim: int = 0,
+        tensor_dim: int = 0,
     ) -> torch.Tensor:
         """
-        scatter the list of tensors to a device mesh dimension. We by default
+        scatter a big tensor to a device mesh dimension. We by default
         use the first rank of the mesh dimension as the source of truth, i.e
         for a 2d mesh [[0, 1], [2, 3]], if we scatter on mesh_dim = 1, we will
-        scatter the tensor list on rank 0 to rank 0/1, and tensor list on rank 2
-        to rank 2/3.
+        scatter the tensor splitted on rank 0 to rank 0/1, and tensor splitted
+        on rank 2 to rank 2/3.
 
         Args:
-            scatter_list (List[torch.Tensor]): list of tensors to scatter.
+            tensor_to_scatter (torch.Tensor): the tensor to be scattered.
             mesh_dim (int, optional): indicate which mesh dimension we want
                 to scatter on, we by default choose the first rank on the
-                mesh dimension.
+                mesh dimension as source of truth.
+            tensor_dim (int, optional): indicate which tensor dimension we want
+                to split the `tensor_to_scatter` before scattering.
 
         Returns:
             A :class:`torch.Tensor` object
         """
-        # CommTensor does not change eager mode behavior. During tracing, it
-        # makes sure communication result is properly waited before subsequent
-        # read operations.
-        to_scatter = [
-            CommTensor(tensor.contiguous()) for tensor in scatter_list
-        ]
+        my_coordinate = self.get_coordinate_on_dim(mesh_dim)
+        # TODO: what should happen if rank is not in the mesh?
+        assert (
+            my_coordinate is not None
+        ), "Rank if not part of mesh"  # TODO: figure out behavior here
+
+        num_chunks = self.size(mesh_dim)
         dim_group = self._dim_groups[mesh_dim]
         # src need to be global rank
         src_for_dim = 0
         if dim_group is not GroupMember.WORLD:
             src_for_dim = get_global_rank(dim_group, 0)
+
+        scatter_list = list(
+            tensor_to_scatter.tensor_split(num_chunks, dim=tensor_dim)
+        )
+        # gloo does not support uneven scattering, nccl supports it, but it
+        # might be slow compared to even size collective, we need to pad tensor
+        # before really calling scatter, and unpad/narrow it after the collective
+        # TODO: consider if we should remove this logic once ProcessGroupGloo
+        # suupport uneven list, and collective perfomance on par
+        idx_start_to_pad = tensor_to_scatter.size(tensor_dim) % num_chunks
+        to_scatter = []
+        for i, scatter_tensor in enumerate(scatter_list):
+            if idx_start_to_pad != 0 and i >= idx_start_to_pad:
+                scatter_tensor = self._pad_tensor_dim_by_1(
+                    scatter_tensor, tensor_dim
+                )
+            scatter_tensor = scatter_tensor.contiguous()
+            to_scatter.append(CommTensor(scatter_tensor))
+
         # N.B.: the `tensor` below will be a CommTensor too due to CommTensor's
         # propagation rule: propagte wrapping until communication is called.
         # This is necessary in order to properly trigger CommTensor's dispatch
         # function for scatter_.
-        tensor = torch.empty_like(to_scatter[0])
+        tensor = torch.empty_like(to_scatter[my_coordinate])
         if src_for_dim == get_rank():
             scatter(
                 tensor,
@@ -292,10 +326,32 @@ class DeviceMesh(object):
             )
         else:
             scatter(tensor, scatter_list=None, src=src_for_dim, group=dim_group)
+
+        # resize to uneven size if needed
+        if idx_start_to_pad != 0 and my_coordinate >= idx_start_to_pad:
+            # tensor = tensor.narrow(tensor_dim, start=0, length=tensor.size(tensor_dim) - 1)
+            tensor = self._unpad_tensor_dim_by_1(tensor, tensor_dim)
         return tensor
 
-    # pyre-fixme[3]: Return type must be annotated.
-    def broadcast(self, tensor: torch.Tensor, mesh_dim: int = 0):
+    def broadcast(
+        self, tensor: torch.Tensor, mesh_dim: int = 0
+    ) -> torch.Tensor:
+        """
+        broadcast the tensor to a device mesh dimension. We by default
+        use the first rank of the mesh dimension as the source of truth, i.e
+        for a 2d mesh [[0, 1], [2, 3]], if we broadcast on mesh_dim = 1, we will
+        broadcast the tensor on rank 0 to rank 0/1, and tensor on rank 2
+        to rank 2/3.
+
+        Args:
+            tensor (torch.Tensor): tensor to scatter.
+            mesh_dim (int, optional): indicate which mesh dimension we want
+                to scatter on, we by default choose the first rank on the
+                mesh dimension as source of truth.
+
+        Returns:
+            A :class:`torch.Tensor` object
+        """
         dim_group = self._dim_groups[mesh_dim]
         # src need to be global rank
         src_for_dim = 0
@@ -305,89 +361,160 @@ class DeviceMesh(object):
         # CommTensor does not change eager mode behavior. During tracing, it
         # makes sure communication result is properly waited before subsequent
         # read operations.
-        return broadcast(
-            CommTensor(tensor.contiguous()), src=src_for_dim, group=dim_group
-        )
+        if not tensor.is_contiguous():
+            tensor = CommTensor(tensor.contiguous())
+        else:
+            tensor = CommTensor(tensor.clone())
+        broadcast(tensor, src=src_for_dim, group=dim_group)
+        return tensor
 
-    # pyre-fixme[3]: Return type must be annotated.
-    def all_gather(self, tensor: torch.Tensor, mesh_dim: int = 0):
-        dim_group = self._dim_groups[mesh_dim]
-        # CommTensor does not change eager mode behavior. During tracing, it
-        # makes sure communication result is properly waited before subsequent
-        # read operations.
-        return all_gather(CommTensor(tensor), group=dim_group)
-
-    # pyre-fixme[3]: Return type must be annotated.
-    def all_gather_base(
+    def all_gather(
         self,
-        output_tensor: torch.Tensor,
         tensor: torch.Tensor,
+        output_shape: Sequence[int],
         mesh_dim: int = 0,
         tensor_dim: int = 0,
-    ):
-        # only nccl have all_gather base
-        if self.backend() == "nccl":
-            if tensor_dim != 0:
-                tensor = tensor.transpose(tensor_dim, 0)
-            # TODO needs contiguous?
-            output = _all_gather_base(
-                output_tensor, tensor, group=self._dim_groups[mesh_dim]
-            )
-            if tensor_dim != 0:
-                output = output.transpose(tensor_dim, 0)
-            return output
-        else:
-            # if not nccl, fallback to use all_gather
-            # and reform the output tensor by concat
-            gathered_chunks = self.all_gather(tensor, mesh_dim=mesh_dim)
-            # TODO: find more performant way
-            output_tensor.copy_(torch.cat(gathered_chunks, dim=tensor_dim))
-            return output_tensor
+    ) -> torch.Tensor:
+        """
+        all_gather the tensor on each rank to a bigger output_tensor on a
+        device mesh dimension.
 
-    # pyre-fixme[3]: Return type must be annotated.
+        Args:
+            tensor (torch.Tensor): tensor to be gathered on each rank.
+            output_shape (Tuple[int, ...]): output shape of the all_gather call,
+                this is needed because we need to know the proper size of each
+                receving tensor on each rank in order to call dist.all_gather,
+                as sometimes we have uneven sharding on the mesh dimension. We
+                use torch.tensor_split semantics to construct the recv tensor
+                and cat them to the output_shape.
+            mesh_dim (int, optional): indicate which mesh dimension we want
+                to scatter on, we by default choose the first rank on the
+                mesh dimension as source of truth.
+            tensor_dim (int, optional): indicate which tensor dimension we want
+                to concat on after we gather list of tensors from all rank.
+
+        Returns:
+            A :class:`torch.Tensor` object
+        """
+        num_chunks = self.size(mesh_dim)
+        _, rem = divmod(output_shape[tensor_dim], num_chunks)
+        assert rem == 0, "output_shape must be divisible by num_chunks"
+        input_tensor = tensor.contiguous()
+        gathered_list = [
+            CommTensor(torch.empty_like(input_tensor))
+            for _ in range(num_chunks)
+        ]
+
+        dim_group = self._dim_groups[mesh_dim]
+        # N.B. CommTensor does not change eager mode behavior. During tracing, it
+        # makes sure communication result is properly waited before subsequent
+        # read operations.
+        # input tensor must be contiguous
+        all_gather(
+            gathered_list,
+            CommTensor(input_tensor),
+            group=dim_group,
+        )
+        return torch.cat(gathered_list, dim=tensor_dim)  # type: ignore
+
     def all_reduce(
         self,
         tensor: torch.Tensor,
         op: ReduceOp = ReduceOp.SUM,  # type: ignore
         mesh_dim: int = 0,
-    ):
+    ) -> torch.Tensor:
+        """
+        all_reduce the tensor on each rank on a device mesh dimension, and
+        return an output tensor on each rank after all_reduce.
+
+        Args:
+            input (torch.Tensor): tensor to be all_reduced on each rank.
+            op (:class:`torch.distributed.distributed_c10d.ReduceOp, optional):
+                the reduction op of all_reduce (i.e. ReduceOp.SUM)
+            mesh_dim (int, optional): indicate which mesh dimension we want
+                to reduce on.
+
+        Returns:
+            A :class:`torch.Tensor` object
+        """
         dim_group = self._dim_groups[mesh_dim]
         # CommTensor does not change eager mode behavior. During tracing, it
         # makes sure communication result is properly waited before subsequent
         # read operations.
-        return all_reduce(CommTensor(tensor), op=op, group=dim_group)
+        if not tensor.is_contiguous():
+            tensor = CommTensor(tensor.contiguous())
+        else:
+            tensor = CommTensor(tensor.clone())
+        all_reduce(tensor, op=op, group=dim_group)
+        return tensor
 
-    # pyre-fixme[3]: Return type must be annotated.
-    def reduce_scatter_base(
+    def reduce_scatter(
         self,
-        output: torch.Tensor,
         input: torch.Tensor,
         op: ReduceOp = ReduceOp.SUM,  # type: ignore
         mesh_dim: int = 0,
-    ):
-        # NOTE: two caveats:
-        # 1. only NCCL support reduce_scatter
-        # 2. we are using a non-autograd enabled reduce_scatter
-        #    this is fine as we are using it now on redistribute
-        #    which have backward enabled, but if we want to use
-        #    this in other case which requires autograd, we should
-        #    add the autograd enabled collective in distributed/nn/functional
-        if self.backend() == "nccl":
-            _reduce_scatter_base(
-                output, input, op, group=self._dim_groups[mesh_dim]
-            )
+        tensor_dim: int = 0,
+    ) -> torch.Tensor:
+        """
+        reduce_scattter the tensor on each rank on a device mesh dimension, and
+        return an output tensor that's scattered to each rank after reduce.
+
+        Args:
+            input (torch.Tensor): tensor to be reduced and scattered on each rank.
+            op (:class:`torch.distributed.distributed_c10d.ReduceOp, optional):
+                the reduction op of reduce_scatter (i.e. ReduceOp.SUM)
+            mesh_dim (int, optional): indicate which mesh dimension we want
+                to scatter on.
+            tensor_dim (int, optional): indicate which tensor dimension we want
+                to scatter after the reduction.
+
+        Returns:
+            A :class:`torch.Tensor` object
+        """
+        my_coordinate = self.get_coordinate_on_dim(mesh_dim)
+        # TODO: what should happen if rank is not in the mesh?
+        assert (
+            my_coordinate is not None
+        ), "Rank if not part of mesh"  # TODO: figure out behavior here
+
+        num_chunks = self.size(mesh_dim)
+        if self._backend == "nccl":
+            input_list = list(input.tensor_split(num_chunks, dim=tensor_dim))
+            # gloo does not support uneven scattering, nccl supports it, but it
+            # might be slow compared to even size collective, we need to pad tensor
+            # before really calling scatter, and unpad/narrow it after the collective
+            # TODO: consider if we should remove this logic once ProcessGroupGloo
+            # suupport uneven list, and collective perfomance on par
+            idx_start_to_pad = input.size(tensor_dim) % num_chunks
+            to_scatter = []
+            for i, scatter_tensor in enumerate(input_list):
+                if idx_start_to_pad != 0 and i >= idx_start_to_pad:
+                    scatter_tensor = self._pad_tensor_dim_by_1(
+                        scatter_tensor, tensor_dim
+                    )
+                scatter_tensor = scatter_tensor.contiguous()
+                to_scatter.append(CommTensor(scatter_tensor))
+
+            output = torch.empty_like(to_scatter[my_coordinate])
+            dim_group = self._dim_groups[mesh_dim]
+            reduce_scatter(output, to_scatter, op=op, group=dim_group)
+
+            # resize to uneven size if needed
+            if idx_start_to_pad != 0 and my_coordinate >= idx_start_to_pad:
+                # tensor = tensor.narrow(tensor_dim, start=0, length=tensor.size(tensor_dim) - 1)
+                output = self._unpad_tensor_dim_by_1(output, tensor_dim)
+
             return output
-        else:
+        elif self._backend == "gloo":
             # it's gloo, which does not have reduce_scatter
             # we have to do all_reduce + scatter
-            reduced_tensor = self.all_reduce(input, mesh_dim=mesh_dim)
-            shard_dim = 0
-            num_chunks = 0
-            for i in range(input.ndim):
-                if input.size(i) > output.size(i):
-                    num_chunks = input.size(i) // output.size(i)
-                    shard_dim = i
-                    break
-
-            chunks = reduced_tensor.chunk(num_chunks, dim=shard_dim)
-            return self.scatter(chunks, mesh_dim=mesh_dim)
+            warnings.warn(
+                "ProcessGroupGloo does not support reduce_scatter, falling back with all reduce!"
+            )
+            reduced_tensor = self.all_reduce(input, op=op, mesh_dim=mesh_dim)
+            chunks = reduced_tensor.tensor_split(num_chunks, dim=tensor_dim)
+            return chunks[my_coordinate]
+        else:
+            raise RuntimeError(
+                f"backend {self._backend} does not support reduce_scatter!"
+            )

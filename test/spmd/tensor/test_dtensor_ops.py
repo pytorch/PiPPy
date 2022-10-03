@@ -125,25 +125,22 @@ dtensor_fails = {
     # get full support with varying sharding specs
     xfail("__getitem__"),
     xfail("__rsub__"),
-    xfail("_masked.amax"),
-    xfail("_masked.amin"),
-    xfail("_masked.argmax"),
-    xfail("_masked.argmin"),
-    xfail("_masked.cumprod"),
-    xfail("_masked.cumsum"),
-    xfail("_masked.log_softmax"),
-    xfail("_masked.logaddexp"),
-    xfail("_masked.logsumexp"),
-    xfail("_masked.median"),
-    xfail("_masked.norm"),
-    xfail("_masked.prod"),
-    xfail("_masked.softmin"),
-    xfail("_masked.softmax"),
-    xfail("_masked.sum"),
-    xfail("add"),
+    xfail("masked.amax"),
+    xfail("masked.amin"),
+    xfail("masked.argmax"),
+    xfail("masked.argmin"),
+    xfail("masked.cumprod"),
+    xfail("masked.cumsum"),
+    xfail("masked.log_softmax"),
+    xfail("masked.logaddexp"),
+    xfail("masked.logsumexp"),
+    xfail("masked.median"),
+    xfail("masked.norm"),
+    xfail("masked.prod"),
+    xfail("masked.softmin"),
+    xfail("masked.softmax"),
+    xfail("masked.sum"),
     xfail("addbmm"),
-    xfail("addcdiv"),
-    xfail("addcmul"),
     xfail("addmv"),
     xfail("addr"),
     xfail("all"),
@@ -161,9 +158,7 @@ dtensor_fails = {
     xfail("baddbmm"),
     xfail("bernoulli"),
     xfail("block_diag"),
-    xfail("bmm"),
     xfail("broadcast_shapes"),
-    xfail("bucketize"),
     xfail("cat"),
     xfail("cartesian_prod"),
     xfail("cdist"),
@@ -195,13 +190,11 @@ dtensor_fails = {
     xfail("diff"),
     xfail("dist"),
     xfail("dot"),
-    xfail("dsplit"),
     xfail("dstack"),
     xfail("einsum"),
     xfail("empty"),
     xfail("empty_like"),
     xfail("eq"),
-    xfail("equal"),
     xfail("eye"),
     xfail("fft.fft2"),
     xfail("fft.fft"),
@@ -226,7 +219,6 @@ dtensor_fails = {
     xfail("fmax"),
     xfail("fmin"),
     xfail("frexp"),
-    xfail("full_like"),
     xfail("gather"),
     xfail("geqrf"),
     xfail("gradient"),
@@ -234,7 +226,6 @@ dtensor_fails = {
     xfail("histc"),
     xfail("histogram"),
     xfail("histogramdd"),
-    xfail("hsplit"),
     xfail("hstack"),
     xfail("index_add"),
     xfail("index_copy"),
@@ -250,7 +241,6 @@ dtensor_fails = {
     xfail("isposinf"),
     xfail("kron"),
     xfail("kthvalue"),
-    xfail("lerp"),
     xfail("linalg.cholesky"),
     xfail("linalg.cholesky_ex"),
     xfail("linalg.cond"),
@@ -297,8 +287,6 @@ dtensor_fails = {
     xfail("linspace"),
     xfail("log_softmax"),
     xfail("log_softmax", "dtype"),
-    xfail("logaddexp2"),
-    xfail("logaddexp"),
     xfail("logcumsumexp"),
     xfail("logdet"),
     xfail("logical_not"),
@@ -322,7 +310,6 @@ dtensor_fails = {
     xfail("min", "reduction_no_dim"),
     xfail("min", "reduction_with_dim"),
     xfail("minimum"),
-    xfail("mm"),
     xfail("mode"),
     xfail("msort"),
     xfail("multinomial"),
@@ -331,14 +318,10 @@ dtensor_fails = {
     xfail("nanmedian"),
     xfail("nanquantile"),
     xfail("nansum"),
-    xfail("narrow"),
     xfail("native_layer_norm"),
     xfail("ne"),
     xfail("new_empty"),
     xfail("new_empty_strided"),
-    xfail("new_full"),
-    xfail("new_ones"),
-    xfail("new_zeros"),
     xfail("transpose"),
     xfail("nn.functional.adaptive_avg_pool1d"),
     xfail("nn.functional.adaptive_avg_pool2d"),
@@ -440,7 +423,6 @@ dtensor_fails = {
     xfail("normal"),
     xfail("normal", "number_mean"),
     xfail("ormqr"),
-    xfail("outer"),
     xfail("pca_lowrank"),
     xfail("pinverse"),
     xfail("polar"),
@@ -472,7 +454,6 @@ dtensor_fails = {
     xfail("select"),
     xfail("select_scatter"),
     xfail("signbit"),
-    xfail("slice_scatter"),
     xfail("sort"),
     xfail("sparse.sampled_addmm"),
     xfail("special.airy_ai"),
@@ -509,7 +490,6 @@ dtensor_fails = {
     xfail("std"),
     xfail("std_mean"),
     xfail("stft"),
-    xfail("sub"),
     xfail("sum_to_size"),
     xfail("svd"),
     xfail("svd_lowrank"),
@@ -518,7 +498,6 @@ dtensor_fails = {
     xfail("take_along_dim"),
     xfail("take"),
     xfail("tensor_split"),
-    xfail("tensordot"),
     xfail("to_sparse"),
     xfail("topk"),
     xfail("trace"),
@@ -538,10 +517,7 @@ dtensor_fails = {
     xfail("view_as_complex"),
     xfail("view_as"),
     xfail("view"),  # view related op only works with certain sharding dims
-    xfail("vsplit"),
     xfail("vstack"),
-    xfail("where"),
-    xfail("zeros_like"),
     # ops inside this might even fail without dtensor
     # tests, as we rescale op db common test size factor (i.e. L, M, S)
     # which triggered the orignal function run failures with input
@@ -569,11 +545,10 @@ dtensor_fails = {
     skip("isclose"),
     skip("isreal"),
     skip("matmul"),
-    skip("_masked.mean"),
-    skip("_masked.var"),
-    skip("_masked.std"),
-    skip("_masked.normalize"),
-    skip("ones_like"),
+    skip("masked.mean"),
+    skip("masked.var"),
+    skip("masked.std"),
+    skip("masked.normalize"),
     skip("prod"),
     skip("segment_reduce", "lengths"),
     skip("segment_reduce", "offsets"),
@@ -583,10 +558,11 @@ dtensor_fails = {
 # Add a list of ops that are currently failing BW pass
 skip_bw = [
     None,  # corresponds to the transpose ops 'H' and 'T'
-    "torch.isfinite",
-    "torch.eq",
-    "torch.isnan",
+    "torch.bucketize",
     "torch.conj_physical",
+    "torch.eq",
+    "torch.isfinite",
+    "torch.isnan",
 ]
 
 
@@ -622,6 +598,16 @@ def run_dtensor_crossref(test_case, func, args, kwargs):
                     # for cross-ref testing, as some tests may be looking at
                     # errors
                     dtensor_rs = func(*dtensor_args, **dtensor_kwargs)
+
+                    # we need to skip tests containing tensors of zero elmeents for now.
+                    # see issue: https://github.com/pytorch/tau/issues/470
+                    # TODO remove this once issue above fixed.
+                    flat_args, _ = tree_flatten(dtensor_rs)
+                    if any(
+                        isinstance(e, torch.Tensor) and e.numel() == 0
+                        for e in flat_args
+                    ):
+                        continue
 
                     # redistribute/all_gather the results to compare with normal output
                     dtensor_rs = tree_map(to_replicate, dtensor_rs)

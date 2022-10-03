@@ -75,9 +75,9 @@ class DistMatrixOpsTest(DistTensorTestBase):
     @with_comms
     def test_mm(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
-        shard0_spec = [Shard(0)]
-        shard1_spec = [Shard(1)]
-        replica_spec = [Replicate()]
+        shard0_spec = Shard(0)
+        shard1_spec = Shard(1)
+        replica_spec = Replicate()
 
         t1 = torch.randn(12, 8, requires_grad=True)
         t2 = torch.randn(8, 16, requires_grad=True)
@@ -89,7 +89,7 @@ class DistMatrixOpsTest(DistTensorTestBase):
             dt1 = distribute_tensor(t1, device_mesh, placements1)
             dt2 = distribute_tensor(t2, device_mesh, placements2)
             dist_res: DTensor = cast(DTensor, torch.mm(dt1, dt2)).redistribute(
-                device_mesh, replica_spec
+                device_mesh, [replica_spec]
             )
             self.assertEqual(dist_res.to_local(), local_res)
             # backward
@@ -97,16 +97,12 @@ class DistMatrixOpsTest(DistTensorTestBase):
             dist_res.backward(grad_dist_res)
             self.assertIsNotNone(dt1.grad)
 
-        test_placement_comb(replica_spec, replica_spec)
-        test_placement_comb(shard0_spec, replica_spec)
-        test_placement_comb(shard1_spec, replica_spec)
-        test_placement_comb(replica_spec, shard1_spec)
-        test_placement_comb(shard1_spec, shard0_spec)
-        test_placement_comb(replica_spec, shard0_spec)
-
-        # TODO: support (shard0, shard1) -> [shard0, shard1]
-        with self.assertRaises(Exception):
-            test_placement_comb(shard0_spec, shard1_spec)
+        placement_specs = [shard0_spec, shard1_spec, replica_spec]
+        shard_specs_comb = list(
+            itertools.product(placement_specs, placement_specs)
+        )
+        for spec in shard_specs_comb:
+            test_placement_comb([spec[0]], [spec[1]])
 
     @with_comms
     def test_t(self):
@@ -121,6 +117,29 @@ class DistMatrixOpsTest(DistTensorTestBase):
         tranposed_mat2 = tranposed_mat.t()
         self.assertEqual(tranposed_mat2.size(), torch.Size([12, 8]))
         self.assertEqual(tranposed_mat2.placements, shard_spec)
+
+    @with_comms
+    def test_t_partial(self):
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+
+        a = torch.randn(12, 8)
+        b = torch.randn(8, 4)
+        c = torch.mm(a, b).t()
+
+        da = distribute_tensor(a, device_mesh, [Shard(1)])
+        db = distribute_tensor(b, device_mesh, [Shard(0)])
+
+        # mm(da, db) should return a _Partial tensor.
+        # transposing it should keep it _Partial
+        dc = torch.mm(da, db).t()
+
+        self.assertTrue(isinstance(dc.placements[0], _Partial))
+
+        # check that the local and distributed op results match
+        self.assertEqual(
+            c,
+            dc.redistribute(device_mesh, [Replicate()]).to_local(),
+        )
 
     # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
     @with_comms
@@ -185,9 +204,14 @@ class DistMatrixOpsTest(DistTensorTestBase):
         passlist = [
             (shard0_spec, shard0_spec, shard0_spec),
             (shard0_spec, shard0_spec, replica_spec),
+            (shard0_spec, shard1_spec, shard0_spec),
+            (shard0_spec, shard2_spec, shard0_spec),
             (shard1_spec, shard1_spec, replica_spec),
             (shard0_spec, replica_spec, shard0_spec),
             (shard2_spec, replica_spec, shard2_spec),
+            (shard2_spec, shard0_spec, shard2_spec),
+            (shard2_spec, shard1_spec, shard2_spec),
+            (shard2_spec, shard2_spec, shard2_spec),
             (replica_spec, shard0_spec, shard0_spec),
             (replica_spec, shard1_spec, replica_spec),
             (replica_spec, shard2_spec, shard1_spec),
@@ -211,7 +235,6 @@ class DistMatrixOpsTest(DistTensorTestBase):
                 test_placement_comb(
                     [spec[0]], [spec[1]], [spec[2]], beta, alpha, batch_1.grad
                 )
-
             # TODO: support these tests
             shard_specs_comb = [
                 spec for spec in shard_specs_comb if spec not in passlist
@@ -268,26 +291,17 @@ class DistMatrixOpsTest(DistTensorTestBase):
         shard_specs_comb = list(
             itertools.product(placement_specs, placement_specs)
         )
-        passlist = [
-            (shard0_spec, shard0_spec),
-            (shard0_spec, replica_spec),
-            (shard1_spec, replica_spec),
-            (shard2_spec, replica_spec),
-            (replica_spec, shard0_spec),
-            (replica_spec, shard2_spec),
-            (shard2_spec, shard1_spec),
-            (replica_spec, replica_spec),
-        ]
+        faillist = [(replica_spec, shard1_spec)]
 
+        shard_specs_comb = [
+            spec for spec in shard_specs_comb if spec not in faillist
+        ]
         # tests that currently pass
-        for spec in passlist:
+        for spec in shard_specs_comb:
             test_placement_comb([spec[0]], [spec[1]])
 
         # TODO: support these tests
-        shard_specs_comb = [
-            spec for spec in shard_specs_comb if spec not in passlist
-        ]
-        for spec in shard_specs_comb:
+        for spec in faillist:
             with self.assertRaises(Exception):
                 test_placement_comb([spec[0]], [spec[1]])
 

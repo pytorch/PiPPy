@@ -550,22 +550,6 @@ def propagate_shape_and_sharding(
     )
 
 
-def local_shape(spec: DTensorSpec, rank: int) -> Tuple[int, ...]:
-    """
-    Given a DTensorSpec and a global rank, compute the shape of a local
-    shard of the given DTensor.
-    """
-    assert spec.shape is not None, "DTensorSpec does not contain global shape."
-    local_shape = list(spec.shape)  # start with global shape
-    for idx, placement in enumerate(spec.placements):
-        if isinstance(placement, Shard):
-            assert (
-                local_shape[placement.dim] % spec.mesh.size(idx) == 0
-            ), f"Only even sharding supported for now. (Got {local_shape[placement.dim]} // {spec.mesh.size(idx)} for mesh idx {idx}"
-            local_shape[placement.dim] //= spec.mesh.size(idx)
-    return tuple(local_shape)
-
-
 def register_prop_rule_map(
     aten_op_name: str, local_op_name: Callable[..., torch.Tensor]
 ) -> None:
@@ -589,14 +573,12 @@ def register_prop_rule_map(
             tuple(input_dtensor_spec.mesh.mesh.shape),
         )
         output_dtensor_spec = DTensorSpec(
-            ndim=len(global_out_shape),
             mesh=input_dtensor_spec.mesh,
             placements=shard_out,
             shape=torch.Size(global_out_shape),
+            ndim=len(global_out_shape),
         )
-        local_out_shape = local_shape(
-            output_dtensor_spec, torch.distributed.get_rank()
-        )
+        local_out_shape = output_dtensor_spec.local_shape
 
         # We only need the local shape to lower he call into the local op
         args = op_schema.args_schema
@@ -614,6 +596,7 @@ register_prop_rule_map("aten.squeeze.default", torch.squeeze)
 register_prop_rule_map("aten.squeeze.dim", torch.squeeze)
 register_prop_rule_map("aten.view.default", Tensor.view)
 register_prop_rule_map("aten.view.SymInt", Tensor.view)
+register_prop_rule_map("aten._unsafe_view.default", Tensor.view)
 register_prop_rule_map("aten.unsqueeze.default", torch.unsqueeze)
 register_prop_rule_map("aten.expand.default", Tensor.expand)
 register_prop_rule_map("aten.permute.default", torch.permute)
