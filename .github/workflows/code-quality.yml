@@ -17,7 +17,7 @@ jobs:
     - uses: actions/checkout@v2
     - uses: actions/setup-python@v2
       with:
-        python-version: 3.x
+        python-version: "3.10.6"
     - name: Install dependencies
       run: |
         pip install --upgrade pip
@@ -27,6 +27,9 @@ jobs:
         pip install --pre torchvision -f https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html
         pip install git+https://github.com/pbelevich/transformers.git@compatible_with_pt_master
         pip install "black<23" pylint==v3.0.0a5 mypy==v0.902 flake8 pyre-check==0.9.15
+    - name: Pyre check for SPMD
+      if: always()
+      run: pyre check
     - name: Lint with pylint
       if: always()
       run: pylint --disable=all --enable=unused-import $(git ls-files '*.py')
@@ -38,7 +41,4 @@ jobs:
       run: flake8 pippy spmd
     - name: Lint with black for SPMD
       if: always()
-      run: black --check --line-length 80 spmd test/spmd
-    - name: Pyre check for SPMD
-      if: always()
-      run: pyre check
+      run: black --check spmd test/spmd
