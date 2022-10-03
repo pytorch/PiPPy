@@ -239,7 +239,7 @@ def operator_dispatch(
 
     if schema_kind == SchemaKind.inplace:
         # inplace op should return self instead of re-wrapping
-        self = cast(spmd_tensor.DTensor, args[0])
+        self = cast(dtensor.DTensor, args[0])
         self._spec = cast(DTensorSpec, output_sharding.output_spec)
         return self
     elif schema_kind == SchemaKind.out:
@@ -251,7 +251,7 @@ def operator_dispatch(
         )
         out_dts = []
         for i, out in enumerate(func_schema.arguments.out):
-            out_dt = cast(spmd_tensor.DTensor, kwargs[out.name])
+            out_dt = cast(dtensor.DTensor, kwargs[out.name])
             out_dt._spec = cast(DTensorSpec, output_specs[i])
             out_dts.append(out_dt)
         return tuple(out_dts) if len(out_dts) > 1 else out_dts[0]

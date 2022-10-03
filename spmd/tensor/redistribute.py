@@ -171,11 +171,11 @@ def _redistribute_with_local_tensor(
     return new_local_tensor
 
 
-def redistribute_spmd_tensor(
-    input: "spmd_tensor.DTensor",
+def redistribute_dtensor(
+    input: "dtensor.DTensor",
     device_mesh: DeviceMesh,
     placements: Sequence[Placement],
-) -> "spmd_tensor.DTensor":
+) -> "dtensor.DTensor":
     if input.device_mesh != device_mesh:
         # TODO: alltoall reshuffling to change device_mesh if they are not the same
         raise NotImplementedError("Cross device mesh comm not supported yet!")
@@ -188,7 +188,7 @@ def redistribute_spmd_tensor(
         placements,
     )
 
-    return spmd_tensor.DTensor(
+    return dtensor.DTensor(
         new_local_tensor,
         device_mesh,
         placements,
@@ -207,7 +207,7 @@ class Redistribute(torch.autograd.Function):
     ):
         ctx.previous_placement = input.placements
         ctx.previous_device_mesh = input.device_mesh
-        return redistribute_spmd_tensor(input, device_mesh, placements)
+        return redistribute_dtensor(input, device_mesh, placements)
 
     @staticmethod
     def backward(ctx, grad_output: "dtensor.DTensor"):  # type: ignore
@@ -233,7 +233,7 @@ class Redistribute(torch.autograd.Function):
                 target_placements.append(target)
 
         return (
-            redistribute_spmd_tensor(
+            redistribute_dtensor(
                 grad_output, previous_device_mesh, target_placements
             ),
             None,
