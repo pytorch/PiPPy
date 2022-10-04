@@ -687,6 +687,34 @@ class TestDTensorOps(DistTensorTestBase):
 
         check_dtensor_func(self, test, op)
 
+    @unittest.skipIf(TEST_WITH_ASAN, "Skipped under ASAN")
+    @suppress_warnings
+    @ops(dtensor_lagging_op_db, allowed_dtypes=(torch.float,))
+    @skipOps("TestDTensorOps", "test_dtensor_op_db", dtensor_fails)
+    def test_all_dtensor_op_db(self, dtype, op):
+        pg_backend = "nccl" if DEVICE_TYPE == "cuda" else "gloo"
+        if pg_backend == "nccl" and torch.cuda.device_count() < self.world_size:
+            sys.exit(TEST_SKIPS[f"multi-gpu-{self.world_size}"].exit_code)
+
+        self.init_pg(backend=pg_backend)
+        self.mesh = DeviceMesh(DEVICE_TYPE, torch.arange(self.world_size))
+
+        # test each op with dist tensor inputs and normal inputs
+        def test():
+            samples = op.sample_inputs(DEVICE_TYPE, dtype, requires_grad=True)
+            for sample_input in samples:
+                args = [sample_input.input] + list(sample_input.args)
+                kwargs = sample_input.kwargs
+
+                run_dtensor_crossref(self, op.op, args, kwargs)
+                # we need to figure out a way to test the out variant, out variant testing
+                # is tricky, as we need to pre allocate the dtensor out, some of them rely
+                # on sharding placements to be pre-known (i.e. mm.out)
+                # if isinstance(expected, torch.Tensor) and op.supports_out:
+                #     func(*args, **kwargs, out=expected)
+
+        check_dtensor_func(self, test, op)
+
 
 # only instantiate tests for DEVICE_TYPE alone (i.e. either CPU or GPU)
 instantiate_device_type_tests(

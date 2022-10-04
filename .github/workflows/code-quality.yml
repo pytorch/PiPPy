@@ -39,6 +39,6 @@ jobs:
     - name: Lint with flake8
       if: always()
       run: flake8 pippy spmd
-    - name: Lint with black for SPMD
+    - name: Code format linting
       if: always()
-      run: black --check spmd test/spmd
+      run: ./format.sh --check
