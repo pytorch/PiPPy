@@ -23,16 +23,12 @@ for f in $(git ls-files | grep '\.py$'); do
 	    # ignore
 	    ;;
 
-    'test/spmd/'*)
-	    # include
-	    DEFAULT_TARGETS+=( "$f" )
-	    ;;
-
-    'test/'*)
-	    # ignore (order matters here)
+    'test/'*fx*)
+	    # ignore
 	    ;;
 
     *)
+	    # include
 	    DEFAULT_TARGETS+=( "$f" )
 	    ;;
   esac

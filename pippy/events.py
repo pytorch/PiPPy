@@ -41,15 +41,22 @@ class EventDependency:
 @dataclass
 class EventsContext:
     events: List[Event] = field(default_factory=list)
-    next_events: Dict[str, List[EventDependency]] = field(default_factory=lambda: defaultdict(list))
-    prev_events: Dict[str, List[EventDependency]] = field(default_factory=lambda: defaultdict(list))
+    next_events: Dict[str, List[EventDependency]] = field(
+        default_factory=lambda: defaultdict(list)
+    )
+    prev_events: Dict[str, List[EventDependency]] = field(
+        default_factory=lambda: defaultdict(list)
+    )
 
     @staticmethod
-    def _update(dst: Dict[str, List[EventDependency]], src: Dict[str, List[EventDependency]]):
+    def _update(
+        dst: Dict[str, List[EventDependency]],
+        src: Dict[str, List[EventDependency]],
+    ):
         for k, v in src.items():
             dst[k].extend(v)
 
-    def update(self, events_context: 'EventsContext'):
+    def update(self, events_context: "EventsContext"):
         self.events.extend(events_context.events)
         self._update(self.next_events, events_context.next_events)
         self._update(self.prev_events, events_context.prev_events)
@@ -64,19 +71,57 @@ class EventRecorder:
     hostname: str = socket.gethostname()
     pid = os.getpid()
 
-    def record_event(self, rank: int, start_ts: float, finish_ts: float, id: str, name: str, type: Optional[Any],
-                     mbid: Optional[Any]):
+    def record_event(
+        self,
+        rank: int,
+        start_ts: float,
+        finish_ts: float,
+        id: str,
+        name: str,
+        type: Optional[Any],
+        mbid: Optional[Any],
+    ):
         self.events_context.events.append(
-            Event(rank=rank, host=self.hostname, pid=self.pid, start_ts=start_ts, finish_ts=finish_ts, id=id, name=name,
-                  type=type, mbid=mbid))
+            Event(
+                rank=rank,
+                host=self.hostname,
+                pid=self.pid,
+                start_ts=start_ts,
+                finish_ts=finish_ts,
+                id=id,
+                name=name,
+                type=type,
+                mbid=mbid,
+            )
+        )
 
-    def record_dump(self, rank: int, ts: float, id: str, name: str, type: Optional[Any],
-                    allocators: Dict[str, Allocator]):
+    def record_dump(
+        self,
+        rank: int,
+        ts: float,
+        id: str,
+        name: str,
+        type: Optional[Any],
+        allocators: Dict[str, Allocator],
+    ):
         self.events_context.events.append(
-            MemDumpEvent(rank=rank, host=self.hostname, pid=self.pid, start_ts=ts, finish_ts=ts, id=id, name=name, type=type,
-                         allocators=allocators, mbid=None))
+            MemDumpEvent(
+                rank=rank,
+                host=self.hostname,
+                pid=self.pid,
+                start_ts=ts,
+                finish_ts=ts,
+                id=id,
+                name=name,
+                type=type,
+                allocators=allocators,
+                mbid=None,
+            )
+        )
 
-    def record_event_dependency(self, from_id: str, to_id: str, type: Optional[Any]):
+    def record_event_dependency(
+        self, from_id: str, to_id: str, type: Optional[Any]
+    ):
         dep = EventDependency(from_id=from_id, to_id=to_id, type=type)
         self.events_context.next_events[from_id].append(dep)
         self.events_context.prev_events[to_id].append(dep)
