@@ -255,6 +255,7 @@ class TensorParallelMultiheadAttention(torch.nn.Module):
     def copy(self, that: torch.nn.MultiheadAttention) -> None:
         # TODO: current implementation assume `self` is a self attention module
         assert self.hidden_size == that.embed_dim, "embed_dim must be equal in TensorParallelMultiheadAttention.copy()!"
+        """
         if that.in_proj_weight is not None:
             self.qkv.register_parameter("weight", that.in_proj_weight)
         if that.in_proj_bias is not None:
@@ -263,3 +264,20 @@ class TensorParallelMultiheadAttention(torch.nn.Module):
             self.proj.register_parameter("weight", that.out_proj.weight)
         if that.out_proj.bias is not None:
             self.proj.register_parameter("bias", that.out_proj.bias)
+        """
+        x = that.in_proj_weight.data.clone().detach()
+        x.requires_grad_()
+        x = torch.nn.Parameter(x)
+        self.qkv.register_parameter("weight", x)
+        x = that.in_proj_bias.data.clone().detach()
+        x.requires_grad_()
+        x = torch.nn.Parameter(x)
+        self.qkv.register_parameter("bias", x)
+        x = that.out_proj.weight.data.clone().detach()
+        x.requires_grad_()
+        x = torch.nn.Parameter(x)
+        self.proj.register_parameter("weight", x)
+        x = that.out_proj.bias.data.clone().detach()
+        x.requires_grad_()
+        x = torch.nn.Parameter(x)
+        self.proj.register_parameter("bias", x)

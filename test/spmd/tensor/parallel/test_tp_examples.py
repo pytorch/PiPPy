@@ -391,14 +391,73 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
 
         # Initialize model using same seed.
         torch.manual_seed(5)
-        model = TensorParallelMultiheadAttention(
-            16, 8, self.device_type, tp_size=4, add_bias_kv=True
-        )
+        model = nn.MultiheadAttention(16, 8, add_bias_kv=True)
         torch.manual_seed(5)
         # TODO: our sharding function cannot shard the root node
         model_tp = MultiheadAttnWrap(16, 8, add_bias_kv=True)
+        """
+        # test
+        torch.manual_seed(5)
+        for name, child in model_tp.named_children():
+            if isinstance(child, nn.MultiheadAttention):
+                tp_multi_head_attention = TensorParallelMultiheadAttention(
+                    child.embed_dim,
+                    child.num_heads,
+                    device=self.device_type,
+                    tp_size=4,
+                    add_bias_kv=True,  # TODO: can we recover this info from child???
+                )
+                tp_multi_head_attention.copy(child)
+                model_tp.register_module(name, tp_multi_head_attention)
+
+        # Ensure model are initialized the same way.
+        self.assertEqual(
+            model.in_proj_weight,
+            model_tp.attn.qkv.weight
+        )
+        self.assertEqual(
+            model.in_proj_bias,
+            model_tp.attn.qkv.bias
+        )
+        self.assertEqual(
+            model.out_proj.weight,
+            model_tp.attn.proj.weight
+        )
+        self.assertEqual(
+            model.out_proj.bias,
+            model_tp.attn.proj.bias
+        )
+        """
         # TODO: input/output fn
         distribute_module(model_tp, device_mesh, partition_fn=my_shard_self_attn(self.device_type, 4), input_fn=None, output_fn=None)
+
+        replicate = [Replicate()]
+        device_mesh = model_tp.attn.qkv.weight.device_mesh
+        # Ensure model are initialized the same way.
+        self.assertEqual(
+            model.in_proj_weight,
+            model_tp.attn.qkv.weight.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.in_proj_bias,
+            model_tp.attn.qkv.bias.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.out_proj.weight,
+            model_tp.attn.proj.weight.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.out_proj.bias,
+            model_tp.attn.proj.bias.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
 
         LR = 0.25
         optim = torch.optim.SGD(model.parameters(), lr=LR)
@@ -406,7 +465,7 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
 
         output = model(inp, inp, inp)
         output_tp = model_tp(inp, inp, inp)
-        self.assertEqual(output, output_tp)
+        self.assertEqual(output, output_tp)  # FIX: ValueError: only one element tensors can be converted to Python scalars
 
         output.sum().backward()
         output_tp.sum().backward()
@@ -415,25 +474,25 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         device_mesh = model_tp.attn.qkv.weight.device_mesh
         # Ensure gradients are same.
         self.assertEqual(
-            model.qkv.weight.grad,
+            model.in_proj_weight.grad,
             model_tp.attn.qkv.weight.grad.redistribute(
                 device_mesh=device_mesh, placements=replicate
             ).to_local(),
         )
         self.assertEqual(
-            model.qkv.bias.grad,
+            model.in_proj_bias.grad,
             model_tp.attn.qkv.bias.grad.redistribute(
                 device_mesh=device_mesh, placements=replicate
             ).to_local(),
         )
         self.assertEqual(
-            model.proj.weight.grad,
+            model.out_proj.weight.grad,
             model_tp.attn.proj.weight.grad.redistribute(
                 device_mesh=device_mesh, placements=replicate
             ).to_local(),
         )
         self.assertEqual(
-            model.proj.bias.grad,
+            model.out_proj.bias.grad,
             model_tp.attn.proj.bias.grad.redistribute(
                 device_mesh=device_mesh, placements=replicate
             ).to_local(),
@@ -472,7 +531,6 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         output = model(inp, inp, inp)
         output_tp = model_tp(inp, inp, inp)
         self.assertEqual(output, output_tp)
-
 
 if __name__ == "__main__":
     run_tests()
