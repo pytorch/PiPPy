@@ -105,9 +105,6 @@ def _shard_self_attn(name, module, device_type, tp_size) -> None:
     # if any, replace it with TensorParallelMultiheadAttention using register_module() and shard
     for name, child in module.named_children():
         if isinstance(child, nn.MultiheadAttention):
-            # TODO: only for testing, remove it
-            torch.manual_seed(5)
-            # TODO: copy parameters?
             tp_multi_head_attention = TensorParallelMultiheadAttention(
                 child.embed_dim,
                 child.num_heads,
@@ -115,6 +112,8 @@ def _shard_self_attn(name, module, device_type, tp_size) -> None:
                 tp_size=tp_size,
                 add_bias_kv=True,  # TODO: can we recover this info from child???
             )
+            # TODO: copy parameters. Can we merge the construction step with the sharding step?
+            tp_multi_head_attention.copy(child)
             _shard_custom_multi_head_attn(tp_multi_head_attention, device_type, tp_size)
             module.register_module(name, tp_multi_head_attention)
 
