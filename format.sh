@@ -34,31 +34,6 @@ for f in $(git ls-files | grep '\.py$'); do
   esac
 done
 
-DEFAULT_TARGETS=()
-for f in $(git ls-files | grep '\.py$'); do
-  case "$f" in
-    'pippy/'*)
-	    ;;
-
-    'examples/'*)
-	    ;;
-
-    'docs/'*)
-	    ;;
-
-    'test/spmd/'*)
-	    DEFAULT_TARGETS+=( "$f" )
-	    ;;
-
-    'test/'*)
-	    ;;
-
-    *)
-	    DEFAULT_TARGETS+=( "$f" )
-	    ;;
-  esac
-done
-
 function format() {
   local TARGET="$1"
 
