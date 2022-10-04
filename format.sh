@@ -1,6 +1,7 @@
 #!/bin/bash
 
-# USAGE: ./format.sh [--check] [TARGETS]
+# USAGE: ./format.sh [--show-targets] [--check] [TARGETS]
+# When used with --show-targets, list all default targets and exits.
 # When used with --check, reports errors but changes nothing.
 
 DEFAULT_TARGETS=(
@@ -12,6 +13,31 @@ DEFAULT_TARGETS=(
 	  grep -v '^test/test_fx' | \
 	  grep -v '^test/fx' )
 )
+
+DEFAULT_TARGETS=()
+for f in $(git ls-files | grep '\.py$'); do
+  case "$f" in
+    'pippy/'*)
+	    ;;
+
+    'examples/'*)
+	    ;;
+
+    'docs/'*)
+	    ;;
+
+    'test/spmd/'*)
+	    DEFAULT_TARGETS+=( "$f" )
+	    ;;
+
+    'test/'*)
+	    ;;
+
+    *)
+	    DEFAULT_TARGETS+=( "$f" )
+	    ;;
+  esac
+done
 
 function format() {
   local TARGET="$1"
@@ -78,6 +104,12 @@ function main() {
 
   for x in "$@"; do
     case "$x" in
+      '--show-targets')
+	for f in ${DEFAULT_TARGETS[@]}; do
+	  echo $f;
+	done
+	exit 0;
+        ;;
       '--check')
         CHECK=1;
         ;;
