@@ -54,6 +54,7 @@ Split a model based on a maximum number of parameter and buffer elements a pipel
 Input:
   mod: `torch.nn.Module` to split
   threshold: maximum number of parameter and buffer elements a stage can have
+  max_stages: maximum number of stages; default = -1, no limit
 Output:
   A tuple consisting of:
       - a `fx.GraphModule` transformed from the input module with `pipe_split` inserted
@@ -61,8 +62,10 @@ Output:
 """
 
 
-def split_on_size_threshold(
-    mod: torch.nn.Module, threshold: int
+def _split_on_size_threshold_with_max_stages(
+    mod: torch.nn.Module,
+    threshold: int,
+    max_stages: int = -1
 ) -> Tuple[pippy.fx.GraphModule, int]:
     # Trace the user module to get a graph first
     gm: pippy.fx.GraphModule = pippy.fx.symbolic_trace(mod)
@@ -121,12 +124,61 @@ def split_on_size_threshold(
             accumulate_params.update(new_params)
 
     # Insert pipe_split nodes at the recorded positions
+    nstages = 1
     for node in insert_before_nodes:
+        if nstages == max_stages:
+            break
         with gm.graph.inserting_before(node):
             gm.graph.call_function(pipe_split, (), {})
+        nstages += 1
 
     # Since we transformed the graph, we need to recompile the module
     gm.recompile()
 
-    nstages = len(insert_before_nodes) + 1
     return gm, nstages
+
+
+"""
+Split a model based on a maximum number of parameter and buffer elements a pipeline stage can have
+Input:
+  mod: `torch.nn.Module` to split
+  threshold: maximum number of parameter and buffer elements a stage can have
+Output:
+  A tuple consisting of:
+      - a `fx.GraphModule` transformed from the input module with `pipe_split` inserted
+      - number of stages the input module is split into
+"""
+
+
+def split_on_size_threshold(
+    mod: torch.nn.Module,
+    threshold: int
+) -> Tuple[pippy.fx.GraphModule, int]:
+    return _split_on_size_threshold_with_max_stages(mod, threshold)
+
+
+def split_into_nstages_equal_size(
+    mod: torch.nn.Module,
+    nstages: int = 1,
+) -> pippy.fx.GraphModule:
+    param_size = 0
+    for param in mod.parameters():
+        param_size += param.numel()
+    buffer_size = 0
+    for buffer in mod.buffers():
+        buffer_size += buffer.numel()
+
+    total_size = param_size + buffer_size
+    per_stage_size = total_size / nstages
+    logging.debug(
+        f"Total model size: {total_size}, "
+        f"per stage size: {per_stage_size}"
+    )
+
+    gm, rv_nstages = _split_on_size_threshold_with_max_stages(
+        mod,
+        per_stage_size,
+        nstages)
+    assert rv_nstages == nstages
+
+    return gm
