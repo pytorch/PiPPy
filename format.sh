@@ -4,33 +4,28 @@
 # When used with --show-targets, list all default targets and exits.
 # When used with --check, reports errors but changes nothing.
 
-DEFAULT_TARGETS=(
-  $( git ls-files | \
-	  grep '\.py$' | \
-	  grep -v '^examples' | \
-	  grep -v '^docs' | \
-	  grep -v '^pippy' | \
-	  grep -v '^test/test_fx' | \
-	  grep -v '^test/fx' )
-)
-
 DEFAULT_TARGETS=()
 for f in $(git ls-files | grep '\.py$'); do
   case "$f" in
     'pippy/'*)
+	    # ignore
 	    ;;
 
     'examples/'*)
+	    # ignore
 	    ;;
 
     'docs/'*)
+	    # ignore
 	    ;;
 
     'test/spmd/'*)
+	    # include
 	    DEFAULT_TARGETS+=( "$f" )
 	    ;;
 
     'test/'*)
+	    # ignore (order matters here)
 	    ;;
 
     *)
