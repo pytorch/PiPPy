@@ -1,4 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+from threading import local
 import torch
 import torch.distributed.distributed_c10d as c10d
 
@@ -29,6 +30,71 @@ class Placement(object):
 class Shard(Placement):
     # shard placement, shard on a dim
     dim: int
+
+    def shard_tensor(
+        self,
+        tensor: torch.Tensor,
+        num_chunks: int,
+        *,
+        with_padding: bool = True,
+        contiguous: bool = True,
+    ) -> Tuple[List[torch.Tensor], int]:
+        # NOTE: For with_padding option, we pad the tensor on each rank before calling
+        # the collectives (i.e. scatter/all_gather, etc.). This is because for gloo
+        # backend, it does not support uneven collectives, nccl supports some, but
+        # it might be slow compared to even size collective, we need to pad tensor
+        # before really calling the collective, and unpad/narrow it afterwards
+        # TODO: consider if we should remove this logic once ProcessGroupGloo
+        # support uneven list, and collective perfomance on par
+        assert (
+            self.dim <= tensor.ndim
+        ), f"Sharding dim {self.dim} greater than tensor ndim {tensor.ndim}"
+        assert (
+            tensor.size(self.dim) >= num_chunks
+        ), f"Tensors to be sharded on dim {self.dim} must be at least as large as the number of devices in that dimension {num_chunks}"
+        # split tensor over dimension `dim` into n slices with padding if necessary
+        tensor_list = list(tensor.tensor_split(num_chunks, self.dim))
+        idx_start_to_pad = tensor.size(self.dim) % num_chunks
+        if with_padding or contiguous:
+            shard_list = []
+            for i, shard in enumerate(tensor_list):
+                if (
+                    with_padding
+                    and idx_start_to_pad != 0
+                    and i >= idx_start_to_pad
+                ):
+                    shard = self.pad_tensor(shard)
+                # input tensors are expected to be congtiguous by the collective backend
+                shard = shard.contiguous() if contiguous else shard
+                shard_list.append(shard)
+            return shard_list, idx_start_to_pad
+        else:
+            return shard_list, idx_start_to_pad
+
+    def pad_tensor(self, tensor: torch.Tensor) -> torch.Tensor:
+        # pad tensor by 1 on the shard dim
+        pad = [0, 0] * (tensor.ndim - self.dim)
+        pad[-1] = 1
+        return torch.nn.functional.pad(tensor, pad)
+
+    def unpad_tensor(self, tensor: torch.Tensor) -> torch.Tensor:
+        # unpad tensor by 1 on the shard dim
+        return tensor.narrow(
+            self.dim, start=0, length=tensor.size(self.dim) - 1
+        )
+
+    def split_size_on_dim(
+        self, size: Sequence[int], num_chunks: int
+    ) -> Tuple[int, int]:
+        # return the split size and the padding idx
+        assert self.dim < len(
+            size
+        ), f"Sharding dim {self.dim} greater than tensor ndim {len(size)}"
+        assert (
+            size[self.dim] >= num_chunks
+        ), f"Size to be sharded on dim {self.dim} must be at least as large as the number of devices in that dimension {num_chunks}"
+        split_size, pad_idx = divmod(size[self.dim], num_chunks)
+        return split_size, pad_idx
 
 
 @dataclass
@@ -116,19 +182,24 @@ class DTensorSpec(object):
     def local_shape(self) -> Tuple[int, ...]:
         """
         Compute the shape of a local shard of the given DTensor on its current
-        global rank.
+        coordinate of the mesh.
         """
-        # TODO: support uneven sharding
         assert (
             self.shape is not None
         ), "DTensorSpec does not contain global shape."
         local_shape = list(self.shape)  # start with global shape
         for idx, placement in enumerate(self.placements):
+            mesh_dim_size = self.mesh.size(idx)
+            my_coordinate = self.mesh.get_coordinate_on_dim(idx)
+            assert my_coordinate is not None, "Rank not part of mesh!"
             if isinstance(placement, Shard):
-                assert (
-                    local_shape[placement.dim] % self.mesh.size(idx) == 0
-                ), f"Only even sharding supported for now. (Got {local_shape[placement.dim]} // {self.mesh.size(idx)} for mesh idx {idx}"
-                local_shape[placement.dim] //= self.mesh.size(idx)
+                split_size, pad_idx = placement.split_size_on_dim(
+                    local_shape, mesh_dim_size
+                )
+                split_size += (
+                    1 if pad_idx != 0 and my_coordinate < pad_idx else 0
+                )
+                local_shape[placement.dim] = split_size
         return tuple(local_shape)
 
     @property
@@ -142,20 +213,25 @@ class DTensorSpec(object):
             self.shape is not None
         ), "DTensorSpec does not contain global shape."
         local_offsets = [0] * self.ndim
-        for idx, mesh_dim in enumerate(self.dim_map):
-            if mesh_dim > -1:
-                my_coordinate = self.mesh.get_coordinate_on_dim(mesh_dim)
-                # TODO: what should happen if rank is not in the mesh?
-                # see issue https://github.com/pytorch/tau/pull/492
-                assert (
-                    my_coordinate is not None
-                ), "Rank if not part of mesh"  # TODO: figure out behavior here
-                mesh_dim_size = self.mesh.size(mesh_dim)
-                quot, rem = divmod(self.shape[idx], mesh_dim_size)
-                local_offsets[idx] = my_coordinate * quot + (
-                    rem if my_coordinate >= rem else my_coordinate
-                )
+        local_shape = list(self.shape)
 
+        for idx, placement in enumerate(self.placements):
+            mesh_dim_size = self.mesh.size(idx)
+            my_coordinate = self.mesh.get_coordinate_on_dim(idx)
+            assert my_coordinate is not None, "Rank not part of mesh!"
+            if isinstance(placement, Shard):
+                shard_dim = placement.dim
+                split_size, pad_idx = placement.split_size_on_dim(
+                    local_shape, mesh_dim_size
+                )
+                local_shape[shard_dim] = (
+                    split_size + 1
+                    if pad_idx != 0 and my_coordinate < pad_idx
+                    else split_size
+                )
+                local_offsets[shard_dim] = my_coordinate * split_size + (
+                    pad_idx if my_coordinate >= pad_idx else my_coordinate
+                )
         return tuple(local_offsets)
 
     @classmethod

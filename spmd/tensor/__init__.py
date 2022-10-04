@@ -69,33 +69,47 @@ def distribute_tensor(
             )
         return tensor
 
-    # distribute the tensor according to PlacementSpec
+    local_tensor = tensor
+
+    # distribute the tensor according to the placements.
     for idx, placement in enumerate(placements):
         if placement.is_shard():
             placement = cast(Shard, placement)
-            shard_dim = placement.dim
-            assert (
-                shard_dim <= tensor.ndim
-            ), f"Sharding dim {shard_dim} greater than tensor ndim {tensor.ndim}"
 
-            local_tensor = device_mesh.scatter(
-                tensor, mesh_dim=idx, tensor_dim=shard_dim
+            my_coordinate = device_mesh.get_coordinate_on_dim(idx)
+            # TODO: what should happen if rank is not in the mesh?
+            # see issue https://github.com/pytorch/tau/pull/492
+            assert (
+                my_coordinate is not None
+            ), "Rank if not part of mesh"  # TODO: figure out behavior here
+
+            num_chunks = device_mesh.size(idx)
+            scatter_list, pad_idx = placement.shard_tensor(
+                local_tensor, num_chunks, with_padding=True, contiguous=True
             )
+            output = torch.empty_like(scatter_list[my_coordinate])
+
+            device_mesh.scatter(output, scatter_list, mesh_dim=idx)
+            if pad_idx != 0 and my_coordinate >= pad_idx:
+                output = placement.unpad_tensor(output)
             # scatter call could not return a tensor with correct requires_grad
             # field, as ProcessGroupNCCL refuse to take a tensor with requires_grad
             # to do inplace update! So we manually set it here
-            local_tensor.requires_grad_(tensor.requires_grad)
-            tensor = local_tensor
+            output.requires_grad_(tensor.requires_grad)
+            local_tensor = output
         elif placement.is_replicate():
-            tensor = device_mesh.broadcast(tensor, mesh_dim=idx)
+            local_tensor = local_tensor.contiguous()
+            device_mesh.broadcast(local_tensor, mesh_dim=idx)
         else:
             raise RuntimeError(
                 f"Trying to distribute tensor with unsupported placements {placement} on device mesh dimension {idx}!"
             )
 
+    assert local_tensor is not None, "distributing a tensor should not be None"
     return DTensor(
-        tensor,
+        local_tensor,
         device_mesh,
         placements,
+        size=tensor.size(),
         requires_grad=tensor.requires_grad,
     )

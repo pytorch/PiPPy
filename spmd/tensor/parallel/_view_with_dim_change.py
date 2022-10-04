@@ -84,6 +84,7 @@ class _ViewAndRedistribute(torch.autograd.Function):
                 new_local_tensor,
                 device_mesh,
                 new_sharding_placement,
+                size=self.size(),
                 requires_grad=new_local_tensor.requires_grad,
             )
 
@@ -97,6 +98,7 @@ class _ViewAndRedistribute(torch.autograd.Function):
                 grad_output.to_local().view(*previous_local_tensor_size),
                 previous_device_mesh,
                 previous_placement,
+                size=grad_output.size(),
                 requires_grad=grad_output.requires_grad,
             ),
             None,

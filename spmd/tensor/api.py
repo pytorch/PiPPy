@@ -3,7 +3,7 @@ import copy
 import warnings
 import torch
 from torch.utils._pytree import tree_flatten
-from typing import Dict, Callable, Optional, Sequence
+from typing import Dict, Callable, Optional, Sequence, cast
 from spmd.tensor.device_mesh import get_global_device_mesh, DeviceMesh
 from spmd.tensor.placement_types import (
     Placement,
@@ -43,18 +43,24 @@ from spmd.tensor.dispatch import operator_dispatch, OpSchema, OutputSharding
 class ToTorchTensor(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input: "DTensor"):  # type: ignore
-        ctx.previous_placement = input.placements
-        ctx.previous_device_mesh = input.device_mesh
+        ctx.dtensor_device_mesh = input.device_mesh
+        ctx.dtensor_placements = input.placements
+        ctx.dtensor_shape = input.shape
+        ctx.dtensor_requires_grad = input.requires_grad
         return input._local_tensor.detach()
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor):  # type: ignore
-        previous_placement = ctx.previous_placement
-        previous_device_mesh = ctx.previous_device_mesh
-        dist_grad = DTensor.from_local(
-            grad_output, previous_device_mesh, previous_placement
+        device_mesh = ctx.dtensor_device_mesh
+        placements = ctx.dtensor_placements
+        return DTensor(
+            grad_output,
+            device_mesh,
+            placements,
+            size=ctx.dtensor_shape,
+            # requires_grad=ctx.dtensor_requires_grad,
+            requires_grad=grad_output.requires_grad,
         )
-        return dist_grad
 
 
 class FromTorchTensor(torch.autograd.Function):
@@ -79,10 +85,21 @@ class FromTorchTensor(torch.autograd.Function):
                     # only broadcast if run_check is True
                     device_mesh.broadcast(input, mesh_dim=idx)
 
+        # if it's not by default run_check, we assume user is certain that each
+        # rank has the same tensor shape, and we just use that to calculate the
+        # global shape
+        tensor_shape = list(input.size())
+        for idx, placement in enumerate(placements):
+            if placement.is_shard():
+                shard_dim = cast(Shard, placement).dim
+                local_dim_size = tensor_shape[shard_dim]
+                tensor_shape[shard_dim] = local_dim_size * device_mesh.size(idx)
+
         dist_tensor = DTensor(
             input,
             device_mesh,
             placements,
+            size=torch.Size(tensor_shape),
             # requires_grad of the dist tensor depends on if input
             # requires_grad or not
             requires_grad=input.requires_grad,
@@ -130,8 +147,9 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         local_tensor: torch.Tensor,
         device_mesh: DeviceMesh,
         placements: Sequence[Placement],
-        # pyre-fixme[2]: Parameter must be annotated.
-        **kwargs,
+        *,
+        size: torch.Size,
+        requires_grad: bool = False,
     ) -> "DTensor":
         """
         Construct a DTensor from a local tensor, device mesh, and placement and
@@ -143,29 +161,29 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
             already have tensor initialized and want to shard this tensor),
             consider using `distribute_tensor`.
         """
-        # recover tensor shape and strides in the case of sharding
-        tensor_shape = list(local_tensor.size())
+        # recover tensor strides from local tensor strides and global size info
+        # in the case of sharding
         tensor_stride = list(local_tensor.stride())
-        for idx, placement in enumerate(placements):
+        local_size = list(local_tensor.size())
+        for placement in placements:
             if isinstance(placement, Shard):
                 shard_dim = placement.dim
-                local_dim_size = tensor_shape[shard_dim]
-                # recover tensor shape on the shard dim
-                tensor_shape[shard_dim] = local_dim_size * device_mesh.size(idx)
-
                 # recover tensor stride by modifying the stride that larger than
                 # the current stride on the shard_dim
                 for i in range(len(tensor_stride)):
-                    if tensor_stride[i] > tensor_stride[shard_dim]:
-                        tensor_stride[i] = tensor_stride[i] * device_mesh.size(
-                            idx
-                        )
+                    if (
+                        i != shard_dim
+                        and tensor_stride[i] >= tensor_stride[shard_dim]
+                    ):
+                        # rescale the stride by the shard size
+                        tensor_stride[i] = (
+                            tensor_stride[i] // local_size[shard_dim]
+                        ) * size[shard_dim]
             elif not isinstance(placement, (Replicate, _Partial)):
                 raise RuntimeError(
                     f"placement type {type(placement)} not supported!"
                 )
 
-        requires_grad = kwargs.get("requires_grad", False)
         if requires_grad != local_tensor.requires_grad:
             warnings.warn(
                 "To construct DTensor from torch.Tensor, it's recommended to "
@@ -176,7 +194,7 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # placement spec, it does not do actual distribution
         r = torch.Tensor._make_wrapper_subclass(  # type: ignore[attr-defined]
             cls,
-            torch.Size(tensor_shape),
+            size,
             strides=tensor_stride,
             dtype=local_tensor.dtype,
             device=local_tensor.device,
@@ -304,8 +322,10 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # This API perform necessary transformations and get
         # a new DTensor with the new spec. i.e. for
         # sharding it's a reshard behavior.
-        # TODO: handle last shard uneven with padding
-        # right now we assume all local shard equal size
+        # Note that redistribute currently only supports out
+        # of place redistribution, i.e. it always create a new
+        # DTensor object and leave the original one unchanged.
+        # TODO: consider if we should offer in place redistribution
         device_mesh = (
             get_global_device_mesh() if device_mesh is None else device_mesh
         )
