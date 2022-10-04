@@ -39,7 +39,7 @@ if __name__ == "__main__":
     from typing import List
     from torch.testing._internal.common_methods_invocations import op_db, OpInfo
     # Generated from test/gen_dtensor_op_db.py via
-    # python spmd/test/gen_dtensor_lagging_op_db.py > spmd/test/dtensor_lagging_op_db.py
+    # python spmd/testing/gen_dtensor_lagging_op_db.py > spmd/test/dtensor_lagging_op_db.py
     #
     # This approach is copied from functorch:
     # People add new OpInfos to PyTorch all the time.
