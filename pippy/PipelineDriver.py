@@ -1027,7 +1027,7 @@ class PipelineDriverBase(torch.nn.Module):
     """
     def init_data_parallel(self, dp_group_size, dp_pg_cb=None):
         if dp_group_size <= 1:
-            logging.info(f'[root] Data parallel group size <= 1, skipping data parallel initialization')
+            logging.info('[root] Data parallel group size <= 1, skipping data parallel initialization')
             return
 
         n_stages = len(self.stage_to_executor)
