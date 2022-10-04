@@ -7,8 +7,12 @@
 DEFAULT_TARGETS=()
 for f in $(git ls-files | grep '\.py$'); do
   case "$f" in
-    'pippy/'*)
+    'pippy/fx/'*)
 	    # ignore
+	    ;;
+
+    'pippy/'*)
+	    DEFAULT_TARGETS+=( "$f" )
 	    ;;
 
     'examples/'*)
@@ -19,16 +23,12 @@ for f in $(git ls-files | grep '\.py$'); do
 	    # ignore
 	    ;;
 
-    'test/spmd/'*)
-	    # include
-	    DEFAULT_TARGETS+=( "$f" )
-	    ;;
-
-    'test/'*)
-	    # ignore (order matters here)
+    'test/'*fx*)
+	    # ignore
 	    ;;
 
     *)
+	    # include
 	    DEFAULT_TARGETS+=( "$f" )
 	    ;;
   esac
@@ -105,9 +105,11 @@ function main() {
 	done
 	exit 0;
         ;;
+
       '--check')
         CHECK=1;
         ;;
+
       *)
         TARGETS+=( "$x" )
         ;;
