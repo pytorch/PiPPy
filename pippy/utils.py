@@ -8,6 +8,8 @@ import logging
 # 1. Needed to work around the issue of RPC not automatically pinning spawned worker threads to CUDA device of the main
 # thread
 # 2. Must be done before `import torch` at which point CUDA context may be created
+# 3. Currently this is enabled by default (as long as #1 is not implemented in RPC). Users may set `PIPPY_PIN_DEVICE` to
+# 0 to disable the pinning
 if os.getenv('PIPPY_PIN_DEVICE', '1') == '1':
     cuda_devices_str = os.getenv('CUDA_VISIBLE_DEVICES')
     if (cuda_devices_str is None                        # not set
