@@ -34,6 +34,31 @@ for f in $(git ls-files | grep '\.py$'); do
   esac
 done
 
+DEFAULT_TARGETS=()
+for f in $(git ls-files | grep '\.py$'); do
+  case "$f" in
+    'pippy/'*)
+	    ;;
+
+    'examples/'*)
+	    ;;
+
+    'docs/'*)
+	    ;;
+
+    'test/spmd/'*)
+	    DEFAULT_TARGETS+=( "$f" )
+	    ;;
+
+    'test/'*)
+	    ;;
+
+    *)
+	    DEFAULT_TARGETS+=( "$f" )
+	    ;;
+  esac
+done
+
 function format() {
   local TARGET="$1"
 
@@ -99,18 +124,17 @@ function main() {
 
   for x in "$@"; do
     case "$x" in
-<<<<<<< HEAD
       '--show-targets')
-	for f in ${DEFAULT_TARGETS[@]}; do
-	  echo $f;
-	done
-	exit 0;
+	      for f in ${DEFAULT_TARGETS[@]}; do
+	        echo $f;
+	      done
+	      exit 0;
         ;;
-=======
->>>>>>> 9250547 (Standardized format script)
+
       '--check')
         CHECK=1;
         ;;
+
       *)
         TARGETS+=( "$x" )
         ;;
