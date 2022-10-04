@@ -100,10 +100,10 @@ function main() {
   for x in "$@"; do
     case "$x" in
       '--show-targets')
-	      for f in ${DEFAULT_TARGETS[@]}; do
-	        echo $f;
-	      done
-	      exit 0;
+	for f in ${DEFAULT_TARGETS[@]}; do
+	  echo $f;
+	done
+	exit 0;
         ;;
 
       '--check')
