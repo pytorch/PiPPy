@@ -148,10 +148,8 @@ class DTensorConverter(object):
             if isinstance(arg, torch.Tensor):
                 choices_for_args.append(self.gen_sharding_choices_for_arg(arg))
 
-        self.choices_for_args = choices_for_args
-
         self.sharding_combs: Iterator[Sequence[Placement]] = iter(
-            itertools.product(*self.choices_for_args)
+            itertools.product(*choices_for_args)
         )
 
     def successful(self) -> bool:
