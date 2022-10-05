@@ -222,8 +222,8 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
     # properly sharded spmd.tensor.parallel.TensorParallelMultiheadAttention
     # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
     @with_comms
-    @skip_unless_torch_gpu
-    def test_self_attn_megatron_e2e(self):
+    #@skip_unless_torch_gpu
+    def test_self_attn_megatron_e2e_1(self):
         inp_size = [8, 12, 16]
         # Ensure all tp ranks have same input.
         torch.manual_seed(0)
@@ -231,12 +231,30 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
 
         # Initialize model using same seed.
         torch.manual_seed(5)
+        # TODO: our sharding function cannot shard the root node
+        model_tp = MultiheadAttnWrap(16, 8, add_bias_kv=True)
         model = TensorParallelMultiheadAttention(
             16, 8, self.device_type, tp_size=NUM_DEVICES, add_bias_kv=True
         )
-        torch.manual_seed(5)
-        # TODO: our sharding function cannot shard the root node
-        model_tp = MultiheadAttnWrap(16, 8, add_bias_kv=True)
+        model.copy(model_tp.attn)   # Initialize model with same parameters
+
+        # check if parameters are same
+        self.assertEqual(
+            model.qkv.weight,
+            model_tp.attn.in_proj_weight
+        )
+        self.assertEqual(
+            model.qkv.bias,
+            model_tp.attn.in_proj_bias
+        )
+        self.assertEqual(
+            model.proj.weight,
+            model_tp.attn.out_proj.weight
+        )
+        self.assertEqual(
+            model.proj.bias,
+            model_tp.attn.out_proj.bias
+        )
 
         # Shard module and initialize optimizer.
         device_mesh = DeviceMesh(self.device_type, list(range(NUM_DEVICES)))
@@ -251,6 +269,15 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         replicate = [Replicate()]
         device_mesh = model_tp.attn.qkv.weight.device_mesh
         # Ensure model are initialized the same way.
+        if self.rank == 0:
+            print("model.qkv.weight")
+            print(model.qkv.weight)
+            print("model_tp.attn.qkv.weight")
+            print(
+                model_tp.attn.qkv.weight.redistribute(
+                    device_mesh=device_mesh, placements=replicate
+                ).to_local()
+            )
         self.assertEqual(
             model.qkv.weight,
             model_tp.attn.qkv.weight.redistribute(
