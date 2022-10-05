@@ -13,6 +13,13 @@ from spmd import (
 from spmd.tensor.parallel import TensorParallelMultiheadAttention
 
 
+def _replicate_input(inputs, device_mesh):
+    DTensors = []
+    for tensor in inputs:
+        DTensors.append(DTensor.from_local(tensor, device_mesh, [Replicate()]))
+    return tuple(DTensors)
+
+
 def _aggregate_local_tensor(module: torch.nn.Module) -> torch.nn.Module:
     def hook_func(_module, _input, output):
         if isinstance(output, DTensor):
@@ -30,7 +37,8 @@ def _aggregate_local_tensor(module: torch.nn.Module) -> torch.nn.Module:
 def _gradient_hook(param, grad):
     param._local_tensor.grad = grad._local_tensor
 
-def _shard_custom_multi_head_attn(m, device_type, tp_size):
+
+def _shard_self_attn(name, module, device_type, tp_size) -> None:
     # note: do we really need start_idx since it's 0???
     start_idx = 0
     device_mesh = DeviceMesh(
@@ -41,7 +49,7 @@ def _shard_custom_multi_head_attn(m, device_type, tp_size):
     row_wise_sharding = [Shard(1)]
     replicate = [Replicate()]
 
-    def shard_params(name, module):
+    def _shard_self_attn_params(name, module):
         if isinstance(module, nn.Linear):
             if name == "qkv":
                 sharded_weight = nn.Parameter(
@@ -83,23 +91,12 @@ def _shard_custom_multi_head_attn(m, device_type, tp_size):
                         functools.partial(_gradient_hook, module.bias)
                     )
 
-    def replicate_input(inputs):
-        DTensors = []
-        for tensor in inputs:
-            DTensors.append(DTensor.from_local(tensor, device_mesh, replicate))
-        return tuple(DTensors)
-
-    dist_mod = distribute_module(
-        m,
-        device_mesh,
-        partition_fn=shard_params,
-        input_fn=replicate_input,
-        output_fn=None,
-    )
-    return dist_mod
+    if isinstance(module, TensorParallelMultiheadAttention):
+        for n, m in module.named_children():
+            _shard_self_attn_params(n, m)
 
 
-def _shard_self_attn(name, module, device_type, tp_size) -> None:
+def _replace_with_custom_self_attn(name, module, device_type, tp_size) -> None:
     # named_modules() produces a prefix iterator over the tree
     # for each module in named_modules(), we check if there's any MultiheadAttention module in its immediate children
     # if any, replace it with TensorParallelMultiheadAttention using register_module() and shard
@@ -114,11 +111,16 @@ def _shard_self_attn(name, module, device_type, tp_size) -> None:
             )
             # TODO: copy parameters. Can we merge the construction step with the sharding step?
             tp_multi_head_attention.copy(child)
-            _shard_custom_multi_head_attn(tp_multi_head_attention, device_type, tp_size)
+            #_shard_custom_multi_head_attn(tp_multi_head_attention, device_type, tp_size)
             module.register_module(name, tp_multi_head_attention)
 
 
-def my_shard_self_attn(device_type, tp_size):
+def shard_self_attn(device_type, tp_size):
     return functools.partial(
         _shard_self_attn, device_type=device_type, tp_size=tp_size
+    )
+
+def replicate_input(device_mesh):
+    return functools.partial(
+        _replicate_input, device_mesh=device_mesh
     )

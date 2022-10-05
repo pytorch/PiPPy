@@ -4,5 +4,6 @@ from spmd.tensor.parallel.multihead_attention_tp import (
 )
 
 from spmd.tensor.parallel.api import (
-    my_shard_self_attn,
+    shard_self_attn,
+    replicate_input,
 )
