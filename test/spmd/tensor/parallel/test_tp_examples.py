@@ -12,7 +12,11 @@ from spmd import (
     Shard,
     Replicate,
 )
-from spmd.tensor.parallel import TensorParallelMultiheadAttention, shard_self_attn, replicate_input
+from spmd.tensor.parallel import (
+    TensorParallelMultiheadAttention,
+    shard_self_attn,
+    replicate_input,
+)
 
 
 class MLPModule(torch.nn.Module):
@@ -110,10 +114,13 @@ class MultiheadAttnWrap(nn.Module):
     # TODO: complete the interface
     def __init__(self, embed_dim, num_heads, add_bias_kv=False):
         super().__init__()
-        self.attn = nn.MultiheadAttention(embed_dim, num_heads, add_bias_kv=add_bias_kv)
+        self.attn = nn.MultiheadAttention(
+            embed_dim, num_heads, add_bias_kv=add_bias_kv
+        )
 
     def forward(self, query, key, value):
         return self.attn(query, key, value)
+
 
 class DistTensorParallelExampleTest(DistTensorTestBase):
     @with_comms
@@ -211,9 +218,11 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         output_tp = model_tp(inp)
         self.assertEqual(output, output_tp)
 
+    # test if torch.nn.MultiheadAttention can be replaced with
+    # properly sharded spmd.tensor.parallel.TensorParallelMultiheadAttention
     # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
     @with_comms
-    #@skip_unless_torch_gpu
+    @skip_unless_torch_gpu
     def test_self_attn_megatron_e2e(self):
         inp_size = [8, 12, 16]
         # Ensure all tp ranks have same input.
@@ -223,23 +232,49 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         # Initialize model using same seed.
         torch.manual_seed(5)
         model = TensorParallelMultiheadAttention(
-            16, 8, self.device_type, tp_size=4, add_bias_kv=True
+            16, 8, self.device_type, tp_size=NUM_DEVICES, add_bias_kv=True
         )
         torch.manual_seed(5)
-        model_tp = TensorParallelMultiheadAttention(
-            16, 8, self.device_type, tp_size=4, add_bias_kv=True
-        )
-
-        # Ensure model are initialized the same way.
-        self.assertEqual(model.qkv.weight, model_tp.qkv.weight)
-        self.assertEqual(model.qkv.bias, model_tp.qkv.bias)
-        self.assertEqual(model.proj.weight, model_tp.proj.weight)
-        self.assertEqual(model.proj.bias, model_tp.proj.bias)
+        # TODO: our sharding function cannot shard the root node
+        model_tp = MultiheadAttnWrap(16, 8, add_bias_kv=True)
 
         # Shard module and initialize optimizer.
-        # TODO BE: device_mesh will be instantiated twice.
         device_mesh = DeviceMesh(self.device_type, list(range(NUM_DEVICES)))
-        distribute_module(model_tp, device_mesh, partition_fn=shard_self_attn(self.device_type, NUM_DEVICES), input_fn=replicate_input(device_mesh), output_fn=None)
+        distribute_module(
+            model_tp,
+            device_mesh,
+            partition_fn=shard_self_attn(device_mesh),
+            input_fn=replicate_input(device_mesh),
+            output_fn=None,
+        )
+
+        replicate = [Replicate()]
+        device_mesh = model_tp.attn.qkv.weight.device_mesh
+        # Ensure model are initialized the same way.
+        self.assertEqual(
+            model.qkv.weight,
+            model_tp.attn.qkv.weight.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.qkv.bias,
+            model_tp.attn.qkv.bias.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.proj.weight,
+            model_tp.attn.proj.weight.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.proj.bias,
+            model_tp.attn.proj.bias.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
 
         LR = 0.25
         optim = torch.optim.SGD(model.parameters(), lr=LR)
@@ -314,12 +349,11 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         output_tp = model_tp(inp, inp, inp)
         self.assertEqual(output, output_tp)
 
-"""
-    # note: test our new shard_self_attn api
+    # test if torch.nn.MultiheadAttention can be replaced with
+    # properly sharded spmd.tensor.parallel.TensorParallelMultiheadAttention
     # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
     @with_comms
     def test_self_attn_megatron_e2e_2(self):
-        device_mesh = DeviceMesh(self.device_type, list(range(NUM_DEVICES)))
         inp_size = [8, 12, 16]
         # Ensure all tp ranks have same input.
         torch.manual_seed(0)
@@ -332,8 +366,14 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         # TODO: our sharding function cannot shard the root node
         model_tp = MultiheadAttnWrap(16, 8, add_bias_kv=True)
 
-        # TODO: input/output fn
-        distribute_module(model_tp, device_mesh, partition_fn=my_shard_self_attn(self.device_type, 4), input_fn=None, output_fn=None)
+        device_mesh = DeviceMesh(self.device_type, list(range(NUM_DEVICES)))
+        distribute_module(
+            model_tp,
+            device_mesh,
+            partition_fn=shard_self_attn(device_mesh),
+            input_fn=replicate_input(device_mesh),
+            output_fn=None,
+        )
 
         replicate = [Replicate()]
         device_mesh = model_tp.attn.qkv.weight.device_mesh
@@ -371,8 +411,10 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         output_tp = model_tp(inp, inp, inp)
         if self.rank == 0:
             print(f"output={output}\noutput_tp={output_tp}")
-        #print(f"output shape={output.shape}, output_tp shape={output_tp.shape}")
-        self.assertEqual(output, output_tp)  # FIX: ValueError: tensors are not close
+        # print(f"output shape={output.shape}, output_tp shape={output_tp.shape}")
+        self.assertEqual(
+            output, output_tp
+        )  # FIX: ValueError: tensors are not close
 
         output.sum().backward()
         output_tp.sum().backward()
@@ -438,7 +480,7 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         output = model(inp, inp, inp)
         output_tp = model_tp(inp, inp, inp)
         self.assertEqual(output, output_tp)
-"""
+
 
 if __name__ == "__main__":
     run_tests()

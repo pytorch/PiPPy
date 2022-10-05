@@ -38,13 +38,7 @@ def _gradient_hook(param, grad):
     param._local_tensor.grad = grad._local_tensor
 
 
-def _shard_self_attn(name, module, device_type, tp_size) -> None:
-    # note: do we really need start_idx since it's 0???
-    start_idx = 0
-    device_mesh = DeviceMesh(
-        device_type,
-        list(range(start_idx, start_idx + tp_size)),
-    )
+def _shard_self_attn(name, module, device_mesh) -> None:
     col_wise_sharding = [Shard(0)]
     row_wise_sharding = [Shard(1)]
     replicate = [Replicate()]
@@ -91,36 +85,26 @@ def _shard_self_attn(name, module, device_type, tp_size) -> None:
                         functools.partial(_gradient_hook, module.bias)
                     )
 
-    if isinstance(module, TensorParallelMultiheadAttention):
+    if isinstance(module, TensorParallelMultiheadAttention):  # shard TPMA
         for n, m in module.named_children():
             _shard_self_attn_params(n, m)
+    else:
+        for n, m in module.named_children():  # replace with TPMA
+            if isinstance(m, nn.MultiheadAttention):
+                tp_multi_head_attention = TensorParallelMultiheadAttention(
+                    m.embed_dim,
+                    m.num_heads,
+                    device=device_mesh.device_type,
+                    tp_size=device_mesh.size(0),  # group size on dim 0
+                    add_bias_kv=(m.bias_k != None),
+                )
+                tp_multi_head_attention.copy(m)
+                module.register_module(n, tp_multi_head_attention)
 
 
-def _replace_with_custom_self_attn(name, module, device_type, tp_size) -> None:
-    # named_modules() produces a prefix iterator over the tree
-    # for each module in named_modules(), we check if there's any MultiheadAttention module in its immediate children
-    # if any, replace it with TensorParallelMultiheadAttention using register_module() and shard
-    for name, child in module.named_children():
-        if isinstance(child, nn.MultiheadAttention):
-            tp_multi_head_attention = TensorParallelMultiheadAttention(
-                child.embed_dim,
-                child.num_heads,
-                device=device_type,
-                tp_size=tp_size,
-                add_bias_kv=True,  # TODO: can we recover this info from child???
-            )
-            # TODO: copy parameters. Can we merge the construction step with the sharding step?
-            tp_multi_head_attention.copy(child)
-            #_shard_custom_multi_head_attn(tp_multi_head_attention, device_type, tp_size)
-            module.register_module(name, tp_multi_head_attention)
+def shard_self_attn(device_mesh):
+    return functools.partial(_shard_self_attn, device_mesh=device_mesh)
 
-
-def shard_self_attn(device_type, tp_size):
-    return functools.partial(
-        _shard_self_attn, device_type=device_type, tp_size=tp_size
-    )
 
 def replicate_input(device_mesh):
-    return functools.partial(
-        _replicate_input, device_mesh=device_mesh
-    )
+    return functools.partial(_replicate_input, device_mesh=device_mesh)
