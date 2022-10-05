@@ -27,6 +27,10 @@ from torch.distributed.distributed_c10d import ReduceOp
 import torch.utils._pytree as pytree
 
 
+def no_op():
+    return None
+
+
 def deepcopy_convert_to_dtensor(
     val: Any,
     device_mesh: DeviceMesh,
@@ -83,7 +87,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         kwargs: Optional[Dict[str, Any]] = None,
     ):
         if pre_op_fn is None:
-            pre_op_fn = lambda: None
+            pre_op_fn = no_op
 
         if not kwargs:
             kwargs = {}
@@ -125,11 +129,11 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         **kwargs,
     ):
         if pre_op_fn is None:
-            pre_op_fn = lambda: None
+            pre_op_fn = no_op
 
         input_tensor = torch.randn(
             *input_size,
-            device=self.device_type,
+            device=self.device_type,  # type: ignore
             requires_grad=True,
         )
 
