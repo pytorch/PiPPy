@@ -310,7 +310,7 @@ def _pre_load_state_dict(
         inner_tensor = cast(ShardedTensor, shards[0].tensor)
         shards = inner_tensor.local_shards()
 
-    return (tensor, [shards[0].tensor] if len(shards) > 0 else [])
+    return (tensor, shards if len(shards) > 0 else [])
 
 
 try:
