@@ -278,6 +278,30 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
                     device_mesh=device_mesh, placements=replicate
                 ).to_local()
             )
+            print("model.qkv.bias")
+            print(model.qkv.bias)
+            print("model_tp.attn.qkv.bias")
+            print(
+                model_tp.attn.qkv.bias.redistribute(
+                    device_mesh=device_mesh, placements=replicate
+                ).to_local()
+            )
+            print("model.proj.weight")
+            print(model.proj.weight)
+            print("model_tp.attn.proj.weight")
+            print(
+                model_tp.attn.proj.weight.redistribute(
+                    device_mesh=device_mesh, placements=replicate
+                ).to_local()
+            )
+            print("model.proj.bias")
+            print(model.proj.bias)
+            print("model_tp.attn.proj.bias")
+            print(
+                model_tp.attn.proj.bias.redistribute(
+                    device_mesh=device_mesh, placements=replicate
+                ).to_local()
+            )
         self.assertEqual(
             model.qkv.weight,
             model_tp.attn.qkv.weight.redistribute(
