@@ -238,7 +238,7 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
 
         # Shard module and initialize optimizer.
         # TODO BE: device_mesh will be instantiated twice.
-        device_mesh = DeviceMesh(self.device_type, NUM_DEVICES)
+        device_mesh = DeviceMesh(self.device_type, list(range(NUM_DEVICES)))
         distribute_module(model_tp, device_mesh, partition_fn=shard_self_attn(self.device_type, NUM_DEVICES), input_fn=replicate_input(device_mesh), output_fn=None)
 
         LR = 0.25
@@ -319,7 +319,7 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
     # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
     @with_comms
     def test_self_attn_megatron_e2e_2(self):
-        device_mesh = DeviceMesh(self.device_type, 4)
+        device_mesh = DeviceMesh(self.device_type, list(range(NUM_DEVICES)))
         inp_size = [8, 12, 16]
         # Ensure all tp ranks have same input.
         torch.manual_seed(0)
