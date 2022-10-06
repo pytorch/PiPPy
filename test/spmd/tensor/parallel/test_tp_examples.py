@@ -307,7 +307,7 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
             try:
                 self.assertEqual(output, output_tp)
             except AssertionError:
-                print(f"iteration #{iter}: output mismatch.")
+                print(f"rank #{self.rank} iteration #{iter}: output mismatch.")
 
             output.sum().backward()
             output_tp.sum().backward()
@@ -341,7 +341,7 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
                     ).to_local(),
                 )
             except AssertionError:
-                print(f"iteration #{iter}: grad mismatch after backward.")
+                print(f"rank #{self.rank} iteration #{iter}: grad mismatch after backward.")
 
             optim.step()
             optim_tp.step()
@@ -373,7 +373,7 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
                     ).to_local(),
                 )
             except AssertionError:
-                print(f"iteration #{iter}: parameters mismatch after optimization.")
+                print(f"rank #{self.rank} iteration #{iter}: parameters mismatch after optimization.")
 
 if __name__ == "__main__":
     run_tests()
