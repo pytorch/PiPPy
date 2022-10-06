@@ -148,7 +148,7 @@ def shard_self_attn(m, device_type, tp_size):
                 module.weight.register_hook(
                     functools.partial(_gradient_hook, module.weight)
                 )
-                _aggregate_local_tensor(module)
+                #_aggregate_local_tensor(module)
                 if module.bias is not None:
                     replicated_bias = nn.Parameter(
                         distribute_tensor(module.bias, device_mesh, replicate)
@@ -164,12 +164,20 @@ def shard_self_attn(m, device_type, tp_size):
             DTensors.append(DTensor.from_local(tensor, device_mesh, replicate))
         return tuple(DTensors)
 
+    def aggregate_output(outputs):
+        assert isinstance(outputs, DTensor)
+        return (
+            outputs.redistribute(outputs.device_mesh, [Replicate()])
+            .contiguous()
+            .to_local()
+        )
+
     dist_mod = distribute_module(
         m,
         device_mesh,
         partition_fn=shard_params,
         input_fn=replicate_input,
-        output_fn=None,
+        output_fn=aggregate_output,
     )
     return dist_mod
 
