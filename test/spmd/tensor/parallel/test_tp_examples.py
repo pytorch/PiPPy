@@ -299,6 +299,11 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
 
         output = model(inp, inp, inp)
         output_tp = model_tp(inp, inp, inp)
+        for i, ti in enumerate(output):
+            for j, tj in enumerate(ti):
+                for k, x in enumerate(tj):
+                    if x != output_tp[i][j][k]:
+                        print(f"proc {self.rank}: output[{i}][{j}][{k}]={x}, output_tp[{i}][{j}][{k}]={output_tp[i][j][k]}")
         self.assertEqual(output, output_tp)
 
         output.sum().backward()
@@ -364,6 +369,11 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         inp = torch.rand(*inp_size, device=self.device_type)
         output = model(inp, inp, inp)
         output_tp = model_tp(inp, inp, inp)
+        for i, ti in enumerate(output):
+            for j, tj in enumerate(ti):
+                for k, x in enumerate(tj):
+                    if x != output_tp[i][j][k]:
+                        print(f"proc {self.rank}: output[{i}][{j}][{k}]={x}, output_tp[{i}][{j}][{k}]={output_tp[i][j][k]}")
         self.assertEqual(output, output_tp)
 
     # test if torch.nn.MultiheadAttention can be replaced with
