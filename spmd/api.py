@@ -69,7 +69,7 @@ def _get_dtensor_dispatch_graph(
         else:
             return arg
 
-    print("=== tracing ", node.name, node.target, node.args, node.kwargs)
+    #print("=== tracing ", node.name, node.target, node.args, node.kwargs)
     args = tree_map(remap_arg, node.args)
     # kwargs in this set of tests are all constants
     kwargs = node.kwargs
@@ -83,7 +83,7 @@ def _get_dtensor_dispatch_graph(
         DTensor._custom_dispatch_ops,
     )
     node_to_obj[node] = out
-    print("=== dtensor out, ", out.placements, out.size())
+    #print("=== dtensor out, ", out.placements, out.size())
 
     # get DTensor specs for inputs and outputs
     (
@@ -182,12 +182,15 @@ class SPMD(nn.Module):
                 )
             elif node.op == "output":
                 new_args = []
+                has_partial = False
                 for a in node.args[0]:
                     if not isinstance(a, fx.Node):
                         new_args.append(a)
                         continue
                     obj = node_to_obj[a]
                     if isinstance(obj, DTensor) and isinstance(obj.placements[0], _Partial):
+                        has_partial = True
+
                         def dummy_add(grad, zero) -> torch.Tensor:
                             return grad + zero
 
@@ -235,8 +238,9 @@ class SPMD(nn.Module):
                                         dtn, lambda n: value_remap[n]
                                     )
 
-                gm.graph.erase_node(node)
-                gm.graph.output(new_args)
+                if has_partial:
+                    gm.graph.erase_node(node)
+                    gm.graph.output(new_args)
                 break
             else:
                 raise ValueError(f"Unrecognized node {node}")
@@ -279,8 +283,11 @@ class SPMD(nn.Module):
 
         gm.graph.lint()
         gm.graph.eliminate_dead_code()
+        gm.recompile()
         if dist.get_rank() == 0:
+            print("==== print tabular graph")
             gm.graph.print_tabular()
+
 
         return gm
 
