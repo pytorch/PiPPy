@@ -304,13 +304,13 @@ def _chunk_tensor(
 
 def _pre_load_state_dict(
     tensor: torch.Tensor,
-) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+) -> Tuple[torch.Tensor, List[Shard]]:
     shards = cast(ShardedTensor, tensor).local_shards()
     if len(shards) == 1 and type(shards[0].tensor) is ShardedTensor:
         inner_tensor = cast(ShardedTensor, shards[0].tensor)
         shards = inner_tensor.local_shards()
 
-    return (tensor, [shards[0].tensor] if len(shards) > 0 else [])
+    return (tensor, shards if len(shards) > 0 else [])
 
 
 try:
@@ -348,7 +348,7 @@ try:
             self,
             tensor: torch.Tensor,
         ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
-            return _pre_load_state_dict(tensor)
+            return _pre_load_state_dict(tensor)  # type: ignore
 
     _set_fsdp_extensions(DTensorExtensions())
 
