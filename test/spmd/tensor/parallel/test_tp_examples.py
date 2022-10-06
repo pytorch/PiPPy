@@ -125,9 +125,6 @@ def shard_self_attn(m, device_type, tp_size):
                     )
                 )
                 module.register_parameter("weight", sharded_weight)
-                module.weight.register_hook(
-                    functools.partial(_gradient_hook, module.weight)
-                )
                 if module.bias is not None:
                     sharded_bias = nn.Parameter(
                         distribute_tensor(
@@ -135,9 +132,6 @@ def shard_self_attn(m, device_type, tp_size):
                         )
                     )
                     module.register_parameter("bias", sharded_bias)
-                    module.bias.register_hook(
-                        functools.partial(_gradient_hook, module.bias)
-                    )
             elif name == "proj":
                 sharded_weight = nn.Parameter(
                     distribute_tensor(
@@ -145,18 +139,11 @@ def shard_self_attn(m, device_type, tp_size):
                     )
                 )
                 module.register_parameter("weight", sharded_weight)
-                module.weight.register_hook(
-                    functools.partial(_gradient_hook, module.weight)
-                )
-                #_aggregate_local_tensor(module)
                 if module.bias is not None:
                     replicated_bias = nn.Parameter(
                         distribute_tensor(module.bias, device_mesh, replicate)
                     )
                     module.register_parameter("bias", replicated_bias)
-                    module.bias.register_hook(
-                        functools.partial(_gradient_hook, module.bias)
-                    )
 
     def replicate_input(inputs):
         DTensors = []
@@ -167,7 +154,7 @@ def shard_self_attn(m, device_type, tp_size):
     def aggregate_output(outputs):
         assert isinstance(outputs, DTensor)
         return (
-            outputs.redistribute(outputs.device_mesh, [Replicate()])
+            outputs.redistribute(device_mesh, replicate)
             .contiguous()
             .to_local()
         )
