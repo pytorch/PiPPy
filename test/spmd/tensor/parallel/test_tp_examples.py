@@ -232,29 +232,19 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         # Initialize model using same seed.
         torch.manual_seed(5)
         # TODO: our sharding function cannot shard the root node
-        model_tp = MultiheadAttnWrap(16, 8, add_bias_kv=True, device=self.device_type)
+        model_tp = MultiheadAttnWrap(
+            16, 8, add_bias_kv=True, device=self.device_type
+        )
         model = TensorParallelMultiheadAttention(
             16, 8, self.device_type, tp_size=NUM_DEVICES, add_bias_kv=True
         )
-        model.copy(model_tp.attn)   # Initialize model with same parameters
+        model.copy(model_tp.attn)  # Initialize model with same parameters
 
         # check if parameters are same
-        self.assertEqual(
-            model.qkv.weight,
-            model_tp.attn.in_proj_weight
-        )
-        self.assertEqual(
-            model.qkv.bias,
-            model_tp.attn.in_proj_bias
-        )
-        self.assertEqual(
-            model.proj.weight,
-            model_tp.attn.out_proj.weight
-        )
-        self.assertEqual(
-            model.proj.bias,
-            model_tp.attn.out_proj.bias
-        )
+        self.assertEqual(model.qkv.weight, model_tp.attn.in_proj_weight)
+        self.assertEqual(model.qkv.bias, model_tp.attn.in_proj_bias)
+        self.assertEqual(model.proj.weight, model_tp.attn.out_proj.weight)
+        self.assertEqual(model.proj.bias, model_tp.attn.out_proj.bias)
 
         # Shard module and initialize optimizer.
         device_mesh = DeviceMesh(self.device_type, list(range(NUM_DEVICES)))
@@ -305,7 +295,9 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
                 for j, tj in enumerate(ti):
                     for k, x in enumerate(tj):
                         if x != output_tp[i][j][k]:
-                            print(f"proc {self.rank}: output[{i}][{j}][{k}]={x}, output_tp[{i}][{j}][{k}]={output_tp[i][j][k]}")
+                            print(
+                                f"proc {self.rank}: output[{i}][{j}][{k}]={x}, output_tp[{i}][{j}][{k}]={output_tp[i][j][k]}"
+                            )
         self.assertEqual(output, output_tp)
 
         output.sum().backward()
@@ -377,7 +369,9 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
                 for j, tj in enumerate(ti):
                     for k, x in enumerate(tj):
                         if x != output_tp[i][j][k]:
-                            print(f"proc {self.rank}: output[{i}][{j}][{k}]={x}, output_tp[{i}][{j}][{k}]={output_tp[i][j][k]}")
+                            print(
+                                f"proc {self.rank}: output[{i}][{j}][{k}]={x}, output_tp[{i}][{j}][{k}]={output_tp[i][j][k]}"
+                            )
         self.assertEqual(output, output_tp)
 
     # test if torch.nn.MultiheadAttention can be replaced with
@@ -440,9 +434,7 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
 
         output = model(inp, inp, inp)[0]
         output_tp = model_tp(inp, inp, inp)
-        self.assertEqual(
-            output, output_tp
-        )
+        self.assertEqual(output, output_tp)
 
         output.sum().backward()
         output_tp.sum().backward()
@@ -514,7 +506,7 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
     # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
     # TODO: see if the divergence problem happens in this case.
     @with_comms
-    #@skip_unless_torch_gpu
+    @skip_unless_torch_gpu
     def test_self_attn_megatron_e2e_0(self):
         inp_size = [8, 12, 16]
         # Ensure all tp ranks have same input.
@@ -586,7 +578,9 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
                 for j, tj in enumerate(ti):
                     for k, x in enumerate(tj):
                         if x != output_tp[i][j][k]:
-                            print(f"proc {self.rank}: output[{i}][{j}][{k}]={x}, output_tp[{i}][{j}][{k}]={output_tp[i][j][k]}")
+                            print(
+                                f"proc {self.rank}: output[{i}][{j}][{k}]={x}, output_tp[{i}][{j}][{k}]={output_tp[i][j][k]}"
+                            )
         self.assertEqual(output, output_tp)
 
         output.sum().backward()
@@ -658,8 +652,11 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
                 for j, tj in enumerate(ti):
                     for k, x in enumerate(tj):
                         if x != output_tp[i][j][k]:
-                            print(f"proc {self.rank}: output[{i}][{j}][{k}]={x}, output_tp[{i}][{j}][{k}]={output_tp[i][j][k]}")
+                            print(
+                                f"proc {self.rank}: output[{i}][{j}][{k}]={x}, output_tp[{i}][{j}][{k}]={output_tp[i][j][k]}"
+                            )
         self.assertEqual(output, output_tp)
+
 
 if __name__ == "__main__":
     run_tests()

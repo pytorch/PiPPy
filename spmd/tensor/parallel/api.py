@@ -4,8 +4,6 @@ import torch.nn as nn
 import functools
 from spmd import (
     distribute_tensor,
-    distribute_module,
-    DeviceMesh,
     DTensor,
     Shard,
     Replicate,
@@ -96,7 +94,7 @@ def _shard_self_attn(name, module, device_mesh) -> None:
                     m.num_heads,
                     device=device_mesh.device_type,
                     tp_size=device_mesh.size(0),  # group size on dim 0
-                    add_bias_kv=(m.bias_k != None),
+                    add_bias_kv=m.bias_k is not None,
                 )
                 tp_multi_head_attention.copy(m)
                 module.register_module(n, tp_multi_head_attention)
