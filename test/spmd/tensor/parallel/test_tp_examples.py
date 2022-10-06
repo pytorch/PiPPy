@@ -272,7 +272,7 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
 
     # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
     @with_comms
-    #@skip_unless_torch_gpu
+    @skip_unless_torch_gpu
     def test_self_attn_megatron_e2e(self):
         inp_size = [8, 12, 16]
         # Ensure all tp ranks have same input.
@@ -304,7 +304,10 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
             inp = torch.rand(*inp_size, device=self.device_type)
             output = model(inp, inp, inp)
             output_tp = model_tp(inp, inp, inp)
-            self.assertEqual(output, output_tp)
+            try:
+                self.assertEqual(output, output_tp)
+            except AssertionError:
+                print(f"iteration #{iter}: output mismatch.")
 
             output.sum().backward()
             output_tp.sum().backward()
@@ -312,59 +315,65 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
             replicate = [Replicate()]
             device_mesh = model_tp.qkv.weight.device_mesh
             # Ensure gradients are same.
-            self.assertEqual(
-                model.qkv.weight.grad,
-                model_tp.qkv.weight.grad.redistribute(
-                    device_mesh=device_mesh, placements=replicate
-                ).to_local(),
-            )
-            self.assertEqual(
-                model.qkv.bias.grad,
-                model_tp.qkv.bias.grad.redistribute(
-                    device_mesh=device_mesh, placements=replicate
-                ).to_local(),
-            )
-            self.assertEqual(
-                model.proj.weight.grad,
-                model_tp.proj.weight.grad.redistribute(
-                    device_mesh=device_mesh, placements=replicate
-                ).to_local(),
-            )
-            self.assertEqual(
-                model.proj.bias.grad,
-                model_tp.proj.bias.grad.redistribute(
-                    device_mesh=device_mesh, placements=replicate
-                ).to_local(),
-            )
+            try:
+                self.assertEqual(
+                    model.qkv.weight.grad,
+                    model_tp.qkv.weight.grad.redistribute(
+                        device_mesh=device_mesh, placements=replicate
+                    ).to_local(),
+                )
+                self.assertEqual(
+                    model.qkv.bias.grad,
+                    model_tp.qkv.bias.grad.redistribute(
+                        device_mesh=device_mesh, placements=replicate
+                    ).to_local(),
+                )
+                self.assertEqual(
+                    model.proj.weight.grad,
+                    model_tp.proj.weight.grad.redistribute(
+                        device_mesh=device_mesh, placements=replicate
+                    ).to_local(),
+                )
+                self.assertEqual(
+                    model.proj.bias.grad,
+                    model_tp.proj.bias.grad.redistribute(
+                        device_mesh=device_mesh, placements=replicate
+                    ).to_local(),
+                )
+            except AssertionError:
+                print(f"iteration #{iter}: grad mismatch after backward.")
 
             optim.step()
             optim_tp.step()
 
             # Ensure model weights are still same after update.
-            self.assertEqual(
-                model.qkv.weight,
-                model_tp.qkv.weight.redistribute(
-                    device_mesh=device_mesh, placements=replicate
-                ).to_local(),
-            )
-            self.assertEqual(
-                model.qkv.bias,
-                model_tp.qkv.bias.redistribute(
-                    device_mesh=device_mesh, placements=replicate
-                ).to_local(),
-            )
-            self.assertEqual(
-                model.proj.weight,
-                model_tp.proj.weight.redistribute(
-                    device_mesh=device_mesh, placements=replicate
-                ).to_local(),
-            )
-            self.assertEqual(
-                model.proj.bias,
-                model_tp.proj.bias.redistribute(
-                    device_mesh=device_mesh, placements=replicate
-                ).to_local(),
-            )
+            try:
+                self.assertEqual(
+                    model.qkv.weight,
+                    model_tp.qkv.weight.redistribute(
+                        device_mesh=device_mesh, placements=replicate
+                    ).to_local(),
+                )
+                self.assertEqual(
+                    model.qkv.bias,
+                    model_tp.qkv.bias.redistribute(
+                        device_mesh=device_mesh, placements=replicate
+                    ).to_local(),
+                )
+                self.assertEqual(
+                    model.proj.weight,
+                    model_tp.proj.weight.redistribute(
+                        device_mesh=device_mesh, placements=replicate
+                    ).to_local(),
+                )
+                self.assertEqual(
+                    model.proj.bias,
+                    model_tp.proj.bias.redistribute(
+                        device_mesh=device_mesh, placements=replicate
+                    ).to_local(),
+                )
+            except AssertionError:
+                print(f"iteration #{iter}: parameters mismatch after optimization.")
 
 if __name__ == "__main__":
     run_tests()
