@@ -220,8 +220,9 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
     # test if torch.nn.MultiheadAttention can be replaced with
     # properly sharded spmd.tensor.parallel.TensorParallelMultiheadAttention
     # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
+    # TODO: investigate the divergence problem.
     @with_comms
-    #@skip_unless_torch_gpu
+    @skip_unless_torch_gpu
     def test_self_attn_megatron_e2e_1(self):
         inp_size = [8, 12, 16]
         # Ensure all tp ranks have same input.
@@ -508,6 +509,157 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         output_tp = model_tp(inp, inp, inp)
         self.assertEqual(output, output_tp)
 
+    # test if spmd.tensor.parallel.TensorParallelMultiheadAttention gets
+    # properly sharded
+    # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
+    # TODO: see if the divergence problem happens in this case.
+    @with_comms
+    #@skip_unless_torch_gpu
+    def test_self_attn_megatron_e2e_0(self):
+        inp_size = [8, 12, 16]
+        # Ensure all tp ranks have same input.
+        torch.manual_seed(0)
+        inp = torch.rand(*inp_size, device=self.device_type)
+
+        # Initialize model using same seed.
+        torch.manual_seed(5)
+        model = TensorParallelMultiheadAttention(
+            16, 8, self.device_type, tp_size=NUM_DEVICES, add_bias_kv=True
+        )
+        torch.manual_seed(5)
+        model_tp = TensorParallelMultiheadAttention(
+            16, 8, self.device_type, tp_size=NUM_DEVICES, add_bias_kv=True
+        )
+
+        # Ensure model are initialized the same way.
+        self.assertEqual(model.qkv.weight, model_tp.qkv.weight)
+        self.assertEqual(model.qkv.bias, model_tp.qkv.bias)
+        self.assertEqual(model.proj.weight, model_tp.proj.weight)
+        self.assertEqual(model.proj.bias, model_tp.proj.bias)
+
+        # Shard module and initialize optimizer.
+        device_mesh = DeviceMesh(self.device_type, list(range(NUM_DEVICES)))
+        distribute_module(
+            model_tp,
+            device_mesh,
+            partition_fn=shard_self_attn(device_mesh),
+            input_fn=replicate_input(device_mesh),
+            output_fn=None,
+        )
+
+        replicate = [Replicate()]
+        device_mesh = model_tp.qkv.weight.device_mesh
+        # Ensure model are initialized the same way.
+        self.assertEqual(
+            model.qkv.weight,
+            model_tp.qkv.weight.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.qkv.bias,
+            model_tp.qkv.bias.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.proj.weight,
+            model_tp.proj.weight.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.proj.bias,
+            model_tp.proj.bias.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+
+        LR = 0.25
+        optim = torch.optim.SGD(model.parameters(), lr=LR)
+        optim_tp = torch.optim.SGD(model_tp.parameters(), lr=LR)
+
+        output = model(inp, inp, inp)
+        output_tp = model_tp(inp, inp, inp)
+        if self.rank == 0:
+            for i, ti in enumerate(output):
+                for j, tj in enumerate(ti):
+                    for k, x in enumerate(tj):
+                        if x != output_tp[i][j][k]:
+                            print(f"proc {self.rank}: output[{i}][{j}][{k}]={x}, output_tp[{i}][{j}][{k}]={output_tp[i][j][k]}")
+        self.assertEqual(output, output_tp)
+
+        output.sum().backward()
+        output_tp.sum().backward()
+
+        replicate = [Replicate()]
+        device_mesh = model_tp.qkv.weight.device_mesh
+        # Ensure gradients are same.
+        self.assertEqual(
+            model.qkv.weight.grad,
+            model_tp.qkv.weight.grad.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.qkv.bias.grad,
+            model_tp.qkv.bias.grad.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.proj.weight.grad,
+            model_tp.proj.weight.grad.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.proj.bias.grad,
+            model_tp.proj.bias.grad.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+
+        optim.step()
+        optim_tp.step()
+
+        # Ensure model weights are still same after update.
+        self.assertEqual(
+            model.qkv.weight,
+            model_tp.qkv.weight.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.qkv.bias,
+            model_tp.qkv.bias.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.proj.weight,
+            model_tp.proj.weight.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.proj.bias,
+            model_tp.proj.bias.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+
+        inp = torch.rand(*inp_size, device=self.device_type)
+        output = model(inp, inp, inp)
+        output_tp = model_tp(inp, inp, inp)
+
+        if self.rank == 0:
+            for i, ti in enumerate(output):
+                for j, tj in enumerate(ti):
+                    for k, x in enumerate(tj):
+                        if x != output_tp[i][j][k]:
+                            print(f"proc {self.rank}: output[{i}][{j}][{k}]={x}, output_tp[{i}][{j}][{k}]={output_tp[i][j][k]}")
+        self.assertEqual(output, output_tp)
 
 if __name__ == "__main__":
     run_tests()
