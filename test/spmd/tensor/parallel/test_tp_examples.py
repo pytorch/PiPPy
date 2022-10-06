@@ -272,7 +272,7 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
 
     # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
     @with_comms
-    @skip_unless_torch_gpu
+    #@skip_unless_torch_gpu
     def test_self_attn_megatron_e2e(self):
         inp_size = [8, 12, 16]
         # Ensure all tp ranks have same input.
@@ -348,6 +348,10 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
 
             # Ensure model weights are still same after update.
             try:
+                print(f"rank #{self.rank} iteration #{iter}: model_tp.qkv.weight.replacement={model_tp.qkv.weight.placements}")
+                print(f"rank #{self.rank} iteration #{iter}: model_tp.qkv.bias.replacement={model_tp.qkv.bias.placements}")
+                print(f"rank #{self.rank} iteration #{iter}: model_tp.proj.weight.replacement={model_tp.proj.weight.placements}")
+                print(f"rank #{self.rank} iteration #{iter}: model_tp.proj.bias.replacement={model_tp.proj.bias.placements}")
                 self.assertEqual(
                     model.qkv.weight,
                     model_tp.qkv.weight.redistribute(
