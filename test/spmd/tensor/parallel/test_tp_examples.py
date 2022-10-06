@@ -232,7 +232,7 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         # Initialize model using same seed.
         torch.manual_seed(5)
         # TODO: our sharding function cannot shard the root node
-        model_tp = MultiheadAttnWrap(16, 8, add_bias_kv=True)
+        model_tp = MultiheadAttnWrap(16, 8, add_bias_kv=True, device=self.device_type)
         model = TensorParallelMultiheadAttention(
             16, 8, self.device_type, tp_size=NUM_DEVICES, add_bias_kv=True
         )
