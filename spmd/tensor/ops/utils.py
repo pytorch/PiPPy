@@ -1,4 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+import torch
 from typing import List, Union
 from spmd.tensor.api import DTensor
 
