@@ -410,5 +410,11 @@ class TraceDistTensorTest(DistTensorTestBase):
         self._test_expand(xd, yd, f, mesh, out_placement)
 
 
+class TraceModuleTest(DistTensorTestBase):
+    @property
+    def world_size(self):
+        return 2
+
+
 if __name__ == "__main__":
     run_tests()

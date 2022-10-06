@@ -2,6 +2,8 @@
 from typing import List, Union
 from spmd.tensor.api import DTensor
 
+import torch
+
 
 # pyre-fixme[3]: Return type must be annotated.
 # pyre-fixme[2]: Parameter must be annotated.
@@ -41,7 +43,7 @@ def register_prop_rule(func):
 
 
 def as_list(x: Union[List[object], object]) -> List[object]:
-    if type(x) is list:
+    if type(x) is list or isinstance(x, torch.fx.immutable_collections.immutable_list):
         return x
     else:
         return [x]
