@@ -349,27 +349,39 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
             # Ensure model weights are still same after update.
             try:
                 print(f"rank #{self.rank} iteration #{iter}: model_tp.qkv.weight.replacement={model_tp.qkv.weight.placements}")
-                print(f"rank #{self.rank} iteration #{iter}: model_tp.qkv.bias.replacement={model_tp.qkv.bias.placements}")
-                print(f"rank #{self.rank} iteration #{iter}: model_tp.proj.weight.replacement={model_tp.proj.weight.placements}")
-                print(f"rank #{self.rank} iteration #{iter}: model_tp.proj.bias.replacement={model_tp.proj.bias.placements}")
                 self.assertEqual(
                     model.qkv.weight,
                     model_tp.qkv.weight.redistribute(
                         device_mesh=device_mesh, placements=replicate
                     ).to_local(),
                 )
+            except AssertionError:
+                print(f"rank #{self.rank} iteration #{iter}: model_tp.qkv.weight mismatch after optimization.")
+
+            try:
+                print(f"rank #{self.rank} iteration #{iter}: model_tp.qkv.bias.replacement={model_tp.qkv.bias.placements}")
                 self.assertEqual(
                     model.qkv.bias,
                     model_tp.qkv.bias.redistribute(
                         device_mesh=device_mesh, placements=replicate
                     ).to_local(),
                 )
+            except AssertionError:
+                print(f"rank #{self.rank} iteration #{iter}: model_tp.qkv.bias mismatch after optimization.")
+
+            try:
+                print(f"rank #{self.rank} iteration #{iter}: model_tp.proj.weight.replacement={model_tp.proj.weight.placements}")
                 self.assertEqual(
                     model.proj.weight,
                     model_tp.proj.weight.redistribute(
                         device_mesh=device_mesh, placements=replicate
                     ).to_local(),
                 )
+            except AssertionError:
+                print(f"rank #{self.rank} iteration #{iter}: model_tp.proj.weight mismatch after optimization.")
+
+            try:
+                print(f"rank #{self.rank} iteration #{iter}: model_tp.proj.bias.replacement={model_tp.proj.bias.placements}")
                 self.assertEqual(
                     model.proj.bias,
                     model_tp.proj.bias.redistribute(
@@ -377,7 +389,7 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
                     ).to_local(),
                 )
             except AssertionError:
-                print(f"rank #{self.rank} iteration #{iter}: parameters mismatch after optimization.")
+                print(f"rank #{self.rank} iteration #{iter}: model_tp.proj.bias mismatch after optimization.")
 
 if __name__ == "__main__":
     run_tests()
