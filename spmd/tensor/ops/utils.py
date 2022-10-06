@@ -41,7 +41,9 @@ def register_prop_rule(func):
 
 
 def as_list(x: Union[List[object], object]) -> List[object]:
-    if type(x) is list:
+    if type(x) is list or isinstance(
+        x, torch.fx.immutable_collections.immutable_list
+    ):
         return x
     else:
         return [x]
