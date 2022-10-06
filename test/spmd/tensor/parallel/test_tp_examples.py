@@ -111,11 +111,10 @@ def shard_mlp(m, device_type, tp_size):
 
 
 class MultiheadAttnWrap(nn.Module):
-    # TODO: complete the interface
-    def __init__(self, embed_dim, num_heads, add_bias_kv=False):
+    def __init__(self, embed_dim, num_heads, add_bias_kv=False, device=None):
         super().__init__()
         self.attn = nn.MultiheadAttention(
-            embed_dim, num_heads, add_bias_kv=add_bias_kv
+            embed_dim, num_heads, add_bias_kv=add_bias_kv, device=device
         )
 
     def forward(self, query, key, value):
