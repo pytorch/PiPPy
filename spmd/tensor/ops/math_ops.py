@@ -2,7 +2,7 @@
 from typing import cast
 
 from spmd.tensor.api import DTensor
-from spmd.tensor.placement_types import DTensorSpec, Replicate, _Partial
+from spmd.tensor.placement_types import DTensorSpec
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.ops.common_rules import reduction_rule, pointwise_rule
 from spmd.tensor.ops.utils import register_prop_rule
@@ -45,23 +45,3 @@ def softmax_bwd_rule(op_schema: OpSchema) -> OutputSharding:
             "Cannot run _softmax_backward_data on sharding dimension!"
         )
     return pointwise_rule(op_schema)
-
-
-@register_prop_rule("aten.native_dropout.default")
-def dropout_rule(op_schema: OpSchema) -> OutputSharding:
-    self_spec = cast(DTensorSpec, op_schema.args_schema[0])
-
-    # TODO: enable dropout on partial/replicate tensor when we fix
-    # the problem of non-deterministic algorithm with replication.
-    replicate_or_partial = False
-    for placement in self_spec.placements:
-        if isinstance(placement, (Replicate, _Partial)):
-            replicate_or_partial = True
-            break
-
-    if replicate_or_partial:
-        return OutputSharding(
-            None, failed_reason="Dropout with replication is not supported yet!"
-        )
-    else:
-        return OutputSharding(self_spec)
