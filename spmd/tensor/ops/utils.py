@@ -3,8 +3,6 @@ import torch
 from typing import List, Union
 from spmd.tensor.api import DTensor
 
-import torch
-
 
 # pyre-fixme[3]: Return type must be annotated.
 # pyre-fixme[2]: Parameter must be annotated.

@@ -266,7 +266,6 @@ def reduction_rule(op_schema: OpSchema) -> OutputSharding:
     Propagate the sharding for reduction operations. Examples:
         ij->i - sum on dim
     """
-    print("in ==== reduction_rule")
     alphabet = "abcdefghijklmnopqrstuvwxyz"
     # reduction op usually begin with a single tensor
     input_spec = cast(DTensorSpec, op_schema.args_schema[0])
