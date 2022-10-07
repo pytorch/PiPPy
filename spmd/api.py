@@ -276,6 +276,7 @@ def _convert_to_distributed(
 
 
 class SPMD(nn.Module):
+    # TODO: add schema_override
     def __init__(self, module: nn.Module, schema: Schema):
         super().__init__()
         assert schema.placements == [
