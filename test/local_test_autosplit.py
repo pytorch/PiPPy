@@ -43,6 +43,7 @@ MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.TRANSMIT
 d_hid = 512
 bs = 503
 
+
 class ExampleCode(torch.nn.Module):
     def __init__(self):
         super().__init__()
