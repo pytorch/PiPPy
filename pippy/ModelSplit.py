@@ -154,6 +154,17 @@ def split_on_size_threshold(
     return _split_on_size_threshold_with_max_stages(mod, threshold)
 
 
+"""
+Split a model into given number of stages, based on equal stage size
+Input:
+  mod: `torch.nn.Module` to split
+  nstages: number of stages to split the module into
+Output:
+  A tuple consisting of:
+      - a `fx.GraphModule` transformed from the input module with `pipe_split` inserted
+"""
+
+
 def split_into_nstages_equal_size(
     mod: torch.nn.Module,
     nstages: int = 1,
