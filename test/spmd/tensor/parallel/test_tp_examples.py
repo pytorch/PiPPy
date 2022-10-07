@@ -353,6 +353,8 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         inp = torch.rand(*inp_size, device=self.device_type)
         output = model(inp, inp, inp)
         output_tp = model_tp(inp, inp, inp)
+        # slient difference between outputs
+        print(f"rank {self.rank}:\noutput={output}\noutput_tp={output_tp}")
         self.assertEqual(output, output_tp)
 
     # torch.nn.MultiheadAttention == dist_module(torch.nn.MultiheadAttention)

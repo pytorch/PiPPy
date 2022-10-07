@@ -266,21 +266,3 @@ class TensorParallelMultiheadAttention(torch.nn.Module):
             self.proj.register_parameter("weight", that.out_proj.weight)
         if that.out_proj.bias is not None:
             self.proj.register_parameter("bias", that.out_proj.bias)
-        """
-        x = that.in_proj_weight.data.clone().detach()
-        x.requires_grad_()
-        x = torch.nn.Parameter(x)
-        self.qkv.register_parameter("weight", x)
-        x = that.in_proj_bias.data.clone().detach()
-        x.requires_grad_()
-        x = torch.nn.Parameter(x)
-        self.qkv.register_parameter("bias", x)
-        x = that.out_proj.weight.data.clone().detach()
-        x.requires_grad_()
-        x = torch.nn.Parameter(x)
-        self.proj.register_parameter("weight", x)
-        x = that.out_proj.bias.data.clone().detach()
-        x.requires_grad_()
-        x = torch.nn.Parameter(x)
-        self.proj.register_parameter("bias", x)
-        """
