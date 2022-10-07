@@ -296,9 +296,15 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         optim_tp = torch.optim.SGD(model_tp.parameters(), lr=LR)
 
         for iter in range(10):
+            # clear grads
+            optim.zero_grad()
+            optim_tp.zero_grad()
+
             inp = torch.rand(*inp_size, device=self.device_type)
             output = model(inp, inp, inp)
             output_tp = model_tp(inp, inp, inp)
+
+            # check if forward pass produces the same result
             try:
                 self.assertEqual(output, output_tp)
             except AssertionError:
@@ -338,6 +344,7 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
             except AssertionError:
                 print(f"rank #{self.rank} iteration #{iter}: grad mismatch after backward.")
 
+            # update parameters
             optim.step()
             optim_tp.step()
 
@@ -376,8 +383,8 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
                 print(f"rank #{self.rank} iteration #{iter}: model_tp.proj.weight mismatch after optimization.")
 
             try:
-                print(f"rank #{self.rank} iteration #{iter}: model_tp.proj.bias.replacement={model_tp.proj.bias.placements}")
-                print(f"rank #{self.rank} iteration #{iter}: model_tp.proj.bias.grad.replacement={model_tp.proj.bias.grad.placements}")
+                #rint(f"rank #{self.rank} iteration #{iter}: model_tp.proj.bias.replacement={model_tp.proj.bias.placements}")
+                #print(f"rank #{self.rank} iteration #{iter}: model_tp.proj.bias.grad.replacement={model_tp.proj.bias.grad.placements}")
                 print(f"rank #{self.rank} iteration #{iter}: \nmodel_tp.proj.bias={model_tp.proj.bias}\nmodel_tp.proj.bias.grad={model_tp.proj.bias.grad}")
                 self.assertEqual(
                     model.proj.bias,
