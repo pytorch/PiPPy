@@ -63,9 +63,7 @@ Output:
 
 
 def _split_on_size_threshold_with_max_stages(
-    mod: torch.nn.Module,
-    threshold: int,
-    max_stages: int = -1
+    mod: torch.nn.Module, threshold: int, max_stages: int = -1
 ) -> Tuple[pippy.fx.GraphModule, int]:
     # Trace the user module to get a graph first
     gm: pippy.fx.GraphModule = pippy.fx.symbolic_trace(mod)
@@ -151,8 +149,7 @@ Output:
 
 
 def split_on_size_threshold(
-    mod: torch.nn.Module,
-    threshold: int
+    mod: torch.nn.Module, threshold: int
 ) -> Tuple[pippy.fx.GraphModule, int]:
     return _split_on_size_threshold_with_max_stages(mod, threshold)
 
@@ -171,14 +168,12 @@ def split_into_nstages_equal_size(
     total_size = param_size + buffer_size
     per_stage_size = total_size / nstages
     logging.debug(
-        f"Total model size: {total_size}, "
-        f"per stage size: {per_stage_size}"
+        f"Total model size: {total_size}, " f"per stage size: {per_stage_size}"
     )
 
     gm, rv_nstages = _split_on_size_threshold_with_max_stages(
-        mod,
-        per_stage_size,
-        nstages)
+        mod, per_stage_size, nstages
+    )
     assert rv_nstages == nstages
 
     return gm
