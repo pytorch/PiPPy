@@ -16,6 +16,7 @@ from spmd.tensor.parallel import (
     TensorParallelMultiheadAttention,
     tp_shard_self_attn,
     replicate_input,
+    aggregate_output,
 )
 
 
@@ -227,9 +228,8 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         torch.manual_seed(0)
         inp = torch.rand(*inp_size, device=self.device_type)
 
-        # Initialize model using same seed.
-        torch.manual_seed(5)
         # TODO: our sharding function cannot shard the root node
+        torch.manual_seed(5)
         model_tp = MultiheadAttnWrap(
             16, 8, add_bias_kv=True, device=self.device_type
         )
@@ -288,16 +288,6 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
 
         output = model(inp, inp, inp)
         output_tp = model_tp(inp, inp, inp)
-        """
-        if self.rank == 0:
-            for i, ti in enumerate(output):
-                for j, tj in enumerate(ti):
-                    for k, x in enumerate(tj):
-                        if x != output_tp[i][j][k]:
-                            print(
-                                f"proc {self.rank}: output[{i}][{j}][{k}]={x}, output_tp[{i}][{j}][{k}]={output_tp[i][j][k]}"
-                            )
-        """
         self.assertEqual(output, output_tp)
 
         output.sum().backward()
@@ -363,16 +353,6 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         inp = torch.rand(*inp_size, device=self.device_type)
         output = model(inp, inp, inp)
         output_tp = model_tp(inp, inp, inp)
-        """
-        if self.rank == 0:
-            for i, ti in enumerate(output):
-                for j, tj in enumerate(ti):
-                    for k, x in enumerate(tj):
-                        if x != output_tp[i][j][k]:
-                            print(
-                                f"proc {self.rank}: output[{i}][{j}][{k}]={x}, output_tp[{i}][{j}][{k}]={output_tp[i][j][k]}"
-                            )
-        """
         self.assertEqual(output, output_tp)
 
     # torch.nn.MultiheadAttention == dist_module(torch.nn.MultiheadAttention)
@@ -636,16 +616,6 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         inp = torch.rand(*inp_size, device=self.device_type)
         output = model(inp, inp, inp)
         output_tp = model_tp(inp, inp, inp)
-        """
-        if self.rank == 0:
-            for i, ti in enumerate(output):
-                for j, tj in enumerate(ti):
-                    for k, x in enumerate(tj):
-                        if x != output_tp[i][j][k]:
-                            print(
-                                f"proc {self.rank}: output[{i}][{j}][{k}]={x}, output_tp[{i}][{j}][{k}]={output_tp[i][j][k]}"
-                            )
-        """
         self.assertEqual(output, output_tp)
 
 
