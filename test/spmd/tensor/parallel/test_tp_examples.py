@@ -14,7 +14,7 @@ from spmd import (
 )
 from spmd.tensor.parallel import (
     TensorParallelMultiheadAttention,
-    shard_self_attn,
+    tp_shard_self_attn,
     replicate_input,
 )
 
@@ -217,10 +217,8 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         output_tp = model_tp(inp)
         self.assertEqual(output, output_tp)
 
-    # test if torch.nn.MultiheadAttention can be replaced with
-    # properly sharded spmd.tensor.parallel.TensorParallelMultiheadAttention
+    # TensorParallelMultiheadAttention == dist_module(torch.nn.MultiheadAttention)
     # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
-    # TODO: investigate the divergence problem.
     @with_comms
     @skip_unless_torch_gpu
     def test_self_attn_megatron_e2e_1(self):
@@ -251,9 +249,9 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         distribute_module(
             model_tp,
             device_mesh,
-            partition_fn=shard_self_attn(device_mesh),
+            partition_fn=tp_shard_self_attn(device_mesh),
             input_fn=replicate_input(device_mesh),
-            output_fn=None,
+            output_fn=aggregate_output,
         )
 
         replicate = [Replicate()]
@@ -290,6 +288,7 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
 
         output = model(inp, inp, inp)
         output_tp = model_tp(inp, inp, inp)
+        """
         if self.rank == 0:
             for i, ti in enumerate(output):
                 for j, tj in enumerate(ti):
@@ -298,6 +297,7 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
                             print(
                                 f"proc {self.rank}: output[{i}][{j}][{k}]={x}, output_tp[{i}][{j}][{k}]={output_tp[i][j][k]}"
                             )
+        """
         self.assertEqual(output, output_tp)
 
         output.sum().backward()
@@ -363,7 +363,7 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         inp = torch.rand(*inp_size, device=self.device_type)
         output = model(inp, inp, inp)
         output_tp = model_tp(inp, inp, inp)
-
+        """
         if self.rank == 0:
             for i, ti in enumerate(output):
                 for j, tj in enumerate(ti):
@@ -372,10 +372,10 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
                             print(
                                 f"proc {self.rank}: output[{i}][{j}][{k}]={x}, output_tp[{i}][{j}][{k}]={output_tp[i][j][k]}"
                             )
+        """
         self.assertEqual(output, output_tp)
 
-    # test if torch.nn.MultiheadAttention can be replaced with
-    # properly sharded spmd.tensor.parallel.TensorParallelMultiheadAttention
+    # torch.nn.MultiheadAttention == dist_module(torch.nn.MultiheadAttention)
     # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
     @with_comms
     def test_self_attn_megatron_e2e_2(self):
@@ -395,9 +395,9 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         distribute_module(
             model_tp,
             device_mesh,
-            partition_fn=shard_self_attn(device_mesh),
+            partition_fn=tp_shard_self_attn(device_mesh),
             input_fn=replicate_input(device_mesh),
-            output_fn=None,
+            output_fn=aggregate_output,
         )
 
         replicate = [Replicate()]
@@ -501,10 +501,8 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         output_tp = model_tp(inp, inp, inp)
         self.assertEqual(output, output_tp)
 
-    # test if spmd.tensor.parallel.TensorParallelMultiheadAttention gets
-    # properly sharded
+    # TensorParallelMultiheadAttention == dist_module(TensorParallelMultiheadAttention)
     # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
-    # TODO: see if the divergence problem happens in this case.
     @with_comms
     @skip_unless_torch_gpu
     def test_self_attn_megatron_e2e_0(self):
@@ -534,9 +532,9 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         distribute_module(
             model_tp,
             device_mesh,
-            partition_fn=shard_self_attn(device_mesh),
+            partition_fn=tp_shard_self_attn(device_mesh),
             input_fn=replicate_input(device_mesh),
-            output_fn=None,
+            output_fn=aggregate_output,
         )
 
         replicate = [Replicate()]
@@ -573,14 +571,6 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
 
         output = model(inp, inp, inp)
         output_tp = model_tp(inp, inp, inp)
-        if self.rank == 0:
-            for i, ti in enumerate(output):
-                for j, tj in enumerate(ti):
-                    for k, x in enumerate(tj):
-                        if x != output_tp[i][j][k]:
-                            print(
-                                f"proc {self.rank}: output[{i}][{j}][{k}]={x}, output_tp[{i}][{j}][{k}]={output_tp[i][j][k]}"
-                            )
         self.assertEqual(output, output_tp)
 
         output.sum().backward()
@@ -646,7 +636,7 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         inp = torch.rand(*inp_size, device=self.device_type)
         output = model(inp, inp, inp)
         output_tp = model_tp(inp, inp, inp)
-
+        """
         if self.rank == 0:
             for i, ti in enumerate(output):
                 for j, tj in enumerate(ti):
@@ -655,6 +645,7 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
                             print(
                                 f"proc {self.rank}: output[{i}][{j}][{k}]={x}, output_tp[{i}][{j}][{k}]={output_tp[i][j][k]}"
                             )
+        """
         self.assertEqual(output, output_tp)
 
 

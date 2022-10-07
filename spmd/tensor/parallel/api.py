@@ -7,29 +7,16 @@ from spmd import (
     DTensor,
     Shard,
     Replicate,
+    DeviceMesh,
 )
 from spmd.tensor.parallel import TensorParallelMultiheadAttention
 
 
-def _replicate_input(inputs, device_mesh):
+def _replicate_input(inputs: Sequence[torch.Tensor], device_mesh: DeviceMesh) -> Tuple[DTensor]:
     DTensors = []
     for tensor in inputs:
         DTensors.append(DTensor.from_local(tensor, device_mesh, [Replicate()]))
     return tuple(DTensors)
-
-
-def _aggregate_local_tensor(module: torch.nn.Module) -> torch.nn.Module:
-    def hook_func(_module, _input, output):
-        if isinstance(output, DTensor):
-            replica_placement = [Replicate()]
-            return (
-                output.redistribute(output.device_mesh, replica_placement)
-                .contiguous()
-                .to_local()
-            )
-
-    module.register_forward_hook(hook_func)
-    return module
 
 
 def _gradient_hook(param, grad):
@@ -50,9 +37,6 @@ def _shard_self_attn(name, module, device_mesh) -> None:
                     )
                 )
                 module.register_parameter("weight", sharded_weight)
-                module.weight.register_hook(
-                    functools.partial(_gradient_hook, module.weight)
-                )
                 if module.bias is not None:
                     sharded_bias = nn.Parameter(
                         distribute_tensor(
@@ -60,9 +44,6 @@ def _shard_self_attn(name, module, device_mesh) -> None:
                         )
                     )
                     module.register_parameter("bias", sharded_bias)
-                    module.bias.register_hook(
-                        functools.partial(_gradient_hook, module.bias)
-                    )
             elif name == "proj":
                 sharded_weight = nn.Parameter(
                     distribute_tensor(
@@ -70,18 +51,11 @@ def _shard_self_attn(name, module, device_mesh) -> None:
                     )
                 )
                 module.register_parameter("weight", sharded_weight)
-                module.weight.register_hook(
-                    functools.partial(_gradient_hook, module.weight)
-                )
-                _aggregate_local_tensor(module)
                 if module.bias is not None:
                     replicated_bias = nn.Parameter(
                         distribute_tensor(module.bias, device_mesh, replicate)
                     )
                     module.register_parameter("bias", replicated_bias)
-                    module.bias.register_hook(
-                        functools.partial(_gradient_hook, module.bias)
-                    )
 
     if isinstance(module, TensorParallelMultiheadAttention):  # shard TPMA
         for n, m in module.named_children():
@@ -100,9 +74,19 @@ def _shard_self_attn(name, module, device_mesh) -> None:
                 module.register_module(n, tp_multi_head_attention)
 
 
-def shard_self_attn(device_mesh):
+def tp_shard_self_attn(device_mesh):
     return functools.partial(_shard_self_attn, device_mesh=device_mesh)
 
 
 def replicate_input(device_mesh):
     return functools.partial(_replicate_input, device_mesh=device_mesh)
+
+
+def aggregate_output(output: DTensor) -> torch.Tensor:
+    if isinstance(output, DTensor):
+        replica_placement = [Replicate()]
+        return (
+            output.redistribute(output.device_mesh, replica_placement)
+            .contiguous()
+            .to_local()
+        )
