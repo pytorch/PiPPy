@@ -1,11 +1,11 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 import torch.nn as nn
+from torch.distributed._spmd.comm_tensor import _get_tracer
 from torch.distributed.distributed_c10d import get_global_rank, get_world_size
 from torch.fx.experimental.proxy_tensor import make_fx, proxy_slot
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.testing._internal.common_utils import run_tests
-from torch.distributed._spmd.comm_tensor import _get_tracer
 from torch.utils._pytree import tree_flatten, tree_map
 
 import spmd
