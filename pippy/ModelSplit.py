@@ -160,8 +160,7 @@ Input:
   mod: `torch.nn.Module` to split
   nstages: number of stages to split the module into
 Output:
-  A tuple consisting of:
-      - a `fx.GraphModule` transformed from the input module with `pipe_split` inserted
+  A `fx.GraphModule` transformed from the input module with `pipe_split` inserted between `nstages` stages
 """
 
 
