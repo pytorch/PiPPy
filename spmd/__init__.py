@@ -1,6 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import Optional, Callable, Tuple, Union
-import torch
+from typing import Optional, Callable
 import torch.nn as nn
 from spmd.tensor import distribute_tensor
 from spmd.tensor.api import DTensor
