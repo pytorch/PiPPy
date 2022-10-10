@@ -68,9 +68,7 @@ def _shard_self_attn(
                 tp_multi_head_attention = TensorParallelMultiheadAttention(
                     m.embed_dim,
                     m.num_heads,
-                    device=torch.device(
-                        device_mesh.device_type
-                    ),  # TODO: convert DeviceMesh.device_type from str to torch.device???
+                    device=torch.device(device_mesh.device_type),
                     tp_size=device_mesh.size(0),  # group size on dim 0
                     add_bias_kv=m.bias_k is not None,
                 )

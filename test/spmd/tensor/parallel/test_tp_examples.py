@@ -232,11 +232,19 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         # Initialize model using same seed.
         torch.manual_seed(5)
         model = TensorParallelMultiheadAttention(
-            16, 8, tp_size=NUM_DEVICES, add_bias_kv=True, device=self.device_type,
+            16,
+            8,
+            tp_size=NUM_DEVICES,
+            add_bias_kv=True,
+            device=self.device_type,
         )
         torch.manual_seed(5)
         model_tp = TensorParallelMultiheadAttention(
-            16, 8, tp_size=NUM_DEVICES, add_bias_kv=True, device=self.device_type,
+            16,
+            8,
+            tp_size=NUM_DEVICES,
+            add_bias_kv=True,
+            device=self.device_type,
         )
 
         # Ensure model are initialized the same way.
@@ -369,7 +377,11 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         # TODO: our sharding function cannot shard the root node
         torch.manual_seed(5)
         model = TensorParallelMultiheadAttention(
-            16, 8, tp_size=NUM_DEVICES, add_bias_kv=True, device=self.device_type,
+            16,
+            8,
+            tp_size=NUM_DEVICES,
+            add_bias_kv=True,
+            device=self.device_type,
         )
         model_tp = MultiheadAttnWrap(
             16, 8, add_bias_kv=True, device=self.device_type
@@ -379,13 +391,17 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         # Use TensorParallelMultiheadAttention parameters instead
         x = model.qkv.weight.clone().detach()
         x.requires_grad_()
-        model_tp.attn.register_parameter("in_proj_weight", torch.nn.Parameter(x))
+        model_tp.attn.register_parameter(
+            "in_proj_weight", torch.nn.Parameter(x)
+        )
         x = model.qkv.bias.clone().detach()
         x.requires_grad_()
         model_tp.attn.register_parameter("in_proj_bias", torch.nn.Parameter(x))
         x = model.proj.weight.clone().detach()
         x.requires_grad_()
-        model_tp.attn.out_proj.register_parameter("weight", torch.nn.Parameter(x))
+        model_tp.attn.out_proj.register_parameter(
+            "weight", torch.nn.Parameter(x)
+        )
         x = model.proj.bias.clone().detach()
         x.requires_grad_()
         model_tp.attn.out_proj.register_parameter("bias", torch.nn.Parameter(x))
