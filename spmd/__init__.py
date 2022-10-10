@@ -84,3 +84,14 @@ def distribute_module(
         )
 
     return module
+
+
+# All public APIs from spmd package
+__all__ = [
+    "DTensor",
+    "DeviceMesh",
+    "distribute_tensor",
+    "distribute_module",
+    "Shard",
+    "Replicate",
+]
