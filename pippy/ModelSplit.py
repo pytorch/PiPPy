@@ -177,7 +177,7 @@ def split_into_nstages_equal_size(
         buffer_size += buffer.numel()
 
     total_size = param_size + buffer_size
-    per_stage_size = total_size / nstages
+    per_stage_size = total_size // nstages
     logging.debug(
         f"Total model size: {total_size}, " f"per stage size: {per_stage_size}"
     )
