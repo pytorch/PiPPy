@@ -218,276 +218,12 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         output_tp = model_tp(inp)
         self.assertEqual(output, output_tp)
 
-    # TensorParallelMultiheadAttention == dist_module(torch.nn.MultiheadAttention)
-    # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
-    @with_comms
-    @skip_unless_torch_gpu
-    def test_self_attn_megatron_e2e_1(self):
-        inp_size = [8, 12, 16]
-        # Ensure all tp ranks have same input.
-        torch.manual_seed(0)
-        inp = torch.rand(*inp_size, device=self.device_type)
-
-        # TODO: our sharding function cannot shard the root node
-        torch.manual_seed(5)
-        model_tp = MultiheadAttnWrap(
-            16, 8, add_bias_kv=True, device=self.device_type
-        )
-        model = TensorParallelMultiheadAttention(
-            16, 8, self.device_type, tp_size=NUM_DEVICES, add_bias_kv=True
-        )
-        model.copy(model_tp.attn)  # Initialize model with same parameters
-
-        # check if parameters are same
-        self.assertEqual(model.qkv.weight, model_tp.attn.in_proj_weight)
-        self.assertEqual(model.qkv.bias, model_tp.attn.in_proj_bias)
-        self.assertEqual(model.proj.weight, model_tp.attn.out_proj.weight)
-        self.assertEqual(model.proj.bias, model_tp.attn.out_proj.bias)
-
-        # Shard module and initialize optimizer.
-        device_mesh = DeviceMesh(self.device_type, list(range(NUM_DEVICES)))
-        distribute_module(
-            model_tp,
-            device_mesh,
-            partition_fn=tp_shard_self_attn(device_mesh),
-            input_fn=replicate_input(device_mesh),
-            output_fn=aggregate_output,
-        )
-
-        replicate = [Replicate()]
-        device_mesh = model_tp.attn.qkv.weight.device_mesh
-        # Ensure model are initialized the same way.
-        self.assertEqual(
-            model.qkv.weight,
-            model_tp.attn.qkv.weight.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-        self.assertEqual(
-            model.qkv.bias,
-            model_tp.attn.qkv.bias.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-        self.assertEqual(
-            model.proj.weight,
-            model_tp.attn.proj.weight.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-        self.assertEqual(
-            model.proj.bias,
-            model_tp.attn.proj.bias.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-
-        LR = 0.25
-        optim = torch.optim.SGD(model.parameters(), lr=LR)
-        optim_tp = torch.optim.SGD(model_tp.parameters(), lr=LR)
-
-        output = model(inp, inp, inp)
-        output_tp = model_tp(inp, inp, inp)
-        self.assertEqual(output, output_tp)
-
-        output.sum().backward()
-        output_tp.sum().backward()
-
-        replicate = [Replicate()]
-        device_mesh = model_tp.attn.qkv.weight.device_mesh
-        # Ensure gradients are same.
-        self.assertEqual(
-            model.qkv.weight.grad,
-            model_tp.attn.qkv.weight.grad.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-        self.assertEqual(
-            model.qkv.bias.grad,
-            model_tp.attn.qkv.bias.grad.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-        self.assertEqual(
-            model.proj.weight.grad,
-            model_tp.attn.proj.weight.grad.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-        self.assertEqual(
-            model.proj.bias.grad,
-            model_tp.attn.proj.bias.grad.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-
-        optim.step()
-        optim_tp.step()
-
-        # Ensure model weights are still same after update.
-        self.assertEqual(
-            model.qkv.weight,
-            model_tp.attn.qkv.weight.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-        self.assertEqual(
-            model.qkv.bias,
-            model_tp.attn.qkv.bias.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-        self.assertEqual(
-            model.proj.weight,
-            model_tp.attn.proj.weight.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-        self.assertEqual(
-            model.proj.bias,
-            model_tp.attn.proj.bias.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-
-        inp = torch.rand(*inp_size, device=self.device_type)
-        output = model(inp, inp, inp)
-        output_tp = model_tp(inp, inp, inp)
-        # slient difference between outputs
-        print(f"rank {self.rank}:\noutput={output}\noutput_tp={output_tp}")
-        self.assertEqual(output, output_tp)
-
-    # torch.nn.MultiheadAttention == dist_module(torch.nn.MultiheadAttention)
-    # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
-    @with_comms
-    def test_self_attn_megatron_e2e_2(self):
-        inp_size = [8, 12, 16]
-        # Ensure all tp ranks have same input.
-        torch.manual_seed(0)
-        inp = torch.rand(*inp_size, device=self.device_type)
-
-        # Initialize model using same seed.
-        torch.manual_seed(5)
-        model = nn.MultiheadAttention(16, 8, add_bias_kv=True)
-        torch.manual_seed(5)
-        # TODO: our sharding function cannot shard the root node
-        model_tp = MultiheadAttnWrap(16, 8, add_bias_kv=True)
-
-        device_mesh = DeviceMesh(self.device_type, list(range(NUM_DEVICES)))
-        distribute_module(
-            model_tp,
-            device_mesh,
-            partition_fn=tp_shard_self_attn(device_mesh),
-            input_fn=replicate_input(device_mesh),
-            output_fn=aggregate_output,
-        )
-
-        replicate = [Replicate()]
-        device_mesh = model_tp.attn.qkv.weight.device_mesh
-        # Ensure model are initialized the same way.
-        self.assertEqual(
-            model.in_proj_weight,
-            model_tp.attn.qkv.weight.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-        self.assertEqual(
-            model.in_proj_bias,
-            model_tp.attn.qkv.bias.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-        self.assertEqual(
-            model.out_proj.weight,
-            model_tp.attn.proj.weight.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-        self.assertEqual(
-            model.out_proj.bias,
-            model_tp.attn.proj.bias.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-
-        LR = 0.25
-        optim = torch.optim.SGD(model.parameters(), lr=LR)
-        optim_tp = torch.optim.SGD(model_tp.parameters(), lr=LR)
-
-        output = model(inp, inp, inp)[0]
-        output_tp = model_tp(inp, inp, inp)
-        self.assertEqual(output, output_tp)
-
-        output.sum().backward()
-        output_tp.sum().backward()
-
-        replicate = [Replicate()]
-        device_mesh = model_tp.attn.qkv.weight.device_mesh
-        # Ensure gradients are same.
-        self.assertEqual(
-            model.in_proj_weight.grad,
-            model_tp.attn.qkv.weight.grad.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-        self.assertEqual(
-            model.in_proj_bias.grad,
-            model_tp.attn.qkv.bias.grad.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-        self.assertEqual(
-            model.out_proj.weight.grad,
-            model_tp.attn.proj.weight.grad.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-        self.assertEqual(
-            model.out_proj.bias.grad,
-            model_tp.attn.proj.bias.grad.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-
-        optim.step()
-        optim_tp.step()
-
-        # Ensure model weights are still same after update.
-        self.assertEqual(
-            model.qkv.weight,
-            model_tp.attn.qkv.weight.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-        self.assertEqual(
-            model.qkv.bias,
-            model_tp.attn.qkv.bias.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-        self.assertEqual(
-            model.proj.weight,
-            model_tp.attn.proj.weight.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-        self.assertEqual(
-            model.proj.bias,
-            model_tp.attn.proj.bias.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-
-        inp = torch.rand(*inp_size, device=self.device_type)
-        output = model(inp, inp, inp)
-        output_tp = model_tp(inp, inp, inp)
-        self.assertEqual(output, output_tp)
 
     # TensorParallelMultiheadAttention == dist_module(TensorParallelMultiheadAttention)
     # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
     @with_comms
     @skip_unless_torch_gpu
-    def test_self_attn_megatron_e2e_0(self):
+    def test_self_attn_megatron_e2e(self):
         inp_size = [8, 12, 16]
         # Ensure all tp ranks have same input.
         torch.manual_seed(0)
@@ -496,11 +232,11 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         # Initialize model using same seed.
         torch.manual_seed(5)
         model = TensorParallelMultiheadAttention(
-            16, 8, self.device_type, tp_size=NUM_DEVICES, add_bias_kv=True
+            16, 8, tp_size=NUM_DEVICES, add_bias_kv=True, device=self.device_type,
         )
         torch.manual_seed(5)
         model_tp = TensorParallelMultiheadAttention(
-            16, 8, self.device_type, tp_size=NUM_DEVICES, add_bias_kv=True
+            16, 8, tp_size=NUM_DEVICES, add_bias_kv=True, device=self.device_type,
         )
 
         # Ensure model are initialized the same way.
@@ -558,7 +294,6 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         output.sum().backward()
         output_tp.sum().backward()
 
-        replicate = [Replicate()]
         device_mesh = model_tp.qkv.weight.device_mesh
         # Ensure gradients are same.
         self.assertEqual(
@@ -611,6 +346,289 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         self.assertEqual(
             model.proj.bias,
             model_tp.proj.bias.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+
+        inp = torch.rand(*inp_size, device=self.device_type)
+        output = model(inp, inp, inp)
+        output_tp = model_tp(inp, inp, inp)
+        self.assertEqual(output, output_tp)
+
+
+    # TensorParallelMultiheadAttention == dist_module(torch.nn.MultiheadAttention)
+    # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
+    @with_comms
+    @skip_unless_torch_gpu
+    def test_self_attn_replacement_megatron_e2e(self):
+        inp_size = [8, 12, 16]
+        # Ensure all tp ranks have same input.
+        torch.manual_seed(0)
+        inp = torch.rand(*inp_size, device=self.device_type)
+
+        # TODO: our sharding function cannot shard the root node
+        torch.manual_seed(5)
+        model = TensorParallelMultiheadAttention(
+            16, 8, tp_size=NUM_DEVICES, add_bias_kv=True, device=self.device_type,
+        )
+        model_tp = MultiheadAttnWrap(
+            16, 8, add_bias_kv=True, device=self.device_type
+        )
+
+        # TODO: somehow using torch.nn.MultiheadAttention's initial params does not work
+        # Use TensorParallelMultiheadAttention parameters instead
+        x = model.qkv.weight.clone().detach()
+        x.requires_grad_()
+        model_tp.attn.register_parameter("in_proj_weight", torch.nn.Parameter(x))
+        x = model.qkv.bias.clone().detach()
+        x.requires_grad_()
+        model_tp.attn.register_parameter("in_proj_bias", torch.nn.Parameter(x))
+        x = model.proj.weight.clone().detach()
+        x.requires_grad_()
+        model_tp.attn.out_proj.register_parameter("weight", torch.nn.Parameter(x))
+        x = model.proj.bias.clone().detach()
+        x.requires_grad_()
+        model_tp.attn.out_proj.register_parameter("bias", torch.nn.Parameter(x))
+
+        # check if parameters are same
+        self.assertEqual(model.qkv.weight, model_tp.attn.in_proj_weight)
+        self.assertEqual(model.qkv.bias, model_tp.attn.in_proj_bias)
+        self.assertEqual(model.proj.weight, model_tp.attn.out_proj.weight)
+        self.assertEqual(model.proj.bias, model_tp.attn.out_proj.bias)
+
+        # Shard module and initialize optimizer.
+        device_mesh = DeviceMesh(self.device_type, list(range(NUM_DEVICES)))
+        distribute_module(
+            model_tp,
+            device_mesh,
+            partition_fn=tp_shard_self_attn(device_mesh),
+            input_fn=replicate_input(device_mesh),
+            output_fn=aggregate_output,
+        )
+
+        replicate = [Replicate()]
+        device_mesh = model_tp.attn.qkv.weight.device_mesh
+        # Ensure model are initialized the same way.
+        self.assertEqual(
+            model.qkv.weight,
+            model_tp.attn.qkv.weight.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.qkv.bias,
+            model_tp.attn.qkv.bias.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.proj.weight,
+            model_tp.attn.proj.weight.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.proj.bias,
+            model_tp.attn.proj.bias.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+
+        LR = 0.25
+        optim = torch.optim.SGD(model.parameters(), lr=LR)
+        optim_tp = torch.optim.SGD(model_tp.parameters(), lr=LR)
+
+        output = model(inp, inp, inp)
+        output_tp = model_tp(inp, inp, inp)
+        self.assertEqual(output, output_tp)
+
+        output.sum().backward()
+        output_tp.sum().backward()
+
+        device_mesh = model_tp.attn.qkv.weight.device_mesh
+        # Ensure gradients are same.
+        self.assertEqual(
+            model.qkv.weight.grad,
+            model_tp.attn.qkv.weight.grad.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.qkv.bias.grad,
+            model_tp.attn.qkv.bias.grad.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.proj.weight.grad,
+            model_tp.attn.proj.weight.grad.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.proj.bias.grad,
+            model_tp.attn.proj.bias.grad.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+
+        optim.step()
+        optim_tp.step()
+
+        # Ensure model weights are still same after update.
+        self.assertEqual(
+            model.qkv.weight,
+            model_tp.attn.qkv.weight.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.qkv.bias,
+            model_tp.attn.qkv.bias.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.proj.weight,
+            model_tp.attn.proj.weight.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.proj.bias,
+            model_tp.attn.proj.bias.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+
+        inp = torch.rand(*inp_size, device=self.device_type)
+        output = model(inp, inp, inp)
+        output_tp = model_tp(inp, inp, inp)
+        self.assertEqual(output, output_tp)
+
+
+    # torch.nn.MultiheadAttention == dist_module(torch.nn.MultiheadAttention)
+    # Note: it seems torch.nn.MultiheadAttention != TensorParallelMultiheadAttention
+    # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
+    @with_comms
+    @skip_unless_torch_gpu
+    def test_torch_self_attn_replacement_megatron_e2e(self):
+        inp_size = [8, 12, 16]
+        # Ensure all tp ranks have same input.
+        torch.manual_seed(0)
+        inp = torch.rand(*inp_size, device=self.device_type)
+
+        # Initialize model using same seed.
+        torch.manual_seed(5)
+        model = nn.MultiheadAttention(
+            16, 8, add_bias_kv=True, device=self.device_type
+        )
+        torch.manual_seed(5)
+        # TODO: our sharding function cannot shard the root node
+        model_tp = MultiheadAttnWrap(
+            16, 8, add_bias_kv=True, device=self.device_type
+        )
+
+        device_mesh = DeviceMesh(self.device_type, list(range(NUM_DEVICES)))
+        distribute_module(
+            model_tp,
+            device_mesh,
+            partition_fn=tp_shard_self_attn(device_mesh),
+            input_fn=replicate_input(device_mesh),
+            output_fn=aggregate_output,
+        )
+
+        replicate = [Replicate()]
+        device_mesh = model_tp.attn.qkv.weight.device_mesh
+        # Ensure model are initialized the same way.
+        self.assertEqual(
+            model.in_proj_weight,
+            model_tp.attn.qkv.weight.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.in_proj_bias,
+            model_tp.attn.qkv.bias.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.out_proj.weight,
+            model_tp.attn.proj.weight.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.out_proj.bias,
+            model_tp.attn.proj.bias.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+
+        LR = 0.25
+        optim = torch.optim.SGD(model.parameters(), lr=LR)
+        optim_tp = torch.optim.SGD(model_tp.parameters(), lr=LR)
+
+        output = model(inp, inp, inp)[0]
+        output_tp = model_tp(inp, inp, inp)
+        self.assertEqual(output, output_tp)
+
+        output.sum().backward()
+        output_tp.sum().backward()
+
+        device_mesh = model_tp.attn.qkv.weight.device_mesh
+        # Ensure gradients are same.
+        self.assertEqual(
+            model.in_proj_weight.grad,
+            model_tp.attn.qkv.weight.grad.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.in_proj_bias.grad,
+            model_tp.attn.qkv.bias.grad.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.out_proj.weight.grad,
+            model_tp.attn.proj.weight.grad.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.out_proj.bias.grad,
+            model_tp.attn.proj.bias.grad.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+
+        optim.step()
+        optim_tp.step()
+
+        # Ensure model weights are still same after update.
+        self.assertEqual(
+            model.qkv.weight,
+            model_tp.attn.qkv.weight.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.qkv.bias,
+            model_tp.attn.qkv.bias.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.proj.weight,
+            model_tp.attn.proj.weight.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.proj.bias,
+            model_tp.attn.proj.bias.redistribute(
                 device_mesh=device_mesh, placements=replicate
             ).to_local(),
         )

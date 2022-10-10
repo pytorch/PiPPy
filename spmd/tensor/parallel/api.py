@@ -2,7 +2,7 @@
 import torch
 import torch.nn as nn
 import functools
-from typing import Sequence, Tuple
+from typing import Sequence, Tuple, Callable
 from spmd import (
     distribute_tensor,
     DTensor,
@@ -10,26 +10,27 @@ from spmd import (
     Replicate,
     DeviceMesh,
 )
+from spmd.tensor import Placement
 from spmd.tensor.parallel import TensorParallelMultiheadAttention
 
 
-def _replicate_input(inputs: Sequence[torch.Tensor], device_mesh: DeviceMesh) -> Tuple[DTensor]:
+def _replicate_input(
+    inputs: Sequence[torch.Tensor], device_mesh: DeviceMesh
+) -> Tuple[DTensor, ...]:
     DTensors = []
     for tensor in inputs:
         DTensors.append(DTensor.from_local(tensor, device_mesh, [Replicate()]))
     return tuple(DTensors)
 
 
-def _gradient_hook(param, grad):
-    param._local_tensor.grad = grad._local_tensor
+def _shard_self_attn(
+    name: str, module: nn.Module, device_mesh: DeviceMesh
+) -> None:
+    col_wise_sharding: Sequence[Placement] = [Shard(0)]
+    row_wise_sharding: Sequence[Placement] = [Shard(1)]
+    replicate: Sequence[Placement] = [Replicate()]
 
-
-def _shard_self_attn(name, module, device_mesh) -> None:
-    col_wise_sharding = [Shard(0)]
-    row_wise_sharding = [Shard(1)]
-    replicate = [Replicate()]
-
-    def _shard_self_attn_params(name, module):
+    def _shard_self_attn_params(name: str, module: nn.Module) -> None:
         if isinstance(module, nn.Linear):
             if name == "qkv":
                 sharded_weight = nn.Parameter(
@@ -67,7 +68,9 @@ def _shard_self_attn(name, module, device_mesh) -> None:
                 tp_multi_head_attention = TensorParallelMultiheadAttention(
                     m.embed_dim,
                     m.num_heads,
-                    device=device_mesh.device_type,
+                    device=torch.device(
+                        device_mesh.device_type
+                    ),  # TODO: convert DeviceMesh.device_type from str to torch.device???
                     tp_size=device_mesh.size(0),  # group size on dim 0
                     add_bias_kv=m.bias_k is not None,
                 )
@@ -75,11 +78,15 @@ def _shard_self_attn(name, module, device_mesh) -> None:
                 module.register_module(n, tp_multi_head_attention)
 
 
-def tp_shard_self_attn(device_mesh):
+def tp_shard_self_attn(
+    device_mesh: DeviceMesh,
+) -> Callable[[str, nn.Module], None]:
     return functools.partial(_shard_self_attn, device_mesh=device_mesh)
 
 
-def replicate_input(device_mesh):
+def replicate_input(
+    device_mesh: DeviceMesh,
+) -> functools.partial[Tuple[DTensor, ...]]:
     return functools.partial(_replicate_input, device_mesh=device_mesh)
 
 
@@ -88,6 +95,6 @@ def aggregate_output(output: DTensor) -> torch.Tensor:
         replica_placement = [Replicate()]
         return (
             output.redistribute(output.device_mesh, replica_placement)
-            .contiguous()
             .to_local()
+            .contiguous()
         )

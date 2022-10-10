@@ -263,6 +263,11 @@ class TensorParallelMultiheadAttention(torch.nn.Module):
         if that.in_proj_bias is not None:
             self.qkv.register_parameter("bias", that.in_proj_bias)
         if that.out_proj.weight is not None:
-            self.proj.register_parameter("weight", that.out_proj.weight)
+            # TODO: The use of Parameter is to avoid `mypy` issue caused
+            # by the `tensor` type annotation on Linear.weight to which
+            # a Parameter object is actually assigned
+            self.proj.register_parameter(
+                "weight", torch.nn.Parameter(that.out_proj.weight)
+            )
         if that.out_proj.bias is not None:
             self.proj.register_parameter("bias", that.out_proj.bias)
