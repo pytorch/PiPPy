@@ -144,7 +144,6 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         )
 
     @with_comms
-    @skip_unless_torch_gpu
     def test_activations(self):
         device_mesh = self.build_device_mesh()
         self._run_sharded_elementwise_ops(
@@ -185,7 +184,6 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         )
 
     @with_comms
-    @skip_unless_torch_gpu
     @skip(
         "testing RNG based ops is broken: https://github.com/pytorch/tau/issues/494"
     )
@@ -248,7 +246,6 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         )
 
     @with_comms
-    @skip_unless_torch_gpu
     def test_dropout_errors(self):
         device_mesh = self.build_device_mesh()
         with self.assertRaisesRegex(RuntimeError, "supported"):
@@ -260,7 +257,6 @@ class DistElementwiseOpsTest(DistTensorTestBase):
             )
 
     @with_comms
-    @skip_unless_torch_gpu
     def test_mul_out(self):
         device_mesh = self.build_device_mesh()
         torch.manual_seed(self.rank)
