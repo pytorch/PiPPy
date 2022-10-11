@@ -66,6 +66,26 @@ class ExampleCode(torch.nn.Module):
         return {"out": x}
 
 
+def inspect_split_module(
+    pipe: Pipe,
+    expected_stages: int = -1,
+):
+    gm: pippy.fx.GraphModule = pipe.split_gm
+    # Check returned number of stages
+    nstages = len(list(gm.children()))
+    if expected_stages > 0:
+        assert (
+            nstages == expected_stages
+        ), f"Model is split into {nstages} instead of {expected_stages} stages"
+
+    print(f"\n======= GraphModule after Auto-split =======")
+    print(gm)
+
+    for i, submod in enumerate(gm.children()):
+        print(f"\n======= Child module {i} =======")
+        print(submod)
+
+
 # Common function to run pipeline with input and check equivalence
 def run_pipe_driver(ec_pipe, args):
     args_chunk_spec = (TensorChunkSpec(0),)
@@ -125,22 +145,15 @@ def test_split_on_size_threshold(_, args):
 
     # Auto-split based on size threshold
     threshold = 300000
-    gm, nstages = pippy.ModelSplit.split_on_size_threshold(ec, threshold)
-    print(f"Model is split into {nstages} stages")
+    split_policy = pippy.ModelSplit.split_on_size_threshold(threshold)
+    ec_pipe = Pipe.from_tracing(ec, MULTI_USE_PARAM_CONFIG, split_policy=split_policy)
 
-    print(f"\n======= GraphModule after Auto-split =======")
-    print(gm)
-
-    ec_pipe = Pipe.from_tracing(gm, MULTI_USE_PARAM_CONFIG)
-
-    for i, submod in enumerate(ec_pipe.split_gm.children()):
-        print(f"\n======= Child module {i} =======")
-        print(submod)
+    inspect_split_module(ec_pipe, expected_stages=5)
 
     run_pipe_driver(ec_pipe, args)
 
 
-def test_split_into_nstages(_, args):
+def test_split_into_equal_size(_, args):
     ec = ExampleCode()
     ec.to(args.device)
     ec_input = torch.randn(bs, d_hid, device=args.device)
@@ -148,21 +161,10 @@ def test_split_into_nstages(_, args):
 
     # Auto-split based on given number of stages
     nstages = 5
-    gm = pippy.ModelSplit.split_into_nstages_equal_size(ec, nstages)
-    print(f"\n======= GraphModule after Auto-split =======")
-    print(gm)
+    split_policy = pippy.ModelSplit.split_into_equal_size(nstages)
+    ec_pipe = Pipe.from_tracing(ec, MULTI_USE_PARAM_CONFIG, split_policy=split_policy)
 
-    ec_pipe = Pipe.from_tracing(gm, MULTI_USE_PARAM_CONFIG)
-
-    # Check returned number of stages
-    rv_stages = len(list(ec_pipe.split_gm.children()))
-    assert (
-        rv_stages == nstages
-    ), f"Model is split into {rv_stages} instead of {nstages} stages"
-
-    for i, submod in enumerate(ec_pipe.split_gm.children()):
-        print(f"\n======= Child module {i} =======")
-        print(submod)
+    inspect_split_module(ec_pipe, expected_stages=nstages)
 
     run_pipe_driver(ec_pipe, args)
 
@@ -209,7 +211,7 @@ def main(args=None):
     print("Using schedule:", args.schedule)
 
     run_pippy(test_split_on_size_threshold, args)
-    run_pippy(test_split_into_nstages, args)
+    run_pippy(test_split_into_equal_size, args)
 
 
 if __name__ == "__main__":

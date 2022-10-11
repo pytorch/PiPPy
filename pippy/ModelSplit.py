@@ -1,6 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import logging
-from typing import Dict, List, Tuple
+from typing import Callable, Dict, List, Tuple
 
 import torch
 import pippy.fx
@@ -52,7 +52,7 @@ def _analyze_node_size(
 """
 Split a model based on a maximum number of parameter and buffer elements a pipeline stage can have
 Input:
-  mod: `torch.nn.Module` to split
+  gm: `pippy.fx.GraphModule` to split
   threshold: maximum number of parameter and buffer elements a stage can have
   max_stages: maximum number of stages; default = -1, no limit
 Output:
@@ -63,10 +63,8 @@ Output:
 
 
 def _split_on_size_threshold_with_max_stages(
-    mod: torch.nn.Module, threshold: int, max_stages: int = -1
+    gm: pippy.fx.GraphModule, threshold: int, max_stages: int = -1,
 ) -> Tuple[pippy.fx.GraphModule, int]:
-    # Trace the user module to get a graph first
-    gm: pippy.fx.GraphModule = pippy.fx.symbolic_trace(mod)
     # Analyze size of parameters/buffers used by each node in the graph
     node_param_sizes = _analyze_node_size(gm)
 
@@ -137,53 +135,61 @@ def _split_on_size_threshold_with_max_stages(
 
 
 """
-Split a model based on a maximum number of parameter and buffer elements a pipeline stage can have
+Create a Callable that splits a module based on a maximum number of parameter and buffer elements a pipeline stage can
+have.
 Input:
-  mod: `torch.nn.Module` to split
   threshold: maximum number of parameter and buffer elements a stage can have
 Output:
-  A tuple consisting of:
-      - a `fx.GraphModule` transformed from the input module with `pipe_split` inserted
-      - number of stages the input module is split into
+  a Callable that transforms an input `fx.GraphModule` into an output `fx.GraphModule` that has `pipe_split` inserted
+  before a stage reaches the `threshold` size
 """
 
 
 def split_on_size_threshold(
-    mod: torch.nn.Module, threshold: int
-) -> Tuple[pippy.fx.GraphModule, int]:
-    return _split_on_size_threshold_with_max_stages(mod, threshold)
+    threshold: int,
+) -> Callable[[pippy.fx.GraphModule], pippy.fx.GraphModule]:
+    def _split_on_size_threshold(
+        gm: pippy.fx.GraphModule
+    ) -> pippy.fx.GraphModule:
+        gm, _ = _split_on_size_threshold_with_max_stages(gm, threshold)
+        return gm
+
+    return _split_on_size_threshold
 
 
 """
-Split a model into given number of stages, based on equal stage size
+Create a Callable that splits a model into given number of stages, based on equal stage size
 Input:
-  mod: `torch.nn.Module` to split
   nstages: number of stages to split the module into
 Output:
-  A `fx.GraphModule` transformed from the input module with `pipe_split` inserted between `nstages` stages
+  a Callable that transforms an input `fx.GraphModule` into an output `fx.GraphModule` that has `pipe_split` inserted
+  between `nstages` stages
 """
 
 
-def split_into_nstages_equal_size(
-    mod: torch.nn.Module,
+def split_into_equal_size(
     nstages: int = 1,
-) -> pippy.fx.GraphModule:
-    param_size = 0
-    for param in mod.parameters():
-        param_size += param.numel()
-    buffer_size = 0
-    for buffer in mod.buffers():
-        buffer_size += buffer.numel()
+) -> Callable[[pippy.fx.GraphModule], pippy.fx.GraphModule]:
+    def _split_into_nstages_equal_size(
+        gm: pippy.fx.GraphModule
+    ) -> pippy.fx.GraphModule:
+        param_size = 0
+        for param in gm.parameters():
+            param_size += param.numel()
+        buffer_size = 0
+        for buffer in gm.buffers():
+            buffer_size += buffer.numel()
 
-    total_size = param_size + buffer_size
-    per_stage_size = total_size // nstages
-    logging.debug(
-        f"Total model size: {total_size}, " f"per stage size: {per_stage_size}"
-    )
+        total_size = param_size + buffer_size
+        per_stage_size = total_size // nstages
+        logging.debug(
+            f"Total model size: {total_size}, " f"per stage size: {per_stage_size}"
+        )
 
-    gm, rv_nstages = _split_on_size_threshold_with_max_stages(
-        mod, per_stage_size, nstages
-    )
-    assert rv_nstages == nstages
+        gm, rv_nstages = _split_on_size_threshold_with_max_stages(
+            gm, per_stage_size, nstages
+        )
+        assert rv_nstages == nstages
+        return gm
 
-    return gm
+    return _split_into_nstages_equal_size
