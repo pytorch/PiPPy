@@ -10,14 +10,6 @@ from spmd.tensor.redistribute import redistribute_dtensor
 
 ArgKwargsType = Union[Tuple[object, ...], Dict[str, object]]
 
-# pyre-fixme[3]: Return type must be annotated.
-# pyre-fixme[2]: Parameter must be annotated.
-def all_equal(xs):
-    xs = list(xs)
-    if not xs:
-        return True
-    return xs[1:] == xs[:-1]
-
 
 def unwrap_local_tensor(e: "dtensor.DTensor") -> torch.Tensor:
     return e._local_tensor if isinstance(e, dtensor.DTensor) else e
