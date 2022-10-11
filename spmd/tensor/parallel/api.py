@@ -3,24 +3,24 @@ import torch
 import torch.nn as nn
 import functools
 from typing import Sequence, Tuple, Callable
-from spmd import (
+from spmd.tensor import (
     distribute_tensor,
     DTensor,
     Shard,
     Replicate,
     DeviceMesh,
+    Placement,
 )
-from spmd.tensor import Placement
 from spmd.tensor.parallel import TensorParallelMultiheadAttention
 
 
 def _replicate_input(
     inputs: Sequence[torch.Tensor], device_mesh: DeviceMesh
 ) -> Tuple[DTensor, ...]:
-    DTensors = []
-    for tensor in inputs:
-        DTensors.append(DTensor.from_local(tensor, device_mesh, [Replicate()]))
-    return tuple(DTensors)
+    replicate = [Replicate()] * device_mesh.ndim
+    return tuple(
+        DTensor.from_local(tensor, device_mesh, replicate) for tensor in inputs
+    )
 
 
 def _shard_self_attn(
@@ -28,7 +28,7 @@ def _shard_self_attn(
 ) -> None:
     col_wise_sharding: Sequence[Placement] = [Shard(0)]
     row_wise_sharding: Sequence[Placement] = [Shard(1)]
-    replicate: Sequence[Placement] = [Replicate()]
+    replicate: Sequence[Placement] = [Replicate()] * device_mesh.ndim
 
     def _shard_self_attn_params(name: str, module: nn.Module) -> None:
         if isinstance(module, nn.Linear):
@@ -88,11 +88,12 @@ def replicate_input(
     return functools.partial(_replicate_input, device_mesh=device_mesh)
 
 
-def aggregate_output(output: DTensor) -> torch.Tensor:
+def replicate_output(output: DTensor) -> torch.Tensor:
     if isinstance(output, DTensor):
-        replica_placement = [Replicate()]
+        replicate = [Replicate()] * output.device_mesh.ndim
+        # TODO: can the output be left incontiguous?
         return (
-            output.redistribute(output.device_mesh, replica_placement)
+            output.redistribute(output.device_mesh, replicate)
             .to_local()
             .contiguous()
         )

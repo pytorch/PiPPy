@@ -16,7 +16,7 @@ from spmd.tensor.parallel import (
     TensorParallelMultiheadAttention,
     tp_shard_self_attn,
     replicate_input,
-    aggregate_output,
+    replicate_output,
 )
 
 
@@ -35,7 +35,7 @@ class MLPModule(torch.nn.Module):
 def _aggregate_local_tensor(module: torch.nn.Module) -> torch.nn.Module:
     def hook_func(_module, _input, output):
         if isinstance(output, DTensor):
-            replica_placement = [Replicate()]
+            replica_placement = [Replicate()] * device_mesh.ndim
             return (
                 output.redistribute(output.device_mesh, replica_placement)
                 .contiguous()
@@ -58,7 +58,7 @@ def shard_mlp(m, device_type, tp_size):
     )
     col_wise_sharding = [Shard(0)]
     row_wise_sharding = [Shard(1)]
-    replicate = [Replicate()]
+    replicate = [Replicate()] * device_mesh.ndim
 
     def shard_params(name, module):
         if isinstance(module, nn.Linear):
@@ -153,8 +153,8 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         # This is for FSDP + TP integration.
         self.assertTrue(model_tp.net1.weight._local_tensor.grad is not None)
 
-        replicate = [Replicate()]
         device_mesh = model_tp.net1.weight.device_mesh
+        replicate = [Replicate()] * device_mesh.ndim
 
         # Ensure gradients are same.
         self.assertEqual(
@@ -218,7 +218,6 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         output_tp = model_tp(inp)
         self.assertEqual(output, output_tp)
 
-
     # TensorParallelMultiheadAttention == dist_module(TensorParallelMultiheadAttention)
     # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
     @with_comms
@@ -260,11 +259,11 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
             device_mesh,
             partition_fn=tp_shard_self_attn(device_mesh),
             input_fn=replicate_input(device_mesh),
-            output_fn=aggregate_output,
+            output_fn=replicate_output,
         )
 
-        replicate = [Replicate()]
         device_mesh = model_tp.qkv.weight.device_mesh
+        replicate = [Replicate()] * device_mesh.ndim
         # Ensure model are initialized the same way.
         self.assertEqual(
             model.qkv.weight,
@@ -363,7 +362,6 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         output_tp = model_tp(inp, inp, inp)
         self.assertEqual(output, output_tp)
 
-
     # TensorParallelMultiheadAttention == dist_module(torch.nn.MultiheadAttention)
     # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
     @with_comms
@@ -389,21 +387,20 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
 
         # TODO: somehow using torch.nn.MultiheadAttention's initial params does not work
         # Use TensorParallelMultiheadAttention parameters instead
-        x = model.qkv.weight.clone().detach()
-        x.requires_grad_()
+        x = model.qkv.weight.clone().detach().requires_grad_()
         model_tp.attn.register_parameter(
             "in_proj_weight", torch.nn.Parameter(x)
         )
-        x = model.qkv.bias.clone().detach()
-        x.requires_grad_()
+
+        x = model.qkv.bias.clone().detach().requires_grad_()
         model_tp.attn.register_parameter("in_proj_bias", torch.nn.Parameter(x))
-        x = model.proj.weight.clone().detach()
-        x.requires_grad_()
+
+        x = model.proj.weight.clone().detach().requires_grad_()
         model_tp.attn.out_proj.register_parameter(
             "weight", torch.nn.Parameter(x)
         )
-        x = model.proj.bias.clone().detach()
-        x.requires_grad_()
+
+        x = model.proj.bias.clone().detach().requires_grad_()
         model_tp.attn.out_proj.register_parameter("bias", torch.nn.Parameter(x))
 
         # check if parameters are same
@@ -419,11 +416,11 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
             device_mesh,
             partition_fn=tp_shard_self_attn(device_mesh),
             input_fn=replicate_input(device_mesh),
-            output_fn=aggregate_output,
+            output_fn=replicate_output,
         )
 
-        replicate = [Replicate()]
         device_mesh = model_tp.attn.qkv.weight.device_mesh
+        replicate = [Replicate()] * device_mesh.ndim
         # Ensure model are initialized the same way.
         self.assertEqual(
             model.qkv.weight,
