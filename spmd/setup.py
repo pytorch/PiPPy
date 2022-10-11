@@ -45,7 +45,9 @@ def write_version_file() -> None:
 requirements = [
     # This represents a nightly version of PyTorch.
     # It can be installed as a binary or from source.
-    "torch>=1.12.0.dev"
+    "torch>=1.13.0.dev"
+    "pyyaml"
+    "expecttest"
 ]
 
 extras: Dict[str, Union[str, List[str]]] = {}
@@ -75,7 +77,7 @@ if __name__ == "__main__":
         name=package_name,
         version=version,
         author="SPMD Team",
-        url="https://github.com/pytorch/PiPPy/spmd",
+        url="https://github.com/pytorch/tau/spmd",
         description="SPMD implementation for PyTorch",
         license="BSD",
         # Package info

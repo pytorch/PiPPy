@@ -1,2 +1,10 @@
 # Python dependencies required for release
-torch >= 1.13.0.dev0
+--pre --extra-index-url https://download.pytorch.org/whl/nightly/cu113 sys_platform == "linux"
+torch >= 1.14.0.dev0; sys_platform == "linux"
+
+--pre --extra-index-url https://download.pytorch.org/whl/nightly/cpu sys_platform == "darwin"
+torch >= 1.14.0.dev0; sys_platform == "darwin"
+
+expecttest
+numpy
+pyyaml
