@@ -134,9 +134,10 @@ def run_master(pp_ranks, args):
 
     number_of_workers = len(pp_ranks) - pippy.utils.exclude_master
     print(f"number_of_workers = {number_of_workers}")
-    if args.auto_split:
-        # Specify auto_split policy for use by `from_tracing` call later
-        # split_policy = pippy.ModelSplit.split_on_size_threshold(5e6)
+    # Specify auto_split policy for use by `from_tracing` call later
+    if args.auto_split == "threshold":
+        split_policy = pippy.ModelSplit.split_on_size_threshold(490 * 1e6)
+    elif args.auto_split == "equal_size":
         split_policy = pippy.ModelSplit.split_into_equal_size(number_of_workers)
     else:
         # Manually insert split points before `from_tracing` call
@@ -242,7 +243,7 @@ if __name__ == "__main__":
     parser.add_argument('--checkpoint', type=int, default=1, choices=[0, 1])
     parser.add_argument('--pp_group_size', type=int, default=8)
     parser.add_argument('--exclude_master', type=int, default=0, choices=[0, 1])
-    parser.add_argument('--auto_split', type=int, default=0, choices=[0, 1])
+    parser.add_argument('--auto_split', type=str, default="")
     args = parser.parse_args()
 
     assert args.world_size % args.pp_group_size == 0
