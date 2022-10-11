@@ -146,7 +146,9 @@ def test_split_on_size_threshold(_, args):
     # Auto-split based on size threshold
     threshold = 300000
     split_policy = pippy.ModelSplit.split_on_size_threshold(threshold)
-    ec_pipe = Pipe.from_tracing(ec, MULTI_USE_PARAM_CONFIG, split_policy=split_policy)
+    ec_pipe = Pipe.from_tracing(
+        ec, MULTI_USE_PARAM_CONFIG, split_policy=split_policy
+    )
 
     inspect_split_module(ec_pipe, expected_stages=5)
 
@@ -162,7 +164,9 @@ def test_split_into_equal_size(_, args):
     # Auto-split based on given number of stages
     nstages = 5
     split_policy = pippy.ModelSplit.split_into_equal_size(nstages)
-    ec_pipe = Pipe.from_tracing(ec, MULTI_USE_PARAM_CONFIG, split_policy=split_policy)
+    ec_pipe = Pipe.from_tracing(
+        ec, MULTI_USE_PARAM_CONFIG, split_policy=split_policy
+    )
 
     inspect_split_module(ec_pipe, expected_stages=nstages)
 

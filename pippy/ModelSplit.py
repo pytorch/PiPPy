@@ -63,7 +63,9 @@ Output:
 
 
 def _split_on_size_threshold_with_max_stages(
-    gm: pippy.fx.GraphModule, threshold: int, max_stages: int = -1,
+    gm: pippy.fx.GraphModule,
+    threshold: int,
+    max_stages: int = -1,
 ) -> Tuple[pippy.fx.GraphModule, int]:
     # Analyze size of parameters/buffers used by each node in the graph
     node_param_sizes = _analyze_node_size(gm)
@@ -149,7 +151,7 @@ def split_on_size_threshold(
     threshold: int,
 ) -> Callable[[pippy.fx.GraphModule], pippy.fx.GraphModule]:
     def _split_on_size_threshold(
-        gm: pippy.fx.GraphModule
+        gm: pippy.fx.GraphModule,
     ) -> pippy.fx.GraphModule:
         gm, _ = _split_on_size_threshold_with_max_stages(gm, threshold)
         return gm
@@ -171,7 +173,7 @@ def split_into_equal_size(
     nstages: int = 1,
 ) -> Callable[[pippy.fx.GraphModule], pippy.fx.GraphModule]:
     def _split_into_nstages_equal_size(
-        gm: pippy.fx.GraphModule
+        gm: pippy.fx.GraphModule,
     ) -> pippy.fx.GraphModule:
         param_size = 0
         for param in gm.parameters():
@@ -183,7 +185,8 @@ def split_into_equal_size(
         total_size = param_size + buffer_size
         per_stage_size = total_size // nstages
         logging.debug(
-            f"Total model size: {total_size}, " f"per stage size: {per_stage_size}"
+            f"Total model size: {total_size}, "
+            f"per stage size: {per_stage_size}"
         )
 
         gm, rv_nstages = _split_on_size_threshold_with_max_stages(
