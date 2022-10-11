@@ -48,7 +48,7 @@ requirements = [
     "torch>=1.13.0.dev",
     "expecttest",
     "numpy",
-    "pyyaml"
+    "pyyaml",
 ]
 
 extras: Dict[str, Union[str, List[str]]] = {}
