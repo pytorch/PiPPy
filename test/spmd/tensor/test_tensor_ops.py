@@ -85,16 +85,38 @@ class DistTensorOpsTest(DistTensorTestBase):
         self.assertTrue(mul_res is dt_to_mul)
         self.assertEqual(mul_res.to_local(), expected_mul_dt.to_local())
 
+        # test inplace op self and other dtensor with other specs
+        # and make sure out spec not change
+        shard_spec = [Shard(0)]
+        partial_spec = [_Partial()]
+        dt_to_inplace_add = distribute_tensor(input_tensor, mesh, shard_spec)
+        partial_grad = DTensor.from_local(
+            torch.randn(12, 3), mesh, partial_spec
+        )
+        res = dt_to_inplace_add.add_(partial_grad)
+        self.assertTrue(res is dt_to_inplace_add)
+        self.assertTrue(res.placements == shard_spec)
+
     @with_comms
     def test_op_out_variant(self):
         mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         input_tensor = torch.randn((12, 3), device=self.device_type)
-        dist_tensor_out = distribute_tensor(input_tensor, mesh, [Shard(0)])
-        expected_dt = dist_tensor_out.clone() + 3
-        res = torch.add(dist_tensor_out, 3, out=dist_tensor_out)
+        sharded_dt_input = distribute_tensor(input_tensor, mesh, [Shard(0)])
+        expected_dt = sharded_dt_input.clone() + 3
+        sharded_dt_out = sharded_dt_input.clone()
+        res = torch.add(sharded_dt_input, 3, out=sharded_dt_out)
         # op out variant should be the same instance before and after
-        self.assertTrue(res is dist_tensor_out)
-        self.assertEqual(dist_tensor_out.to_local(), expected_dt.to_local())
+        self.assertTrue(res is sharded_dt_out)
+        self.assertEqual(sharded_dt_out.to_local(), expected_dt.to_local())
+
+        # test op out variant with other spec and make sure out spec not change
+        replica_spec = [Replicate()]
+        replicate_out = distribute_tensor(input_tensor, mesh, replica_spec)
+        expected_dt = replicate_out.clone() + 3
+        res = torch.add(sharded_dt_input, 3, out=replicate_out)
+        self.assertTrue(res is replicate_out)
+        self.assertTrue(res.placements == replica_spec)
+        self.assertEqual(replicate_out.to_local(), expected_dt.to_local())
 
     @with_comms
     def test_empty_like(self):

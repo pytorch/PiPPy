@@ -10,16 +10,13 @@ from spmd.testing.common_utils import (
     with_comms,
     skip_unless_torch_gpu,
 )
-from spmd.tensor.dispatch import OpSchema
 
 from spmd.tensor import distribute_tensor
-from spmd.tensor.ops.pointwise_ops import pointwise_rule
-from spmd import DTensor, DeviceMesh
+from spmd import DeviceMesh, DTensor
 from spmd.tensor.placement_types import (
     Shard,
     Replicate,
     _Partial,
-    DTensorSpec,
     Placement,
 )
 from torch.distributed.distributed_c10d import ReduceOp
