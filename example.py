@@ -2,6 +2,7 @@
 import torch
 from typing import Any
 
+
 class MyNetworkBlock(torch.nn.Module):
     def __init__(self, in_dim, out_dim):
         super().__init__()
@@ -19,7 +20,7 @@ class MyNetwork(torch.nn.Module):
 
         prev_dim = in_dim
         for i, dim in enumerate(layer_dims):
-            setattr(self, f'layer{i}', MyNetworkBlock(prev_dim, dim))
+            setattr(self, f"layer{i}", MyNetworkBlock(prev_dim, dim))
             prev_dim = dim
 
         self.num_layers = len(layer_dims)
@@ -28,9 +29,10 @@ class MyNetwork(torch.nn.Module):
 
     def forward(self, x):
         for i in range(self.num_layers):
-            x = getattr(self, f'layer{i}')(x)
+            x = getattr(self, f"layer{i}")(x)
 
         return self.output_proj(x)
+
 
 mn = MyNetwork(512, [512, 1024, 256])
 
@@ -43,17 +45,22 @@ print(pipe.split_gm.submod_0)
 
 from pippy.IR import annotate_split_points, PipeSplitWrapper
 
-annotate_split_points(mn, {'layer0': PipeSplitWrapper.SplitPoint.END,
-                           'layer1': PipeSplitWrapper.SplitPoint.END})
+annotate_split_points(
+    mn,
+    {
+        "layer0": PipeSplitWrapper.SplitPoint.END,
+        "layer1": PipeSplitWrapper.SplitPoint.END,
+    },
+)
 
 pipe = Pipe.from_tracing(mn)
-print(' pipe '.center(80, '*'))
+print(" pipe ".center(80, "*"))
 print(pipe)
-print(' submod0 '.center(80, '*'))
+print(" submod0 ".center(80, "*"))
 print(pipe.split_gm.submod_0)
-print(' submod1 '.center(80, '*'))
+print(" submod1 ".center(80, "*"))
 print(pipe.split_gm.submod_1)
-print(' submod2 '.center(80, '*'))
+print(" submod2 ".center(80, "*"))
 print(pipe.split_gm.submod_2)
 
 
@@ -66,8 +73,9 @@ print(pipe.split_gm.submod_2)
 # To learn more about `torchrun`, see
 # https://pytorch.org/docs/stable/elastic/run.html
 import os
+
 local_rank = int(os.environ["LOCAL_RANK"])
-world_size = int(os.environ['WORLD_SIZE'])
+world_size = int(os.environ["WORLD_SIZE"])
 
 # PiPPy uses the PyTorch RPC interface. To use RPC, we must call `init_rpc`
 # and inform the RPC framework of this process's rank and the total world
@@ -76,7 +84,8 @@ world_size = int(os.environ['WORLD_SIZE'])
 # To learn more about the PyTorch RPC framework, see
 # https://pytorch.org/docs/stable/rpc.html
 import torch.distributed.rpc as rpc
-rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
+
+rpc.init_rpc(f"worker{local_rank}", rank=local_rank, world_size=world_size)
 
 # PiPPy relies on the concept of a "driver" process. The driver process
 # should be a single process within the RPC group that instantiates the
@@ -104,17 +113,22 @@ if local_rank == 0:
     # single tensor input and single tensor output, so we specify
     # a single `TensorChunkSpec` instance indicating dimension 0
     # for args[0] and the output value.
-    args_chunk_spec : Any = (TensorChunkSpec(0),)
-    kwargs_chunk_spec : Any = {}
-    output_chunk_spec : Any = TensorChunkSpec(0)
+    args_chunk_spec: Any = (TensorChunkSpec(0),)
+    kwargs_chunk_spec: Any = {}
+    output_chunk_spec: Any = TensorChunkSpec(0)
 
     # Finally, we instantiate the PipelineDriver. We pass in the pipe,
     # chunk specs, and world size, and the constructor will distribute
     # our code to the processes in the RPC group. `driver` is an object
     # we can invoke to run the pipeline.
     driver = PipelineDriverFillDrain(
-        pipe, 64, args_chunk_spec=args_chunk_spec, kwargs_chunk_spec=kwargs_chunk_spec,
-        output_chunk_spec=output_chunk_spec, world_size=world_size)
+        pipe,
+        64,
+        args_chunk_spec=args_chunk_spec,
+        kwargs_chunk_spec=kwargs_chunk_spec,
+        output_chunk_spec=output_chunk_spec,
+        world_size=world_size,
+    )
 
     x = torch.randn(512, 512)
 
@@ -128,7 +142,7 @@ if local_rank == 0:
     # Compare numerics of pipeline and original model
     torch.testing.assert_close(output, reference_output)
 
-    print(' Pipeline parallel model ran successfully! '.center(80, '*'))
+    print(" Pipeline parallel model ran successfully! ".center(80, "*"))
 
 
 rpc.shutdown()

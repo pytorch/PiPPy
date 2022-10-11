@@ -5,27 +5,27 @@ from unittest import skip
 import torch
 from torch import Tensor
 from torch.testing._internal.common_utils import run_tests
-from spmd.testing.common_utils import (  # type: ignore
+from spmd.testing.common_utils import (
     DistTensorTestBase,
     with_comms,
-    TEST_GPU_NUM,
+    skip_unless_torch_gpu,
 )
-from spmd.tensor.dispatch import OpSchema
 
 from spmd.tensor import distribute_tensor
-from spmd.tensor.ops.pointwise_ops import pointwise_rule
 from spmd import DeviceMesh, DTensor
 from spmd.tensor.placement_types import (
     Shard,
     Replicate,
     _Partial,
-    DTensorSpec,
     Placement,
 )
 from torch.distributed.distributed_c10d import ReduceOp
-from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 
 import torch.utils._pytree as pytree
+
+
+def no_op():
+    return None
 
 
 def deepcopy_convert_to_dtensor(
@@ -84,7 +84,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         kwargs: Optional[Dict[str, Any]] = None,
     ):
         if pre_op_fn is None:
-            pre_op_fn = lambda: None
+            pre_op_fn = no_op
 
         if not kwargs:
             kwargs = {}
@@ -126,11 +126,11 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         **kwargs,
     ):
         if pre_op_fn is None:
-            pre_op_fn = lambda: None
+            pre_op_fn = no_op
 
         input_tensor = torch.randn(
             *input_size,
-            device=self.device_type,
+            device=self.device_type,  # type: ignore
             requires_grad=True,
         )
 
@@ -143,13 +143,9 @@ class DistElementwiseOpsTest(DistTensorTestBase):
             kwargs=kwargs,
         )
 
-    def common_device_mesh(self) -> DeviceMesh:
-        mesh: Sequence[int] = list(range(self.world_size))
-        return DeviceMesh(self.device_type, mesh)  # type: ignore
-
     @with_comms
     def test_activations(self):
-        device_mesh = self.common_device_mesh()
+        device_mesh = self.build_device_mesh()
         self._run_sharded_elementwise_ops(
             device_mesh=device_mesh,
             placements=[Shard(0)],
@@ -187,13 +183,12 @@ class DistElementwiseOpsTest(DistTensorTestBase):
             op=torch.sigmoid,
         )
 
+    @with_comms
     @skip(
         "testing RNG based ops is broken: https://github.com/pytorch/tau/issues/494"
     )
-    @with_comms
-    @skip_if_lt_x_gpu(TEST_GPU_NUM)
     def test_dropout(self):
-        device_mesh = self.common_device_mesh()
+        device_mesh = self.build_device_mesh()
 
         def _reset_random_seed():
             torch.manual_seed(self.rank + 4)
@@ -218,9 +213,9 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         )
 
     @with_comms
-    @skip_if_lt_x_gpu(TEST_GPU_NUM)
+    @skip_unless_torch_gpu
     def test_dropout_backward(self):
-        device_mesh = self.common_device_mesh()
+        device_mesh = self.build_device_mesh()
         placements = [Shard(0)]
 
         input_size = (8, 5)
@@ -251,10 +246,9 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         )
 
     @with_comms
-    @skip_if_lt_x_gpu(TEST_GPU_NUM)
     def test_dropout_errors(self):
-        device_mesh = self.common_device_mesh()
-        with self.assertRaisesRegex(RuntimeError, "unsupported placements"):
+        device_mesh = self.build_device_mesh()
+        with self.assertRaisesRegex(RuntimeError, "supported"):
             self._run_sharded_elementwise_ops(
                 device_mesh=device_mesh,
                 placements=[_Partial(ReduceOp.SUM)],
@@ -264,7 +258,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
 
     @with_comms
     def test_mul_out(self):
-        device_mesh = self.common_device_mesh()
+        device_mesh = self.build_device_mesh()
         torch.manual_seed(self.rank)
         shard_spec = [Shard(0)]
         input_size = (8, 4)
@@ -284,31 +278,6 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         expected = torch.mul(input_tensor, other_tensor, out=output_tensor)
         self.assertEqual(input_tensor, dtensor.to_local())
         self.assertEqual(expected, dt.to_local())
-
-    @with_comms
-    def test_pointwise_rules_suggestion(self):
-        device_mesh = self.common_device_mesh()
-
-        # propagate point-wise sharding
-        inp1, inp2 = [-1, -1], [-1, 0]
-        mat1_spec = DTensorSpec.from_dim_map(
-            device_mesh, inp1, [], shape=torch.Size([8, 4])
-        )
-        mat2_spec = DTensorSpec.from_dim_map(
-            device_mesh, inp2, [], shape=torch.Size([8, 4])
-        )
-        # adding a positional argument -1 to arg schema
-        output_sharding = pointwise_rule(
-            OpSchema((mat1_spec, mat2_spec, -1), {})
-        )
-        self.assertIsNone(output_sharding.output_spec)
-        self.assertIsNotNone(output_sharding.schema_suggestions)
-
-        # ensure that the suggestion from pointwise rules still have
-        # the positional args that are not DTensorSpec
-        schema_suggestion = output_sharding.schema_suggestions[0]
-        self.assertEqual(len(schema_suggestion.args_schema), 3)
-        self.assertEqual(schema_suggestion.args_schema[2], -1)
 
 
 if __name__ == "__main__":
