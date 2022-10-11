@@ -280,6 +280,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         self.assertEqual(expected, dt.to_local())
 
     @with_comms
+    @skip_unless_torch_gpu
     def test_pointwise_rules_suggestion(self):
         device_mesh = self.build_device_mesh()
 
