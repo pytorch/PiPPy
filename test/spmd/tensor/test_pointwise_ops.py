@@ -8,7 +8,7 @@ from torch.testing._internal.common_utils import run_tests
 from spmd.testing.common_utils import (
     DistTensorTestBase,
     with_comms,
-    TEST_GPU_NUM,
+    skip_unless_torch_gpu,
 )
 
 from spmd.tensor import distribute_tensor
@@ -20,9 +20,12 @@ from spmd.tensor.placement_types import (
     Placement,
 )
 from torch.distributed.distributed_c10d import ReduceOp
-from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 
 import torch.utils._pytree as pytree
+
+
+def no_op():
+    return None
 
 
 def deepcopy_convert_to_dtensor(
@@ -81,7 +84,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         kwargs: Optional[Dict[str, Any]] = None,
     ):
         if pre_op_fn is None:
-            pre_op_fn = lambda: None
+            pre_op_fn = no_op
 
         if not kwargs:
             kwargs = {}
@@ -123,11 +126,11 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         **kwargs,
     ):
         if pre_op_fn is None:
-            pre_op_fn = lambda: None
+            pre_op_fn = no_op
 
         input_tensor = torch.randn(
             *input_size,
-            device=self.device_type,
+            device=self.device_type,  # type: ignore
             requires_grad=True,
         )
 
@@ -140,13 +143,10 @@ class DistElementwiseOpsTest(DistTensorTestBase):
             kwargs=kwargs,
         )
 
-    def common_device_mesh(self) -> DeviceMesh:
-        mesh: Sequence[int] = list(range(self.world_size))
-        return DeviceMesh(self.device_type, mesh)  # type: ignore
-
     @with_comms
+    @skip_unless_torch_gpu
     def test_activations(self):
-        device_mesh = self.common_device_mesh()
+        device_mesh = self.build_device_mesh()
         self._run_sharded_elementwise_ops(
             device_mesh=device_mesh,
             placements=[Shard(0)],
@@ -184,13 +184,13 @@ class DistElementwiseOpsTest(DistTensorTestBase):
             op=torch.sigmoid,
         )
 
+    @with_comms
+    @skip_unless_torch_gpu
     @skip(
         "testing RNG based ops is broken: https://github.com/pytorch/tau/issues/494"
     )
-    @with_comms
-    @skip_if_lt_x_gpu(TEST_GPU_NUM)
     def test_dropout(self):
-        device_mesh = self.common_device_mesh()
+        device_mesh = self.build_device_mesh()
 
         def _reset_random_seed():
             torch.manual_seed(self.rank + 4)
@@ -215,9 +215,9 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         )
 
     @with_comms
-    @skip_if_lt_x_gpu(TEST_GPU_NUM)
+    @skip_unless_torch_gpu
     def test_dropout_backward(self):
-        device_mesh = self.common_device_mesh()
+        device_mesh = self.build_device_mesh()
         placements = [Shard(0)]
 
         input_size = (8, 5)
@@ -248,10 +248,10 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         )
 
     @with_comms
-    @skip_if_lt_x_gpu(TEST_GPU_NUM)
+    @skip_unless_torch_gpu
     def test_dropout_errors(self):
-        device_mesh = self.common_device_mesh()
-        with self.assertRaisesRegex(RuntimeError, "unsupported placements"):
+        device_mesh = self.build_device_mesh()
+        with self.assertRaisesRegex(RuntimeError, "supported"):
             self._run_sharded_elementwise_ops(
                 device_mesh=device_mesh,
                 placements=[_Partial(ReduceOp.SUM)],
@@ -260,8 +260,9 @@ class DistElementwiseOpsTest(DistTensorTestBase):
             )
 
     @with_comms
+    @skip_unless_torch_gpu
     def test_mul_out(self):
-        device_mesh = self.common_device_mesh()
+        device_mesh = self.build_device_mesh()
         torch.manual_seed(self.rank)
         shard_spec = [Shard(0)]
         input_size = (8, 4)
