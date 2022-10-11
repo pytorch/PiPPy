@@ -279,32 +279,6 @@ class DistElementwiseOpsTest(DistTensorTestBase):
         self.assertEqual(input_tensor, dtensor.to_local())
         self.assertEqual(expected, dt.to_local())
 
-    @with_comms
-    @skip_unless_torch_gpu
-    def test_pointwise_rules_suggestion(self):
-        device_mesh = self.build_device_mesh()
-
-        # propagate point-wise sharding
-        inp1, inp2 = [-1, -1], [-1, 0]
-        mat1_spec = DTensorSpec.from_dim_map(
-            device_mesh, inp1, [], shape=torch.Size([8, 4])
-        )
-        mat2_spec = DTensorSpec.from_dim_map(
-            device_mesh, inp2, [], shape=torch.Size([8, 4])
-        )
-        # adding a positional argument -1 to arg schema
-        output_sharding = pointwise_rule(
-            OpSchema((mat1_spec, mat2_spec, -1), {})
-        )
-        self.assertIsNone(output_sharding.output_spec)
-        self.assertIsNotNone(output_sharding.schema_suggestions)
-
-        # ensure that the suggestion from pointwise rules still have
-        # the positional args that are not DTensorSpec
-        schema_suggestion = output_sharding.schema_suggestions[0]
-        self.assertEqual(len(schema_suggestion.args_schema), 3)
-        self.assertEqual(schema_suggestion.args_schema[2], -1)
-
 
 if __name__ == "__main__":
     run_tests()
