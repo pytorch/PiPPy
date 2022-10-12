@@ -1,24 +1,16 @@
 import torch
 import torch.fx as fx
 import torch.distributed as dist
-import torch.multiprocessing as mp
 import torch.nn as nn
 from torch.distributed._spmd.comm_tensor import _get_tracer
-from torch.distributed.distributed_c10d import get_global_rank, get_world_size
 from torch.fx.experimental.proxy_tensor import make_fx, proxy_slot
-from torch.testing._internal.common_utils import run_tests
 from torch.utils._pytree import tree_flatten, tree_map
 
-from functorch._src.named_members_polyfill import (
-    _named_buffers,
-    _named_parameters,
-)
 from functorch.compile import aot_module
 
-import os
 from dataclasses import dataclass
 from functools import partial
-from typing import Any, Callable, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Sequence, Tuple
 
 from spmd.tensor import (
     _Partial,
