@@ -1,4 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+from threading import local
 import torch
 import torch.distributed.distributed_c10d as c10d
 
@@ -130,6 +131,26 @@ class DTensorSpec(object):
                 ), f"Only even sharding supported for now. (Got {local_shape[placement.dim]} // {self.mesh.size(idx)} for mesh idx {idx}"
                 local_shape[placement.dim] //= self.mesh.size(idx)
         return tuple(local_shape)
+
+    @property
+    def local_offsets(self) -> Tuple[int, ...]:
+        """
+        Compute the offsets of a local shard of the given DTensor on its current
+        global rank. This is mostly used by distributed checkpointing to know the
+        exact offsets of the local shard.
+        """
+        assert (
+            self.shape is not None
+        ), "DTensorSpec does not contain global shape."
+        local_offsets = [0] * self.ndim
+        for idx, mesh_dim in enumerate(self.dim_map):
+            if mesh_dim > -1:
+                my_coordinate = self.mesh.get_coordinate_on_dim(mesh_dim)
+                mesh_dim_size = self.mesh.size(mesh_dim)
+                quot, rem = divmod(self.shape[idx], mesh_dim_size)
+                local_offsets[idx] = my_coordinate * quot + (rem if my_coordinate >= rem else my_coordinate)
+
+        return tuple(local_offsets)
 
     @classmethod
     def from_dim_map(
