@@ -111,7 +111,7 @@ class DistTensorTest(DistTensorTestBase):
         self.assertEqual(local_tensor_with_grad.grad, expected_grad)
 
     @with_comms
-    def test_local_tensor(self):
+    def test_to_local(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
         local_tensor_with_grad = torch.randn(
@@ -144,7 +144,7 @@ class DistTensorTest(DistTensorTestBase):
         )
 
     @with_comms
-    def test_from_local_then_local_tensor(self):
+    def test_from_local_then_to_local(self):
         # this test ensure end to end from torch.Tensor -> dist tensor -> torch.Tensor works
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
