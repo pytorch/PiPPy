@@ -61,7 +61,7 @@ def _get_dtensor_dispatch_graph(
                 # tracing. Delete the tracer.
 
                 # pyre-ignore[6]: Incompatible parameter type
-                del cast(Dict[object, Any]obj.__dict__)[proxy_slot]
+                del cast(Dict[object, object], obj.__dict__)[proxy_slot]
             return obj
         else:
             return arg
