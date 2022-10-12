@@ -59,9 +59,7 @@ def inspect_split_module(
 
 
 def run_master(_, args):
-    d_hid = 512
-    bs = 503
-
+    # PiPPy parameters
     MULTI_USE_PARAM_CONFIG = (
         MultiUseParameterConfig.REPLICATE
         if args.replicate
@@ -70,43 +68,59 @@ def run_master(_, args):
     print(f"REPLICATE config: {args.replicate} -> {MULTI_USE_PARAM_CONFIG}")
     print("Using schedule:", args.schedule)
 
-    def my_compiler(gm: torch.fx.GraphModule, example_inputs):
-        print("\n============= my_compiler() called with FX graph =============")
-        gm.graph.print_tabular()
+    # Model parameters
+    d_hid = 512
+    bs = 503
 
-        print("\n============= example inputs =============")
-        print(example_inputs)
+    # Chunking parameters
+    args_chunk_spec = (TensorChunkSpec(0),)
+    kwargs_chunk_spec: Dict = {}
+    output_chunk_spec = (TensorChunkSpec(0),)
+    chunks = 1
+
+    # Ask Dynamo to let PiPPy annotation stay in graph
+    torchdynamo.allow_in_graph(pipe_split)
+
+
+    # Define a compiler backend made by PiPPy for use by Dynamo
+    # The backend comprising:
+    # - PiPPy's graph split, and
+    # - PiPPy's driver creation
+    # The driver is return as a compiled runtime callable, which will be used in the actual data execution
+    def my_pippy_compiler(gm: torch.fx.GraphModule, example_inputs, **kwargs):
+        print("\n============= my_pippy_compiler() called with FX graph =============")
+        gm.graph.print_tabular()
 
         # Run example input
         input = example_inputs[0]
-        output = gm(input)
-        print("\n============= example output =============")
-        print(output)
+        # Make global for equivalence comparison later
+        global ref_out
+        ref_out = gm(input)
 
         # PiPPy Pipe creation
+        # Here we split the graph
         pipe = Pipe.from_tracing(gm, MULTI_USE_PARAM_CONFIG)
-        print("\n============= PiPPy Pipe creation =============")
 
-        inspect_split_module(pipe, 2)
+        inspect_split_module(pipe, 4)
 
-        return pipe   # return a runtime Callable
+        # Create PipelineDriver
+        pipe_driver: PipelineDriverBase = schedules[args.schedule](
+            pipe,
+            chunks,
+            args_chunk_spec,
+            kwargs_chunk_spec,
+            output_chunk_spec,
+            args.world_size,
+            _debug_mask_minibatches=True,
+            _record_mem_dumps=bool(args.record_mem_dumps),
+            checkpoint=bool(args.checkpoint),
+        )
 
-    class ExampleCode(torch.nn.Module):
-        @torchdynamo.optimize(my_compiler)
-        def forward(self, a):
-            x = torch.add(a, 1)
-            x = torch.add(x, 1)
-            pipe_split()
-            x = torch.add(x, 1)
-            x = torch.add(x, 1)
-            return x
+        # Return a runtime Callable
+        # This PipelineDriver is a distributed runtime
+        return pipe_driver
 
-    torchdynamo.allow_in_graph(pipe_split)
-    ec = ExampleCode()
-    ec(torch.randn(10))
-    ec(torch.randn(10))
 
-    """
     class ExampleCode(torch.nn.Module):
         def __init__(self):
             super().__init__()
@@ -115,6 +129,8 @@ def run_master(_, args):
             self.lin = torch.nn.Linear(d_hid, d_hid)
             self.register_buffer("buffer", torch.randn(bs + 100, d_hid))
 
+        # Decorate with Dynamo
+        @torchdynamo.optimize(my_pippy_compiler)
         def forward(self, x):
             x = torch.mm(x, self.mm_param)
             skip_connection = x
@@ -129,65 +145,35 @@ def run_master(_, args):
             x = self.lin(x)
             pipe_split()
             x = torch.relu(x)
-            return {"out": x}
-    """
+            return x
 
-    """
+
+    # Create model as usual
     ec = ExampleCode()
     ec.to(args.device)
     ec_input = torch.randn(bs, d_hid, device=args.device)
-    ec(ec_input)
+    # This would already be output returned by PiPPy's distributed pipeline
+    pipe_out = ec(ec_input)
 
-    ec_pipe = Pipe.from_tracing(ec, MULTI_USE_PARAM_CONFIG)
-    print(ec_pipe.split_gm)
-
-    args_chunk_spec = (TensorChunkSpec(0),)
-    kwargs_chunk_spec: Dict = {}
-    output_chunk_spec = {"out": TensorChunkSpec(0)}
-
-    pipe_driver: PipelineDriverBase = schedules[args.schedule](
-        ec_pipe,
-        5,
-        args_chunk_spec,
-        kwargs_chunk_spec,
-        output_chunk_spec,
-        args.world_size,
-        _debug_mask_minibatches=True,
-        _record_mem_dumps=bool(args.record_mem_dumps),
-        checkpoint=bool(args.checkpoint),
+    # Check correctness
+    torch.testing.assert_close(pipe_out, ref_out[0])
+    print(
+        f'equivalence test passed {torch.sum(pipe_out)} ref {torch.sum(ref_out[0])}'
     )
 
-    # # Warm up and correctness runs
-    out = pipe_driver(ec_input)
-    ref_out = ec_pipe(ec_input)
-
-    # run with different chunk size to exercise microbatch and scheduling components
-    pipe_driver.chunks = 1
-    pipe_driver(ec_input)
-    pipe_driver.chunks = 100
-    pipe_driver(ec_input)
-
-    if CHECK_NUMERIC_EQUIVALENCE:
-        torch.testing.assert_close(out["out"], ref_out["out"])
-        print(
-            f'equivalence test passed {torch.sum(out["out"])} ref {torch.sum(ref_out["out"])}'
-        )
-
-    # # Profiling runs
+    # Profiling run
+    # This run would not trigger compilation
     with torch.autograd.profiler_legacy.profile(
         enabled=PROFILING_ENABLED
     ) as prof:
-        pipe_driver.chunks = 5
-        out = pipe_driver(ec_input)
-        ref_out = ec_pipe(ec_input)
+        pipe_out = ec(ec_input)
         print(
-            f'profiling run completed {torch.sum(out["out"])} ref {torch.sum(ref_out["out"])}'
+            f'profiling run completed {torch.sum(pipe_out)} ref {torch.sum(ref_out[0])}'
         )
     if PROFILING_ENABLED:
         prof.export_chrome_trace(
             f"{os.path.splitext(os.path.basename(__file__))[0]}.json"
         )
-    """
 
 
 def main(args=None):
@@ -225,15 +211,14 @@ def main(args=None):
     if args.schedule == "Interleaved1F1B":
         args.world_size = 2
 
-    # run_pippy(run_master, args)
-    run_master(0, args)
+    run_pippy(run_master, args)
 
 
 if __name__ == "__main__":
     main()
 
 
-class LocalTestForwardTest(unittest.TestCase):
+class LocalTestDynamoTest(unittest.TestCase):
     def test_forward(self):
         import random
 
