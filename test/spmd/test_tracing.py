@@ -442,23 +442,14 @@ class TraceModuleTest(DistTensorTestBase):
 
     @with_comms
     def test_sequential(self):
-        if self.device_type == "cuda":
-            device = torch.device(self.rank)
-            torch.cuda.set_device(self.rank)
-        else:
-            device = torch.device("cpu")
-        model = nn.Sequential(*[nn.Linear(10, 10) for _ in range(2)]).to(device)
-        x = torch.randn(2, 10).to(device)
+        model = nn.Sequential(*[nn.Linear(10, 10) for _ in range(2)]).to(
+            self.device_type
+        )
+        x = torch.randn(2, 10).to(self.device_type)
         self._test_trace_replicate(model, x)
 
     @with_comms
     def test_parallel(self):
-        if self.device_type == "cuda":
-            device = torch.device(self.rank)
-            torch.cuda.set_device(self.rank)
-        else:
-            device = torch.device("cpu")
-
         class Model(nn.Module):
             def __init__(self):
                 super().__init__()
@@ -469,11 +460,9 @@ class TraceModuleTest(DistTensorTestBase):
             def forward(self, x):
                 return sum([m(x) for m in self.module_list])
 
-        model = Model().to(device)
-        x = torch.randn(2, 10).to(device)
+        model = Model().to(self.device_type)
+        x = torch.randn(2, 10).to(self.device_type)
         self._test_trace_replicate(model, x)
-
-
 
 
 if __name__ == "__main__":
