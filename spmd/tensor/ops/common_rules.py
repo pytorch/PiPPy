@@ -2,7 +2,7 @@
 import math
 
 import torch
-from typing import List, Dict, Tuple, cast
+from typing import List, Dict, Tuple, Optional, cast
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.placement_types import DTensorSpec
 from spmd.tensor.ops.utils import as_list
@@ -29,6 +29,7 @@ def _inplace_rewrap_schema_suggestion(
 
 
 def _gen_reshard_suggestions(
+    op_schema: OpSchema,
     input_dims: List[str],
     input_specs: Tuple[DTensorSpec, ...],
     dim_to_sharding: Dict[str, int],
@@ -47,13 +48,19 @@ def _gen_reshard_suggestions(
         )
     return OutputSharding(
         None,
-        schema_suggestions=[OpSchema(tuple(suggested_arg_specs), {})],
+        schema_suggestions=[
+            OpSchema(op_schema.func_schema, tuple(suggested_arg_specs), {})
+        ],
         failed_reason="Input placements op sharding propagation failed, need to reshard!",
     )
 
 
 def einop_rule(
-    equation: str, op_schema: OpSchema, linearity: bool = False
+    equation: str,
+    op_schema: OpSchema,
+    *,
+    linearity: bool = False,
+    enforce_sharding: Optional[Dict[str, int]] = None,
 ) -> OutputSharding:
     """
     Propagate the sharding of inputs to output for ops whose data
@@ -87,7 +94,7 @@ def einop_rule(
         # replicate and shard to shard, but this will trigger an reshard operation
         if a != b:
             if a == -1 or b == -1:
-                # rehsard the replicate to match the sharded one
+                # reshard the replicate to match the sharded one
                 nonlocal needs_reshard
                 needs_reshard = True
                 return a if a != -1 else b
@@ -114,17 +121,12 @@ def einop_rule(
         for idx, (dim, mesh_dim) in enumerate(
             zip(input_dim, input_spec.dim_map)
         ):
-            if mesh_dim != -1:
-                if (
-                    mesh_dim in seen_shardings
-                    and dim != seen_shardings[mesh_dim]
-                ):
+            if enforce_sharding and dim in enforce_sharding:
+                if enforce_sharding[dim] != mesh_dim:
                     needs_reshard = True
-                    seen_shardings[mesh_dim] += dim
-                else:
-                    seen_shardings[mesh_dim] = dim
-
-            if dim not in dim_to_sharding:
+                dim_to_sharding[dim] = enforce_sharding[dim]
+                dim_to_size[dim] = input_spec.shape[idx]
+            elif dim not in dim_to_sharding:
                 dim_to_sharding[dim] = mesh_dim
                 dim_to_size[dim] = input_spec.shape[idx]
             else:
@@ -133,11 +135,24 @@ def einop_rule(
                 )
                 assert dim_to_size[dim] == input_spec.shape[idx]
 
+            # after merging sharding, we check if there're multiple
+            # sharding on the same mesh dim.
+            merged_sharding_for_dim = dim_to_sharding[dim]
+            if merged_sharding_for_dim != -1:
+                if (
+                    merged_sharding_for_dim in seen_shardings
+                    and dim != seen_shardings[merged_sharding_for_dim]
+                ):
+                    needs_reshard = True
+                    seen_shardings[merged_sharding_for_dim] += dim
+                else:
+                    seen_shardings[merged_sharding_for_dim] = dim
+
     if pending_sums_counter and not linearity:
         # return reshard suggestion with no pending sum, because we already properly
         # merge the sharding, this reshard suggestion is legit to use
         return _gen_reshard_suggestions(
-            input_dims, input_specs, dim_to_sharding, []
+            op_schema, input_dims, input_specs, dim_to_sharding, []
         )
     else:
         # It's a op that support linearity, but not all input arguments are partial
@@ -177,7 +192,7 @@ def einop_rule(
     pending_sums = list(pending_sums_counter.keys())
     if needs_reshard:
         return _gen_reshard_suggestions(
-            input_dims, input_specs, dim_to_sharding, pending_sums
+            op_schema, input_dims, input_specs, dim_to_sharding, pending_sums
         )
 
     # if no need to reshard, we directly generate the output sharding
@@ -238,8 +253,25 @@ def pointwise_rule(
             )
 
     fmt = f"{','.join(p for p in dimchars)}->{out_dimchars}"
-    einop_schema = OpSchema(input_specs, {})
-    output_sharding = einop_rule(fmt, einop_schema, linearity=linearity)
+    einop_schema = OpSchema(op_schema.func_schema, input_specs, {})
+
+    enforce_sharding: Dict[str, int] = {}
+    if op_schema.is_inplace:
+        # inplace op should keep the input sharding it writes to
+        for out_dimchar, mesh_dim in zip(out_dimchars, input_specs[0].dim_map):
+            enforce_sharding[out_dimchar] = mesh_dim
+
+    elif op_schema.is_out_variant:
+        out_spec = cast(DTensorSpec, op_schema.kwargs_schema["out"])
+        for out_dimchar, mesh_dim in zip(out_dimchars, out_spec.dim_map):
+            enforce_sharding[out_dimchar] = mesh_dim
+
+    output_sharding = einop_rule(
+        fmt,
+        einop_schema,
+        linearity=linearity,
+        enforce_sharding=enforce_sharding,
+    )
     if (
         output_sharding.output_spec is None
         and output_sharding.schema_suggestions is not None
