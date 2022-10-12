@@ -1,5 +1,4 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from threading import local
 import torch
 import torch.distributed.distributed_c10d as c10d
 
@@ -148,7 +147,9 @@ class DTensorSpec(object):
                 my_coordinate = self.mesh.get_coordinate_on_dim(mesh_dim)
                 mesh_dim_size = self.mesh.size(mesh_dim)
                 quot, rem = divmod(self.shape[idx], mesh_dim_size)
-                local_offsets[idx] = my_coordinate * quot + (rem if my_coordinate >= rem else my_coordinate)
+                local_offsets[idx] = my_coordinate * quot + (
+                    rem if my_coordinate >= rem else my_coordinate
+                )
 
         return tuple(local_offsets)
 
