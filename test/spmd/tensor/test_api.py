@@ -55,6 +55,31 @@ class DTensorAPITest(DistTensorTestBase):
                 self.assertTrue(dist_tensor.is_leaf)
 
     @with_comms
+    def test_distribute_tensor_errors(self):
+        device_mesh = DeviceMesh(
+            self.device_type, torch.arange(self.world_size).reshape(2, 2)
+        )
+        tensor_shape = [3 * self.world_size, 3 * self.world_size]
+        tensor_to_distribute = torch.randn(*tensor_shape)
+
+        with self.assertRaisesRegex(ValueError, "must have the same length"):
+            shard_spec = [Shard(0)]
+            distribute_tensor(tensor_to_distribute, device_mesh, shard_spec)
+
+        spec = [Shard(0), Shard(1)]
+        dtensor = distribute_tensor(tensor_to_distribute, device_mesh, spec)
+
+        with self.assertRaisesRegex(ValueError, "to a different device mesh"):
+            new_mesh = DeviceMesh(
+                self.device_type, torch.arange(self.world_size)
+            )
+            distribute_tensor(dtensor, new_mesh, [Shard(0)])
+
+        with self.assertRaisesRegex(ValueError, "to a different placements"):
+            new_spec = [Shard(0), Replicate()]
+            distribute_tensor(dtensor, device_mesh, new_spec)
+
+    @with_comms
     def test_distribute_module(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         # fully shard all linear modules on dim 0
