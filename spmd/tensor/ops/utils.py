@@ -41,7 +41,10 @@ def register_prop_rule(func):
     return wrapper
 
 
-def as_list(x: Union[List[object], object]) -> List[object]:
+def as_list(x: Union[List[object], object]) -> Union[List[object], object]:
+    # During tracing, `aten.sum.dim_IntList` used `immutable_list` for its args,
+    # which is an object but treated as a list by the. Therefore, keep
+    # `immutable_list` intact here as well.
     if type(x) is list or isinstance(
         x, torch.fx.immutable_collections.immutable_list
     ):
