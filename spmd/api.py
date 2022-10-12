@@ -10,7 +10,7 @@ from functorch.compile import aot_module
 
 from dataclasses import dataclass
 from functools import partial
-from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
+from typing import Dict, List, Optional, Sequence, Tuple, cast
 
 from spmd.tensor import (
     _Partial,
@@ -42,7 +42,7 @@ def _dispatch_with_local_tensors(
     def redistribute(arg: object) -> object:
         return (
             _redistribute_with_local_tensor(arg, *specs[arg])
-            if arg in specs
+            if isinstance(arg, torch.Tensor) and arg in specs
             else arg
         )
 
@@ -157,7 +157,9 @@ def _convert_to_distributed(
                     ):
                         has_partial = True
 
-                        def dummy_add(grad: torch.Tensor, zero: torch.Tensor) -> torch.Tensor:
+                        def dummy_add(
+                            grad: torch.Tensor, zero: torch.Tensor
+                        ) -> torch.Tensor:
                             return grad + zero
 
                         grad: torch.Tensor = obj._local_tensor
@@ -202,8 +204,8 @@ def _convert_to_distributed(
                         value_remap: Dict[fx.Node, fx.Node] = {}
                         for dtn in traced_dispatch.graph.nodes:
                             if dtn.op == "placeholder":
-                                # do nothing, ignore placeholders, as it has already
-                                # been prepared in value_remap
+                                # do nothing, ignore placeholders, as it has
+                                # already been prepared in value_remap
                                 value_remap[dtn] = a
                             elif dtn.op == "output":
                                 assert (
