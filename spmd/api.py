@@ -10,7 +10,7 @@ from functorch.compile import aot_module
 
 from dataclasses import dataclass
 from functools import partial
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from spmd.tensor import (
     _Partial,
@@ -38,8 +38,8 @@ def _dispatch_with_local_tensors(
         torch.Tensor,
         Tuple[torch.Size, DeviceMesh, Sequence[Placement], Sequence[Placement]],
     ] = {},
-) -> Any:
-    def redistribute(arg):
+) -> object:
+    def redistribute(arg: object) -> object:
         return (
             _redistribute_with_local_tensor(arg, *specs[arg])
             if arg in specs
@@ -53,12 +53,14 @@ def _get_dtensor_dispatch_graph(
     node: fx.Node,
     node_to_obj: Dict[fx.Node, object],
 ) -> fx.GraphModule:
-    def remap_arg(arg):
+    def remap_arg(arg: object) -> object:
         if isinstance(arg, torch.fx.Node):
             obj = node_to_obj[arg]
             if _get_tracer(obj):
                 # This is a shared arg, already has a tracer from previous
                 # tracing. Delete the tracer.
+
+                # pyre-ignore[6]: Incompatible parameter type
                 del obj.__dict__[proxy_slot]
             return obj
         else:
@@ -68,9 +70,11 @@ def _get_dtensor_dispatch_graph(
     # kwargs in this set of tests are all constants
     kwargs = node.kwargs
 
+    op_overload = cast(torch._ops.OpOverload, node.target)
+
     # run dispatch once to get the real DTensor output
     out = operator_dispatch(
-        node.target,
+        op_overload,
         args,
         node.kwargs,  # kwargs in this set of tests are all constants
         DTensor._op_to_rules,
@@ -90,7 +94,7 @@ def _get_dtensor_dispatch_graph(
     flatten_args_schema, _ = tree_flatten(target_schema.args_schema)
 
     specs: Dict[
-        torch.Tensor,
+        op_overload,
         Tuple[
             torch.Size,
             DeviceMesh,
@@ -109,23 +113,23 @@ def _get_dtensor_dispatch_graph(
 
     dispatch = partial(
         _dispatch_with_local_tensors,
-        node.target,
+        op_overload,
         kwargs=kwargs,
         specs=specs,
     )
 
-    def unwrap_local(e):
+    def unwrap_local(e: Any):
         return e._local_tensor if isinstance(e, DTensor) else e
 
     return make_fx(dispatch)(tree_map(unwrap_local, args))
 
 
 def _convert_to_distributed(
-    gm: fx.Graph,
+    gm: fx.GraphModule,
     inps: List[torch.Tensor],
     schemas: List[Schema],
     _allow_partial: bool = False,
-) -> fx.Graph:
+) -> fx.GraphModule:
     node_to_obj: Dict[fx.Node, object] = {}
     # map local op node in traced_f to its corresponding subgraph of
     # DTensor ops.
@@ -158,8 +162,8 @@ def _convert_to_distributed(
                         def dummy_add(grad, zero) -> torch.Tensor:
                             return grad + zero
 
-                        grad = obj._local_tensor
-                        zero = torch.zeros_like(obj._local_tensor)
+                        grad: torch.Tensor = obj._local_tensor
+                        zero: torch.Tensor = torch.zeros_like(obj._local_tensor)
 
                         traced_add = make_fx(dummy_add)(grad, zero)
 
@@ -279,9 +283,9 @@ class SPMD(nn.Module):
         for p in module.parameters():
             dist.broadcast(p, src=0)
 
-        self._local_module = module
-        self._schema = schema
-        self._compiled_m = None
+        self._local_module: nn.Module = module
+        self._schema: Schema = schema
+        self._compiled_m: Optional[nn.Module] = None
 
     def _compile(
         self, gm: fx.GraphModule, inps: List[torch.Tensor]
@@ -292,14 +296,18 @@ class SPMD(nn.Module):
                 p.storage().data_ptr() for p in self._local_module.parameters()
             ]
 
-        shard_schema = Schema(mesh=self._schema.mesh, placements=[Shard(0)])
-        schemas = [
+        shard_schema: Schema = Schema(
+            mesh=self._schema.mesh, placements=[Shard(0)]
+        )
+        schemas: List[Schema] = [
             self._schema if is_param(inp) else shard_schema for inp in inps
         ]
 
         return _convert_to_distributed(gm, inps, schemas)
 
-    def forward(self, *args, **kwargs):
+    def forward(
+        self, *args: Tuple[object], **kwargs: Dict[str, object]
+    ) -> object:
         if self._compiled_m is None:
             self._compiled_m = aot_module(
                 self._local_module,
