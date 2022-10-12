@@ -41,7 +41,6 @@ def _dispatch_with_local_tensors(
 ) -> object:
     def redistribute(arg: object) -> object:
         return (
-            # pyre-fixme[6]: Incompatible parameter type
             _redistribute_with_local_tensor(arg, *specs[arg])
             if arg in specs
             else arg
