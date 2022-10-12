@@ -41,7 +41,8 @@ def _dispatch_with_local_tensors(
 ) -> object:
     def redistribute(arg: object) -> object:
         return (
-            _redistribute_with_local_tensor(cast(torch.Tensor, arg), *specs[arg])
+            # pyre-fixme[6]: Incompatible parameter type
+            _redistribute_with_local_tensor(arg, *specs[arg])
             if arg in specs
             else arg
         )
@@ -59,8 +60,6 @@ def _get_dtensor_dispatch_graph(
             if _get_tracer(obj):
                 # This is a shared arg, already has a tracer from previous
                 # tracing. Delete the tracer.
-
-                # pyre-ignore[6]: Incompatible parameter type
                 del cast(Dict[object, object], obj.__dict__)[proxy_slot]
             return obj
         else:
@@ -273,7 +272,7 @@ def _convert_to_distributed(
 
 class SPMD(nn.Module):
     # TODO: add schema_override
-    def __init__(self, module: nn.Module, schema: Schema):
+    def __init__(self, module: nn.Module, schema: Schema) -> None:
         super().__init__()
         assert schema.placements == [
             Replicate()
