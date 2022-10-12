@@ -10,7 +10,7 @@ from functorch.compile import aot_module
 
 from dataclasses import dataclass
 from functools import partial
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
 
 from spmd.tensor import (
     _Partial,
