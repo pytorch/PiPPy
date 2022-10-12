@@ -41,7 +41,7 @@ def _dispatch_with_local_tensors(
 ) -> object:
     def redistribute(arg: object) -> object:
         return (
-            _redistribute_with_local_tensor(arg, *specs[arg])
+            _redistribute_with_local_tensor(cast(torch.Tensor, arg), *specs[arg])
             if arg in specs
             else arg
         )
@@ -61,14 +61,14 @@ def _get_dtensor_dispatch_graph(
                 # tracing. Delete the tracer.
 
                 # pyre-ignore[6]: Incompatible parameter type
-                del obj.__dict__[proxy_slot]
+                del cast(Dict[object, Any]obj.__dict__)[proxy_slot]
             return obj
         else:
             return arg
 
     args = tree_map(remap_arg, node.args)
     # kwargs in this set of tests are all constants
-    kwargs = node.kwargs
+    kwargs = cast(Dict[str, object], node.kwargs)
 
     op_overload = cast(torch._ops.OpOverload, node.target)
 
@@ -76,7 +76,7 @@ def _get_dtensor_dispatch_graph(
     out = operator_dispatch(
         op_overload,
         args,
-        node.kwargs,  # kwargs in this set of tests are all constants
+        kwargs,  # kwargs in this set of tests are all constants
         DTensor._op_to_rules,
         DTensor._custom_dispatch_ops,
     )
@@ -84,7 +84,7 @@ def _get_dtensor_dispatch_graph(
 
     # get DTensor specs for inputs and outputs
     (target_schema, redistribute, output_sharding,) = propagate_input_sharding(
-        node.target,
+        op_overload,
         args,
         kwargs,
         DTensor._op_to_rules,
@@ -94,7 +94,7 @@ def _get_dtensor_dispatch_graph(
     flatten_args_schema, _ = tree_flatten(target_schema.args_schema)
 
     specs: Dict[
-        op_overload,
+        torch.Tensor,
         Tuple[
             torch.Size,
             DeviceMesh,
@@ -118,7 +118,7 @@ def _get_dtensor_dispatch_graph(
         specs=specs,
     )
 
-    def unwrap_local(e: Any):
+    def unwrap_local(e: object) -> object:
         return e._local_tensor if isinstance(e, DTensor) else e
 
     return make_fx(dispatch)(tree_map(unwrap_local, args))
@@ -159,7 +159,7 @@ def _convert_to_distributed(
                     ):
                         has_partial = True
 
-                        def dummy_add(grad, zero) -> torch.Tensor:
+                        def dummy_add(grad: torch.Tensor, zero: torch.Tensor) -> torch.Tensor:
                             return grad + zero
 
                         grad: torch.Tensor = obj._local_tensor
@@ -315,4 +315,4 @@ class SPMD(nn.Module):
                 self._compile,
             )
 
-        return self._compiled_m(*args, **kwargs)
+        return cast(nn.Module, self._compiled_m)(*args, **kwargs)

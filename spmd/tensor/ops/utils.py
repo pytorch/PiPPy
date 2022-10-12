@@ -41,6 +41,7 @@ def register_prop_rule(func):
     return wrapper
 
 
+# pyre-fixme[11]: Annotation `immutable_list` is not defined as a type.
 def as_list(
     x: Union[List[object], object]
 ) -> Union[List[object], torch.fx.immutable_collections.immutable_list]:
