@@ -43,7 +43,7 @@ def register_prop_rule(func):
 
 def as_list(
     x: Union[List[object], object]
-# pyre-fixme[11]: Annotation `immutable_list` is not defined as a type.
+    # pyre-fixme[11]: Annotation `immutable_list` is not defined as a type.
 ) -> Union[List[object], torch.fx.immutable_collections.immutable_list]:
     # During tracing, `aten.sum.dim_IntList` uses `immutable_list` for its args,
     # which is an object but treated as a list by the tracer. Therefore, keep
