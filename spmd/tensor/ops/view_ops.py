@@ -490,11 +490,6 @@ ops: Dict[Callable[..., torch.Tensor], Op] = {
     torch.unsqueeze: Op(
         dim_map=lambda input, dim: dim_unsqueeze(input.ndim, dim)
     ),
-    torch.var: Op(
-        dim_map=lambda input, dim=None, correction=None, keepdim=False: dim_reduction(
-            input.ndim, dim, keepdim
-        )
-    ),
     Tensor.view: Op(
         dim_map=lambda input, *shape: view_groups(input.shape, shape),
         shape_argnum=1,
@@ -728,7 +723,3 @@ register_prop_rule_map("aten.expand.default", Tensor.expand)
 register_prop_rule_map("aten.permute.default", torch.permute)
 register_prop_rule_map("aten.repeat.default", Tensor.repeat)
 register_prop_rule_map("aten.transpose.int", torch.transpose)
-
-# these are not really view ops but we would like to trigger fallback on them
-# when sharding on the operating dimension
-register_prop_rule_map("aten.var.correction", torch.var)
