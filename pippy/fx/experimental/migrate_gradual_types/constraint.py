@@ -1,6 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 # -*- coding: utf-8 -*-
-from pippy.fx.experimental.migrate_gradual_types.operation import op_add, op_sub, op_mul, op_div, op_mod, op_gt, op_lt
+from pippy.fx.experimental.migrate_gradual_types.operation import op_add, op_sub, op_mul, op_div, \
+    op_mod, op_gt, op_lt, op_neq, op_eq
 from pippy.fx.tensor_type import TensorType, Dyn
 
 
@@ -244,10 +245,10 @@ class IndexSelect(Constraint):
 
     def __eq__(self, other):
         if isinstance(other, IndexSelect):
-            return self.tensor_size == other.tensor_size and\
-                self.dim_replace == other.dim_replace and\
-                self.index == other.index and\
-                self.output == other.output and\
+            return self.tensor_size == other.tensor_size and \
+                self.dim_replace == other.dim_replace and \
+                self.index == other.index and \
+                self.output == other.output and \
                 self.input_var == other.input_var
         else:
             return False
@@ -285,7 +286,7 @@ class Transpose(Constraint):
 
     def __eq__(self, other):
         if isinstance(other, Transpose):
-            return self.tensor_size == other.tensor_size and\
+            return self.tensor_size == other.tensor_size and \
                 self.index1 == other.index1 and \
                 self.index2 == other.index2 and \
                 self.output == other.output and \
@@ -317,8 +318,8 @@ class GetItem(Constraint):
     def __eq__(self, other):
         if isinstance(other, GetItem):
             return self.res == other.res and \
-                self.tensor_size == other.tensor_size and\
-                self.index == other.index and\
+                self.tensor_size == other.tensor_size and \
+                self.index == other.index and \
                 self.input_var == other.input_var
         else:
             return False
@@ -381,7 +382,7 @@ class CalcConv(Constraint):
 
     def __eq__(self, other):
         if isinstance(other, CalcConv):
-            return self.conv_result == other.conv_result and self.input_var == other.input_var and\
+            return self.conv_result == other.conv_result and self.input_var == other.input_var and \
                 self.c_out == other.c_out and self.kernel == other.kernel and self.padding == other.padding \
                 and self.stride == other.stride and self.dilation == other.dilation \
                 and self.matching_constraint == other.matching_constraint
@@ -550,9 +551,9 @@ def is_algebraic_expression(constraint):
 
 def is_bool_expr(constraint):
     if isinstance(constraint, BinConstraintD):
-        return constraint.op in [op_gt, op_lt]
+        return constraint.op in [op_gt, op_lt, op_neq, op_eq]
     else:
-        return isinstance(constraint, BVar)
+        return isinstance(constraint, BVar) or isinstance(constraint, Conj) or isinstance(constraint, Disj)
 
 def is_dim(d):
     return isinstance(d, DVar) or isinstance(d, int) or d == Dyn

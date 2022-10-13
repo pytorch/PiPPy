@@ -1,17 +1,22 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
-
-from torch.distributed.distributed_c10d import (
-    get_global_rank,
-    get_world_size,
-)
+import torch.nn as nn
+from torch.distributed.distributed_c10d import get_global_rank, get_world_size
 from torch.fx.experimental.proxy_tensor import make_fx
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.testing._internal.common_utils import run_tests
+
+from spmd.api import SPMD, Schema
 from spmd.testing.common_utils import (  # type: ignore
     DistTensorTestBase,
     with_comms,
 )
-from spmd.tensor import DeviceMesh
+from spmd.tensor import (
+    DeviceMesh,
+    Replicate,
+)
+
+from copy import deepcopy
 
 
 class TraceDeviceMeshTestBase:
@@ -165,6 +170,57 @@ class TraceDeviceMesh2DTest(DistTensorTestBase, TraceDeviceMeshTestBase):
     @with_comms
     def test_all_gather_nd(self):
         self._test_all_gather_nd(torch.arange(4).reshape(2, 2))
+
+
+class TraceModuleTest(DistTensorTestBase):
+    @property
+    def world_size(self):
+        return 2
+
+    def _test_trace_replicate(self, model, x):
+        # if x.device.type == "cuda":
+        ddp = DDP(deepcopy(model))
+        spmd = SPMD(
+            deepcopy(model),
+            schema=Schema(
+                mesh=DeviceMesh(
+                    self.device_type, torch.arange(self.world_size)
+                ),
+                placements=[Replicate()],
+            ),
+        )
+
+        ddp(x).sum().backward()
+        spmd(x).sum().backward()
+        for p1, p2 in zip(ddp.parameters(), spmd.parameters()):
+            # DDP divides gradients by world size to compute average, but
+            # _Partial tensor shouldn't do that automatically. Hence explicitly
+            # do division here.
+            self.assertTrue(p1.grad.allclose(p2.grad / self.world_size))
+
+    @with_comms
+    def test_sequential(self):
+        model = nn.Sequential(*[nn.Linear(10, 10) for _ in range(2)]).to(
+            self.device_type
+        )
+        x = torch.randn(2, 10).to(self.device_type)
+        self._test_trace_replicate(model, x)
+
+    @with_comms
+    def test_parallel(self):
+        class Model(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.module_list = nn.ModuleList(
+                    [nn.Linear(10, 10) for _ in range(2)]
+                )
+
+            def forward(self, x):
+                return sum([m(x) for m in self.module_list])
+
+        model = Model().to(self.device_type)
+        x = torch.randn(2, 10).to(self.device_type)
+        self._test_trace_replicate(model, x)
 
 
 if __name__ == "__main__":
