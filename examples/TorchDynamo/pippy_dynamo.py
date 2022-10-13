@@ -133,8 +133,10 @@ def run_master(_, args):
             self.lin = torch.nn.Linear(d_hid, d_hid)
             self.register_buffer("buffer", torch.randn(bs + 100, d_hid))
 
-        # Decorate with Dynamo
-        @torchdynamo.optimize(my_pippy_compiler)
+        # Decorate with Dynamo here, or
+        # explicitly call optimize in the main code.
+        # We do the latter for zero change on the model, hence commenting out the decoration here
+        # @torchdynamo.optimize(my_pippy_compiler)
         def forward(self, x):
             x = torch.mm(x, self.mm_param)
             skip_connection = x
@@ -155,10 +157,14 @@ def run_master(_, args):
     # Create model as usual
     ec = ExampleCode()
     ec.to(args.device)
+    # Optimize and distribute model using Dynamo + PiPPy
+    ec = torchdynamo.optimize(my_pippy_compiler)(ec)
+
     ec_input = torch.randn(bs, d_hid, device=args.device)
     # This would already be output returned by PiPPy's distributed pipeline
     pipe_out = ec(ec_input)
 
+    print(f"\n======= Runtime tests =======")
     # Check correctness
     torch.testing.assert_close(pipe_out, ref_out[0])
     print(
