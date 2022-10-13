@@ -145,6 +145,11 @@ class DTensorSpec(object):
         for idx, mesh_dim in enumerate(self.dim_map):
             if mesh_dim > -1:
                 my_coordinate = self.mesh.get_coordinate_on_dim(mesh_dim)
+                # TODO: what should happen if rank is not in the mesh?
+                # see issue https://github.com/pytorch/tau/pull/492
+                assert (
+                    my_coordinate is not None
+                ), "Rank if not part of mesh"  # TODO: figure out behavior here
                 mesh_dim_size = self.mesh.size(mesh_dim)
                 quot, rem = divmod(self.shape[idx], mesh_dim_size)
                 local_offsets[idx] = my_coordinate * quot + (
