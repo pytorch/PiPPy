@@ -58,6 +58,10 @@ def inspect_split_module(
         print(submod)
 
 
+# For storing reference output from inside compiler
+ref_out = ()
+
+
 def run_master(_, args):
     # PiPPy parameters
     MULTI_USE_PARAM_CONFIG = (
