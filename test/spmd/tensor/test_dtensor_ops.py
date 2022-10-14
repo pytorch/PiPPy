@@ -488,7 +488,6 @@ dtensor_fails = {
     xfail("std"),
     xfail("std_mean"),
     xfail("stft"),
-    xfail("sum_to_size"),
     xfail("svd"),
     xfail("svd_lowrank"),
     xfail("symeig"),
