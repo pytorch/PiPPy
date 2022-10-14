@@ -124,7 +124,6 @@ def run_worker(rank, run_master, args, *extra_args):
         rpc_timeout = 1800
 
     options = rpc.TensorPipeRpcBackendOptions(
-        num_worker_threads=512, rpc_timeout=1800, _transports=tp_transports()
         num_worker_threads=num_worker_threads, rpc_timeout=rpc_timeout, _transports=tp_transports()
     )
     if args.cuda:
