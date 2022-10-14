@@ -550,10 +550,6 @@ def propagate_shape_and_sharding(
             for dim in cmd.input_dims[1:]:
                 if isinstance(dim, InputDim):
                     shardable_dims[dim.input_dim, :] = False
-                # assert (
-                #    not isinstance(dim, InputDim)
-                #    or dim.input_dim not in sharded_in_dims
-                # ), "Only the first member of a Flatten dimension group can be sharded"
             dim0 = cmd.input_dims[0]
             return (
                 _prod(get_dim_size(a)[0] for a in cmd.input_dims),
@@ -600,9 +596,6 @@ def propagate_shape_and_sharding(
             return cmd.size, None
         elif isinstance(cmd, Repeat):
             size, in_dim = get_dim_size(cmd.input_dim)
-            # assert (
-            #     in_dim is None or in_dim.input_dim not in sharded_in_dims
-            # ), "Cannot tile sharded dimension."
             if in_dim is not None:
                 shardable_dims[in_dim.input_dim, :] = False
             return size * cmd.times, None

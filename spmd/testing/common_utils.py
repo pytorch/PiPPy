@@ -136,7 +136,6 @@ class DistTensorTestBase(MultiProcessTestCase):
                     ).to_local(),
                     out,
                 )
-        print(f"profile:::: {profile}")
 
 
 # wrapper to initialize comms (processgroup)
