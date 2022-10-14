@@ -200,12 +200,23 @@ def einop_rule(
         if dim not in output_dims[0] and shard_on_mesh != -1:
             pending_sums.append(shard_on_mesh)
 
+    output_dim_map = []
+    output_shape = []
+    for dim in output_dim:
+        if dim == "1":
+            # find output dim that is a singleton dimension, mark sharding and shape
+            output_dim_map.append(-1)
+            output_shape.append(1)
+        else:
+            output_dim_map.append(dim_to_sharding[dim])
+            output_shape.append(dim_to_size[dim])
+
     return OutputSharding(
         DTensorSpec.from_dim_map(
             input_specs[0].mesh,
-            [dim_to_sharding[dim] for dim in output_dim],
+            output_dim_map,
             pending_sums,
-            shape=torch.Size([dim_to_size[dim] for dim in output_dim]),
+            shape=torch.Size(output_shape),
         )
     )
 
@@ -303,21 +314,24 @@ def reduction_rule(op_schema: OpSchema) -> OutputSharding:
     input_spec = cast(DTensorSpec, op_schema.args_schema[0])
     input_chars = alphabet[: input_spec.ndim]
 
-    if len(op_schema.args_schema) > 1 and isinstance(
-        op_schema.args_schema[1], (int, list)
-    ):
+    if len(op_schema.args_schema) == 1:
+        # reducing to a single scalar tensor, we just mark output as empty
+        out_dimchars = ""
+    else:
         # this is usually a dim-based reduction op schema pattern, it
         # might not be true for every op for other special cases, we
         # need to specialize them as needed.
         # TODO: add support for things like `torch.unique` where it
         # does not follow the reduction op convention.
-        dim_list = as_list(op_schema.args_schema[1])
-        out_dimchars = input_chars.translate(
-            {ord(alphabet[cast(int, dim)]): None for dim in dim_list}
+        keep_dim = len(op_schema.args_schema) > 2 and bool(
+            op_schema.args_schema[2]
         )
-    else:
-        # reducing to a single scalar tensor, we just mark output as empty
-        out_dimchars = ""
+        dim_list = as_list(op_schema.args_schema[1])
+        # keep_dim=True means output dim is a singleton dim
+        reduce_dim_char = ord("1") if keep_dim else None
+        out_dimchars = input_chars.translate(
+            {ord(alphabet[cast(int, dim)]): reduce_dim_char for dim in dim_list}
+        )
 
     fmt = f"{input_chars}->{out_dimchars}"
     return einop_rule(fmt, op_schema)
