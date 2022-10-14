@@ -12,7 +12,7 @@ from typing import (
     cast,
 )
 
-from spmd.tensor.placement_types import DTensorSpec, Placement
+from spmd.tensor.placement_types import DTensorSpec, Placement, Replicate
 import functools
 import operator
 from spmd.tensor.api import Shard
@@ -31,7 +31,8 @@ Shape = Tuple[int, ...]
 class DimSpec:
     """Specifies how an output dimension maps to an input dimension."""
 
-    pass
+    def inputs(self) -> Iterable["DimSpec"]:
+        return ()
 
 
 # Rules that map each dimension of the output to dimensions of the input tensor
@@ -63,6 +64,9 @@ class Broadcast(DimSpec):
     def new(cls, dim: DimSpec, dim_size: int) -> DimSpec:
         return Broadcast(dim, dim_size)
 
+    def inputs(self) -> Iterable[DimSpec]:
+        return (self.dim,)
+
 
 @dataclass
 class NewDim(DimSpec):
@@ -92,6 +96,9 @@ class Repeat(DimSpec):
         else:
             return Repeat(dim, times)
 
+    def inputs(self) -> Iterable[DimSpec]:
+        return (self.input_dim,)
+
 
 @dataclass
 class Flatten(DimSpec):
@@ -112,6 +119,9 @@ class Flatten(DimSpec):
             return dims[0]
         else:
             return Flatten(dims)
+
+    def inputs(self) -> Iterable[DimSpec]:
+        return self.input_dims
 
 
 @dataclass
@@ -145,6 +155,9 @@ class Split(DimSpec):
             new_group_shape = tuple(m[1][0] for m in group_mapping)
             new_idx = next(filter(lambda x: x[1][1] == idx, group_mapping))[0]
             return Split(dim, new_group_shape, new_idx)
+
+    def inputs(self) -> Iterable[DimSpec]:
+        return (self.input_dim,)
 
 
 def dim_pad_left(ndim: int, min_dims: int) -> DimMap:
@@ -391,6 +404,10 @@ def dim_transpose(ndim: int, dim1: int, dim2: int) -> DimMap:
 
 
 def dim_squeeze(shape: Shape, dim: Optional[int] = None) -> DimMap:
+    # FIXME: this is wrong when dim=None and one of the dimensions
+    # equals size of the mesh. For example squeeze(DTensor(tensor(4), Shard[0])) could
+    # end up as squeeze(tensor(1)) if we have 4 devices; this would lead to
+    # removal of a dimension that is not acutally a singleton.
     return tuple(
         InputDim(i)
         for i, s in enumerate(shape)
@@ -403,6 +420,25 @@ def dim_unsqueeze(ndim: int, dim: int) -> DimMap:
     if dim < 0:
         dim += ndim + 1
     return dims[:dim] + (Singleton(),) + dims[dim:]
+
+
+def dim_reduction(
+    ndim: int, dim_or_dims: Optional[Union[int, Sequence[int]]], keepdim: bool
+) -> DimMap:
+    """
+    General fallback for reduction ops where _Partial() does not apply.
+    This will cause incoming tensor to be replicated on the reducing dimensions.
+    """
+    if dim_or_dims is None:
+        dim_or_dims = tuple(range(ndim))
+    if isinstance(dim_or_dims, int):
+        dim_or_dims = (dim_or_dims,)
+    dim_or_dims = tuple(d if d >= 0 else d + ndim for d in dim_or_dims)
+    return tuple(
+        InputDim(i) if i not in dim_or_dims else Singleton()
+        for i in range(ndim)
+        if i not in dim_or_dims or keepdim
+    )
 
 
 @dataclass
@@ -466,7 +502,7 @@ def propagate_shape_and_sharding(
     local_in_shape: Shape,
     rule: DimMap,
     mesh_sizes: Shape,
-) -> Tuple[Shape, Sequence[Placement]]:
+) -> Tuple[Shape, Optional[Sequence[Placement]], torch.Tensor]:
     """
     Takes as input the global shape of the tensor, and the input sharding,
     and produce corresponding output sharding and shape of the output tensor.
@@ -482,19 +518,38 @@ def propagate_shape_and_sharding(
     sharded_in_dims: Set[int] = set(
         s.dim for s in in_shard if isinstance(s, Shard)
     )
+    # for each input dim, for each mesh dim, provides a list of possible shardable dimensions
+    shardable_dims: torch.Tensor = torch.ones(
+        (len(local_in_shape), len(mesh_sizes)), dtype=torch.bool
+    )
+
+    # in case an input dimension disappears (e.g. collapsing, reduction)
+    # we cannot shard in that dimension (we need a replication fall-back rule)
+
+    seen_input_dims: Set[int] = set()
+
+    def collect_used_inputs(cmd: DimSpec) -> None:
+        if isinstance(cmd, InputDim):
+            seen_input_dims.add(cmd.input_dim)
+        for inp in cmd.inputs():
+            collect_used_inputs(inp)
+
+    for cmd in rule:
+        collect_used_inputs(cmd)
+    for dim in range(len(local_in_shape)):
+        shardable_dims[dim, :] = dim in seen_input_dims
 
     def get_dim_size(cmd: DimSpec) -> Tuple[int, Optional[InputDim]]:
         if isinstance(cmd, InputDim):
+            seen_input_dims.add(cmd.input_dim)
             return (
                 local_in_shape[cmd.input_dim],
                 cmd if cmd.input_dim in sharded_in_dims else None,
             )
         elif isinstance(cmd, Flatten):
             for dim in cmd.input_dims[1:]:
-                assert (
-                    not isinstance(dim, InputDim)
-                    or dim.input_dim not in sharded_in_dims
-                ), "Only the first member of a Flatten dimension group can be sharded"
+                if isinstance(dim, InputDim):
+                    shardable_dims[dim.input_dim, :] = False
             dim0 = cmd.input_dims[0]
             return (
                 _prod(get_dim_size(a)[0] for a in cmd.input_dims),
@@ -509,6 +564,20 @@ def propagate_shape_and_sharding(
             if cmd.split_id == 0 and in_dim is not None:
                 # we need to check that the input dimension is divisble
                 # by the size of the submesh we're sharding it on
+                # NOTE: it would be possible to shard the same input dimension
+                # on more than one mesh dimension. In that case, the dimension
+                # needs to be divisible by the product of mesh sizes.
+                # In order to keep the problem more tractable, we will not consider
+                # double resharding as a suggestion (e.g. [Shard(0), Shard(0) ])
+                # but we will allow it if that's the input and it's compatible
+
+                # 1. is this dimension shardable on each individual mesh dim?
+                for mesh_dim, mesh_dim_size in enumerate(mesh_sizes):
+                    shardable_dims[in_dim.input_dim, mesh_dim] = (
+                        out_size % mesh_dim_size == 0
+                    )
+
+                # 2. here we special case things like [Shard(0), Shard(0)]
                 submesh_size = 1
                 for size, shard in zip(mesh_sizes, in_shard):
                     if isinstance(shard, Shard) and shard.dim == in_dim:
@@ -516,6 +585,7 @@ def propagate_shape_and_sharding(
                 assert (
                     out_size % submesh_size == 0
                 ), f"Resulting dimension size {out_size} is not divisible by its mesh dimension {submesh_size}."
+
             # we will only shard our first component of the split
             return out_size, in_dim if cmd.split_id == 0 else None
         elif isinstance(cmd, Singleton):
@@ -526,9 +596,8 @@ def propagate_shape_and_sharding(
             return cmd.size, None
         elif isinstance(cmd, Repeat):
             size, in_dim = get_dim_size(cmd.input_dim)
-            assert (
-                in_dim is None or in_dim.input_dim not in sharded_in_dims
-            ), "Cannot tile sharded dimension."
+            if in_dim is not None:
+                shardable_dims[in_dim.input_dim, :] = False
             return size * cmd.times, None
         else:
             raise RuntimeError(f"cmd not found: {cmd}, in rule: {rule}")
@@ -541,13 +610,22 @@ def propagate_shape_and_sharding(
         if in_dim is not None:
             dim_map[in_dim.input_dim] = dim
 
-    return (
-        tuple(out_shape),
-        [
+    needs_reshard = any(
+        isinstance(placement, Shard)
+        and not shardable_dims[placement.dim][mesh_dim]
+        for mesh_dim, placement in enumerate(in_shard)
+    )
+
+    output_placements = (
+        None
+        if needs_reshard
+        else [
             Shard(dim_map[s.dim]) if isinstance(s, Shard) else s
             for s in in_shard
-        ],
+        ]
     )
+
+    return (tuple(out_shape), output_placements, shardable_dims)
 
 
 def register_prop_rule_map(
@@ -566,30 +644,67 @@ def register_prop_rule_map(
         global_in_shape = input_dtensor_spec.shape
         assert global_in_shape is not None, "Shape required."
 
-        global_out_shape, shard_out = propagate_shape_and_sharding(
+        (
+            global_out_shape,
+            shard_out,
+            shardable_dims,
+        ) = propagate_shape_and_sharding(
             input_dtensor_spec.placements,
             tuple(global_in_shape),
             rules,
             tuple(input_dtensor_spec.mesh.mesh.shape),
         )
-        output_dtensor_spec = DTensorSpec(
-            mesh=input_dtensor_spec.mesh,
-            placements=shard_out,
-            shape=torch.Size(global_out_shape),
-            ndim=len(global_out_shape),
-        )
-        local_out_shape = output_dtensor_spec.local_shape
 
-        # We only need the local shape to lower he call into the local op
-        args = op_schema.args_schema
-        if spec.shape_argnum is not None:
-            op_schema.args_schema = (
-                args[: spec.shape_argnum]
-                + (tuple(local_out_shape),)
-                + args[cast(int, spec.shape_argnum) + 1 :]
+        if shard_out is not None:
+            # no reshard needed
+            output_dtensor_spec = DTensorSpec(
+                mesh=input_dtensor_spec.mesh,
+                placements=shard_out,
+                shape=torch.Size(global_out_shape),
+                ndim=len(global_out_shape),
             )
+            local_out_shape = output_dtensor_spec.local_shape
 
-        return OutputSharding(output_spec=output_dtensor_spec)
+            # We only need the local shape to lower he call into the local op
+            args = op_schema.args_schema
+            if spec.shape_argnum is not None:
+                op_schema.args_schema = (
+                    args[: spec.shape_argnum]
+                    + (tuple(local_out_shape),)
+                    + args[cast(int, spec.shape_argnum) + 1 :]
+                )
+
+            return OutputSharding(output_spec=output_dtensor_spec)
+
+        else:
+            # TODO: optimize this. we shouldn't simply blindly replicate
+            #       unshardable dims ...
+            # FIXME: this can be wrong for situations where we have
+            #        [Shard(0), Shard(0)]
+            suggested_placements = [
+                p
+                if not isinstance(p, Shard) or shardable_dims[p.dim][mesh_dim]
+                else Replicate()
+                for mesh_dim, p in enumerate(input_dtensor_spec.placements)
+            ]
+            return OutputSharding(
+                output_spec=None,
+                schema_suggestions=[
+                    OpSchema(
+                        func_schema=op_schema.func_schema,
+                        args_schema=(
+                            DTensorSpec(
+                                placements=suggested_placements,
+                                mesh=input_dtensor_spec.mesh,
+                                ndim=input_dtensor_spec.ndim,
+                                shape=input_dtensor_spec.shape,
+                            ),
+                        )
+                        + op_schema.args_schema[1:],
+                        kwargs_schema=op_schema.kwargs_schema,
+                    )
+                ],
+            )
 
 
 register_prop_rule_map("aten.squeeze.default", torch.squeeze)
