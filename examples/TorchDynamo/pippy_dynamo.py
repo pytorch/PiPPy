@@ -10,6 +10,7 @@ import torch.autograd.profiler_legacy
 
 import pippy.fx
 from pippy import run_pippy
+from pippy.fx.passes import shape_prop
 from pippy.IR import MultiUseParameterConfig, Pipe, pipe_split
 from pippy.PipelineDriver import (
     PipelineDriverBase,
@@ -104,8 +105,16 @@ def run_master(_, args):
         # PiPPy Pipe creation
         # Here we split the graph
         pipe = Pipe.from_tracing(gm, MULTI_USE_PARAM_CONFIG)
-
         inspect_split_module(pipe, 4)
+
+        # Propogate shape across GraphModule
+        print("\n============= Propogate shape across GraphModule =============")
+        sp = shape_prop.ShapeProp(pipe.split_gm)
+        sp.propagate(input)
+        for node in pipe.split_gm.graph.nodes:
+            print(f"Node: {node.name}")
+            for t_meta in node.meta['tensor_meta']:
+                print(f"- {t_meta}")
 
         # Create PipelineDriver
         pipe_driver: PipelineDriverBase = schedules[args.schedule](
