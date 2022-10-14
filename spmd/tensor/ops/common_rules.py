@@ -328,7 +328,7 @@ def reduction_rule(op_schema: OpSchema) -> OutputSharding:
         )
         dim_list = as_list(op_schema.args_schema[1])
         # keep_dim=True means output dim is a singleton dim
-        reduce_dim_char = None if keep_dim else ord("1")
+        reduce_dim_char = ord("1") if keep_dim else None
         out_dimchars = input_chars.translate(
             {ord(alphabet[cast(int, dim)]): reduce_dim_char for dim in dim_list}
         )
