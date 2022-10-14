@@ -1308,7 +1308,9 @@ class PipelineDriverBase(torch.nn.Module):
             # Assign stages to rank workers in a round-robin fashion
             rank = self.all_ranks[stage_id % self.world_size]
             if self.device is not None:
-                logging.debug(f"[root] Moving stage_id = {stage_id} mod to {self.device}")
+                logging.debug(
+                    f"[root] Moving stage_id = {stage_id} mod to {self.device}"
+                )
                 descr.mod.to(self.device)
             logging.debug(f"[root] Sending stage_id = {stage_id} mod to worker")
             self.remote_stage_executor_rrefs[descr.name] = (
@@ -1318,10 +1320,16 @@ class PipelineDriverBase(torch.nn.Module):
                 .create_stage_executor(stage_id=stage_id, mod=descr.mod),
             )
             if self.device is not None:
-                logging.debug(f"[root] Waiting stage_id = {stage_id} mod to be confirmed by worker")
-                while not self.remote_stage_executor_rrefs[descr.name][1].confirmed_by_owner():
+                logging.debug(
+                    f"[root] Waiting stage_id = {stage_id} mod to be confirmed by worker"
+                )
+                while not self.remote_stage_executor_rrefs[descr.name][
+                    1
+                ].confirmed_by_owner():
                     pass
-                logging.debug(f"[root] Deleting stage_id = {stage_id} mod on master")
+                logging.debug(
+                    f"[root] Deleting stage_id = {stage_id} mod on master"
+                )
                 descr.mod.to("cpu")
                 descr.mod = None
             self.stage_to_executor[stage_id] = self.remote_stage_executor_rrefs[
