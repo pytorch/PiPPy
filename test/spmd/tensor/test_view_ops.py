@@ -474,22 +474,6 @@ class TestViewOps(DistTensorTestBase):
             ),
         )
 
-    @with_comms
-    def test_nonlinear_reductions_fallback(self):
-        mesh = DeviceMesh(
-            self.device_type, torch.arange(dist.get_world_size()).view(-1)
-        )
-        self._test_op(
-            mesh,
-            lambda x: torch.var(x, dim=1, keepdim=False),
-            torch.randn(6, 18, 12),
-        )
-        self._test_op(
-            mesh,
-            lambda x: torch.var(x, dim=1, keepdim=True),
-            torch.randn(6, 18, 12),
-        )
-
 
 if __name__ == "__main__":
     run_tests()

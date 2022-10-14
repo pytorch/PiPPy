@@ -698,6 +698,7 @@ def register_prop_rule_map(
                 output_spec=None,
                 schema_suggestions=[
                     OpSchema(
+                        func_schema=op_schema.func_schema,
                         args_schema=(
                             DTensorSpec(
                                 placements=suggested_placements,
