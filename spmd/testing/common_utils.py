@@ -72,7 +72,7 @@ def redistribute_profiler() -> Generator[RedistributeProfile, None, None]:
     def patched_redistribute_dtensor(
         input: DTensor,
         device_mesh: DeviceMesh,
-        placements: List[Placement],
+        placements: Sequence[Placement],
     ) -> DTensor:
         result = orig_redistribute_dtensor(input, device_mesh, placements)
         profile.num_calls += 1
