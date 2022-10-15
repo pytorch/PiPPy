@@ -892,6 +892,11 @@ class PipeStageExecutor(EventRecorder):
             if refcounted_future.release():
                 self.value_store.pop(value_ref_arg.unique_key)
 
+        # Instead of return value let's do a send call
+        if caller_stage != "root":
+            dummy = torch.ones(2)
+            torch.distributed.send(dummy, caller_stage)
+
         return value
 
     def async_transfer(self, microbatch, value_ref_arg, arg_idx, runlist_key):
@@ -899,10 +904,15 @@ class PipeStageExecutor(EventRecorder):
             f"[{self.stage_id}][{microbatch}] Requesting transfer of value {value_ref_arg} "
             f"for runlist item {runlist_key} arg_idx {arg_idx}"
         )
-        value_ref_executor_rref = self.peer_executors[value_ref_arg.stage_id]
+        callee_stage = value_ref_arg.stage_id
+        value_ref_executor_rref = self.peer_executors[callee_stage]
         fut = value_ref_executor_rref.rpc_async().get_value(
             self.stage_id, runlist_key, microbatch, value_ref_arg
         )
+
+        dummy = torch.zeros(2)
+        torch.distributed.recv(dummy, callee_stage)
+        print(dummy)
 
         def bottom_half(fut):
             value = fut.value()
