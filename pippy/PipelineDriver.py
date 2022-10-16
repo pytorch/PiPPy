@@ -163,6 +163,7 @@ class ValueReference:
     def __init__(self, stage_id, unique_key):
         self.stage_id = stage_id
         self.unique_key = unique_key
+        self.meta : Dict[str, Any] = {}
 
     stage_id: int
     unique_key: str
@@ -869,7 +870,7 @@ class PipeStageExecutor(EventRecorder):
                 )
                 self.value_store_cv.notify_all()
 
-    def get_value(self, caller_stage, runlist_key, microbatch, value_ref_arg):
+    def get_value(self, caller_stage, runlist_key, microbatch, value_ref_arg, use_c10d=False):
         callee_stage = value_ref_arg.stage_id
         logging.debug(
             f"[{callee_stage}][{microbatch}] Executing transfer of value "
@@ -893,9 +894,9 @@ class PipeStageExecutor(EventRecorder):
                 self.value_store.pop(value_ref_arg.unique_key)
 
         # Instead of return value let's do a send call
-        if caller_stage != "root":
-            dummy = torch.ones(2)
-            torch.distributed.send(dummy, caller_stage)
+        if use_c10d:
+            torch.distributed.send(value, caller_stage)
+            return
 
         return value
 
@@ -906,21 +907,32 @@ class PipeStageExecutor(EventRecorder):
         )
         callee_stage = value_ref_arg.stage_id
         value_ref_executor_rref = self.peer_executors[callee_stage]
+
+        # Check if there is tensor meta in ValRef
+        use_c10d = False
+        if 'tensor_meta' in value_ref_arg.meta:
+            tm = value_ref_arg.meta['tensor_meta']
+            use_c10d = True
+            recv_buff = torch.zeros(tm.shape, dtype=tm.dtype)
+
         fut = value_ref_executor_rref.rpc_async().get_value(
-            self.stage_id, runlist_key, microbatch, value_ref_arg
+            self.stage_id, runlist_key, microbatch, value_ref_arg, use_c10d
         )
 
-        dummy = torch.zeros(2)
-        torch.distributed.recv(dummy, callee_stage)
-        print(dummy)
+        if use_c10d:
+            torch.distributed.recv(recv_buff, callee_stage)
 
         def bottom_half(fut):
-            value = fut.value()
             logging.debug(
                 f"[{self.stage_id}][{microbatch}] Completing transfer of value {value_ref_arg} "
                 f"for runlist item {runlist_key} arg_idx {arg_idx}"
             )
-            self.rank_worker.update_run_list(runlist_key, arg_idx, value)
+            if use_c10d:
+                print(recv_buff)
+                self.rank_worker.update_run_list(runlist_key, arg_idx, recv_buff)
+            else:
+                value = fut.value()
+                self.rank_worker.update_run_list(runlist_key, arg_idx, value)
 
         return fut.then(bottom_half)
 
@@ -1788,6 +1800,18 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
         ):
             print(node, self.env[node])
             self.env[node].to_here()
+
+        # Insert tensor meta to ValueRefence returned by node call
+        if (node.op == "call_function" or
+            node.op == "call_module"
+        ):
+            if ('tensor_meta' in node.meta and
+                isinstance(node.meta['tensor_meta'], pippy.fx.passes.shape_prop.TensorMetadata)
+            ):
+                ValRef: ValueReference = self.env[node]
+                ValRef.meta.setdefault('tensor_meta', node.meta['tensor_meta'])
+                print(f"Interpreted node: {node.name}")
+                print(f"- {ValRef.meta['tensor_meta']}")
 
         self.pc += 1
         return node
