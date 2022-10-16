@@ -23,12 +23,17 @@ class DistMathOpsTest(DistTensorTestBase):
 
         mat1 = distribute_tensor(tensor_to_sum, device_mesh, shard_spec)
 
+        keep_dim_or_not = [True, False, None]
         for dim in range(tensor_to_sum.ndim):
-            dim_sumed_tensor = tensor_to_sum.sum(dim=dim)
-            dt_dim_sumed_tensor = mat1.sum(dim=dim).redistribute(
-                device_mesh, [Replicate()] * device_mesh.ndim
-            )
-            self.assertEqual(dt_dim_sumed_tensor.to_local(), dim_sumed_tensor)
+            for keep_dim in keep_dim_or_not:
+                sum_args = (dim, keep_dim) if keep_dim is not None else (dim,)
+                dim_sumed_tensor = tensor_to_sum.sum(*sum_args)
+                dt_dim_sumed_tensor = mat1.sum(*sum_args).redistribute(
+                    device_mesh, [Replicate()] * device_mesh.ndim
+                )
+                self.assertEqual(
+                    dt_dim_sumed_tensor.to_local(), dim_sumed_tensor
+                )
 
         full_sumed_tensor = tensor_to_sum.sum()
         dt_sum = mat1.sum().redistribute(
