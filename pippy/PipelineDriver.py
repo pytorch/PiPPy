@@ -602,6 +602,24 @@ class PipeStageExecutor(EventRecorder):
         self.optim_init_cv = threading.Condition(self.optim_init_lock)
 
         self.lr_scheduler = None
+        self.device = self._find_mod_device()
+
+    def _find_mod_device(self):
+        # We assume that all parameters in the module are on the same device
+        # HACK: we assume the module has at least one parameter
+        param = next(self.mod.parameters(), None)
+        buffer = next(self.mod.buffers(), None)
+        if param is not None:
+            device = param.device
+        elif buffer is not None:
+            device = buffer.device
+        else:
+            logging.warning(
+                f"Module of stage {self.stage_id} has no parameter or buffer, "
+                f"cannot figure out device. Setting it to cpu"
+            )
+            device = torch.device('cpu')
+        return device
 
     def __getstate__(self):
         # Adding an empty __getstate__ function here to work around the DDP pickling issue (#153) that occurs when the
@@ -724,28 +742,13 @@ class PipeStageExecutor(EventRecorder):
         # We provide device to the Future constructor so that between
         # future.set_result() and future.wait() correct dependencies can be
         # captured
-        # We assume the output value is on the same device as the stage's
-        # module, and that all parameters in the module are on the same device
-        # HACK: we assume the module has at least one parameter
-        found_device = True
-        param = next(self.mod.parameters(), None)
-        buffer = next(self.mod.buffers(), None)
-        if param is not None:
-            device = param.device
-        elif buffer is not None:
-            device = buffer.device
-        else:
-            found_device = False
-            logging.warning(
-                f"Module of stage {self.stage_id} has no parameter or buffer, "
-                f"cannot figure out device. Setting it to cpu"
-            )
+        # We assume the output value is on the same device as the stage's parameters
 
         # Future constructor does not accept CPU device, must set to None
         future: torch.futures.Future = torch.futures.Future(
             devices=None
-            if not found_device or device.type == "cpu"
-            else [device]
+            if self.device.type == "cpu"
+            else [self.device]
         )
         # TODO: increase blocked_args_count for extra things like scheduling
         work_item = WorkItem(
@@ -913,7 +916,7 @@ class PipeStageExecutor(EventRecorder):
         if 'tensor_meta' in value_ref_arg.meta:
             tm = value_ref_arg.meta['tensor_meta']
             use_c10d = True
-            recv_buff = torch.zeros(tm.shape, dtype=tm.dtype)
+            recv_buff = torch.zeros(tm.shape, dtype=tm.dtype, device=self.device)
 
         fut = value_ref_executor_rref.rpc_async().get_value(
             self.stage_id, runlist_key, microbatch, value_ref_arg, use_c10d

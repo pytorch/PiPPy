@@ -164,8 +164,8 @@ def run_master(_, args):
             x = torch.relu(x)
             x = x + skip_connection
             x = torch.mm(x, self.mm_param2)
-            x = self.lin(x)
             pipe_split()
+            x = self.lin(x)
             x = torch.relu(x)
             return x
 
