@@ -116,13 +116,6 @@ def run_master(_, args):
             for t_meta in node.meta['tensor_meta']:
                 print(f"- {t_meta}")
 
-        # Find shape of input nodes
-        print("\n============= Node inputs =============")
-        for node in pipe.split_gm.graph.nodes:
-            print(f"Node {node.name} inputs:")
-            for in_node in node.all_input_nodes:
-                print(f"- {in_node.name}")
-
         # Create PipelineDriver
         pipe_driver: PipelineDriverBase = schedules[args.schedule](
             pipe,

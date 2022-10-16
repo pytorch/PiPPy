@@ -163,7 +163,7 @@ class ValueReference:
     def __init__(self, stage_id, unique_key):
         self.stage_id = stage_id
         self.unique_key = unique_key
-        self.meta : Dict[str, Any] = {}
+        self.meta: Dict[str, Any] = {}
 
     stage_id: int
     unique_key: str
@@ -618,7 +618,7 @@ class PipeStageExecutor(EventRecorder):
                 f"Module of stage {self.stage_id} has no parameter or buffer, "
                 f"cannot figure out device. Setting it to cpu"
             )
-            device = torch.device('cpu')
+            device = torch.device("cpu")
         return device
 
     def __getstate__(self):
@@ -746,9 +746,7 @@ class PipeStageExecutor(EventRecorder):
 
         # Future constructor does not accept CPU device, must set to None
         future: torch.futures.Future = torch.futures.Future(
-            devices=None
-            if self.device.type == "cpu"
-            else [self.device]
+            devices=None if self.device.type == "cpu" else [self.device]
         )
         # TODO: increase blocked_args_count for extra things like scheduling
         work_item = WorkItem(
@@ -873,7 +871,14 @@ class PipeStageExecutor(EventRecorder):
                 )
                 self.value_store_cv.notify_all()
 
-    def get_value(self, caller_stage, runlist_key, microbatch, value_ref_arg, use_c10d=False):
+    def get_value(
+        self,
+        caller_stage,
+        runlist_key,
+        microbatch,
+        value_ref_arg,
+        use_c10d=False,
+    ):
         callee_stage = value_ref_arg.stage_id
         logging.debug(
             f"[{callee_stage}][{microbatch}] Executing transfer of value "
@@ -913,10 +918,12 @@ class PipeStageExecutor(EventRecorder):
 
         # Check if there is tensor meta in ValRef
         use_c10d = False
-        if 'tensor_meta' in value_ref_arg.meta:
-            tm = value_ref_arg.meta['tensor_meta']
+        if "tensor_meta" in value_ref_arg.meta:
+            tm = value_ref_arg.meta["tensor_meta"]
             use_c10d = True
-            recv_buff = torch.zeros(tm.shape, dtype=tm.dtype, device=self.device)
+            recv_buff = torch.zeros(
+                tm.shape, dtype=tm.dtype, device=self.device
+            )
 
         fut = value_ref_executor_rref.rpc_async().get_value(
             self.stage_id, runlist_key, microbatch, value_ref_arg, use_c10d
@@ -931,8 +938,9 @@ class PipeStageExecutor(EventRecorder):
                 f"for runlist item {runlist_key} arg_idx {arg_idx}"
             )
             if use_c10d:
-                print(recv_buff)
-                self.rank_worker.update_run_list(runlist_key, arg_idx, recv_buff)
+                self.rank_worker.update_run_list(
+                    runlist_key, arg_idx, recv_buff
+                )
             else:
                 value = fut.value()
                 self.rank_worker.update_run_list(runlist_key, arg_idx, value)
@@ -1805,16 +1813,13 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
             self.env[node].to_here()
 
         # Insert tensor meta to ValueRefence returned by node call
-        if (node.op == "call_function" or
-            node.op == "call_module"
-        ):
-            if ('tensor_meta' in node.meta and
-                isinstance(node.meta['tensor_meta'], pippy.fx.passes.shape_prop.TensorMetadata)
+        if node.op == "call_function" or node.op == "call_module":
+            if "tensor_meta" in node.meta and isinstance(
+                node.meta["tensor_meta"],
+                pippy.fx.passes.shape_prop.TensorMetadata,
             ):
                 ValRef: ValueReference = self.env[node]
-                ValRef.meta.setdefault('tensor_meta', node.meta['tensor_meta'])
-                print(f"Interpreted node: {node.name}")
-                print(f"- {ValRef.meta['tensor_meta']}")
+                ValRef.meta.setdefault("tensor_meta", node.meta["tensor_meta"])
 
         self.pc += 1
         return node
