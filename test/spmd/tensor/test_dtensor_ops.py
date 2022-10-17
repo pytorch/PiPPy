@@ -209,7 +209,6 @@ dtensor_fails = {
     xfail("fft.rfft2"),
     xfail("fft.rfft"),
     xfail("fft.rfftn"),
-    xfail("flatten"),
     xfail("flip"),
     xfail("fliplr"),
     xfail("flipud"),
@@ -237,7 +236,6 @@ dtensor_fails = {
     xfail("isnan"),
     xfail("isneginf"),
     xfail("isposinf"),
-    xfail("kron"),
     xfail("kthvalue"),
     xfail("linalg.cholesky"),
     xfail("linalg.cholesky_ex"),
@@ -431,11 +429,8 @@ dtensor_fails = {
     xfail("rand_like"),
     xfail("randint_like"),
     xfail("randn_like"),
-    xfail("ravel"),
     xfail("renorm"),
     xfail("repeat_interleave"),
-    xfail("reshape_as"),
-    xfail("reshape"),
     xfail("resize_"),
     xfail("resize_as_"),
     xfail("roll"),
@@ -512,8 +507,6 @@ dtensor_fails = {
     xfail("var_mean"),
     xfail("vdot"),
     xfail("view_as_complex"),
-    xfail("view_as"),
-    xfail("view"),  # view related op only works with certain sharding dims
     xfail("vstack"),
     # ops inside this might even fail without dtensor
     # tests, as we rescale op db common test size factor (i.e. L, M, S)
