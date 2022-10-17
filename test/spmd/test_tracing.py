@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 from torch.distributed.distributed_c10d import get_global_rank, get_world_size
 from torch.fx.experimental.proxy_tensor import make_fx
+from torch.distributed._spmd.comm_tensor import CommTensor
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.testing._internal.common_utils import run_tests
 
@@ -33,13 +34,15 @@ class TraceDeviceMeshTestBase:
             ]
 
             def fn(tensor: torch.Tensor):
-                reduced_tensor = mesh.all_reduce(tensor, mesh_dim=dim)
+                tensor_to_reduce = CommTensor(tensor.clone())
+
+                mesh.all_reduce(tensor_to_reduce, mesh_dim=dim)
                 # multiply with 1 to trigger wait on read during tracing.
-                return reduced_tensor * 1
+                return tensor_to_reduce * 1
 
             # use a local_tensor + 1 for tracing to make sure that we are not
             # simply replaying recorded tensor value
-            traced_fn = make_fx(fn)(local_tensor + 1)
+            traced_fn = make_fx(fn)(local_tensor.clone() + 1)
 
             # execute traced DeviceMesh communication
             reduced_tensor = traced_fn(local_tensor)
@@ -58,7 +61,8 @@ class TraceDeviceMeshTestBase:
             ]
 
             def fn(tensor: torch.Tensor):
-                received_tensor = mesh.broadcast(tensor, mesh_dim=dim)
+                received_tensor = CommTensor(tensor.clone())
+                mesh.broadcast(received_tensor, mesh_dim=dim)
                 # multiply with 1 to trigger wait on read during tracing.
                 return received_tensor * 1
 
@@ -89,7 +93,8 @@ class TraceDeviceMeshTestBase:
             tensor_to_scatter = torch.cat(scattered_tensors)
 
             def fn(tensor_to_scatter: torch.Tensor):
-                received_tensor = mesh.scatter(tensor_to_scatter, mesh_dim=dim)
+                scattered_comm_tensor = CommTensor(tensor_to_scatter)
+                received_tensor = mesh.scatter(scattered_comm_tensor, mesh_dim=dim)
                 # multiply with 1 to trigger wait on read during tracing.
                 return received_tensor * 1
 
@@ -113,7 +118,8 @@ class TraceDeviceMeshTestBase:
             ]
 
             def fn(tensor: torch.Tensor, output_shape):
-                return mesh.all_gather(tensor, output_shape, mesh_dim=dim)
+                tensor_to_gather = CommTensor(tensor)
+                return mesh.all_gather(tensor_to_gather, output_shape, mesh_dim=dim)
 
             # use a local_tensor + 1 for tracing to make sure that we are not
             # simply replaying recorded tensor value

@@ -340,7 +340,8 @@ class DeviceMesh(object):
                     scatter_tensor, tensor_dim
                 )
             scatter_tensor = scatter_tensor.contiguous()
-            to_scatter.append(CommTensor(scatter_tensor))
+            # to_scatter.append(CommTensor(scatter_tensor))
+            to_scatter.append(scatter_tensor)
 
         # N.B.: the `tensor` below will be a CommTensor too due to CommTensor's
         # propagation rule: propagte wrapping until communication is called.
@@ -390,10 +391,6 @@ class DeviceMesh(object):
         # CommTensor does not change eager mode behavior. During tracing, it
         # makes sure communication result is properly waited before subsequent
         # read operations.
-        if not tensor.is_contiguous():
-            tensor = CommTensor(tensor.contiguous())
-        else:
-            tensor = CommTensor(tensor.clone())
         broadcast(tensor, src=src_for_dim, group=dim_group)
         return tensor
 
@@ -440,13 +437,11 @@ class DeviceMesh(object):
             # create recv tensor with padded shape
             recv_shape[tensor_dim] = quot + (1 if rem > 0 else 0)
             gathered_list.append(
-                CommTensor(
-                    torch.empty(
-                        recv_shape,
-                        dtype=tensor.dtype,
-                        layout=tensor.layout,
-                        device=tensor.device,
-                    )
+                torch.empty(
+                    recv_shape,
+                    dtype=tensor.dtype,
+                    layout=tensor.layout,
+                    device=tensor.device,
                 )
             )
 
@@ -463,7 +458,7 @@ class DeviceMesh(object):
         # input tensor must be contiguous
         all_gather(
             gathered_list,
-            CommTensor(tensor.contiguous()),
+            tensor.contiguous(),
             group=dim_group,
         )
 
@@ -501,10 +496,6 @@ class DeviceMesh(object):
         # CommTensor does not change eager mode behavior. During tracing, it
         # makes sure communication result is properly waited before subsequent
         # read operations.
-        if not tensor.is_contiguous():
-            tensor = CommTensor(tensor.contiguous())
-        else:
-            tensor = CommTensor(tensor.clone())
         all_reduce(tensor, op=op, group=dim_group)
         return tensor
 

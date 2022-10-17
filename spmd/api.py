@@ -4,6 +4,7 @@ import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed._spmd.comm_tensor import _get_tracer
 from torch.fx.experimental.proxy_tensor import make_fx, proxy_slot
+from torch.distributed._spmd.comm_tensor import CommTensor
 from torch.utils._pytree import tree_flatten, tree_map
 
 from functorch.compile import aot_module
@@ -40,6 +41,12 @@ def _dispatch_with_local_tensors(
     ] = {},
 ) -> object:
     def redistribute(arg: object) -> object:
+        if isinstance(arg, torch.Tensor) and arg in specs:
+            comm_arg = CommTensor(arg)
+            arg = _redistribute_with_local_tensor(comm_arg, *specs[arg])
+
+        return arg
+
         return (
             _redistribute_with_local_tensor(arg, *specs[arg])
             if isinstance(arg, torch.Tensor) and arg in specs
