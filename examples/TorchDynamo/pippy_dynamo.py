@@ -8,7 +8,10 @@ from typing import Dict
 import torch
 import torch.autograd.profiler_legacy
 import torch.fx
-import torchdynamo
+# TorchDynamo is moved into PyTorch for PyTorch > 1.13
+# One can use TorchDynamo without installing it separately by:
+# import torch._dynamo as dynamo
+import torchdynamo as dynamo
 
 import pippy.fx
 from pippy import run_pippy
@@ -84,7 +87,7 @@ def run_master(_, args):
     chunks = 1
 
     # Ask Dynamo to let PiPPy annotation stay in graph
-    torchdynamo.allow_in_graph(pipe_split)
+    dynamo.allow_in_graph(pipe_split)
 
     # Define a compiler backend made by PiPPy for use by Dynamo
     # The backend comprising:
@@ -143,7 +146,7 @@ def run_master(_, args):
         # Decorate with Dynamo here, or
         # explicitly call optimize in the main code.
         # We do the latter for zero change on the model, hence commenting out the decoration here
-        # @torchdynamo.optimize(my_pippy_compiler)
+        # @dynamo.optimize(my_pippy_compiler)
         def forward(self, x):
             x = torch.mm(x, self.mm_param)
             skip_connection = x
@@ -164,7 +167,7 @@ def run_master(_, args):
     ec = ExampleCode()
     ec.to(args.device)
     # Optimize and distribute model using Dynamo + PiPPy
-    ec = torchdynamo.optimize(my_pippy_compiler)(ec)
+    ec = dynamo.optimize(my_pippy_compiler)(ec)
 
     ec_input = torch.randn(bs, d_hid, device=args.device)
     # This would already be output returned by PiPPy's distributed pipeline
