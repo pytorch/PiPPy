@@ -92,6 +92,4 @@ __all__ = [
     "Schema",
     "SPMD",
     "distribute_module",
-    "Shard",
-    "Replicate",
 ]
