@@ -1,11 +1,11 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import Optional, Callable, Tuple, Union
-import torch
+from typing import Optional, Callable
 import torch.nn as nn
 from spmd.tensor import distribute_tensor
 from spmd.tensor.api import DTensor
 from spmd.tensor.device_mesh import get_global_device_mesh, DeviceMesh
 from spmd.tensor.placement_types import Replicate, Shard
+from spmd.api import Schema, SPMD
 
 
 def distribute_module(
@@ -84,3 +84,12 @@ def distribute_module(
         )
 
     return module
+
+
+# All public APIs from spmd package
+__all__ = [
+    "DeviceMesh",
+    "Schema",
+    "SPMD",
+    "distribute_module",
+]

@@ -4,7 +4,7 @@ from typing import Optional, Sequence, cast
 import torch
 from spmd.tensor.api import DTensor
 from spmd.tensor.device_mesh import DeviceMesh, get_global_device_mesh
-from spmd.tensor.placement_types import Placement, Shard, Replicate, _Partial
+from spmd.tensor.placement_types import Placement, Shard, Replicate
 
 
 # Import all builtin dist tensor ops
@@ -99,3 +99,13 @@ def distribute_tensor(
         placements,
         requires_grad=tensor.requires_grad,
     )
+
+
+# All public APIs from dtensor package
+__all__ = [
+    "DTensor",
+    "DeviceMesh",
+    "distribute_tensor",
+    "Shard",
+    "Replicate",
+]
