@@ -9,6 +9,7 @@ on:
       - '.github/workflows/pippy**'
       - 'pippy/**'
       - 'test/**'
+      - 'examples/**'
       - '!test/spmd/**'
       - '!docs/**'
       - '!**.md'

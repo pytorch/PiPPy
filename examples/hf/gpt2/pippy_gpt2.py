@@ -4,6 +4,7 @@ import inspect
 import logging
 import os
 from functools import reduce
+from typing import Optional
 
 import torch
 from transformers import GPT2LMHeadModel, GPT2Config
@@ -20,7 +21,6 @@ from pippy.visualizer import events_to_json
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
-
 
 schedules = {
     'FillDrain': PipelineDriverFillDrain,
@@ -40,32 +40,6 @@ def get_number_of_params(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-# TODO: Fails! Why??? https://gist.github.com/pbelevich/f4e78c6ed2fdabc8b02ab15e254935fd
-# def add_split_points(gpt2, layers_per_rank):
-#     for i in range(0, gpt2.config.n_layer // layers_per_rank):
-#         annotate_split_points(gpt2, {f'transformer.h.{i * layers_per_rank}': PipeSplitWrapper.SplitPoint.BEGINNING})
-#     annotate_split_points(gpt2, {
-#         f'transformer.h.{gpt2.config.n_layer // layers_per_rank - 1}': PipeSplitWrapper.SplitPoint.END})
-#     return gpt2.config.n_layer // layers_per_rank + 2
-
-
-# TODO: Fails! Why??? https://gist.github.com/pbelevich/f4e78c6ed2fdabc8b02ab15e254935fd
-# def add_split_points(gpt2, layers_per_rank):
-#     for i in range(0, gpt2.config.n_layer // layers_per_rank):
-#         annotate_split_points(gpt2, {f'transformer.h.{i * layers_per_rank}': PipeSplitWrapper.SplitPoint.BEGINNING})
-#     annotate_split_points(gpt2, {f'lm_head': PipeSplitWrapper.SplitPoint.BEGINNING})
-#     return gpt2.config.n_layer // layers_per_rank + 2
-
-
-# TODO: Fails! Why??? https://gist.github.com/pbelevich/f4e78c6ed2fdabc8b02ab15e254935fd
-# def add_split_points(gpt2, decoders_per_rank):
-#     annotate_split_points(gpt2, {f'transformer.drop': PipeSplitWrapper.SplitPoint.END})
-#     for i in range(0, gpt2.config.n_layer // decoders_per_rank):
-#         annotate_split_points(gpt2, {
-#             f'transformer.h.{i * decoders_per_rank + decoders_per_rank - 1}': PipeSplitWrapper.SplitPoint.END})
-#     return gpt2.config.n_layer // decoders_per_rank + 2
-
-
 def add_split_points(gpt2, decoders_per_rank):
     for i in range(0, gpt2.config.n_layer // decoders_per_rank):
         annotate_split_points(gpt2, {f'transformer.h.{i * decoders_per_rank}': PipeSplitWrapper.SplitPoint.BEGINNING})
@@ -80,7 +54,11 @@ def run_master(_, args):
 
     assert args.world_size >= 4, "This program requires at least 3 workers + 1 master"
 
-    gpt2 = GPT2LMHeadModel(GPT2Config())
+    config = GPT2Config()
+    config.n_embd = args.n_embd or config.n_embd
+    config.n_layer = args.n_layer or config.n_layer
+    config.n_head = args.n_head or config.n_head
+    gpt2 = GPT2LMHeadModel(config)
     gpt2.eval()
     print(gpt2.config)
     print(f"GPT-2 total number of params = {get_number_of_params(gpt2) // 10 ** 6}M")
@@ -123,7 +101,8 @@ def run_master(_, args):
     gpt2_pipe = Pipe.from_tracing(gpt2, MULTI_USE_PARAM_CONFIG, tracer=PiPPyHFTracer(), concrete_args=concrete_args,
                                   output_loss_value_spec=output_loss_value_spec, deep_copy_module=False)
     assert sm_cnt == len(list(gpt2_pipe.split_gm.children()))
-    gpt2_pipe.to(device)
+    if args.mode == 'small':
+        gpt2_pipe.to(device)
 
     # gpt2_pipe(**gpt2_input_dict)
 
@@ -133,13 +112,18 @@ def run_master(_, args):
     args_chunk_spec = ()
     kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'labels': TensorChunkSpec(0), 'position_ids': None}
     output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b), 'logits': TensorChunkSpec(0),
-                         'past_key_values': [[TensorChunkSpec(0) for _ in range(2)] for _ in range(12)]}
+                         'past_key_values': [[TensorChunkSpec(0) for _ in range(2)] for _ in range(config.n_layer)]}
+    if args.mode == 'large-cpu':
+        intermediate_device = device
+    else:
+        intermediate_device = None
     pipe_driver: PipelineDriverBase = schedules[args.schedule](gpt2_pipe, chunks, args_chunk_spec, kwargs_chunk_spec,
                                                                output_chunk_spec, len(all_worker_ranks),
                                                                all_ranks=all_worker_ranks,
                                                                _debug_mask_minibatches=False,
                                                                _record_mem_dumps=bool(args.record_mem_dumps),
-                                                               checkpoint=bool(args.checkpoint))
+                                                               checkpoint=bool(args.checkpoint),
+                                                               device=intermediate_device)
 
     this_file_name = os.path.splitext(os.path.basename(__file__))[0]
 
@@ -169,6 +153,15 @@ if __name__ == "__main__":
     parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
     parser.add_argument('--record_mem_dumps', type=int, default=0, choices=[0, 1])
     parser.add_argument('--checkpoint', type=int, default=0, choices=[0, 1])
+    parser.add_argument('--rpc_timeout', type=int, default=1800)
+    parser.add_argument('--num_worker_threads', type=int, default=512)
+
+    parser.add_argument('--n_embd', type=int, default=None)
+    parser.add_argument('--n_layer', type=int, default=None)
+    parser.add_argument('--n_head', type=int, default=None)
+
+    parser.add_argument('--mode', type=str, default='small', choices=['small', 'large-cpu'])
+
     args = parser.parse_args()
 
     run_pippy(run_master, args)
