@@ -58,7 +58,6 @@ class ToTorchTensor(torch.autograd.Function):
             device_mesh,
             placements,
             size=ctx.dtensor_shape,
-            # requires_grad=ctx.dtensor_requires_grad,
             requires_grad=grad_output.requires_grad,
         )
 

@@ -1,8 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 
 import torch
-import torch.nn.functional as F
-from typing import Union, Dict, Tuple, List
+from typing import Union, Dict, Tuple
 
 import spmd.tensor.api as dtensor
 from spmd.tensor.placement_types import DTensorSpec, OutputSpecType
@@ -50,7 +49,3 @@ def wrap(res: object, spec: OutputSpecType) -> object:
     else:
         # if the res contains only non tensor values, we simply return it without rewrapping
         return res
-
-
-def needs_pad(rank: int, pad_idx: int) -> bool:
-    return pad_idx != 0 and rank >= pad_idx
