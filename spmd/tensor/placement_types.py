@@ -69,7 +69,7 @@ class Shard(Placement):
                 shard_list.append(shard)
             return shard_list, idx_start_to_pad
         else:
-            return shard_list, idx_start_to_pad
+            return tensor_list, idx_start_to_pad
 
     def pad_tensor(self, tensor: torch.Tensor) -> torch.Tensor:
         # pad tensor by 1 on the shard dim
