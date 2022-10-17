@@ -5,6 +5,7 @@ from spmd.tensor import distribute_tensor
 from spmd.tensor.api import DTensor
 from spmd.tensor.device_mesh import get_global_device_mesh, DeviceMesh
 from spmd.tensor.placement_types import Replicate, Shard
+from spmd.api import Schema, SPMD
 
 
 def distribute_module(
@@ -87,9 +88,9 @@ def distribute_module(
 
 # All public APIs from spmd package
 __all__ = [
-    "DTensor",
     "DeviceMesh",
-    "distribute_tensor",
+    "Schema",
+    "SPMD",
     "distribute_module",
     "Shard",
     "Replicate",
