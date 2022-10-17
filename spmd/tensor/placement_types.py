@@ -131,6 +131,33 @@ class DTensorSpec(object):
                 local_shape[placement.dim] //= self.mesh.size(idx)
         return tuple(local_shape)
 
+    @property
+    def local_offsets(self) -> Tuple[int, ...]:
+        """
+        Compute the offsets of a local shard of the given DTensor on its current
+        global rank. This is mostly used by distributed checkpointing to know the
+        exact offsets of the local shard.
+        """
+        assert (
+            self.shape is not None
+        ), "DTensorSpec does not contain global shape."
+        local_offsets = [0] * self.ndim
+        for idx, mesh_dim in enumerate(self.dim_map):
+            if mesh_dim > -1:
+                my_coordinate = self.mesh.get_coordinate_on_dim(mesh_dim)
+                # TODO: what should happen if rank is not in the mesh?
+                # see issue https://github.com/pytorch/tau/pull/492
+                assert (
+                    my_coordinate is not None
+                ), "Rank if not part of mesh"  # TODO: figure out behavior here
+                mesh_dim_size = self.mesh.size(mesh_dim)
+                quot, rem = divmod(self.shape[idx], mesh_dim_size)
+                local_offsets[idx] = my_coordinate * quot + (
+                    rem if my_coordinate >= rem else my_coordinate
+                )
+
+        return tuple(local_offsets)
+
     @classmethod
     def from_dim_map(
         cls,

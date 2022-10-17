@@ -8,7 +8,7 @@ from spmd.testing.common_utils import (  # type: ignore
     DistTensorTestBase,
     with_comms,
 )
-from spmd.tensor import DeviceMesh, DTensor
+from spmd.tensor import DeviceMesh, DTensor, distribute_tensor
 from spmd.tensor.placement_types import _Partial, Replicate, Shard
 
 
@@ -192,6 +192,40 @@ class DistTensorTest(DistTensorTestBase):
         shard_spec[0] = Replicate()
         self.assertTrue(sharded_tensor.placements is not shard_spec)
         self.assertNotEqual(sharded_tensor.placements, shard_spec)
+
+    @with_comms
+    def test_dtensor_spec_local_shard_offset(self):
+        device_mesh = DeviceMesh(
+            self.device_type, torch.arange(self.world_size).reshape(2, 2)
+        )
+        tensor_shape = (3 * self.world_size, 3 * self.world_size)
+        # sharding specs and its corresponding local shard offsets
+        shard_spec_and_offsets = [
+            (
+                [Shard(0), Replicate()],
+                (3 * (self.world_size // 2) * (self.rank // 2), 0),
+            ),
+            (
+                [Shard(1), Replicate()],
+                (0, 3 * (self.world_size // 2) * (self.rank // 2)),
+            ),
+            (
+                [Replicate(), Shard(0)],
+                (3 * (self.world_size // 2) * (self.rank % 2), 0),
+            ),
+            (
+                [Replicate(), Shard(1)],
+                (0, 3 * (self.world_size // 2) * (self.rank % 2)),
+            ),
+        ]
+
+        # loop through all sharding specs and check local shard offsets
+        logical_tensor = torch.randn(tensor_shape)
+        for shard_spec, expected_shard_offsets in shard_spec_and_offsets:
+            dtensor = distribute_tensor(logical_tensor, device_mesh, shard_spec)
+            self.assertEqual(
+                expected_shard_offsets, dtensor._spec.local_offsets
+            )
 
     @with_comms
     def test_tensor_properties(self):
