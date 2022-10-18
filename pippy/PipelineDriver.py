@@ -11,6 +11,7 @@ from typing import Any, Callable, Dict, List, Tuple, Optional
 import torch
 import torch.distributed.rpc as rpc
 import pippy.fx
+import pippy.fx.passes
 
 from pippy.IR import Pipe
 from pippy.backward import (
@@ -1833,14 +1834,14 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
             print(node, self.env[node])
             self.env[node].to_here()
 
-        # Insert tensor meta to ValueRefence returned by node call
+        # Insert tensor meta to ValueReference returned by node call
         if node.op == "call_function" or node.op == "call_module":
             if "tensor_meta" in node.meta and isinstance(
                 node.meta["tensor_meta"],
                 pippy.fx.passes.shape_prop.TensorMetadata,
             ):
-                ValRef: ValueReference = self.env[node]
-                ValRef.meta.setdefault("tensor_meta", node.meta["tensor_meta"])
+                val_ref: ValueReference = self.env[node]
+                val_ref.meta.setdefault("tensor_meta", node.meta["tensor_meta"])
 
         self.pc += 1
         return node
