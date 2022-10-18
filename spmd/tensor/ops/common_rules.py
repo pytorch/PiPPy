@@ -5,7 +5,7 @@ import torch
 from typing import List, Dict, Tuple, Optional, cast
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.placement_types import DTensorSpec
-from spmd.tensor.ops.utils import as_list
+from spmd.tensor.ops.utils import as_list, normalize_dims
 
 
 def _replace_char_in_str(string: str, new_char: str, idx: int) -> str:
@@ -326,7 +326,8 @@ def reduction_rule(op_schema: OpSchema) -> OutputSharding:
         keep_dim = len(op_schema.args_schema) > 2 and bool(
             op_schema.args_schema[2]
         )
-        dim_list = as_list(op_schema.args_schema[1])
+        dims_list = cast(List[int], as_list(op_schema.args_schema[1]))
+        dim_list = normalize_dims(dims_list, input_spec.ndim)
         # keep_dim=True means output dim is a singleton dim
         reduce_dim_char = ord("1") if keep_dim else None
         out_dimchars = input_chars.translate(

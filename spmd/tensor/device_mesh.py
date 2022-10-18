@@ -294,9 +294,8 @@ class DeviceMesh(object):
         # This is necessary in order to properly trigger CommTensor's dispatch
         # function for scatter_.
         if src_for_dim == get_rank():
-            scatter_list = [CommTensor(t) for t in scatter_list]
             fut = scatter(
-                CommTensor(tensor),
+                tensor,
                 scatter_list=scatter_list,
                 src=src_for_dim,
                 group=dim_group,
@@ -304,7 +303,7 @@ class DeviceMesh(object):
             )
         else:
             fut = scatter(
-                CommTensor(tensor),
+                tensor,
                 scatter_list=None,
                 src=src_for_dim,
                 group=dim_group,
@@ -338,7 +337,7 @@ class DeviceMesh(object):
         if dim_group is not GroupMember.WORLD:
             src_for_dim = get_global_rank(dim_group, 0)
 
-        return broadcast(CommTensor(tensor), src=src_for_dim, group=dim_group)
+        return broadcast(tensor, src=src_for_dim, group=dim_group)
 
     def all_gather(
         self,
@@ -361,14 +360,9 @@ class DeviceMesh(object):
             A :class:`Work` object
         """
         dim_group = self._dim_groups[mesh_dim]
-        # N.B. CommTensor does not change eager mode behavior. During tracing, it
-        # makes sure communication result is properly waited before subsequent
-        # read operations.
-        # input tensor must be contiguous
-        # to_gather = [CommTensor(t) for t in tensor_list]
         return all_gather(
             tensor_list,
-            CommTensor(tensor),
+            tensor,
             group=dim_group,
         )
 
@@ -394,11 +388,8 @@ class DeviceMesh(object):
             A :class:`Work` object
         """
         dim_group = self._dim_groups[mesh_dim]
-        # CommTensor does not change eager mode behavior. During tracing, it
-        # makes sure communication result is properly waited before subsequent
-        # read operations.
         return all_reduce(
-            CommTensor(tensor), op=op, group=dim_group, async_op=async_op
+            tensor, op=op, group=dim_group, async_op=async_op
         )
 
     def reduce_scatter(
@@ -426,11 +417,7 @@ class DeviceMesh(object):
         """
         if self._backend == "nccl":
             dim_group = self._dim_groups[mesh_dim]
-            # CommTensor does not change eager mode behavior. During tracing, it
-            # makes sure communication result is properly waited before subsequent
-            # read operations.
-            to_scatter = [CommTensor(t) for t in input_list]
-            fut = reduce_scatter(output, to_scatter, op=op, group=dim_group)
+            fut = reduce_scatter(output, input_list, op=op, group=dim_group)
 
         elif self._backend == "gloo":
             # it's gloo, which does not have reduce_scatter
@@ -445,8 +432,6 @@ class DeviceMesh(object):
                 my_coordinate is not None
             ), "Rank if not part of mesh"  # TODO: figure out behavior here
             fut = None
-            # TODO: this is not efficient as it incurs n `all_reduce`, we should
-            # see how to do all_reduce once and scatter properly.
             flattened_list = []
             offset_list = []
 

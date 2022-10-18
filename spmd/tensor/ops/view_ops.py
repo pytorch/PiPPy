@@ -17,7 +17,11 @@ import functools
 import operator
 from spmd.tensor.api import Shard
 from spmd.tensor.dispatch import OpSchema, OutputSharding
-from spmd.tensor.ops.utils import register_prop_rule
+from spmd.tensor.ops.utils import (
+    register_prop_rule,
+    normalize_dim,
+    normalize_dims,
+)
 
 
 def _prod(xs: Iterable[int]) -> int:
@@ -221,18 +225,6 @@ def dim_flatten(ndim: int) -> DimMap:
         return (Flatten.new(tuple(InputDim(i) for i in range(ndim))),)
 
 
-def normalize_dims(
-    dims: Union[int, Tuple[int, ...]], ndim: int
-) -> Tuple[int, ...]:
-    if isinstance(dims, int):
-        dims = (dims,)
-    return tuple(normalize_dim(dim, ndim) for dim in dims)
-
-
-def normalize_dim(dim: int, ndim: int) -> int:
-    return dim if dim >= 0 else dim + ndim
-
-
 def dim_movedim(
     ndim: int,
     input: Union[int, Tuple[int, ...]],
@@ -411,7 +403,7 @@ def dim_squeeze(shape: Shape, dim: Optional[int] = None) -> DimMap:
     return tuple(
         InputDim(i)
         for i, s in enumerate(shape)
-        if s > 1 or (dim is not None and i != dim)
+        if s > 1 or (dim is not None and i != normalize_dim(dim, len(shape)))
     )
 
 
