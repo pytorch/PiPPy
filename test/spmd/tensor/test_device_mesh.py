@@ -327,7 +327,7 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
             tensor_padded_list, pad_idx = shard_placement.shard_tensor(
                 tensor_to_split,
                 device_mesh.size(),
-                with_sharding=True,
+                with_padding=True,
                 contiguous=True,
             )
             local_tensor = tensor_padded_list[my_rank]

@@ -289,10 +289,6 @@ class DeviceMesh(object):
         if dim_group is not GroupMember.WORLD:
             src_for_dim = get_global_rank(dim_group, 0)
 
-        # N.B.: the `tensor` below will be a CommTensor too due to CommTensor's
-        # propagation rule: propagte wrapping until communication is called.
-        # This is necessary in order to properly trigger CommTensor's dispatch
-        # function for scatter_.
         if src_for_dim == get_rank():
             fut = scatter(
                 tensor,
@@ -476,13 +472,13 @@ class DeviceMesh(object):
             dim_group_size = get_world_size(dim_group)
             for i in range(dim_group_size):
                 # src need to be global rank
-                src_for_dim = 0
+                src_for_dim = i
                 if dim_group is not GroupMember.WORLD:
                     src_for_dim = get_global_rank(dim_group, i)
 
                 work = scatter(
                     output_tensor_list[i],
-                    input_tensor_list if i == my_coordinate else [],
+                    input_tensor_list if self.get_rank() == src_for_dim else [],
                     group=dim_group,
                     src=src_for_dim,
                 )
