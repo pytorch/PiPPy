@@ -4,7 +4,6 @@ import inspect
 import logging
 import os
 from functools import reduce
-from typing import Optional
 
 import torch
 from transformers import GPT2LMHeadModel, GPT2Config
