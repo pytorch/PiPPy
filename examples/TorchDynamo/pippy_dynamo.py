@@ -7,6 +7,8 @@ from typing import Dict
 
 import torch
 import torch.autograd.profiler_legacy
+import torch.fx
+import torchdynamo
 
 import pippy.fx
 from pippy import run_pippy
@@ -17,9 +19,8 @@ from pippy.PipelineDriver import (
     PipelineDriver1F1B,
     PipelineDriverInterleaved1F1B,
 )
+from pippy.fx.passes import shape_prop
 from pippy.microbatch import TensorChunkSpec
-
-import torchdynamo
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
@@ -39,15 +40,15 @@ pippy.fx.Tracer.proxy_buffer_attributes = True
 
 
 def inspect_split_module(
-    pipe: Pipe,
-    expected_stages: int = -1,
+        pipe: Pipe,
+        expected_stages: int = -1,
 ):
     gm: pippy.fx.GraphModule = pipe.split_gm
     # Check returned number of stages
     nstages = len(list(gm.children()))
     if expected_stages > 0:
         assert (
-            nstages == expected_stages
+                nstages == expected_stages
         ), f"Model is split into {nstages} instead of {expected_stages} stages"
 
     print(f"\n======= GraphModule after Auto-split =======")
@@ -85,7 +86,6 @@ def run_master(_, args):
     # Ask Dynamo to let PiPPy annotation stay in graph
     torchdynamo.allow_in_graph(pipe_split)
 
-
     # Define a compiler backend made by PiPPy for use by Dynamo
     # The backend comprising:
     # - PiPPy's graph split, and
@@ -104,8 +104,16 @@ def run_master(_, args):
         # PiPPy Pipe creation
         # Here we split the graph
         pipe = Pipe.from_tracing(gm, MULTI_USE_PARAM_CONFIG)
-
         inspect_split_module(pipe, 4)
+
+        # Propagate shape across GraphModule
+        print("\n============= Propagate shape across GraphModule =============")
+        sp = shape_prop.ShapeProp(pipe.split_gm)
+        sp.propagate(input)
+        for node in pipe.split_gm.graph.nodes:
+            print(f"Node: {node.name}")
+            for t_meta in node.meta['tensor_meta']:
+                print(f"- {t_meta}")
 
         # Create PipelineDriver
         pipe_driver: PipelineDriverBase = schedules[args.schedule](
@@ -123,7 +131,6 @@ def run_master(_, args):
         # Return a runtime Callable
         # This PipelineDriver is a distributed runtime
         return pipe_driver
-
 
     class ExampleCode(torch.nn.Module):
         def __init__(self):
@@ -148,11 +155,10 @@ def run_master(_, args):
             x = torch.relu(x)
             x = x + skip_connection
             x = torch.mm(x, self.mm_param2)
-            x = self.lin(x)
             pipe_split()
+            x = self.lin(x)
             x = torch.relu(x)
             return x
-
 
     # Create model as usual
     ec = ExampleCode()
@@ -174,7 +180,7 @@ def run_master(_, args):
     # Profiling run
     # This run would not trigger compilation
     with torch.autograd.profiler_legacy.profile(
-        enabled=PROFILING_ENABLED
+            enabled=PROFILING_ENABLED
     ) as prof:
         pipe_out = ec(ec_input)
         print(
@@ -217,7 +223,7 @@ def main(args=None):
     parser.add_argument("--checkpoint", type=int, default=0, choices=[0, 1])
     args = parser.parse_args(args)
 
-    # Interleaved 1F1B uses less ranks than number of stages
+    # Interleaved 1F1B uses fewer ranks than number of stages
     if args.schedule == "Interleaved1F1B":
         args.world_size = 2
 
