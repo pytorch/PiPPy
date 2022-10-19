@@ -8,14 +8,8 @@ from spmd.testing.common_utils import (  # type: ignore
     DistTensorTestBase,
     with_comms,
 )
-from spmd.tensor import (
-    DeviceMesh,
-    DTensor,
-    Replicate,
-    Shard,
-    _Partial,
-    distribute_tensor,
-)
+from spmd.tensor import DeviceMesh, DTensor, distribute_tensor
+from spmd.tensor.placement_types import _Partial, Replicate, Shard
 
 
 class DistTensorTest(DistTensorTestBase):
