@@ -104,9 +104,9 @@ def _redistribute_with_local_tensor(
                 partial_spec = cast(_Partial, current)
                 # out-of-place all_reduce to replicate, since the current partial DTensor
                 # might get used by other ops as well, so we can't inplace modify it
-                cloned_local = CommTensor(local_tensor.clone(
-                    memory_format=torch.contiguous_format
-                ))
+                cloned_local = CommTensor(
+                    local_tensor.clone(memory_format=torch.contiguous_format)
+                )
                 device_mesh.all_reduce(
                     cloned_local, partial_spec.reduce_op, mesh_dim=i
                 )
@@ -129,9 +129,12 @@ def _redistribute_with_local_tensor(
                 # read operations.
                 for _ in range(num_chunks):
                     gathered_list.append(
-                        CommTensor(torch.empty_like(
-                            local_tensor, memory_format=torch.contiguous_format
-                        ))
+                        CommTensor(
+                            torch.empty_like(
+                                local_tensor,
+                                memory_format=torch.contiguous_format,
+                            )
+                        )
                     )
 
                 device_mesh.all_gather(gathered_list, CommTensor(local_tensor), mesh_dim=i)  # type: ignore
@@ -160,7 +163,7 @@ def _redistribute_with_local_tensor(
                 # wrap with comm tensor
                 scattered_list = [CommTensor(t) for t in scattered_list]
                 output = torch.empty_like(scattered_list[my_coordinate])
-                device_mesh.reduce_scatter(CommTensor(output), scattered_list, mesh_dim=i)
+                device_mesh.reduce_scatter(CommTensor(output), scattered_list, mesh_dim=i)  # type: ignore
                 if pad_idx != 0 and my_coordinate >= pad_idx:
                     output = target_placement.unpad_tensor(output)
                 new_local_tensor = output
@@ -245,7 +248,6 @@ class Redistribute(torch.autograd.Function):
     ):
         ctx.previous_placement = input.placements
         ctx.previous_device_mesh = input.device_mesh
-        print(f"Redistribute forward logical shape: {input.size()}")
         return redistribute_dtensor(input, device_mesh, placements)
 
     @staticmethod

@@ -383,9 +383,7 @@ class DeviceMesh(object):
             A :class:`Work` object
         """
         dim_group = self._dim_groups[mesh_dim]
-        return all_reduce(
-            tensor, op=op, group=dim_group, async_op=async_op
-        )
+        return all_reduce(tensor, op=op, group=dim_group, async_op=async_op)
 
     def reduce_scatter(
         self,

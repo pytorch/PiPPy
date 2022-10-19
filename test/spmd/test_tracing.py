@@ -101,8 +101,12 @@ class TraceDeviceMeshTestBase:
 
             # use a local_tensor + 1 for tracing to make sure that we are not
             # simply replaying recorded tensor value
-            to_receive = torch.empty_like(scattered_tensors[mesh.get_coordinate_on_dim(dim)])
-            traced_fn = make_fx(fn)(to_receive, [t + 1 for t in scattered_tensors])
+            to_receive = torch.empty_like(
+                scattered_tensors[mesh.get_coordinate_on_dim(dim)]
+            )
+            traced_fn = make_fx(fn)(
+                to_receive, [t + 1 for t in scattered_tensors]
+            )
 
             received_tensor = traced_fn(to_receive, scattered_tensors)
             self.assertEqual(received_tensor, torch.ones(3, 3) * self.rank)
@@ -119,7 +123,10 @@ class TraceDeviceMeshTestBase:
                 get_global_rank(dim_group, i) for i in range(dim_group_size)
             ]
 
-            gathered_list = [torch.empty_like(local_tensor) for _ in range(dim_group_size)]
+            gathered_list = [
+                torch.empty_like(local_tensor) for _ in range(dim_group_size)
+            ]
+
             def fn(gathered_list: List[torch.Tensor], tensor: torch.Tensor):
                 gathered_list = [CommTensor(t) for t in gathered_list]
                 tensor = CommTensor(tensor)
