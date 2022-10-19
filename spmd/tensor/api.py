@@ -304,6 +304,22 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         """
         return ToTorchTensor.apply(self)  # pyre-ignore[16]: autograd func
 
+    def to_logical_tensor(self) -> torch.Tensor:
+        """
+        Get the logical view of this DTensor as a torch.Tensor on its current rank. This API
+        replicate the DTensor across the DeviceMesh and return a torch.Tensor object that
+        represents its logical view.
+
+        Returns:
+            A :class:`torch.Tensor` object that represents the logical view of the DTensor
+            on its current rank.
+
+        .. note:: This API is mainly used for debugging purpose.
+        """
+        return self.redistribute(
+            self.device_mesh, [Replicate()] * self.device_mesh.ndim
+        ).to_local()
+
     def redistribute(
         self,
         device_mesh: Optional[DeviceMesh] = None,

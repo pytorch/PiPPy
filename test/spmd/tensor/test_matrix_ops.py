@@ -135,10 +135,7 @@ class DistMatrixOpsTest(DistTensorTestBase):
         self.assertTrue(isinstance(dc.placements[0], _Partial))
 
         # check that the local and distributed op results match
-        self.assertEqual(
-            c,
-            dc.redistribute(device_mesh, [Replicate()]).to_local(),
-        )
+        self.assertEqual(c, dc.to_logical_tensor())
 
     # baddbmm introduces nan occasionally on CPU: https://github.com/pytorch/pytorch/issues/80588
     @with_comms
@@ -177,11 +174,10 @@ class DistMatrixOpsTest(DistTensorTestBase):
                 torch.baddbmm(
                     tensor_dt, batch_1_dt, batch_2_dt, beta=beta, alpha=alpha
                 ),
-            ).redistribute(device_mesh, [Replicate()])
-            dist_local_res = dist_res.to_local()
+            ).to_logical_tensor()
             assert not torch.isnan(local_result).any()
-            assert not torch.isnan(dist_local_res).any()
-            self.assertEqual(dist_local_res.detach(), local_result.detach())
+            assert not torch.isnan(dist_res).any()
+            self.assertEqual(dist_res.detach(), local_result.detach())
 
             # TODO: add test backward
             # grad_dist_res = torch.ones_like(dist_res)
