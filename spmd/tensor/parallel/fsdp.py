@@ -347,7 +347,7 @@ try:
         def pre_load_state_dict_transform(
             self,
             tensor: torch.Tensor,
-        ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+        ) -> Tuple[torch.Tensor, List[Shard]]:
             return _pre_load_state_dict(tensor)  # type: ignore
 
     _set_fsdp_extensions(DTensorExtensions())

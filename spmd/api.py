@@ -13,13 +13,10 @@ from functools import partial
 from typing import Dict, List, Optional, Sequence, Tuple, cast
 
 from spmd.tensor import (
-    _Partial,
     DTensor,
     DeviceMesh,
-    Placement,
-    Replicate,
-    Shard,
 )
+from spmd.tensor.placement_types import Placement, Shard, Replicate, _Partial
 from spmd.tensor.dispatch import operator_dispatch, propagate_input_sharding
 from spmd.tensor.redistribute import _redistribute_with_local_tensor
 

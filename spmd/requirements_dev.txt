@@ -1,8 +1,13 @@
+-r requirements.txt
 # Python dependencies required for development
+astunparse
 black
-expecttest
 flake8
-numpy
+hypothesis
+setuptools
+six
+types-dataclasses
+typing_extensions
 pyre-check
 pytest
 pytest-cov
