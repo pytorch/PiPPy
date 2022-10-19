@@ -1,5 +1,4 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from threading import local
 import torch
 import torch.distributed.distributed_c10d as c10d
 

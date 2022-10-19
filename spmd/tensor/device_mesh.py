@@ -2,7 +2,6 @@
 import warnings
 from typing import List, Optional, Sequence, TypeVar, Union
 import torch
-from torch.distributed._spmd.comm_tensor import CommTensor
 from torch.distributed.distributed_c10d import (
     all_gather,
     all_reduce,
