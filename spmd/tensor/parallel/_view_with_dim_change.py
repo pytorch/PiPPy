@@ -85,7 +85,7 @@ class _ViewAndRedistribute(torch.autograd.Function):
                 new_local_tensor,
                 device_mesh,
                 new_sharding_placement,
-                size=shape,
+                size=torch.Size(shape),
                 requires_grad=new_local_tensor.requires_grad,
             )
 
