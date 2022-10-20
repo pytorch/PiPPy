@@ -82,6 +82,7 @@ class FromTorchTensor(torch.autograd.Function):
                 if placement.is_replicate():
                     # broadcast rank 0 tensor to all ranks
                     # only broadcast if run_check is True
+                    input = input.contiguous()
                     device_mesh.broadcast(input, mesh_dim=idx)
 
         # if it's not by default run_check, we assume user is certain that each
