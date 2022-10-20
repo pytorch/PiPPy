@@ -137,7 +137,7 @@ def _redistribute_with_local_tensor(
                         )
                     )
 
-                device_mesh.all_gather(gathered_list, CommTensor(local_tensor), mesh_dim=i)  # type: ignore
+                device_mesh.all_gather(gathered_list, CommTensor(local_tensor.contiguous()), mesh_dim=i)  # type: ignore
                 # unpad the tensor if the input tensor was padded
                 if pad_idx != 0:
                     gathered_list = [
