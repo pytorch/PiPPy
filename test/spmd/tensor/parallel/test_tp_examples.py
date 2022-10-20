@@ -1,26 +1,23 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 import torch.nn as nn
-import functools
 from torch.testing._internal.common_utils import run_tests
 from spmd.testing.common_utils import DistTensorTestBase, with_comms, NUM_DEVICES, skip_unless_torch_gpu  # type: ignore
 from spmd import (
-    distribute_tensor,
     distribute_module,
     DeviceMesh,
-    DTensor,
-    Shard,
     Replicate,
 )
 from spmd.tensor.parallel import (
     TensorParallelMultiheadAttention,
     tp_shard_self_attn,
+    tp_shard_mlp,
     replicate_input,
     replicate_output,
 )
 
 
-class MLPModule(torch.nn.Module):
+class MLPModule(nn.Module):
     def __init__(self, device):
         super(MLPModule, self).__init__()
         torch.manual_seed(5)
@@ -30,85 +27,6 @@ class MLPModule(torch.nn.Module):
 
     def forward(self, x):
         return self.net2(self.relu(self.net1(x)))
-
-
-def _aggregate_local_tensor(module: torch.nn.Module) -> torch.nn.Module:
-    def hook_func(_module, _input, output):
-        if isinstance(output, DTensor):
-            replica_placement = [Replicate()] * device_mesh.ndim
-            return (
-                output.redistribute(output.device_mesh, replica_placement)
-                .contiguous()
-                .to_local()
-            )
-
-    module.register_forward_hook(hook_func)
-    return module
-
-
-def _gradient_hook(param, grad):
-    param._local_tensor.grad = grad._local_tensor
-
-
-def shard_mlp(m, device_type, tp_size):
-    start_idx = 0
-    device_mesh = DeviceMesh(
-        device_type,
-        list(range(start_idx, start_idx + tp_size)),
-    )
-    col_wise_sharding = [Shard(0)]
-    row_wise_sharding = [Shard(1)]
-    replicate = [Replicate()] * device_mesh.ndim
-
-    def shard_params(name, module):
-        if isinstance(module, nn.Linear):
-            if name == "net1":
-                sharded_weight = nn.Parameter(
-                    distribute_tensor(
-                        module.weight, device_mesh, col_wise_sharding
-                    )
-                )
-                sharded_bias = nn.Parameter(
-                    distribute_tensor(
-                        module.bias, device_mesh, col_wise_sharding
-                    )
-                )
-                module.register_parameter("weight", sharded_weight)
-                module.register_parameter("bias", sharded_bias)
-                module.weight.register_hook(
-                    functools.partial(_gradient_hook, module.weight)
-                )
-            elif name == "net2":
-                sharded_weight = nn.Parameter(
-                    distribute_tensor(
-                        module.weight, device_mesh, row_wise_sharding
-                    )
-                )
-                replicated_bias = nn.Parameter(
-                    distribute_tensor(module.bias, device_mesh, replicate)
-                )
-                module.register_parameter("weight", sharded_weight)
-                module.register_parameter("bias", replicated_bias)
-
-    def replicate_input(inputs):
-        return DTensor.from_local(inputs[0], device_mesh, replicate)
-
-    def aggregate_output(outputs):
-        assert isinstance(outputs, DTensor)
-        return (
-            outputs.redistribute(outputs.device_mesh, replicate)
-            .contiguous()
-            .to_local()
-        )
-
-    dist_mod = distribute_module(
-        m,
-        device_mesh,
-        partition_fn=shard_params,
-        input_fn=replicate_input,
-        output_fn=aggregate_output,
-    )
-    return dist_mod
 
 
 class MultiheadAttnWrap(nn.Module):
@@ -139,8 +57,15 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         self.assertEqual(model.net2.bias, model_tp.net2.bias)
 
         # Shard module and initialize optimizer.
+        device_mesh = DeviceMesh(self.device_type, list(range(NUM_DEVICES)))
+        distribute_module(
+            model_tp,
+            device_mesh,
+            partition_fn=tp_shard_mlp(device_mesh),
+            input_fn=replicate_input(device_mesh),
+            output_fn=replicate_output,
+        )
         LR = 0.25
-        shard_mlp(model_tp, self.device_type, NUM_DEVICES)
         optim = torch.optim.SGD(model.parameters(), lr=LR)
         optim_tp = torch.optim.SGD(model_tp.parameters(), lr=LR)
 
