@@ -725,6 +725,10 @@ class PipeStageExecutor(EventRecorder):
         return torch.futures.Future(
             devices=None if self.device.type == "cpu" else [self.device]
         )
+    
+    def init_tensor_parallel(self, tp_cb, device_type, tp_size):
+        start_idx = self.stage_id * tp_size
+        tp_cb(self.mod, device_type, tp_size, start_idx)
 
     def invoke(
         self,
@@ -1526,6 +1530,23 @@ class PipelineDriverBase(torch.nn.Module):
             futs.append(
                 executor.rpc_async().init_data_parallel(
                     n_stages, dp_group_size, dp_pg_cb
+                )
+            )
+
+        # Here we wait for all DP process groups to be initialized before the user can ask the PipeDriver to run
+        _wait_for_all(futs)
+
+    def init_tensor_parallel(self, tp_dist_callback, device_type, tp_size):
+        logging.info(
+            "[root] Initializing tensor parallel groups"
+        )
+        futs = []
+        # Asks all stage executors to participate in DP process group init
+        # These must be async calls because otherwise there will be deadlocks
+        for executor in self.stage_to_executor.values():
+            futs.append(
+                executor.rpc_async().init_tensor_parallel(
+                    tp_dist_callback, device_type, tp_size,
                 )
             )
 
