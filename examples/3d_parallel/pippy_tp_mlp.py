@@ -53,24 +53,29 @@ pippy.fx.Tracer.proxy_buffer_attributes = True
 
 
 class MLPModule(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, d_hid):
         super(MLPModule, self).__init__()
-        torch.manual_seed(5)
-        self.net1 = torch.nn.Linear(10, 10)
+        self.net1 = torch.nn.Linear(d_hid, d_hid)
         self.relu = torch.nn.ReLU()
-        self.net2 = torch.nn.Linear(10, 10)
-        self.net3 = torch.nn.Linear(10, 10)
-        self.relu1 = torch.nn.ReLU()
-        self.net4 = torch.nn.Linear(10, 10)
+        self.net2 = torch.nn.Linear(d_hid, d_hid)
 
     def forward(self, x):
         x = self.net1(x)
         x = self.relu(x)
         x = self.net2(x)
+        return x
+
+
+class ExampleCode(torch.nn.Module):
+    def __init__(self, d_hid):
+        super().__init__()
+        self.mlp0 = MLPModule(d_hid)
+        self.mlp1 = MLPModule(d_hid)
+
+    def forward(self, x):
+        x = self.mlp0(x)
         pipe_split()
-        x = self.net3(x)
-        x = self.relu1(x)
-        x = self.net4(x)
+        x = self.mlp1(x)
         return x
 
 
@@ -151,14 +156,15 @@ def run_master(pp_ranks, args):
 
     device_type = "cuda" if args.cuda else "cpu"
 
-    inp_size = [5, 10]
+    d_hid = 10
+    inp_size = [5, d_hid]
     # Ensure all tp ranks have same input.
     torch.manual_seed(0)
     inp = torch.rand(*inp_size, device=device_type)
 
     """
     # Reference run
-    ec_tp = MLPModule()
+    ec_tp = ExampleCode(d_hid)
     ec_tp.to(args.device)
 
     start_idx = 0
@@ -174,7 +180,7 @@ def run_master(pp_ranks, args):
     """
 
     print("\n ========== Starting PiPPy ==========")
-    ec = MLPModule()
+    ec = ExampleCode(d_hid)
     ec.to(args.device)
     # PiPPy tracing
     ec_pipe = Pipe.from_tracing(ec, MULTI_USE_PARAM_CONFIG)
