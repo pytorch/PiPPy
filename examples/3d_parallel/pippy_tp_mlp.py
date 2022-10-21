@@ -56,15 +56,21 @@ class MLPModule(torch.nn.Module):
     def __init__(self):
         super(MLPModule, self).__init__()
         torch.manual_seed(5)
-        self.net1 = torch.nn.Linear(10, 16)
+        self.net1 = torch.nn.Linear(10, 10)
         self.relu = torch.nn.ReLU()
-        self.net2 = torch.nn.Linear(16, 12)
+        self.net2 = torch.nn.Linear(10, 10)
+        self.net3 = torch.nn.Linear(10, 10)
+        self.relu1 = torch.nn.ReLU()
+        self.net4 = torch.nn.Linear(10, 10)
 
     def forward(self, x):
         x = self.net1(x)
         x = self.relu(x)
-        pipe_split()
         x = self.net2(x)
+        pipe_split()
+        x = self.net3(x)
+        x = self.relu1(x)
+        x = self.net4(x)
         return x
 
 
@@ -80,8 +86,8 @@ def shard_mlp(m, device_mesh):
 
     def shard_params(name, module):
         if isinstance(module, nn.Linear):
-            if name == "net1":
-                print("shard_mlp: sharding net1")
+            if name == "net1" or name == "net3":
+                print(f"shard_mlp: sharding {name}")
                 sharded_weight = nn.Parameter(
                     distribute_tensor(
                         module.weight, device_mesh, col_wise_sharding
@@ -97,8 +103,8 @@ def shard_mlp(m, device_mesh):
                 module.weight.register_hook(
                     functools.partial(_gradient_hook, module.weight)
                 )
-            elif name == "net2":
-                print("shard_mlp: sharding net2")
+            elif name == "net2" or name == "net4":
+                print(f"shard_mlp: sharding {name}")
                 sharded_weight = nn.Parameter(
                     distribute_tensor(
                         module.weight, device_mesh, row_wise_sharding
