@@ -729,6 +729,25 @@ class PipeStageExecutor(EventRecorder):
     def init_tensor_parallel(self, tp_cb, device_type, tp_size):
         start_idx = self.stage_id * tp_size
         tp_cb(self.mod, device_type, tp_size, start_idx)
+        
+    def init_tensor_parallel(self, n_stages, tp_dist_callback, device_type, tp_size):
+        from spmd import DeviceMesh
+
+        worker_rank = self.rank_worker.rank
+        device_meshes = {}
+        for stage in range(n_stages):
+            start_idx = stage * tp_size
+            stage_device_mesh = DeviceMesh(
+                device_type,
+                list(range(start_idx, start_idx + tp_size)),
+            )
+            device_meshes.setdefault(stage, stage_device_mesh)
+            logging.info(
+                f"Rank[{worker_rank}] stage[{stage}] "
+                f"TP DeviceMesh {stage_device_mesh} -- init complete"
+            )
+
+        tp_dist_callback(self.mod, device_meshes[self.stage_id])
 
     def invoke(
         self,
@@ -1537,6 +1556,7 @@ class PipelineDriverBase(torch.nn.Module):
         _wait_for_all(futs)
 
     def init_tensor_parallel(self, tp_dist_callback, device_type, tp_size):
+        n_stages = len(self.stage_to_executor)
         logging.info(
             "[root] Initializing tensor parallel groups"
         )
@@ -1546,7 +1566,7 @@ class PipelineDriverBase(torch.nn.Module):
         for executor in self.stage_to_executor.values():
             futs.append(
                 executor.rpc_async().init_tensor_parallel(
-                    tp_dist_callback, device_type, tp_size,
+                    n_stages, tp_dist_callback, device_type, tp_size,
                 )
             )
 

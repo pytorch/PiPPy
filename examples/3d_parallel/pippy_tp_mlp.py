@@ -47,11 +47,9 @@ schedules = {
 VERBOSE = bool(int(os.environ.get("VERBOSE", False)))
 
 if VERBOSE:
-    logging.getLogger().setLevel(logging.DEBUG)
+    logging.getLogger().setLevel(logging.INFO)
 
 pippy.fx.Tracer.proxy_buffer_attributes = True
-
-NUM_DEVICES = 2
 
 
 class MLPModule(torch.nn.Module):
@@ -69,31 +67,13 @@ class MLPModule(torch.nn.Module):
         x = self.net2(x)
         return x
 
-"""
-def _aggregate_local_tensor(module: torch.nn.Module) -> torch.nn.Module:
-    def hook_func(_module, _input, output):
-        if isinstance(output, DTensor):
-            replica_placement = [Replicate()] * device_mesh.ndim
-            return (
-                output.redistribute(output.device_mesh, replica_placement)
-                .contiguous()
-                .to_local()
-            )
-
-    module.register_forward_hook(hook_func)
-    return module
-"""
-
 
 def _gradient_hook(param, grad):
     param._local_tensor.grad = grad._local_tensor
 
 
-def shard_mlp(m, device_type, tp_size, start_idx = 0):
-    device_mesh = DeviceMesh(
-        device_type,
-        list(range(start_idx, start_idx + tp_size)),
-    )
+def shard_mlp(m, device_mesh):
+    print(f"Calling shard_mlp with {device_mesh}")
     col_wise_sharding = [Shard(0)]
     row_wise_sharding = [Shard(1)]
     replicate = [Replicate()] * device_mesh.ndim
@@ -101,6 +81,7 @@ def shard_mlp(m, device_type, tp_size, start_idx = 0):
     def shard_params(name, module):
         if isinstance(module, nn.Linear):
             if name == "net1":
+                print("shard_mlp: sharding net1")
                 sharded_weight = nn.Parameter(
                     distribute_tensor(
                         module.weight, device_mesh, col_wise_sharding
@@ -117,6 +98,7 @@ def shard_mlp(m, device_type, tp_size, start_idx = 0):
                     functools.partial(_gradient_hook, module.weight)
                 )
             elif name == "net2":
+                print("shard_mlp: sharding net2")
                 sharded_weight = nn.Parameter(
                     distribute_tensor(
                         module.weight, device_mesh, row_wise_sharding
@@ -161,8 +143,7 @@ def run_master(pp_ranks, args):
     print("Using schedule:", args.schedule)
     print(f"Master rank {args.rank}, PP ranks: {pp_ranks}")
 
-    device_type = "cpu"
-    tp_size = NUM_DEVICES
+    device_type = "cuda" if args.cuda else "cpu"
 
     inp_size = [5, 10]
     # Ensure all tp ranks have same input.
@@ -170,13 +151,18 @@ def run_master(pp_ranks, args):
     inp = torch.rand(*inp_size, device=device_type)
 
     """
+    # Reference run
     ec_tp = MLPModule()
     ec_tp.to(args.device)
 
-    shard_mlp(ec_tp, device_type, tp_size)
+    start_idx = 0
+    device_mesh = DeviceMesh(
+        device_type,
+        list(range(start_idx, start_idx + args.tp_group_size)),
+    )
+    shard_mlp(ec_tp, device_mesh)
     print(f"Rank {args.rank} sharding complete")
 
-    # Reference run
     ref_out = ec_tp(inp)
     print(f"Ref out: {ref_out.size()}")
     """
@@ -207,7 +193,7 @@ def run_master(pp_ranks, args):
     )
     print(f"Rank {args.rank} Instantiated pipe with ranks {pp_ranks}")
 
-    pipe_driver.init_tensor_parallel(shard_mlp, device_type, tp_size)
+    pipe_driver.init_tensor_parallel(shard_mlp, device_type, args.tp_group_size)
 
     out = pipe_driver(inp)
     print(f"PiPPy out: {out.size()}")
@@ -218,17 +204,21 @@ def main(args=None):
     parser.add_argument(
         "--world_size", type=int, default=int(os.getenv("WORLD_SIZE", 4))
     )
+    # ExampleCode has two stages
+    parser.add_argument(
+        "--pp_group_size", type=int, default=2,
+    )
     # in row-major
-    # DP ranks are contiguous rows of size `args.dp_group_size`
+    # TP ranks are contiguous rows of size `args.tp_group_size`
     # PP ranks are non-contiguous columns of size `args.pp_group_size`
     #
-    # if dp_group_size = 4 and pp_group_size = 3
+    # if tp_group_size = 4 and pp_group_size = 3
     #
     #   0 1 2  3
     #   4 5 6  7
     #   8 9 10 11
     #
-    # DP ranks are [0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11]
+    # TP ranks are [0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11]
     # PP ranks are [0, 4, 8], [1, 5, 9], [2, 6, 10], [3, 7, 11]
     parser.add_argument("--rank", type=int, default=int(os.getenv("RANK", -1)))
     parser.add_argument(
@@ -256,13 +246,10 @@ def main(args=None):
     parser.add_argument("--checkpoint", type=int, default=0, choices=[0, 1])
     args = parser.parse_args(args)
 
-    # ExampleCode has two stages
-    args.pp_group_size = 2
+    # Use world size to determine TP group size
     assert args.world_size % args.pp_group_size == 0
-
-    # Use world size to determine DDP size
-    args.dp_group_size = args.world_size // args.pp_group_size
-    print(f"Using data parallel group size: {args.dp_group_size}")
+    args.tp_group_size = args.world_size // args.pp_group_size
+    print(f"Using tensor parallel group size: {args.tp_group_size}")
 
     run_pippy(run_master, args)
 
@@ -271,7 +258,7 @@ if __name__ == "__main__":
     main()
 
 
-class LocalTestDDP(unittest.TestCase):
+class LocalTestPiPPyTP(unittest.TestCase):
     def test_ddp(self):
         import random
 
