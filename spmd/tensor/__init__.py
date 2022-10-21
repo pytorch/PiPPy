@@ -4,7 +4,7 @@ from typing import Optional, Sequence, cast
 import torch
 from spmd.tensor.api import DTensor
 from spmd.tensor.device_mesh import DeviceMesh, get_global_device_mesh
-from spmd.tensor.placement_types import Placement, Shard, Replicate, _Partial
+from spmd.tensor.placement_types import Placement, Shard, Replicate
 
 
 # Import all builtin dist tensor ops
@@ -47,6 +47,28 @@ def distribute_tensor(
     if placements is None:
         placements = [Replicate() for _ in range(device_mesh.ndim)]
 
+    if len(placements) != device_mesh.ndim:
+        raise ValueError(
+            f"`placements` must have the same length as `device_mesh.ndim`! "
+            f"Found placements length: {len(placements)}, and device_mesh.ndim: {device_mesh.ndim}."
+        )
+
+    if isinstance(tensor, DTensor):
+        # if the tensor is already a DTensor, we just need to check if the
+        # device mesh and placements are the same
+        if tensor.device_mesh != device_mesh:
+            raise ValueError(
+                f"Cannot distribute a DTensor with device mesh {tensor.device_mesh} "
+                f"to a different device mesh {device_mesh}."
+            )
+        if tensor.placements != placements:
+            raise ValueError(
+                f"Cannot distribute a DTensor with placements {tensor.placements} "
+                f"to a different placements {placements}. do you want to call "
+                f"`redistribute` instead?"
+            )
+        return tensor
+
     # distribute the tensor according to PlacementSpec
     for idx, placement in enumerate(placements):
         if placement.is_shard():
@@ -77,3 +99,13 @@ def distribute_tensor(
         placements,
         requires_grad=tensor.requires_grad,
     )
+
+
+# All public APIs from dtensor package
+__all__ = [
+    "DTensor",
+    "DeviceMesh",
+    "distribute_tensor",
+    "Shard",
+    "Replicate",
+]

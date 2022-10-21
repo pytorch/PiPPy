@@ -1,4 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+import torch
 from typing import List, Union
 from spmd.tensor.api import DTensor
 
@@ -40,8 +41,16 @@ def register_prop_rule(func):
     return wrapper
 
 
-def as_list(x: Union[List[object], object]) -> List[object]:
-    if type(x) is list:
+def as_list(
+    x: Union[List[object], object]
+    # pyre-fixme[11]: Annotation `immutable_list` is not defined as a type.
+) -> Union[List[object], torch.fx.immutable_collections.immutable_list]:
+    # During tracing, `aten.sum.dim_IntList` uses `immutable_list` for its args,
+    # which is an object but treated as a list by the tracer. Therefore, keep
+    # `immutable_list` intact here as well.
+    if type(x) is list or isinstance(
+        x, torch.fx.immutable_collections.immutable_list
+    ):
         return x
     else:
         return [x]
