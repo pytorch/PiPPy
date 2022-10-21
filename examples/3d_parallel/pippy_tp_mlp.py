@@ -91,7 +91,7 @@ def shard_mlp(m, device_mesh):
 
     def shard_params(name, module):
         if isinstance(module, nn.Linear):
-            if name == "net1" or name == "net3":
+            if name == "net1":
                 print(f"shard_mlp: sharding {name}")
                 sharded_weight = nn.Parameter(
                     distribute_tensor(
@@ -108,7 +108,7 @@ def shard_mlp(m, device_mesh):
                 module.weight.register_hook(
                     functools.partial(_gradient_hook, module.weight)
                 )
-            elif name == "net2" or name == "net4":
+            elif name == "net2":
                 print(f"shard_mlp: sharding {name}")
                 sharded_weight = nn.Parameter(
                     distribute_tensor(
