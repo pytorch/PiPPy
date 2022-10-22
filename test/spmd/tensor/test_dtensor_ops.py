@@ -518,6 +518,7 @@ dtensor_fails = {
     xfail("vdot"),
     xfail("view_as_complex"),
     xfail("vstack"),
+    xfail("zeros"),
     # ops inside this might even fail without dtensor
     # tests, as we rescale op db common test size factor (i.e. L, M, S)
     # which triggered the orignal function run failures with input
