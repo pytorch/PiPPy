@@ -304,7 +304,7 @@ def linear_pointwise_rule(op_schema: OpSchema) -> OutputSharding:
     return pointwise_rule(op_schema, linearity=True)
 
 
-def reduction_rule(op_schema: OpSchema) -> OutputSharding:
+def reduction_rule(op_schema: OpSchema, linearity: bool = False) -> OutputSharding:
     """
     Propagate the sharding for reduction operations. Examples:
         ij->i - sum on dim
@@ -334,4 +334,4 @@ def reduction_rule(op_schema: OpSchema) -> OutputSharding:
         )
 
     fmt = f"{input_chars}->{out_dimchars}"
-    return einop_rule(fmt, op_schema)
+    return einop_rule(fmt, op_schema, linearity=linearity)

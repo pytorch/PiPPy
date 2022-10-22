@@ -1,4 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+from abc import ABC, abstractmethod
+
 import torch
 import torch.distributed.distributed_c10d as c10d
 
@@ -7,7 +9,6 @@ from typing import Optional, List, Sequence, Union, Tuple, cast
 from spmd.tensor.device_mesh import DeviceMesh
 
 
-@dataclass
 class Placement(object):
     # base class Placement type
 
@@ -37,10 +38,46 @@ class Replicate(Placement):
     pass
 
 
+class _ReduceOp(ABC):
+    # ReduceOp that supports non elementwise reduction
+
+    # a extension of c10d.ReduceOp to support custom reduction
+    @abstractmethod
+    def reduce_tensor(self, tensor: torch.Tensor, mesh, mesh_dim) -> torch.Tensor:
+        # reduce tensor to a single tensor, by default elementwise reduction
+        # is allowed
+        ...
+
+class _ElementWiseReduceOp(_ReduceOp):
+    # ReduceOp that supports elementwise reduction
+    
+
+    # a extension of c10d.ReduceOp to support custom reduction
+    def reduce_tensor(self, tensor: torch.Tensor, mesh, mesh_dim) -> torch.Tensor:
+        # reduce tensor to a single tensor, by default elementwise reduction
+        # is allowed
+        ...
+
+
 @dataclass
 class _Partial(Placement):
     # partial placement with reduce op
     reduce_op: c10d.ReduceOp = c10d.ReduceOp.SUM  # type: ignore
+
+
+    def to_replicate(self, tensor: torch.Tensor, mesh: DeviceMesh, mesh_dim: int) -> torch.Tensor:
+        mesh.all_reduce(
+            tensor, self.reduce_op, mesh_dim=mesh_dim
+        )
+        return tensor
+
+
+    def to_shard(self, tensor: torch.Tensor, shard_spec: Placement, mesh: DeviceMesh, mesh_dim: int) -> torch.Tensor:
+        assert shard_spec.is_shard()
+        mesh.reduce_scatter(
+            tensor, self.reduce_op, mesh_dim=mesh_dim
+        )
+        return tensor
 
 
 # used internally to propagate the placements
