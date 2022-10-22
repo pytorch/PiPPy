@@ -309,6 +309,7 @@ def _pre_load_state_dict(
     if len(shards) == 1 and type(shards[0].tensor) is ShardedTensor:
         inner_tensor = cast(ShardedTensor, shards[0].tensor)
         shards = inner_tensor.local_shards()
+        tensor = inner_tensor
 
     return (tensor, shards if len(shards) > 0 else [])
 
