@@ -75,23 +75,7 @@ def distribute_tensor(
     for idx, placement in enumerate(placements):
         if placement.is_shard():
             placement = cast(Shard, placement)
-
-            my_coordinate = device_mesh.get_coordinate_on_dim(idx)
-            # TODO: what should happen if rank is not in the mesh?
-            # see issue https://github.com/pytorch/tau/pull/492
-            assert (
-                my_coordinate is not None
-            ), "Rank if not part of mesh"  # TODO: figure out behavior here
-
-            num_chunks = device_mesh.size(idx)
-            scatter_list, pad_idx = placement.shard_tensor(
-                local_tensor, num_chunks, with_padding=True, contiguous=True
-            )
-            output = torch.empty_like(scatter_list[my_coordinate])
-
-            device_mesh.scatter(output, scatter_list, mesh_dim=idx)
-            if pad_idx != 0 and my_coordinate >= pad_idx:
-                output = placement.unpad_tensor(output)
+            output = placement.shard_tensor(local_tensor, device_mesh, idx)
             # scatter call could not return a tensor with correct requires_grad
             # field, as ProcessGroupNCCL refuse to take a tensor with requires_grad
             # to do inplace update! So we manually set it here

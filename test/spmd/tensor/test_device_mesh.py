@@ -252,7 +252,7 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
             global_tensor = torch.randn(
                 scatter_tensor_shape, device=self.device_type
             )
-            splitted_list, _ = shard_placement.shard_tensor(
+            splitted_list, _ = shard_placement._split_tensor(
                 global_tensor, mesh.size(), with_padding=True, contiguous=True
             )
             recv_tensor = torch.empty_like(splitted_list[mesh.get_rank()])
@@ -274,7 +274,7 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
             tensor_splitted_list = tensor_to_split.tensor_split(
                 device_mesh.size(), dim=shard_dim
             )
-            padded_tensor_list, pad_idx = shard_placement.shard_tensor(
+            padded_tensor_list, pad_idx = shard_placement._split_tensor(
                 tensor_to_scatter,
                 device_mesh.size(),
                 with_padding=True,
@@ -287,7 +287,7 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
             )
             # unpad scattered_tensor
             if pad_idx != 0 and my_rank >= pad_idx:
-                scattered_tensor = shard_placement.unpad_tensor(
+                scattered_tensor = shard_placement._unpad_tensor(
                     scattered_tensor
                 )
 
@@ -324,7 +324,7 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
 
         for shard_dim in range(tensor_to_split.ndim):
             shard_placement = Shard(shard_dim)
-            tensor_padded_list, pad_idx = shard_placement.shard_tensor(
+            tensor_padded_list, pad_idx = shard_placement._split_tensor(
                 tensor_to_split,
                 device_mesh.size(),
                 with_padding=True,
@@ -342,7 +342,7 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
             )
             if pad_idx != 0:
                 gathered_list = [
-                    shard_placement.unpad_tensor(gathered_tensor)
+                    shard_placement._unpad_tensor(gathered_tensor)
                     if i >= pad_idx
                     else gathered_tensor
                     for i, gathered_tensor in enumerate(gathered_list)
@@ -386,7 +386,7 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
             tensor_splitted_list = tensor_to_split.tensor_split(
                 device_mesh.size(), dim=shard_dim
             )
-            padded_tensor_list, pad_idx = shard_placement.shard_tensor(
+            padded_tensor_list, pad_idx = shard_placement._split_tensor(
                 tensor_to_scatter,
                 device_mesh.size(),
                 with_padding=True,
@@ -400,7 +400,7 @@ class DeviceMeshCollectiveTest(DistTensorTestBase):
             )
             # unpad scattered_tensor
             if pad_idx != 0 and my_rank >= pad_idx:
-                scattered_tensor = shard_placement.unpad_tensor(
+                scattered_tensor = shard_placement._unpad_tensor(
                     scattered_tensor
                 )
 

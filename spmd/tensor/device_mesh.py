@@ -260,7 +260,7 @@ class DeviceMesh(object):
 
     def scatter(
         self,
-        tensor: torch.Tensor,
+        output: torch.Tensor,
         scatter_list: List[torch.Tensor],
         mesh_dim: int = 0,
         async_op: bool = False,
@@ -290,7 +290,7 @@ class DeviceMesh(object):
 
         if src_for_dim == get_rank():
             fut = scatter(
-                tensor,
+                output,
                 scatter_list=scatter_list,
                 src=src_for_dim,
                 group=dim_group,
@@ -298,7 +298,7 @@ class DeviceMesh(object):
             )
         else:
             fut = scatter(
-                tensor,
+                output,
                 scatter_list=None,
                 src=src_for_dim,
                 group=dim_group,

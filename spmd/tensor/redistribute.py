@@ -113,63 +113,24 @@ def _redistribute_with_local_tensor(
                 new_local_tensor = cloned_local
             elif current.is_shard():
                 current_placement = cast(Shard, current)
-                # for shard, all_gather all shards and return a tensor that
-                # is replicated on the previously sharded dimension
-                shard_dim = cast(Shard, current).dim
-                # check if it needs to pad input tensor before all_gather
-                pad_idx = size[shard_dim] % num_chunks
-                if pad_idx != 0 and my_coordinate >= pad_idx:
-                    local_tensor = current_placement.pad_tensor(
-                        local_tensor
-                    ).contiguous()
-
-                gathered_list = []
-                # N.B. CommTensor does not change eager mode behavior. During tracing, it
-                # makes sure communication result is properly waited before subsequent
-                # read operations.
-                for _ in range(num_chunks):
-                    gathered_list.append(
-                        CommTensor(
-                            torch.empty_like(
-                                local_tensor,
-                                memory_format=torch.contiguous_format,
-                            )
-                        )
-                    )
-
-                device_mesh.all_gather(gathered_list, CommTensor(local_tensor.contiguous()), mesh_dim=i)  # type: ignore
-                # unpad the tensor if the input tensor was padded
-                if pad_idx != 0:
-                    gathered_list = [
-                        current_placement.unpad_tensor(gathered_tensor)  # type: ignore
-                        if i >= pad_idx
-                        else gathered_tensor
-                        for i, gathered_tensor in enumerate(gathered_list)
-                    ]
-                new_local_tensor = torch.cat(gathered_list, dim=shard_dim)  # type: ignore
+                new_local_tensor = current_placement.to_replicate(
+                    local_tensor, size, device_mesh, i
+                )
             else:
                 raise RuntimeError(
                     f"redistribute from {current_placements} to {target_placements} not supported yet"
                 )
-            #     new_local_tensor = torch.cat(gathered_list, dim=shard_dim)
         elif target.is_shard():
             # Case 2: target is Shard
             target_placement = cast(Shard, target)
             if current.is_partial():
-                # reduce scatter the current tensors
-                scattered_list, pad_idx = target_placement.shard_tensor(
-                    local_tensor, num_chunks, with_padding=True, contiguous=True
+                # reduce shard (i.e. reduce_scatter) the current tensors
+                new_local_tensor = target_placement.reduce_shard_tensor(
+                    local_tensor, device_mesh, i
                 )
-                # wrap with comm tensor
-                scattered_list = [CommTensor(t) for t in scattered_list]
-                output = torch.empty_like(scattered_list[my_coordinate])
-                device_mesh.reduce_scatter(CommTensor(output), scattered_list, mesh_dim=i)  # type: ignore
-                if pad_idx != 0 and my_coordinate >= pad_idx:
-                    output = target_placement.unpad_tensor(output)
-                new_local_tensor = output
             elif current.is_replicate():
                 # split the tensor and return the corresponding cloned local shard
-                shards, _ = target_placement.shard_tensor(
+                shards, _ = target_placement._split_tensor(
                     local_tensor,
                     num_chunks,
                     with_padding=False,
