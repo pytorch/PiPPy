@@ -1,7 +1,6 @@
 import copy
 import dataclasses
 from typing import Dict, List, Optional, Sequence, Tuple, Union, cast
-from torch.distributed import distributed_c10d
 from torch.distributed._shard.checkpoint.planner import LoadPlan
 
 import torch
