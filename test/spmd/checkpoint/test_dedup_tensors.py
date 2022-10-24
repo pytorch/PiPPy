@@ -7,7 +7,7 @@ from torch.distributed._shard.checkpoint.planner_helpers import (
     _create_write_item_for_tensor,
 )
 from torch.testing._internal.common_utils import run_tests, TestCase
-import spmd.checkpoint.dedup_tensors as dedup_tensors
+from spmd.checkpoint import dedup_tensors
 
 
 def create_plan(second_fqn) -> SavePlan:
