@@ -102,15 +102,9 @@ def _redistribute_with_local_tensor(
             # Case 1: target is Replicate
             if current.is_partial():
                 partial_spec = cast(_Partial, current)
-                # out-of-place all_reduce to replicate, since the current partial DTensor
-                # might get used by other ops as well, so we can't inplace modify it
-                cloned_local = CommTensor(
-                    local_tensor.clone(memory_format=torch.contiguous_format)
+                new_local_tensor = partial_spec.to_replicate(
+                    local_tensor, device_mesh, i
                 )
-                device_mesh.all_reduce(
-                    cloned_local, partial_spec.reduce_op, mesh_dim=i
-                )
-                new_local_tensor = cloned_local
             elif current.is_shard():
                 current_placement = cast(Shard, current)
                 new_local_tensor = current_placement.to_replicate(
@@ -125,8 +119,9 @@ def _redistribute_with_local_tensor(
             target_placement = cast(Shard, target)
             if current.is_partial():
                 # reduce shard (i.e. reduce_scatter) the current tensors
-                new_local_tensor = target_placement.reduce_shard_tensor(
-                    local_tensor, device_mesh, i
+                partial_spec = cast(_Partial, current)
+                new_local_tensor = partial_spec.to_shard(
+                    local_tensor, target_placement, device_mesh, i
                 )
             elif current.is_replicate():
                 # split the tensor and return the corresponding cloned local shard

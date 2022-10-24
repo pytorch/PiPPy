@@ -208,17 +208,21 @@ class _ReduceOp(ABC):
 
     # a extension of c10d.ReduceOp to support custom reduction
     @abstractmethod
-    def reduce_tensor(self, tensor: torch.Tensor, mesh, mesh_dim) -> torch.Tensor:
+    def reduce_tensor(
+        self, tensor: torch.Tensor, mesh, mesh_dim
+    ) -> torch.Tensor:
         # reduce tensor to a single tensor, by default elementwise reduction
         # is allowed
         ...
 
+
 class _ElementWiseReduceOp(_ReduceOp):
     # ReduceOp that supports elementwise reduction
-    
 
     # a extension of c10d.ReduceOp to support custom reduction
-    def reduce_tensor(self, tensor: torch.Tensor, mesh, mesh_dim) -> torch.Tensor:
+    def reduce_tensor(
+        self, tensor: torch.Tensor, mesh, mesh_dim
+    ) -> torch.Tensor:
         # reduce tensor to a single tensor, by default elementwise reduction
         # is allowed
         ...
@@ -226,23 +230,36 @@ class _ElementWiseReduceOp(_ReduceOp):
 
 @dataclass
 class _Partial(Placement):
-    # partial placement with reduce op
+    # This is a default partial placement with element-wise reduce op
+    # when doing reduction it follows the contract of `to_replicate`
+    # and `to_shard` to do the reduction and convert the local tensor
+    # to the corresponding state (replicate or shard)
+    #
+    # We can implement custom reductions as needed by subclassing this
+    # class and override those contracts.
     reduce_op: c10d.ReduceOp = c10d.ReduceOp.SUM  # type: ignore
 
-
-    def to_replicate(self, tensor: torch.Tensor, mesh: DeviceMesh, mesh_dim: int) -> torch.Tensor:
-        mesh.all_reduce(
-            tensor, self.reduce_op, mesh_dim=mesh_dim
+    def to_replicate(
+        self, tensor: torch.Tensor, mesh: DeviceMesh, mesh_dim: int
+    ) -> torch.Tensor:
+        # out-of-place all_reduce to replicate, since the current partial DTensor
+        # might get used by other ops as well, so we can't inplace modify it
+        cloned_local = CommTensor(
+            tensor.clone(memory_format=torch.contiguous_format)
         )
-        return tensor
+        mesh.all_reduce(cloned_local, self.reduce_op, mesh_dim=mesh_dim)
+        return cloned_local
 
-
-    def to_shard(self, tensor: torch.Tensor, shard_spec: Placement, mesh: DeviceMesh, mesh_dim: int) -> torch.Tensor:
-        assert shard_spec.is_shard()
-        mesh.reduce_scatter(
-            tensor, self.reduce_op, mesh_dim=mesh_dim
-        )
-        return tensor
+    def to_shard(
+        self,
+        tensor: torch.Tensor,
+        shard_spec: Placement,
+        mesh: DeviceMesh,
+        mesh_dim: int,
+    ) -> torch.Tensor:
+        # by default call reduce_shard_tensor of the shard_spec.
+        shard_spec = cast(Shard, shard_spec)
+        return shard_spec.reduce_shard_tensor(tensor, mesh, mesh_dim)
 
 
 # used internally to propagate the placements

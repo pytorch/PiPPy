@@ -73,6 +73,9 @@ def einop_rule(
     Other ops could use this propagation algorithm when applied, note
     that einsum propagation only deal with list of specs (DTensor specs)
     as it only works on list of tensors!
+
+    linearity in einop_rule means that the calling op `f` follows this rule:
+        f(a + b) = f(a) + f(b)
     """
     # parse einop equation and extract arg specs
     inputs, outputs = equation.split("->")
@@ -304,14 +307,37 @@ def linear_pointwise_rule(op_schema: OpSchema) -> OutputSharding:
     return pointwise_rule(op_schema, linearity=True)
 
 
-def reduction_rule(op_schema: OpSchema, linearity: bool = False) -> OutputSharding:
+def reduction_rule(
+    op_schema: OpSchema,
+    *,
+    dim: Optional[List[int]] = None,
+    keep_dim: bool = False,
+    reduction_linear: bool = False,
+) -> OutputSharding:
     """
     Propagate the sharding for reduction operations. Examples:
         ij->i - sum on dim
+
+    reduction_linear means that the reduction `f` follows this rule:
+        f(f(a), f(b)) = f(a, b)
     """
     alphabet = "abcdefghijklmnopqrstuvwxyz"
     # reduction op usually begin with a single tensor
     input_spec = cast(DTensorSpec, op_schema.args_schema[0])
+    if not reduction_linear and input_spec.sums:
+        # if the reduction is not linear, we need to clear the pending sum
+        # on the input spec and suggest a resharding
+        no_partial_spec = DTensorSpec.from_dim_map(
+            input_spec.mesh, input_spec.dim_map, [], input_spec.shape
+        )
+        schema_suggestion = OpSchema(
+            op_schema.func_schema, tuple([no_partial_spec]), {}
+        )
+        _inplace_rewrap_schema_suggestion(schema_suggestion, op_schema)
+        return OutputSharding(
+            output_spec=None, schema_suggestions=[schema_suggestion]
+        )
+
     input_chars = alphabet[: input_spec.ndim]
 
     if len(op_schema.args_schema) == 1:
@@ -323,9 +349,9 @@ def reduction_rule(op_schema: OpSchema, linearity: bool = False) -> OutputShardi
         # need to specialize them as needed.
         # TODO: add support for things like `torch.unique` where it
         # does not follow the reduction op convention.
-        keep_dim = len(op_schema.args_schema) > 2 and bool(
-            op_schema.args_schema[2]
-        )
+        # keep_dim = len(op_schema.args_schema) > 2 and bool(
+        #     op_schema.args_schema[2]
+        # )
         dims_list = cast(List[int], as_list(op_schema.args_schema[1]))
         dim_list = normalize_dims(dims_list, input_spec.ndim)
         # keep_dim=True means output dim is a singleton dim
@@ -335,4 +361,4 @@ def reduction_rule(op_schema: OpSchema, linearity: bool = False) -> OutputShardi
         )
 
     fmt = f"{input_chars}->{out_dimchars}"
-    return einop_rule(fmt, op_schema, linearity=linearity)
+    return einop_rule(fmt, op_schema)
