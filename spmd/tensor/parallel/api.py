@@ -78,14 +78,12 @@ def _shard_self_attn(
 
 def _isMLP(module: nn.Module) -> bool:
     # We assume that the structure of MLP to shard defined in object way as below:
-    # Linear -> ReLU -> Linear
-    submodules = list(module.children())
-    return (
-        len(submodules) == 3
-        and isinstance(submodules[0], nn.Linear)
-        and isinstance(submodules[1], nn.ReLU)
-        and isinstance(submodules[2], nn.Linear)
+    #   * -> (Linear -> * -> Linear)+ -> *
+    # positive even number of Linear layers interleaved by activation/norm/dropout
+    linear_submodules = list(
+        filter(lambda x: isinstance(x, nn.Linear), module.children())
     )
+    return len(linear_submodules) > 0 and len(linear_submodules) % 2 == 0
 
 
 def _gradient_hook(param: DTensor, grad: DTensor) -> None:
@@ -97,33 +95,31 @@ def _shard_mlp(name: str, module: nn.Module, device_mesh: DeviceMesh) -> None:
         col_wise_sharding: Sequence[Placement] = [Shard(0)]
         row_wise_sharding: Sequence[Placement] = [Shard(1)]
         replicate: Sequence[Placement] = [Replicate()] * device_mesh.ndim
-        submodules = list(module.children())
+        linear_submodules = list(
+            filter(lambda x: isinstance(x, nn.Linear), module.children())
+        )
 
-        # shard Linear layer 1
-        m = submodules[0]
-        if isinstance(m, nn.Linear):
-            sharded_weight = nn.Parameter(
-                distribute_tensor(m.weight, device_mesh, col_wise_sharding)
-            )
-            sharded_bias = nn.Parameter(
-                distribute_tensor(m.bias, device_mesh, col_wise_sharding)
-            )
-            m.register_parameter("weight", sharded_weight)
-            m.register_parameter("bias", sharded_bias)
-            # note: this hook enables access to m.weight._local_tensor.grad
-            m.weight.register_hook(functools.partial(_gradient_hook, m.weight))
-
-        # shard Linear layer 2
-        m = submodules[2]
-        if isinstance(m, nn.Linear):
-            sharded_weight = nn.Parameter(
-                distribute_tensor(m.weight, device_mesh, row_wise_sharding)
-            )
-            replicated_bias = nn.Parameter(
-                distribute_tensor(m.bias, device_mesh, replicate)
-            )
-            m.register_parameter("weight", sharded_weight)
-            m.register_parameter("bias", replicated_bias)
+        for i, m in enumerate(linear_submodules):
+            if i % 2 == 0:
+                # shard Linear layer column-wisely
+                sharded_weight = nn.Parameter(
+                    distribute_tensor(m.weight, device_mesh, col_wise_sharding)
+                )
+                sharded_bias = nn.Parameter(
+                    distribute_tensor(m.bias, device_mesh, col_wise_sharding)
+                )
+                m.register_parameter("weight", sharded_weight)
+                m.register_parameter("bias", sharded_bias)
+            else:
+                # shard Linear layer row-wisely
+                sharded_weight = nn.Parameter(
+                    distribute_tensor(m.weight, device_mesh, row_wise_sharding)
+                )
+                replicated_bias = nn.Parameter(
+                    distribute_tensor(m.bias, device_mesh, replicate)
+                )
+                m.register_parameter("weight", sharded_weight)
+                m.register_parameter("bias", replicated_bias)
 
 
 # Public APIs

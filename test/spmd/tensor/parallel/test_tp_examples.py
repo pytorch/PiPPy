@@ -49,6 +49,10 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         inp = torch.rand(*inp_size, device=self.device_type)
         model = MLPModule(self.device_type)
         model_tp = MLPModule(self.device_type)
+        # Test MLP recognition
+        from spmd.tensor.parallel.api import _isMLP
+
+        self.assertTrue(_isMLP(model_tp))
 
         # Ensure model are initialized the same way.
         self.assertEqual(model.net1.weight, model_tp.net1.weight)
@@ -75,8 +79,6 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
 
         output.sum().backward()
         output_tp.sum().backward()
-        # This is for FSDP + TP integration.
-        self.assertTrue(model_tp.net1.weight._local_tensor.grad is not None)
 
         device_mesh = model_tp.net1.weight.device_mesh
         replicate = [Replicate()] * device_mesh.ndim
