@@ -112,7 +112,7 @@ def _create_sharded_tensor_md_from_dt(
             ShardMetadata(
                 shard_offsets=list(offsets),
                 shard_sizes=list(sizes),
-                placement=f"rank:{scapegoat_rank}/{dt._local_tensor.device}",
+                placement=f"rank:{scapegoat_rank if i > 0 else my_rank}/{dt._local_tensor.device}",
             )
         )
 
@@ -275,7 +275,12 @@ def _chunk_tensor(
 
         dt_pg = _get_dt_pg(tensor)
         # We do this differently here, we create a ST with no local shards then patch it
-        shards = []
+        shards = [
+            Shard(
+                inner_st, _create_shard_md_from_dt(tensor, dist.get_rank(dt_pg))
+            )
+        ]
+
         st_meta = _create_sharded_tensor_md_from_dt(tensor, dt_pg)
         st_meta.tensor_properties.requires_grad = False
 
@@ -284,11 +289,6 @@ def _chunk_tensor(
             sharded_tensor_metadata=st_meta,
             process_group=dt_pg,
             init_rrefs=False,
-        )
-        st_outer._local_shards.append(
-            Shard(
-                inner_st, _create_shard_md_from_dt(tensor, dist.get_rank(dt_pg))
-            )
         )
 
         return st_outer
@@ -304,7 +304,7 @@ def _chunk_tensor(
 
 def _pre_load_state_dict(
     tensor: torch.Tensor,
-) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+) -> Tuple[torch.Tensor, List[Shard]]:
     shards = cast(ShardedTensor, tensor).local_shards()
     if len(shards) == 1 and type(shards[0].tensor) is ShardedTensor:
         inner_tensor = cast(ShardedTensor, shards[0].tensor)
@@ -347,8 +347,8 @@ try:
         def pre_load_state_dict_transform(
             self,
             tensor: torch.Tensor,
-        ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
-            return _pre_load_state_dict(tensor)
+        ) -> Tuple[torch.Tensor, List[Shard]]:
+            return _pre_load_state_dict(tensor)  # type: ignore
 
     _set_fsdp_extensions(DTensorExtensions())
 

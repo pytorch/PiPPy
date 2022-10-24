@@ -4,6 +4,7 @@ from typing import List, cast
 from spmd.tensor.placement_types import Placement
 from spmd.testing.common_utils import (  # type: ignore
     DistTensorTestBase,
+    redistribute_profiler,
     with_comms,
 )
 from spmd import DeviceMesh, Shard, Replicate, distribute_tensor
@@ -169,7 +170,13 @@ class TestViewOps(DistTensorTestBase):
         for in_shard in all_sharding_choices:
             # print(f'   |--- {in_shard}')
             in_dt = distribute_tensor(args[0], device_mesh, in_shard)
-            out_dt = op(in_dt, *args[1:], **kwargs)
+
+            with redistribute_profiler() as profiler:
+                out_dt = op(in_dt, *args[1:], **kwargs)
+
+            self.assertEqual(
+                profiler.num_calls, 0, "Expected no redistribution."
+            )
 
             full_out = out_dt.redistribute(
                 device_mesh, device_mesh.ndim * [Replicate()]
