@@ -224,6 +224,8 @@ def prop_slice(op_schema: OpSchema) -> OutputSharding:
         step = 1
     if end is None or end > input_spec.shape[dim]:
         end = input_spec.shape[dim]
+    if start < 0:
+        start += input_spec.shape[dim]
     if end < 0:
         end += input_spec.shape[dim]
 
