@@ -375,7 +375,6 @@ class CommonRulesTest(DistTensorTestBase):
         mat2_spec = DTensorSpec.from_dim_map(
             mesh, mat2, [], shape=torch.Size([12, 1, 8])
         )
-        print(f">> mat1 spec: {mat1_spec}")
         output_sharding = pointwise_rule(
             OpSchema(func_schema, (mat1_spec, mat2_spec), {})
         )

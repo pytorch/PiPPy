@@ -1,6 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
-from typing import List, Union
+from typing import List, Union, Tuple
 from spmd.tensor.api import DTensor
 
 
@@ -54,3 +54,19 @@ def as_list(
         return x
     else:
         return [x]
+
+
+def normalize_dim(dim: int, ndim: int) -> int:
+    return dim if dim >= 0 else dim + ndim
+
+
+def normalize_dims(
+    dims: Union[int, Tuple[int, ...], List[int]], ndim: int
+) -> Union[Tuple[int, ...], List[int]]:
+    if isinstance(dims, int):
+        dims = (normalize_dim(dims, ndim),)
+    elif isinstance(dims, list):
+        dims = [normalize_dim(dim, ndim) for dim in dims]
+    elif isinstance(dims, tuple):
+        dims = tuple([normalize_dim(dim, ndim) for dim in dims])
+    return dims  # type: ignore

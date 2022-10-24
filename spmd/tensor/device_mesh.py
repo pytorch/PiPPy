@@ -2,8 +2,6 @@
 import warnings
 from typing import List, Optional, Sequence, TypeVar, Union
 import torch
-import torch.nn.functional as F
-from torch.distributed._spmd.comm_tensor import CommTensor
 from torch.distributed.distributed_c10d import (
     all_gather,
     all_reduce,
@@ -19,6 +17,7 @@ from torch.distributed.distributed_c10d import (
     new_group,
     ProcessGroup,
     all_to_all,
+    Work,
 )
 
 _global_device_mesh: Optional["DeviceMesh"] = None
@@ -259,112 +258,58 @@ class DeviceMesh(object):
         """
         return self._coordinate_on_dim[dim] if self._coordinate_on_dim else None
 
-    def _pad_tensor_dim_by_1(
-        self, tensor: torch.Tensor, dim: int
-    ) -> torch.Tensor:
-        pad = [0, 0] * (tensor.ndim - dim)
-        pad[-1] = 1
-        return F.pad(tensor, pad)
-
-    def _unpad_tensor_dim_by_1(
-        self, tensor: torch.Tensor, dim: int
-    ) -> torch.Tensor:
-        return tensor.narrow(dim, start=0, length=tensor.size(dim) - 1)
-
-    def _tensor_split_and_pad(
-        self, tensor: torch.Tensor, n: int, dim: int
-    ) -> Sequence[torch.Tensor]:
-        # split tensor over dimension `dim` into n slices with padding if necessary
-        tensor_list = list(tensor.tensor_split(n, dim))
-        idx_start_to_pad = tensor.size(dim) % n
-        tensor_padded_list = []
-        for i, tensor_to_pad in enumerate(tensor_list):
-            if idx_start_to_pad != 0 and i >= idx_start_to_pad:
-                tensor_to_pad = self._pad_tensor_dim_by_1(tensor_to_pad, dim)
-            # input tensors are expected to be congtiguous by the collective backend
-            tensor_to_pad = tensor_to_pad.contiguous()
-            tensor_padded_list.append(CommTensor(tensor_to_pad))
-        return tensor_padded_list
-
     def scatter(
         self,
-        tensor_to_scatter: torch.Tensor,
+        output: torch.Tensor,
+        scatter_list: List[torch.Tensor],
         mesh_dim: int = 0,
-        tensor_dim: int = 0,
-    ) -> torch.Tensor:
+        async_op: bool = False,
+    ) -> Optional[Work]:
         """
-        scatter a big tensor to a device mesh dimension. We by default
+        scatter a list of tensors to a device mesh dimension. We by default
         use the first rank of the mesh dimension as the source of truth, i.e
         for a 2d mesh [[0, 1], [2, 3]], if we scatter on mesh_dim = 1, we will
-        scatter the tensor splitted on rank 0 to rank 0/1, and tensor splitted
-        on rank 2 to rank 2/3.
+        scatter the tensor list on rank 0 to rank 0/1, and tensor lista on rank
+        2 to rank 2/3.
 
         Args:
-            tensor_to_scatter (torch.Tensor): the tensor to be scattered.
+            tensor (torch.Tensor): the tensor to receive the scattered list.
+            scatter_list (List[torch.Tensor]): the tensor list to be scattered.
             mesh_dim (int, optional): indicate which mesh dimension we want
                 to scatter on, we by default choose the first rank on the
                 mesh dimension as source of truth.
-            tensor_dim (int, optional): indicate which tensor dimension we want
-                to split the `tensor_to_scatter` before scattering.
 
         Returns:
-            A :class:`torch.Tensor` object
+            A :class:`Work` object
         """
-        my_coordinate = self.get_coordinate_on_dim(mesh_dim)
-        # TODO: what should happen if rank is not in the mesh?
-        # see issue https://github.com/pytorch/tau/pull/492
-        assert (
-            my_coordinate is not None
-        ), "Rank if not part of mesh"  # TODO: figure out behavior here
-
-        num_chunks = self.size(mesh_dim)
         dim_group = self._dim_groups[mesh_dim]
         # src need to be global rank
         src_for_dim = 0
         if dim_group is not GroupMember.WORLD:
             src_for_dim = get_global_rank(dim_group, 0)
 
-        scatter_list = list(
-            tensor_to_scatter.tensor_split(num_chunks, dim=tensor_dim)
-        )
-        # gloo does not support uneven scattering, nccl supports it, but it
-        # might be slow compared to even size collective, we need to pad tensor
-        # before really calling scatter, and unpad/narrow it after the collective
-        # TODO: consider if we should remove this logic once ProcessGroupGloo
-        # support uneven list, and collective perfomance on par
-        idx_start_to_pad = tensor_to_scatter.size(tensor_dim) % num_chunks
-        to_scatter = []
-        for i, scatter_tensor in enumerate(scatter_list):
-            if idx_start_to_pad != 0 and i >= idx_start_to_pad:
-                scatter_tensor = self._pad_tensor_dim_by_1(
-                    scatter_tensor, tensor_dim
-                )
-            scatter_tensor = scatter_tensor.contiguous()
-            to_scatter.append(CommTensor(scatter_tensor))
-
-        # N.B.: the `tensor` below will be a CommTensor too due to CommTensor's
-        # propagation rule: propagte wrapping until communication is called.
-        # This is necessary in order to properly trigger CommTensor's dispatch
-        # function for scatter_.
-        tensor = torch.empty_like(to_scatter[my_coordinate])
         if src_for_dim == get_rank():
-            scatter(
-                tensor,
-                scatter_list=to_scatter,
+            fut = scatter(
+                output,
+                scatter_list=scatter_list,
                 src=src_for_dim,
                 group=dim_group,
+                async_op=async_op,
             )
         else:
-            scatter(tensor, scatter_list=None, src=src_for_dim, group=dim_group)
+            fut = scatter(
+                output,
+                scatter_list=None,
+                src=src_for_dim,
+                group=dim_group,
+                async_op=async_op,
+            )
 
-        # resize to uneven size if needed
-        if idx_start_to_pad != 0 and my_coordinate >= idx_start_to_pad:
-            tensor = self._unpad_tensor_dim_by_1(tensor, tensor_dim)
-        return tensor
+        return fut
 
     def broadcast(
         self, tensor: torch.Tensor, mesh_dim: int = 0
-    ) -> torch.Tensor:
+    ) -> Optional[Work]:
         """
         broadcast the tensor to a device mesh dimension. We by default
         use the first rank of the mesh dimension as the source of truth, i.e
@@ -373,13 +318,13 @@ class DeviceMesh(object):
         to rank 2/3.
 
         Args:
-            tensor (torch.Tensor): tensor to scatter.
+            tensor (torch.Tensor): tensor to broadcast.
             mesh_dim (int, optional): indicate which mesh dimension we want
                 to scatter on, we by default choose the first rank on the
                 mesh dimension as source of truth.
 
         Returns:
-            A :class:`torch.Tensor` object
+            A :class:`Work` object
         """
         dim_group = self._dim_groups[mesh_dim]
         # src need to be global rank
@@ -387,102 +332,42 @@ class DeviceMesh(object):
         if dim_group is not GroupMember.WORLD:
             src_for_dim = get_global_rank(dim_group, 0)
 
-        # CommTensor does not change eager mode behavior. During tracing, it
-        # makes sure communication result is properly waited before subsequent
-        # read operations.
-        if not tensor.is_contiguous():
-            tensor = CommTensor(tensor.contiguous())
-        else:
-            tensor = CommTensor(tensor.clone())
-        broadcast(tensor, src=src_for_dim, group=dim_group)
-        return tensor
+        return broadcast(tensor, src=src_for_dim, group=dim_group)
 
     def all_gather(
         self,
+        tensor_list: List[torch.Tensor],
         tensor: torch.Tensor,
-        output_shape: Sequence[int],
         mesh_dim: int = 0,
-        tensor_dim: int = 0,
-    ) -> torch.Tensor:
+    ) -> Optional[Work]:
         """
-        all_gather the tensor on each rank to a bigger output_tensor on a
+        all_gather the tensor on each rank to the tensor_list on a
         device mesh dimension.
 
         Args:
+            tensor_list (List[torch.Tensor]): The gathered tensor list.
             tensor (torch.Tensor): tensor to be gathered on each rank.
-            output_shape (Tuple[int, ...]): output shape of the all_gather call,
-                this is needed because we need to know the proper size of each
-                receving tensor on each rank in order to call dist.all_gather,
-                as sometimes we have uneven sharding on the mesh dimension. We
-                use torch.tensor_split semantics to construct the recv tensor
-                and cat them to the output_shape.
             mesh_dim (int, optional): indicate which mesh dimension we want
                 to scatter on, we by default choose the first rank on the
                 mesh dimension as source of truth.
-            tensor_dim (int, optional): indicate which tensor dimension we want
-                to concat on after we gather list of tensors from all rank.
 
         Returns:
-            A :class:`torch.Tensor` object
+            A :class:`Work` object
         """
-        my_coordinate = self.get_coordinate_on_dim(mesh_dim)
-        # TODO: what should happen if rank is not in the mesh?
-        # see issue https://github.com/pytorch/tau/pull/492
-        assert (
-            my_coordinate is not None
-        ), "Rank if not part of mesh"  # TODO: figure out behavior here
-
-        num_chunks = self.size(mesh_dim)
-        quot, rem = divmod(output_shape[tensor_dim], num_chunks)
-        gathered_list = []
-        for _ in range(num_chunks):
-            recv_shape = list(output_shape)
-            # create recv tensor with padded shape
-            recv_shape[tensor_dim] = quot + (1 if rem > 0 else 0)
-            gathered_list.append(
-                CommTensor(
-                    torch.empty(
-                        recv_shape,
-                        dtype=tensor.dtype,
-                        layout=tensor.layout,
-                        device=tensor.device,
-                    )
-                )
-            )
-
-        tensor = (
-            self._pad_tensor_dim_by_1(tensor, tensor_dim)
-            if rem != 0 and my_coordinate >= rem
-            else tensor
-        )
-
         dim_group = self._dim_groups[mesh_dim]
-        # N.B. CommTensor does not change eager mode behavior. During tracing, it
-        # makes sure communication result is properly waited before subsequent
-        # read operations.
-        # input tensor must be contiguous
-        all_gather(
-            gathered_list,
-            CommTensor(tensor.contiguous()),
+        return all_gather(
+            tensor_list,
+            tensor,
             group=dim_group,
         )
-
-        # resize to uneven size if needed
-        if rem != 0:
-            gathered_list = [
-                self._unpad_tensor_dim_by_1(gathered_tensor, tensor_dim)  # type: ignore
-                if i >= rem
-                else gathered_tensor
-                for i, gathered_tensor in enumerate(gathered_list)
-            ]
-        return torch.cat(gathered_list, dim=tensor_dim)  # type: ignore
 
     def all_reduce(
         self,
         tensor: torch.Tensor,
         op: ReduceOp = ReduceOp.SUM,  # type: ignore
         mesh_dim: int = 0,
-    ) -> torch.Tensor:
+        async_op: bool = False,
+    ) -> Optional[Work]:
         """
         all_reduce the tensor on each rank on a device mesh dimension, and
         return an output tensor on each rank after all_reduce.
@@ -495,138 +380,110 @@ class DeviceMesh(object):
                 to reduce on.
 
         Returns:
-            A :class:`torch.Tensor` object
+            A :class:`Work` object
         """
         dim_group = self._dim_groups[mesh_dim]
-        # CommTensor does not change eager mode behavior. During tracing, it
-        # makes sure communication result is properly waited before subsequent
-        # read operations.
-        if not tensor.is_contiguous():
-            tensor = CommTensor(tensor.contiguous())
-        else:
-            tensor = CommTensor(tensor.clone())
-        all_reduce(tensor, op=op, group=dim_group)
-        return tensor
+        return all_reduce(tensor, op=op, group=dim_group, async_op=async_op)
 
     def reduce_scatter(
         self,
-        input: torch.Tensor,
+        output: torch.Tensor,
+        input_list: List[torch.Tensor],
         op: ReduceOp = ReduceOp.SUM,  # type: ignore
         mesh_dim: int = 0,
-        tensor_dim: int = 0,
-    ) -> torch.Tensor:
+    ) -> Optional[Work]:
         """
-        reduce_scattter the tensor on each rank on a device mesh dimension, and
-        return an output tensor that's scattered to each rank after reduce.
+        reduce the input_list on each rank on a device mesh dimension, and scatter
+        the results to the output tensor on each rank.
 
         Args:
-            input (torch.Tensor): tensor to be reduced and scattered on each rank.
+            output (torch.Tensor): tensor to receive the scattered result.
+            input_list (List[torch.Tensor]): tensor list to be reduced and scattered
+                and scattered on each rank.
             op (:class:`torch.distributed.distributed_c10d.ReduceOp, optional):
                 the reduction op of reduce_scatter (i.e. ReduceOp.SUM)
             mesh_dim (int, optional): indicate which mesh dimension we want
                 to scatter on.
-            tensor_dim (int, optional): indicate which tensor dimension we want
-                to scatter after the reduction.
 
         Returns:
-            A :class:`torch.Tensor` object
+            A :class:`Work` object
         """
-        my_coordinate = self.get_coordinate_on_dim(mesh_dim)
-        # TODO: what should happen if rank is not in the mesh?
-        # see issue https://github.com/pytorch/tau/pull/492
-        assert (
-            my_coordinate is not None
-        ), "Rank if not part of mesh"  # TODO: figure out behavior here
-
-        num_chunks = self.size(mesh_dim)
         if self._backend == "nccl":
-            input_list = list(input.tensor_split(num_chunks, dim=tensor_dim))
-            # gloo does not support uneven scattering, nccl supports it, but it
-            # might be slow compared to even size collective, we need to pad tensor
-            # before really calling scatter, and unpad/narrow it after the collective
-            # TODO: consider if we should remove this logic once ProcessGroupGloo
-            # suupport uneven list, and collective perfomance on par
-            idx_start_to_pad = input.size(tensor_dim) % num_chunks
-            to_scatter = []
-            for i, scatter_tensor in enumerate(input_list):
-                if idx_start_to_pad != 0 and i >= idx_start_to_pad:
-                    scatter_tensor = self._pad_tensor_dim_by_1(
-                        scatter_tensor, tensor_dim
-                    )
-                scatter_tensor = scatter_tensor.contiguous()
-                to_scatter.append(CommTensor(scatter_tensor))
-
-            output = torch.empty_like(to_scatter[my_coordinate])
             dim_group = self._dim_groups[mesh_dim]
-            reduce_scatter(output, to_scatter, op=op, group=dim_group)
+            fut = reduce_scatter(output, input_list, op=op, group=dim_group)
 
-            # resize to uneven size if needed
-            if idx_start_to_pad != 0 and my_coordinate >= idx_start_to_pad:
-                # tensor = tensor.narrow(tensor_dim, start=0, length=tensor.size(tensor_dim) - 1)
-                output = self._unpad_tensor_dim_by_1(output, tensor_dim)
-
-            return output
         elif self._backend == "gloo":
             # it's gloo, which does not have reduce_scatter
             # we have to do all_reduce + scatter
             warnings.warn(
                 "ProcessGroupGloo does not support reduce_scatter, falling back with all reduce!"
             )
-            reduced_tensor = self.all_reduce(input, op=op, mesh_dim=mesh_dim)
-            chunks = reduced_tensor.tensor_split(num_chunks, dim=tensor_dim)
-            return chunks[my_coordinate]
+            my_coordinate = self.get_coordinate_on_dim(mesh_dim)
+            # TODO: what should happen if rank is not in the mesh?
+            # see issue https://github.com/pytorch/tau/pull/492
+            assert (
+                my_coordinate is not None
+            ), "Rank if not part of mesh"  # TODO: figure out behavior here
+            fut = None
+            flattened_list = []
+            offset_list = []
+
+            offset = 0
+            for input in input_list:
+                offset_list.append(offset)
+                offset += input.numel()
+                flattened_list.append(input.flatten())
+
+            # all reduce since gloo does not support reduce_scatter
+            flat_tensor = torch.cat(flattened_list).clone(
+                memory_format=torch.contiguous_format
+            )
+            fut = self.all_reduce(flat_tensor, op=op, mesh_dim=mesh_dim)
+            # scatter the tensor
+            output_offset = offset_list[my_coordinate]
+            output.copy_(
+                flat_tensor[
+                    output_offset : output_offset + output.numel()
+                ].view(output.shape)
+            )
         else:
             raise RuntimeError(
                 f"backend {self._backend} does not support reduce_scatter!"
             )
+        return fut
 
     # TODO: test uneven split on GLOO and NCCL
     def all_to_all(
-        self, input_tensor: torch.Tensor, mesh_dim: int = 0, tensor_dim: int = 0
-    ) -> torch.Tensor:
+        self,
+        output_tensor_list: List[torch.Tensor],
+        input_tensor_list: List[torch.Tensor],
+        mesh_dim: int = 0,
+    ) -> Optional[Work]:
         my_coordinate = self.get_coordinate_on_dim(mesh_dim)
-        # borrow the same logic with scatter()
-        # TODO: what should happen if rank is not in the mesh?
-        # see issue https://github.com/pytorch/tau/pull/492
-        assert (
-            my_coordinate is not None
-        ), "Rank if not part of mesh"  # TODO: figure out behavior here
-
         dim_group = self._dim_groups[mesh_dim]
-        num_chunks = self.size(mesh_dim)
-        input_tensor_list = self._tensor_split_and_pad(
-            input_tensor, num_chunks, tensor_dim
-        )
-        output_tensor = torch.empty_like(input_tensor)
+
+        work = None
         # no direct dist.all_to_all support on 'gloo' so we manually do scatters
         if self.backend() == "gloo":
             # TODO: pull the handle of uneven case in #492
             dim_group_size = get_world_size(dim_group)
             for i in range(dim_group_size):
-                gathered_tensor = self.all_gather(
-                    input_tensor_list[i],
-                    input_tensor.shape,
-                    mesh_dim,
-                    tensor_dim,
+                # src need to be global rank
+                src_for_dim = i
+                if dim_group is not GroupMember.WORLD:
+                    src_for_dim = get_global_rank(dim_group, i)
+
+                work = scatter(
+                    output_tensor_list[i],
+                    input_tensor_list if self.get_rank() == src_for_dim else [],
+                    group=dim_group,
+                    src=src_for_dim,
                 )
-                if i == my_coordinate:
-                    output_tensor = gathered_tensor
+
         elif self.backend() == "nccl":
-            # we assume that the tensors gathered from each node are of the same shape
-            output_tensor_list = [
-                torch.empty_like(input_tensor_list[my_coordinate])
-            ] * len(input_tensor_list)
-            all_to_all(output_tensor_list, input_tensor_list, dim_group)
-            # TODO: BE - code refactor
-            idx_start_to_pad = input_tensor.size(tensor_dim) % num_chunks
-            if idx_start_to_pad != 0 and my_coordinate >= idx_start_to_pad:
-                for i in range(len(output_tensor_list)):
-                    output_tensor_list[i] = self._unpad_tensor_dim_by_1(
-                        output_tensor_list[i], tensor_dim
-                    )
-            output_tensor = torch.cat(output_tensor_list, dim=tensor_dim)
+            work = all_to_all(output_tensor_list, input_tensor_list, dim_group)
         else:
             raise RuntimeError(
                 f"DeviceMesh does not support all-to-all collective operations on {self.backend()} backend."
             )
-        return output_tensor
+        return work

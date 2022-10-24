@@ -442,7 +442,7 @@ def prop_index(op_schema: OpSchema) -> OutputSharding:
         value_shape = torch.Size(
             tuple(value_shape[:insert_dim])
             + tuple(indices_spec.shape)
-            + tuple(value_shape[insert_dim + 1 :])
+            + tuple(value_shape[insert_dim + len(valid_indices_spec) :])
         )
 
         result = OutputSharding(

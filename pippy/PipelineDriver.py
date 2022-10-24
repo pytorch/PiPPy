@@ -922,7 +922,7 @@ class PipeStageExecutor(EventRecorder):
         if "tensor_meta" in value_ref_arg.meta:
             tm = value_ref_arg.meta["tensor_meta"]
             use_c10d = True
-            recv_buff = torch.zeros(
+            recv_buff = torch.empty(
                 tm.shape, dtype=tm.dtype, device=self.device
             )
 

@@ -300,7 +300,11 @@ class DTensorConverter(object):
                 # TODO: add bool tensor dtype support in c10d collective
                 if t.dtype == torch.bool:
                     r = DTensor(
-                        t, mesh, placements, requires_grad=t.requires_grad
+                        t,
+                        mesh,
+                        placements,
+                        size=t.size(),
+                        requires_grad=t.requires_grad,
                     )
                 else:
                     r = distribute_tensor(t, mesh, placements)
