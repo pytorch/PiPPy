@@ -10,7 +10,6 @@ from typing import (
     Union,
     Sequence,
     cast,
-    List,
 )
 
 from spmd.tensor.placement_types import DTensorSpec, Placement, Replicate
