@@ -105,9 +105,12 @@ def set_element(
                 CONTAINER_TYPE, cur_container.setdefault(prev_key, def_val)
             )
         else:
-            extend_list(cur_container, prev_key)  # pyre-ignore[9]
+            # pyre-fixme[6]: Argument 1 to "extend_list" has incompatible type "MutableMapping[Union[str, int], object]"; expected "List[object]"
+            # pyre-fixme[6]: Argument 2 to "extend_list" has incompatible type "Union[str, int]"; expected "int"
+            extend_list(cur_container, prev_key)  
             if cur_container[prev_key] is None:
                 cur_container[prev_key] = def_val
+            # pyre-fixme[9]: Incompatible types in assignment (expression has type "object", variable has type "MutableMapping[Union[str, int], object]")
             cur_container = cur_container[prev_key]  # pyre-ignore[9]
 
     key = path[-1]
