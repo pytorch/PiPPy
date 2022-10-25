@@ -198,11 +198,12 @@ def einop_rule(
             op_schema, input_dims, input_specs, dim_to_sharding, pending_sums
         )
 
-    # if no need to reshard, we directly generate the output sharding
+    # handle output pending sum if a dim appears in input but not output
     for dim, shard_on_mesh in dim_to_sharding.items():
         if dim not in output_dims[0] and shard_on_mesh != -1:
             pending_sums.append(shard_on_mesh)
 
+    # if no need to reshard, we directly generate the output sharding
     output_dim_map = []
     output_shape = []
     for dim in output_dim:
@@ -310,7 +311,7 @@ def linear_pointwise_rule(op_schema: OpSchema) -> OutputSharding:
 def reduction_rule(
     op_schema: OpSchema,
     *,
-    dim: Optional[List[int]] = None,
+    dims: Optional[List[int]] = None,
     keep_dim: bool = False,
     reduction_linear: bool = False,
 ) -> OutputSharding:
@@ -340,24 +341,15 @@ def reduction_rule(
 
     input_chars = alphabet[: input_spec.ndim]
 
-    if len(op_schema.args_schema) == 1:
+    if dims is None:
         # reducing to a single scalar tensor, we just mark output as empty
         out_dimchars = ""
     else:
-        # this is usually a dim-based reduction op schema pattern, it
-        # might not be true for every op for other special cases, we
-        # need to specialize them as needed.
-        # TODO: add support for things like `torch.unique` where it
-        # does not follow the reduction op convention.
-        # keep_dim = len(op_schema.args_schema) > 2 and bool(
-        #     op_schema.args_schema[2]
-        # )
-        dims_list = cast(List[int], as_list(op_schema.args_schema[1]))
-        dim_list = normalize_dims(dims_list, input_spec.ndim)
-        # keep_dim=True means output dim is a singleton dim
+        # if keep the reduction dim, we need to keep the dim char by marking
+        # it as a singleton "1" in the out_dimchars
         reduce_dim_char = ord("1") if keep_dim else None
         out_dimchars = input_chars.translate(
-            {ord(alphabet[dim]): reduce_dim_char for dim in dim_list}
+            {ord(alphabet[dim]): reduce_dim_char for dim in dims}
         )
 
     fmt = f"{input_chars}->{out_dimchars}"

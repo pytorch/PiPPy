@@ -19,12 +19,12 @@ for reduction_op in reduction_ops:
 def sum_rule(op_schema: OpSchema) -> OutputSharding:
     args_schema = op_schema.args_schema
     input_spec = cast(DTensorSpec, args_schema[0])
-    dim = None
+    dims = None
     if len(args_schema) > 1:
-        dim = cast(List[int], as_list(args_schema[1]))
-        dim = normalize_dims(dim, input_spec.ndim)
+        dims = cast(List[int], as_list(args_schema[1]))
+        dims = normalize_dims(dims, input_spec.ndim)
     keep_dim = len(args_schema) > 2 and bool(args_schema[2])
-    return reduction_rule(op_schema, dim=dim, keep_dim=keep_dim, reduction_linear=True)
+    return reduction_rule(op_schema, dims=dims, keep_dim=keep_dim, reduction_linear=True)
 
 sum_ops = [
     "aten.sum.default",
@@ -32,6 +32,7 @@ sum_ops = [
 ]
 for sum_op in sum_ops:
     DTensor._op_to_rules[sum_op] = sum_rule
+
 
 @register_prop_rule("aten._softmax.default")
 def softmax_rule(op_schema: OpSchema) -> OutputSharding:
