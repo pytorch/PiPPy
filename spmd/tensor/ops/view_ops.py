@@ -228,8 +228,8 @@ def dim_flatten(ndim: int) -> DimMap:
 
 def dim_movedim(
     ndim: int,
-    input: Union[int, Tuple[int, ...], List[int]],
-    destination: Union[int, Tuple[int, ...], List[int]],
+    input: Union[int, Sequence[int]],
+    destination: Union[int, Sequence[int]],
 ) -> DimMap:
     input = normalize_dims(input, ndim)
     destination = normalize_dims(destination, ndim)

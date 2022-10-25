@@ -113,7 +113,7 @@ def _redistribute_with_local_tensor(
                 new_local_tensor = cloned_local
             elif current.is_shard():
                 current_placement = cast(Shard, current)
-                new_local_tensor = current_placement.to_replicate(
+                new_local_tensor = current_placement._to_replicate_tensor(
                     local_tensor, size, device_mesh, i
                 )
             else:
@@ -125,7 +125,7 @@ def _redistribute_with_local_tensor(
             target_placement = cast(Shard, target)
             if current.is_partial():
                 # reduce shard (i.e. reduce_scatter) the current tensors
-                new_local_tensor = target_placement.reduce_shard_tensor(
+                new_local_tensor = target_placement._reduce_shard_tensor(
                     local_tensor, device_mesh, i
                 )
             elif current.is_replicate():

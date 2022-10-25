@@ -22,14 +22,13 @@ def wrap(res: object, spec: OutputSpecType) -> object:
         assert spec is not None and isinstance(
             spec, DTensorSpec
         ), f"output spec does not match with output! Expected DTensorSpec, got {spec}."
-        res = dtensor.DTensor(
+        return dtensor.DTensor(
             res,
             spec.mesh,
             spec.placements,
             size=spec.shape,
             requires_grad=res.requires_grad,
         )
-        return res
     elif isinstance(res, list):
         assert spec is not None and isinstance(
             spec, list

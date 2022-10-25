@@ -163,6 +163,7 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         """
         # recover tensor strides from local tensor strides and global size info
         # in the case of sharding
+        # TODO: we should try to use meta tensor for shape and stride calculation
         tensor_stride = list(local_tensor.stride())
         local_size = list(local_tensor.size())
         for placement in placements:
@@ -325,7 +326,6 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         # Note that redistribute currently only supports out
         # of place redistribution, i.e. it always create a new
         # DTensor object and leave the original one unchanged.
-        # TODO: consider if we should offer in place redistribution
         device_mesh = (
             get_global_device_mesh() if device_mesh is None else device_mesh
         )
