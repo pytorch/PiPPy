@@ -224,6 +224,8 @@ def prop_slice(op_schema: OpSchema) -> OutputSharding:
         step = 1
     if end is None or end > input_spec.shape[dim]:
         end = input_spec.shape[dim]
+    if start < 0:
+        start += input_spec.shape[dim]
     if end < 0:
         end += input_spec.shape[dim]
 
@@ -442,7 +444,7 @@ def prop_index(op_schema: OpSchema) -> OutputSharding:
         value_shape = torch.Size(
             tuple(value_shape[:insert_dim])
             + tuple(indices_spec.shape)
-            + tuple(value_shape[insert_dim + 1 :])
+            + tuple(value_shape[insert_dim + len(valid_indices_spec) :])
         )
 
         result = OutputSharding(
