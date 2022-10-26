@@ -2,7 +2,7 @@
 import math
 
 import torch
-from typing import List, Dict, Tuple, Optional, cast
+from typing import List, Sequence, Dict, Tuple, Optional, cast
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.placement_types import DTensorSpec
 from spmd.tensor.ops.utils import as_list, normalize_dims

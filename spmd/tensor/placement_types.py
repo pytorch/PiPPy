@@ -91,7 +91,9 @@ class Shard(Placement):
         rank: int,
         return_offset: bool = False,
     ) -> Tuple[int, int]:
-        # return the local shard size and offset on a given tensor dim
+        """
+        returns the local shard size and offset on a given tensor dim
+        """
         assert (
             size_on_dim >= num_chunks
         ), f"Size to be sharded on dim {self.dim} must be at least as large as the number of devices in that dimension {num_chunks}"
@@ -106,11 +108,13 @@ class Shard(Placement):
             )
         return (local_shard_size, local_offset_on_dim)
 
-    def shard_tensor(
+    def _shard_tensor(
         self, tensor: torch.Tensor, mesh: DeviceMesh, mesh_dim: int
     ) -> torch.Tensor:
-        # shard and scatter a tensor on a mesh dimension (use coordinate
-        # 0 on the mesh dimension as source of truth)
+        """
+        shard and scatter a tensor on a mesh dimension (use coordinate
+        0 on the mesh dimension as source of truth)
+        """
         my_coordinate = mesh.get_coordinate_on_dim(mesh_dim)
         num_chunks = mesh.size(dim=mesh_dim)
         # TODO: what should happen if rank is not in the mesh?
@@ -128,10 +132,12 @@ class Shard(Placement):
             output = self._unpad_tensor(output)
         return output
 
-    def reduce_shard_tensor(
+    def _reduce_shard_tensor(
         self, tensor: torch.Tensor, mesh: DeviceMesh, mesh_dim: int
     ) -> torch.Tensor:
-        # reduce and scatter a tensor on a mesh dimension
+        """
+        reduce and scatter a tensor on a mesh dimension
+        """
         my_coordinate = mesh.get_coordinate_on_dim(mesh_dim)
         num_chunks = mesh.size(dim=mesh_dim)
         # TODO: what should happen if rank is not in the mesh?
@@ -150,15 +156,17 @@ class Shard(Placement):
             output = self._unpad_tensor(output)
         return output
 
-    def to_replicate(
+    def _to_replicate_tensor(
         self,
         local_tensor: torch.Tensor,
         size: torch.Size,
         mesh: DeviceMesh,
         mesh_dim: int,
     ) -> torch.Tensor:
-        # for shard, all_gather all shards and return a tensor that
-        # is replicated on the previously sharded mesh dimension
+        """
+        This function all_gather all shards and return a tensor that
+        is replicated on the previously sharded mesh dimension
+        """
         my_coordinate = mesh.get_coordinate_on_dim(mesh_dim)
         num_chunks = mesh.size(dim=mesh_dim)
         # TODO: what should happen if rank is not in the mesh?

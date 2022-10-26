@@ -62,18 +62,18 @@ class DistTensorTest(DistTensorTestBase):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard0_spec = [Shard(0)]
         local_tensor = torch.randn(4, 8)
-        logical_shape = torch.Size([self.world_size * 4, 8])
+        global_shape = torch.Size([self.world_size * 4, 8])
         dist_tensor = DTensor(
-            local_tensor, device_mesh, shard0_spec, size=logical_shape
+            local_tensor, device_mesh, shard0_spec, size=global_shape
         )
         # won't affect stride
         self.assertEqual(dist_tensor.stride(), (8, 1))
 
         shard1_spec = [Shard(1)]
         local_tensor = torch.randn(8, 4)
-        logical_shape = torch.Size([8, self.world_size * 4])
+        global_shape = torch.Size([8, self.world_size * 4])
         dist_tensor = DTensor(
-            local_tensor, device_mesh, shard1_spec, size=logical_shape
+            local_tensor, device_mesh, shard1_spec, size=global_shape
         )
         # will affect stride after DT initialized
         self.assertEqual(dist_tensor.stride(), (16, 1))
@@ -81,10 +81,10 @@ class DistTensorTest(DistTensorTestBase):
         # if initialized from a transposed mat
         local_tensor = torch.randn(8, 4, 8)
         local_tensor_t = local_tensor.permute(1, 2, 0)
-        logical_shape = torch.Size([4, self.world_size * 8, 8])
+        global_shape = torch.Size([4, self.world_size * 8, 8])
         self.assertEqual(local_tensor_t.stride(), (8, 1, 32))
         dist_tensor = DTensor(
-            local_tensor_t, device_mesh, shard1_spec, size=logical_shape
+            local_tensor_t, device_mesh, shard1_spec, size=global_shape
         )
         self.assertEqual(dist_tensor.stride(), (32, 1, 128))
 

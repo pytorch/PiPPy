@@ -1,6 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
-from typing import List, Union, Tuple
+from typing import List, Union, Sequence
 from spmd.tensor.api import DTensor
 
 
@@ -60,9 +60,11 @@ def normalize_dim(dim: int, ndim: int) -> int:
     return dim if dim >= 0 else dim + ndim
 
 
-def normalize_dims(
-    dims: Union[int, Tuple[int, ...], List[int]], ndim: int
-) -> Union[Tuple[int, ...], List[int]]:
+def normalize_dims(dims: Union[int, Sequence[int]], ndim: int) -> Sequence[int]:
+    """
+    normalize a dim or a sequence of dims, so that they
+    are all positive.
+    """
     if isinstance(dims, int):
         dims = (normalize_dim(dims, ndim),)
     elif isinstance(dims, list):

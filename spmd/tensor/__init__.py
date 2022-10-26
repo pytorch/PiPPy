@@ -75,7 +75,7 @@ def distribute_tensor(
     for idx, placement in enumerate(placements):
         if placement.is_shard():
             placement = cast(Shard, placement)
-            output = placement.shard_tensor(local_tensor, device_mesh, idx)
+            output = placement._shard_tensor(local_tensor, device_mesh, idx)
             # scatter call could not return a tensor with correct requires_grad
             # field, as ProcessGroupNCCL refuse to take a tensor with requires_grad
             # to do inplace update! So we manually set it here
