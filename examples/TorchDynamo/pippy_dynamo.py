@@ -62,6 +62,23 @@ def inspect_split_module(
         print(submod)
 
 
+def shape_prop_pipe(
+        pipe: Pipe,
+        input,
+):
+    print("\n============= Propagate shape across GraphModule =============")
+    sp = shape_prop.ShapeProp(pipe.split_gm)
+    sp.propagate(input)
+    for node in pipe.split_gm.graph.nodes:
+        print(f"Node: {node.name}, outputs: ")
+        if isinstance(node.meta['tensor_meta'], pippy.fx.passes.shape_prop.TensorMetadata):
+            print(f"- {node.meta['tensor_meta']}")
+        else:
+            # Multiple output tensors
+            for t_meta in node.meta['tensor_meta']:
+                print(f"- {t_meta}")
+
+
 # For storing reference output from inside compiler
 ref_out = ()
 
@@ -109,14 +126,8 @@ def run_master(_, args):
         pipe = Pipe.from_tracing(gm, MULTI_USE_PARAM_CONFIG)
         inspect_split_module(pipe, 4)
 
-        # Propagate shape across GraphModule
-        print("\n============= Propagate shape across GraphModule =============")
-        sp = shape_prop.ShapeProp(pipe.split_gm)
-        sp.propagate(input)
-        for node in pipe.split_gm.graph.nodes:
-            print(f"Node: {node.name}")
-            for t_meta in node.meta['tensor_meta']:
-                print(f"- {t_meta}")
+        # Propagate shape across Pipe
+        shape_prop_pipe(pipe, input)
 
         # Create PipelineDriver
         pipe_driver: PipelineDriverBase = schedules[args.schedule](
