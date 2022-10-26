@@ -114,9 +114,13 @@ def run_master(_, args):
         sp = shape_prop.ShapeProp(pipe.split_gm)
         sp.propagate(input)
         for node in pipe.split_gm.graph.nodes:
-            print(f"Node: {node.name}")
-            for t_meta in node.meta['tensor_meta']:
-                print(f"- {t_meta}")
+            print(f"Node: {node.name}, outputs: ")
+            if isinstance(node.meta['tensor_meta'], pippy.fx.passes.shape_prop.TensorMetadata):
+                print(f"- {node.meta['tensor_meta']}")
+            else:
+                # Multiple output tensors
+                for t_meta in node.meta['tensor_meta']:
+                    print(f"- {t_meta}")
 
         # Create PipelineDriver
         pipe_driver: PipelineDriverBase = schedules[args.schedule](
