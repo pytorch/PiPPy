@@ -37,7 +37,7 @@ class _ViewAndRedistribute(torch.autograd.Function):
         ctx.previous_placement = self.placements
         ctx.previous_device_mesh = self.device_mesh
         ctx.previous_local_shape = self.to_local().size()
-        ctx.previous_logical_shape = self.size()
+        ctx.previous_global_shape = self.size()
         assert (
             self.device_mesh.ndim == 1
         ), "Only support 1D Device Mesh for _ViewAndRedistribute."
@@ -94,13 +94,13 @@ class _ViewAndRedistribute(torch.autograd.Function):
         previous_placement = ctx.previous_placement
         previous_device_mesh = ctx.previous_device_mesh
         previous_local_tensor_size = ctx.previous_local_shape
-        previous_logical_shape = ctx.previous_logical_shape
+        previous_global_shape = ctx.previous_global_shape
         return (
             DT(
                 grad_output.to_local().view(*previous_local_tensor_size),
                 previous_device_mesh,
                 previous_placement,
-                size=previous_logical_shape,
+                size=previous_global_shape,
                 requires_grad=grad_output.requires_grad,
             ),
             None,
