@@ -19,11 +19,11 @@ of DTensor and all corner cases for sharded distributed tensor.
 def dist_cat(tensor_list: List[DTensor], dim: int = 0) -> DTensor:
     local_inputs = pytree.tree_map(unwrap_local_tensor, tensor_list)
     local_tensor = torch.ops.aten.concat(local_inputs, dim=dim)
-    return DTensor(
+    return DTensor.from_local(
         local_tensor,
         tensor_list[0].device_mesh,
         tensor_list[0].placements,
-        requires_grad=local_tensor.requires_grad,
+        run_check=False,
     )
 
 
@@ -45,11 +45,11 @@ def dist_split(self: DTensor, split_size_or_sections, dim=0) -> List[DTensor]:
             split_size_or_sections //= world_size
     tensor_list = local_mat.split(split_size_or_sections, dim=dim)
     return [
-        DTensor(
+        DTensor.from_local(
             tensor,
             self.device_mesh,
             [mat_placement],
-            requires_grad=tensor.requires_grad,
+            run_check=False,
         )
         for tensor in tensor_list
     ]
