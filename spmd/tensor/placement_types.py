@@ -358,7 +358,7 @@ class DTensorSpec(object):
                 assert (
                     shard_dim < self.ndim
                 ), f"Sharding dim {shard_dim} greater than tensor ndim {self.ndim}"
-                local_shard_size, _ = placement.local_shard_size_on_dim(
+                local_shard_size, _ = placement._local_shard_size_on_dim(
                     local_shape[shard_dim], mesh_dim_size, my_coordinate
                 )
                 assert isinstance(local_shard_size, int)
