@@ -48,27 +48,27 @@ fi
 RETVAL=0
 
 if (( SKIP_FORMAT == 0 )); then
-  echo "Running format check ..."
+  echo; echo "Running format check ..."
   ./format.sh --check
   (( RETVAL |= $? ))
 fi
 
 if (( SKIP_PYRE == 0 )); then
-  echo "Running pyre ..."
+  echo; echo "Running pyre ..."
   pyre check
   (( RETVAL |= $? ))
 fi
 
-echo "Running flake8 ..."
+echo; echo "Running flake8 ..."
 flake8 pippy spmd test/spmd
 (( RETVAL |= $? ))
 
 # mypy spmd test/spmd
-echo "Running mypy ..."
-mypy $(git ls-files '*.py' | grep -v pippy/fx | grep -v test/.*fx | grep -v examples/hf)
+echo; echo "Running mypy ..."
+mypy --exclude '/pippy/fx' $(git ls-files '*.py' | grep -v pippy/fx | grep -v test/.*fx | grep -v examples/hf)
 (( RETVAL |= $? ))
 
-echo "Running pylint ..."
+echo; echo "Running pylint ..."
 pylint --disable=all --enable=unused-import $(git ls-files '*.py')
 (( RETVAL |= $? ))
 
