@@ -308,7 +308,10 @@ class DeviceMesh(object):
         return fut
 
     def broadcast(
-        self, tensor: torch.Tensor, mesh_dim: int = 0
+        self,
+        tensor: torch.Tensor,
+        mesh_dim: int = 0,
+        async_op: bool = False,
     ) -> Optional[Work]:
         """
         broadcast the tensor to a device mesh dimension. We by default
@@ -332,13 +335,16 @@ class DeviceMesh(object):
         if dim_group is not GroupMember.WORLD:
             src_for_dim = get_global_rank(dim_group, 0)
 
-        return broadcast(tensor, src=src_for_dim, group=dim_group)
+        return broadcast(
+            tensor, src=src_for_dim, group=dim_group, async_op=async_op
+        )
 
     def all_gather(
         self,
         tensor_list: List[torch.Tensor],
         tensor: torch.Tensor,
         mesh_dim: int = 0,
+        async_op: bool = False,
     ) -> Optional[Work]:
         """
         all_gather the tensor on each rank to the tensor_list on a
@@ -356,9 +362,7 @@ class DeviceMesh(object):
         """
         dim_group = self._dim_groups[mesh_dim]
         return all_gather(
-            tensor_list,
-            tensor,
-            group=dim_group,
+            tensor_list, tensor, group=dim_group, async_op=async_op
         )
 
     def all_reduce(
@@ -391,6 +395,7 @@ class DeviceMesh(object):
         input_list: List[torch.Tensor],
         op: ReduceOp = ReduceOp.SUM,  # type: ignore
         mesh_dim: int = 0,
+        async_op: bool = False,
     ) -> Optional[Work]:
         """
         reduce the input_list on each rank on a device mesh dimension, and scatter
@@ -410,7 +415,9 @@ class DeviceMesh(object):
         """
         if self._backend == "nccl":
             dim_group = self._dim_groups[mesh_dim]
-            fut = reduce_scatter(output, input_list, op=op, group=dim_group)
+            fut = reduce_scatter(
+                output, input_list, op=op, group=dim_group, async_op=async_op
+            )
 
         elif self._backend == "gloo":
             # it's gloo, which does not have reduce_scatter
@@ -438,7 +445,9 @@ class DeviceMesh(object):
             flat_tensor = torch.cat(flattened_list).clone(
                 memory_format=torch.contiguous_format
             )
-            fut = self.all_reduce(flat_tensor, op=op, mesh_dim=mesh_dim)
+            fut = self.all_reduce(
+                flat_tensor, op=op, mesh_dim=mesh_dim, async_op=async_op
+            )
             # scatter the tensor
             output_offset = offset_list[my_coordinate]
             output.copy_(
@@ -458,8 +467,8 @@ class DeviceMesh(object):
         output_tensor_list: List[torch.Tensor],
         input_tensor_list: List[torch.Tensor],
         mesh_dim: int = 0,
+        async_op: bool = False,
     ) -> Optional[Work]:
-        my_coordinate = self.get_coordinate_on_dim(mesh_dim)
         dim_group = self._dim_groups[mesh_dim]
 
         work = None
@@ -478,10 +487,16 @@ class DeviceMesh(object):
                     input_tensor_list if self.get_rank() == src_for_dim else [],
                     group=dim_group,
                     src=src_for_dim,
+                    async_op=async_op,
                 )
 
         elif self.backend() == "nccl":
-            work = all_to_all(output_tensor_list, input_tensor_list, dim_group)
+            work = all_to_all(
+                output_tensor_list,
+                input_tensor_list,
+                dim_group,
+                async_op=async_op,
+            )
         else:
             raise RuntimeError(
                 f"DeviceMesh does not support all-to-all collective operations on {self.backend()} backend."
