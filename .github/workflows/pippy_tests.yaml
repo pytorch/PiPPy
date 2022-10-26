@@ -9,6 +9,7 @@ on:
       - '.github/workflows/pippy**'
       - 'pippy/**'
       - 'test/**'
+      - 'examples/**'
       - '!test/spmd/**'
       - '!docs/**'
       - '!**.md'
@@ -252,3 +253,24 @@ jobs:
           docker stop $(docker ps -q) || true
           # Prune all of the docker images
           docker system prune -af
+
+  dynamo_test:
+    runs-on: linux.4xlarge
+    strategy:
+      matrix:
+        python-version: ["3.9"]
+    container:
+      image: python:${{ matrix.python-version }}
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
+      - name: Install TorchDynamo
+        run: pip install git+https://github.com/pytorch/torchdynamo.git@main torchdynamo
+      - name: Install pippy
+        run: "python setup.py install"
+      - name: Test PiPPy + Dynamo example
+        run: python examples/TorchDynamo/pippy_dynamo.py
