@@ -84,7 +84,7 @@ class Shard(Placement):
             self.dim, start=0, length=tensor.size(self.dim) - 1
         )
 
-    def local_shard_size_on_dim(
+    def _local_shard_size_on_dim(
         self,
         size_on_dim: int,
         num_chunks: int,
@@ -247,7 +247,7 @@ class _Partial(Placement):
     # class and override those contracts.
     reduce_op: c10d.ReduceOp = c10d.ReduceOp.SUM  # type: ignore
 
-    def to_replicate(
+    def _to_replicate(
         self, tensor: torch.Tensor, mesh: DeviceMesh, mesh_dim: int
     ) -> torch.Tensor:
         # out-of-place all_reduce to replicate, since the current partial DTensor
@@ -258,16 +258,16 @@ class _Partial(Placement):
         mesh.all_reduce(cloned_local, self.reduce_op, mesh_dim=mesh_dim)
         return cloned_local
 
-    def to_shard(
+    def _to_shard(
         self,
         tensor: torch.Tensor,
-        shard_spec: Placement,
         mesh: DeviceMesh,
         mesh_dim: int,
+        shard_spec: Placement,
     ) -> torch.Tensor:
         # by default call reduce_shard_tensor of the shard_spec.
         shard_spec = cast(Shard, shard_spec)
-        return shard_spec.reduce_shard_tensor(tensor, mesh, mesh_dim)
+        return shard_spec._reduce_shard_tensor(tensor, mesh, mesh_dim)
 
 
 # used internally to propagate the placements
@@ -387,7 +387,7 @@ class DTensorSpec(object):
                 assert (
                     shard_dim < self.ndim
                 ), f"Sharding dim {shard_dim} greater than tensor ndim {self.ndim}"
-                shard_size, shard_offset = placement.local_shard_size_on_dim(
+                shard_size, shard_offset = placement._local_shard_size_on_dim(
                     local_shape[shard_dim],
                     mesh_dim_size,
                     my_coordinate,
@@ -441,10 +441,3 @@ class DTensorSpec(object):
                 placements[m] = Shard(i)
 
         return cls(mesh, placements, shape=shape, ndim=len(dim_map))
-
-
-# ATen op schemas could have Tensor, Tuple[Tensor] and List[Tensor], so output type sould
-# be the same set of possiblities.
-OutputSpecType = Optional[
-    Union[DTensorSpec, Tuple[DTensorSpec, ...], List[DTensorSpec]]
-]

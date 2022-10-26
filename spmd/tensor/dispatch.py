@@ -7,10 +7,11 @@ from torch.utils._pytree import tree_map, tree_flatten, tree_unflatten
 from torchgen.model import FunctionSchema, SchemaKind
 
 import spmd.tensor.api as dtensor
-from spmd.tensor.placement_types import DTensorSpec, OutputSpecType
+from spmd.tensor.placement_types import DTensorSpec
 from spmd.tensor.redistribute import redistribute_dtensor
 from spmd.tensor.utils import (
     ArgKwargsType,
+    OutputSpecType,
     unwrap_local_tensor,
     unwrap_schema,
     wrap,

@@ -5,7 +5,6 @@ import torch
 from typing import List, Sequence, Dict, Tuple, Optional, cast
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.placement_types import DTensorSpec
-from spmd.tensor.ops.utils import as_list, normalize_dims
 
 
 def _replace_char_in_str(string: str, new_char: str, idx: int) -> str:
@@ -311,7 +310,7 @@ def linear_pointwise_rule(op_schema: OpSchema) -> OutputSharding:
 def reduction_rule(
     op_schema: OpSchema,
     *,
-    dims: Optional[List[int]] = None,
+    dims: Optional[Sequence[int]] = None,
     keep_dim: bool = False,
     reduction_linear: bool = False,
 ) -> OutputSharding:

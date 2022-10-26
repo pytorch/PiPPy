@@ -1,5 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import cast, List
+from typing import cast, List, Sequence
 
 from spmd.tensor.api import DTensor
 from spmd.tensor.placement_types import DTensorSpec
@@ -8,20 +8,16 @@ from spmd.tensor.ops.common_rules import reduction_rule, pointwise_rule
 from spmd.tensor.ops.utils import register_prop_rule, as_list, normalize_dims
 
 
-reduction_ops = [
-    "aten.all.default",
-]
-
-for reduction_op in reduction_ops:
-    DTensor._op_to_rules[reduction_op] = reduction_rule
-
+@register_prop_rule("aten.all.default")
+def all_rule(op_schema: OpSchema) -> OutputSharding:
+    return reduction_rule(op_schema, reduction_linear=True)
 
 def sum_rule(op_schema: OpSchema) -> OutputSharding:
     args_schema = op_schema.args_schema
     input_spec = cast(DTensorSpec, args_schema[0])
     dims = None
     if len(args_schema) > 1:
-        dims = cast(List[int], as_list(args_schema[1]))
+        dims = cast(Sequence[int], as_list(args_schema[1]))
         dims = normalize_dims(dims, input_spec.ndim)
     keep_dim = len(args_schema) > 2 and bool(args_schema[2])
     return reduction_rule(op_schema, dims=dims, keep_dim=keep_dim, reduction_linear=True)
@@ -62,8 +58,30 @@ def softmax_bwd_rule(op_schema: OpSchema) -> OutputSharding:
     return pointwise_rule(op_schema)
 
 
-@register_prop_rule("aten.var.default")
-def var_prop(op_schema: OpSchema) -> OutputSharding:
-    input_spec, _ = op_schema.args_schema
-    input_spec = cast(DTensorSpec, input_spec)
-    return OutputSharding(input_spec)
+@register_prop_rule("aten.var.dim")
+@register_prop_rule("aten.var.out")
+def var_rule(op_schema: OpSchema) -> OutputSharding:
+    args_schema = op_schema.args_schema
+    input_spec = cast(DTensorSpec, args_schema[0])
+    dims = None
+    # if length of args > 1, we check args to find dims, note that
+    # var.default have unbias arg as the first argument, so we want
+    # to check if it's not bool
+    if len(args_schema) > 1 and not isinstance(args_schema[1], bool):
+        dims = cast(Sequence[int], as_list(args_schema[1]))
+        dims = normalize_dims(dims, input_spec.ndim)
+    keep_dim = len(args_schema) > 3 and bool(args_schema[3])
+    return reduction_rule(op_schema, dims=dims, keep_dim=keep_dim, reduction_linear=False)
+
+@register_prop_rule("aten.var.correction")
+def var_correction_rule(op_schema: OpSchema) -> OutputSharding:
+    args_schema = op_schema.args_schema
+    input_spec = cast(DTensorSpec, args_schema[0])
+    dims = None
+    if len(args_schema) > 1 and args_schema[1] is not None:
+        dims = cast(Sequence[int], as_list(args_schema[1]))
+        dims = normalize_dims(dims, input_spec.ndim)
+
+    # keep_dim is a kwarg instead of arg for var.correction
+    keep_dim = op_schema.kwargs_schema.get("keepdim", False)
+    return reduction_rule(op_schema, dims=dims, keep_dim=keep_dim, reduction_linear=False)
