@@ -9,6 +9,7 @@ import torch
 from transformers import T5ForConditionalGeneration, T5Config
 
 import pippy.fx
+import pippy.ModelSplit
 from pippy import run_pippy
 from pippy.IR import MultiUseParameterConfig, Pipe, PipeSplitWrapper, annotate_split_points
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverInterleaved1F1B, \
@@ -133,7 +134,16 @@ def run_master(pp_ranks, args):
 
     number_of_workers = len(pp_ranks) - pippy.utils.exclude_master
     print(f"number_of_workers = {number_of_workers}")
-    add_split_points(t5, number_of_workers)
+    # Specify auto_split policy for use by `from_tracing` call later
+    if args.auto_split == "threshold":
+        split_policy = pippy.ModelSplit.split_on_size_threshold(490 * 1e6)
+    elif args.auto_split == "equal_size":
+        split_policy = pippy.ModelSplit.split_into_equal_size(number_of_workers)
+    else:
+        # Manually insert split points before `from_tracing` call
+        add_split_points(t5, number_of_workers)
+        split_policy = None
+
     all_worker_ranks = pp_ranks[pippy.utils.exclude_master:pippy.utils.exclude_master + number_of_workers]
     chunks = len(all_worker_ranks)
     bs = args.batch_size * chunks
@@ -158,7 +168,8 @@ def run_master(pp_ranks, args):
                               # 'past_key_values': False,
                               'encoder_last_hidden_state': False}
     t5_pipe = Pipe.from_tracing(t5, MULTI_USE_PARAM_CONFIG, tracer=PiPPyHFTracer(), concrete_args=concrete_args,
-                                output_loss_value_spec=output_loss_value_spec)
+                                output_loss_value_spec=output_loss_value_spec,
+                                split_policy=split_policy)
     split_gm_children = list(t5_pipe.split_gm.children())
     assert number_of_workers == len(
         split_gm_children), f"number_of_workers = {number_of_workers} len(split_gm_children) = {len(split_gm_children)}"
@@ -232,6 +243,7 @@ if __name__ == "__main__":
     parser.add_argument('--checkpoint', type=int, default=1, choices=[0, 1])
     parser.add_argument('--pp_group_size', type=int, default=8)
     parser.add_argument('--exclude_master', type=int, default=0, choices=[0, 1])
+    parser.add_argument('--auto_split', type=str, default="")
     args = parser.parse_args()
 
     assert args.world_size % args.pp_group_size == 0

@@ -82,7 +82,7 @@ def run_master(_, args):
     ec_pipe = Pipe.from_tracing(
         ec,
         MULTI_USE_PARAM_CONFIG,
-        auto_parallel_strategy=dp_auto_parallel(auto_parallel_ctx),
+        split_policy=dp_auto_parallel(auto_parallel_ctx),
     )
     print(ec_pipe.split_gm)
 

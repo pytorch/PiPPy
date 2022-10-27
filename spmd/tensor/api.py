@@ -313,6 +313,17 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         )
 
     def to_local(self) -> torch.Tensor:
+        """
+        Get the local tensor of this DTensor on its current rank. For sharding it returns
+        a local shard of the logical tensor view, for replication it returns the replica on
+        its current rank.
+
+        Returns:
+            A :class:`torch.Tensor` object that represents the local tensor of its current rank.
+
+        .. note:: `to_local` is differentiable, the `requires_grad` of the local tensor returned
+            will depend on if the `DTensor` requires_grad or not.
+        """
         return ToTorchTensor.apply(self)  # pyre-ignore[16]: autograd func
 
     def redistribute(
@@ -320,6 +331,25 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         device_mesh: Optional[DeviceMesh] = None,
         placements: Optional[Sequence[Placement]] = None,
     ) -> "DTensor":
+        """
+        `redistribute` performs necessary collective operations that redistribute the current
+        DTensor from its current placements to a new placements, or from is current DeviceMesh
+        to a new DeviceMesh. i.e. we can turn a Sharded DTensor to a Replicated DTensor by
+        specifying a Replicate placement for each dimension of the DeviceMesh.
+
+        Args:
+            device_mesh (:class:`DeviceMesh`, optional): DeviceMesh to place the
+                DTensor, if not specified, must be called under a DeviceMesh
+                context manager, default: None
+            placements (List[:class:`Placement`], optional): the new placements that
+                describes how to place the DTensor into the DeviceMesh, must
+                have the same number of elements as `device_mesh.ndim`.
+
+        Returns:
+            A :class:`DTensor` object
+
+        .. note:: `redistribute` is differentiable.
+        """
         # This API perform necessary transformations and get
         # a new DTensor with the new spec. i.e. for
         # sharding it's a reshard behavior.
@@ -343,17 +373,20 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         return Redistribute.apply(self, device_mesh, placements)
 
     @property
-    def placements(self) -> Sequence[Placement]:
-        # placement should be a read only propety
-        # to disallow caller modification on it
-        # caller who want a different DTensorSpec
-        # should call redistribute instead.
-        return self._spec.placements
+    def device_mesh(self) -> DeviceMesh:
+        """
+        The :class:`DeviceMesh` attribute that associates with this DTensor object.
+
+        .. note:: device_mesh is a read-only property, it can not be set.
+        """
+        return self._spec.mesh
 
     @property
-    def device_mesh(self) -> DeviceMesh:
-        # device_mesh should be a read only propety
-        # to disallow caller modification on it
-        # caller who want a different device_mesh
-        # should call redistribute instead.
-        return self._spec.mesh
+    def placements(self) -> Sequence[Placement]:
+        """
+        The placements attribute of this DTensor that describes the layout of this
+        DTensor on the its DeviceMesh.
+
+        .. note:: placements is a read-only property, it can not be set.
+        """
+        return self._spec.placements
