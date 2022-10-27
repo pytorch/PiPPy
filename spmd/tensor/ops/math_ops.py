@@ -1,5 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import cast, List, Sequence
+from typing import cast, Sequence
 
 from spmd.tensor.api import DTensor
 from spmd.tensor.placement_types import DTensorSpec
@@ -9,8 +9,9 @@ from spmd.tensor.ops.utils import register_prop_rule, as_list, normalize_dims
 
 
 @register_prop_rule("aten.all.default")
-def all_rule(op_schema: OpSchema) -> OutputSharding:
+def default_reduction_rule(op_schema: OpSchema) -> OutputSharding:
     return reduction_rule(op_schema, reduction_linear=True)
+
 
 def sum_rule(op_schema: OpSchema) -> OutputSharding:
     args_schema = op_schema.args_schema
@@ -20,7 +21,10 @@ def sum_rule(op_schema: OpSchema) -> OutputSharding:
         dims = cast(Sequence[int], as_list(args_schema[1]))
         dims = normalize_dims(dims, input_spec.ndim)
     keep_dim = len(args_schema) > 2 and bool(args_schema[2])
-    return reduction_rule(op_schema, dims=dims, keep_dim=keep_dim, reduction_linear=True)
+    return reduction_rule(
+        op_schema, dims=dims, keep_dim=keep_dim, reduction_linear=True
+    )
+
 
 sum_ops = [
     "aten.sum.default",
@@ -58,6 +62,11 @@ def softmax_bwd_rule(op_schema: OpSchema) -> OutputSharding:
     return pointwise_rule(op_schema)
 
 
+@register_prop_rule("aten.mean.default")
+def mean_rule(op_schema: OpSchema) -> OutputSharding:
+    return reduction_rule(op_schema, reduction_linear=False)
+
+
 @register_prop_rule("aten.var.dim")
 @register_prop_rule("aten.var.out")
 def var_rule(op_schema: OpSchema) -> OutputSharding:
@@ -71,7 +80,10 @@ def var_rule(op_schema: OpSchema) -> OutputSharding:
         dims = cast(Sequence[int], as_list(args_schema[1]))
         dims = normalize_dims(dims, input_spec.ndim)
     keep_dim = len(args_schema) > 3 and bool(args_schema[3])
-    return reduction_rule(op_schema, dims=dims, keep_dim=keep_dim, reduction_linear=False)
+    return reduction_rule(
+        op_schema, dims=dims, keep_dim=keep_dim, reduction_linear=False
+    )
+
 
 @register_prop_rule("aten.var.correction")
 def var_correction_rule(op_schema: OpSchema) -> OutputSharding:
@@ -83,5 +95,10 @@ def var_correction_rule(op_schema: OpSchema) -> OutputSharding:
         dims = normalize_dims(dims, input_spec.ndim)
 
     # keep_dim is a kwarg instead of arg for var.correction
-    keep_dim = op_schema.kwargs_schema.get("keepdim", False)
-    return reduction_rule(op_schema, dims=dims, keep_dim=keep_dim, reduction_linear=False)
+    keep_dim = cast(bool, op_schema.kwargs_schema.get("keepdim", False))
+    print(f">>>>> var correction keep dim: {keep_dim}")
+    output_sharding = reduction_rule(
+        op_schema, dims=dims, keep_dim=keep_dim, reduction_linear=False
+    )
+    print(f">>>> output sharding: {output_sharding}")
+    return output_sharding

@@ -324,19 +324,31 @@ def reduction_rule(
     alphabet = "abcdefghijklmnopqrstuvwxyz"
     # reduction op usually begin with a single tensor
     input_spec = cast(DTensorSpec, op_schema.args_schema[0])
-    if not reduction_linear and input_spec.sums:
+    if not reduction_linear:
         # if the reduction is not linear, we need to clear the pending sum
-        # on the input spec and suggest a resharding
-        no_partial_spec = DTensorSpec.from_dim_map(
-            input_spec.mesh, input_spec.dim_map, [], input_spec.shape
-        )
-        schema_suggestion = OpSchema(
-            op_schema.func_schema, tuple([no_partial_spec]), {}
-        )
-        _inplace_rewrap_schema_suggestion(schema_suggestion, op_schema)
-        return OutputSharding(
-            output_spec=None, schema_suggestions=[schema_suggestion]
-        )
+        # on the input spec, also replicate the reducing dimension if the
+        # reducing dimension is sharded, then suggest a resharding
+        reduce_dims = range(input_spec.ndim) if dims is None else dims
+
+        reshard_dim_map = input_spec.dim_map
+        needs_reshard = False
+        for dim in reduce_dims:
+            if input_spec.dim_map[dim] != -1:
+                needs_reshard = True
+                reshard_dim_map[dim] = -1
+        needs_reshard = needs_reshard or len(input_spec.sums) > 0
+
+        if needs_reshard:
+            no_partial_spec = DTensorSpec.from_dim_map(
+                input_spec.mesh, reshard_dim_map, [], input_spec.shape
+            )
+            schema_suggestion = OpSchema(
+                op_schema.func_schema, tuple([no_partial_spec]), {}
+            )
+            _inplace_rewrap_schema_suggestion(schema_suggestion, op_schema)
+            return OutputSharding(
+                output_spec=None, schema_suggestions=[schema_suggestion]
+            )
 
     input_chars = alphabet[: input_spec.ndim]
 
