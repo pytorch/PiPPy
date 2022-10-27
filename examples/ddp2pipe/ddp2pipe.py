@@ -1,4 +1,5 @@
 import argparse
+# import logging
 import os
 import socket
 
@@ -18,16 +19,30 @@ from pippy import Pipe, PipelineDriverFillDrain, annotate_split_points, PipeSpli
 from pippy.microbatch import TensorChunkSpec, CustomReducer
 from pippy.utils import tp_transports
 
+# logging.getLogger().setLevel(logging.DEBUG)
+
 USE_TQDM = True
 
+# DIMS = [28 * 28, 100, 10]
+# DP_LAYERS = 1
+# PP_LAYERS = 1
+
+# DIMS = [28 * 28, 300, 100, 30, 10]
+# DP_LAYERS = 2
+# PP_LAYERS = 2
+
 DIMS = [28 * 28, 500, 250, 100, 50, 25, 10]
+DP_LAYERS = 2
+PP_LAYERS = 4
+
+assert DP_LAYERS + PP_LAYERS == len(DIMS) - 1
 
 
 class DDPModel(nn.Module):
     def __init__(self):
         super().__init__()
         self.mod = nn.Sequential(
-            *[layer for i in range(2) for layer in [nn.Linear(DIMS[i], DIMS[i + 1], bias=True), nn.ReLU()]]
+            *[layer for i in range(DP_LAYERS) for layer in [nn.Linear(DIMS[i], DIMS[i + 1], bias=True), nn.ReLU()]]
         )
 
     def forward(self, x):
@@ -38,7 +53,7 @@ class PipeModel(nn.Module):
     def __init__(self):
         super().__init__()
         self.mod = nn.Sequential(
-            *[layer for i in range(2, len(DIMS) - 1) for layer in
+            *[layer for i in range(DP_LAYERS, len(DIMS) - 1) for layer in
               [nn.Sequential(nn.Linear(DIMS[i], DIMS[i + 1], bias=True), nn.ReLU())]]
         )
 
@@ -48,11 +63,19 @@ class PipeModel(nn.Module):
         return logits, loss
 
 
+def resolve_pg_per_stage(pp_rank):
+    assert dp_pg_per_pp_rank
+    return dp_pg_per_pp_rank[pp_rank]
+
+
 class DDP2PipeConnector(nn.Module):
-    def __init__(self, pp_ranks, pp_group, dp_group_size):
+    def __init__(self, pp_ranks, pp_group, dp_group_size, device):
         super().__init__()
         self.pp_ranks = pp_ranks
         self.pp_group = pp_group
+        self.device = device
+
+        self.last_grads = None
 
         rank = torch.distributed.get_rank()
         driver_rank = self.pp_ranks[0]
@@ -60,12 +83,13 @@ class DDP2PipeConnector(nn.Module):
         if rank == driver_rank:
             self.pipe_model = PipeModel()
 
-            for i in range(1, 4):
+            for i in range(1, PP_LAYERS):
                 annotate_split_points(self.pipe_model, {f'mod.{i}': PipeSplitWrapper.SplitPoint.BEGINNING})
 
             # print(self.pipe_model)
 
             self.pipe = Pipe.from_tracing(self.pipe_model, output_loss_value_spec=(False, True))
+            self.pipe.to(self.device)
             args_chunk_spec = (TensorChunkSpec(0), TensorChunkSpec(0))
             kwargs_chunk_spec = {}
             output_chunk_spec = (TensorChunkSpec(0), CustomReducer(torch.tensor(0.0), lambda a, b: a + b))
@@ -80,7 +104,7 @@ class DDP2PipeConnector(nn.Module):
                                                     all_ranks=all_worker_ranks,
                                                     _debug_mask_minibatches=False)
 
-            self.pipeline.init_data_parallel(dp_group_size)
+            self.pipeline.init_data_parallel(dp_group_size, dp_pg_cb=resolve_pg_per_stage)
 
             self.optimizer = self.pipeline.instantiate_optimizer(optim.Adam)
 
@@ -99,6 +123,7 @@ class DDP2PipeConnector(nn.Module):
         torch.distributed.gather(labels, gather_list=labels_list, dst=driver_rank, group=self.pp_group)
 
         if rank == driver_rank:
+            x_list = [x.detach() if x.grad_fn is not None else x for x in x_list]
             x_concat = torch.cat(x_list)
             x_concat.requires_grad = True
             labels_concat = torch.cat(labels_list)
@@ -106,9 +131,9 @@ class DDP2PipeConnector(nn.Module):
             logits_chunks = list(logits_concat.chunk(len(self.pp_ranks)))
         else:
             logits_chunks = None
-            loss = torch.empty(1)
+            loss = torch.empty((), device=self.device)
 
-        logits = torch.empty((x.size(0), DIMS[-1]))
+        logits = torch.empty((x.size(0), DIMS[-1]), device=self.device)
         torch.distributed.scatter(logits, logits_chunks, src=driver_rank, group=self.pp_group)
         torch.distributed.broadcast(loss, src=driver_rank, group=self.pp_group)
 
@@ -117,7 +142,7 @@ class DDP2PipeConnector(nn.Module):
                 last_grads_chunks = [x[0] for x in self.pipeline.last_grads]  # TODO
             else:
                 last_grads_chunks = None
-            last_grads = torch.empty((x.size(0), DIMS[2]))
+            last_grads = torch.empty_like(x)
             torch.distributed.scatter(last_grads, last_grads_chunks, src=driver_rank, group=self.pp_group)
 
             self.last_grads = last_grads
@@ -138,30 +163,28 @@ class DDP2PipeConnector(nn.Module):
 
 
 class FullModel(nn.Module):
-    def __init__(self, pp_ranks_per_dp_group, pp_pg_per_dp_group, pg=None):
+    def __init__(self, pp_ranks_per_dp_group, pp_pg_per_dp_group, device):
         super().__init__()
         self.flatten = nn.Flatten()
-        self.ddp_model = DDPModel()
-        self.ddp_model = DDP(self.ddp_model, process_group=pg)
+        self.ddp_model = DDPModel().to(device)
+        self.ddp_model = DDP(self.ddp_model)
 
         rank = torch.distributed.get_rank()
         dp_group_size = len(pp_ranks_per_dp_group)
         self.pipe_model = DDP2PipeConnector(pp_ranks=pp_ranks_per_dp_group[rank % dp_group_size],
                                             pp_group=pp_pg_per_dp_group[rank % dp_group_size],
-                                            dp_group_size=dp_group_size)
+                                            dp_group_size=dp_group_size, device=device)
 
     def forward(self, x, labels):
         flatten = self.flatten(x)
         ddp_output = self.ddp_model(flatten)
-        return self.pipe_model(ddp_output, labels), ddp_output
+        pipe_output = self.pipe_model(ddp_output, labels)
+        return pipe_output, ddp_output
 
 
 def run_master(args, pp_ranks_per_dp_group, pp_pg_per_dp_group):
-    chunks = 4  # TODO
+    chunks = PP_LAYERS  # TODO
     batch_size = args.batch_size * chunks
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print("Using device:", device)
 
     transform = transforms.Compose([
         transforms.ToTensor(),
@@ -177,9 +200,11 @@ def run_master(args, pp_ranks_per_dp_group, pp_pg_per_dp_group):
     train_dataloader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, sampler=train_sampler)
     valid_dataloader = torch.utils.data.DataLoader(valid_data, batch_size=batch_size)
 
-    model = FullModel(pp_ranks_per_dp_group=pp_ranks_per_dp_group, pp_pg_per_dp_group=pp_pg_per_dp_group)
+    model = FullModel(pp_ranks_per_dp_group=pp_ranks_per_dp_group,
+                      pp_pg_per_dp_group=pp_pg_per_dp_group,
+                      device=args.device)
 
-    optimizer = optim.Adam(model.parameters())
+    ddp_model_optimizer = optim.Adam(model.ddp_model.parameters())
 
     loaders = {
         "train": train_dataloader,
@@ -192,11 +217,11 @@ def run_master(args, pp_ranks_per_dp_group, pp_pg_per_dp_group):
             epoch_correct = 0
             epoch_all = 0
             for i, (x_batch, y_batch) in enumerate(tqdm(dataloader) if USE_TQDM else dataloader):
-                x_batch = x_batch.to(device)
-                y_batch = y_batch.to(device)
+                x_batch = x_batch.to(args.device)
+                y_batch = y_batch.to(args.device)
                 if k == "train":
                     model.train()
-                    optimizer.zero_grad()
+                    ddp_model_optimizer.zero_grad()
                     model.pipe_model.optimizer_zero_grad()
                     (outp, loss), ddp_outp = model(x_batch, y_batch)
                 else:
@@ -212,7 +237,7 @@ def run_master(args, pp_ranks_per_dp_group, pp_pg_per_dp_group):
                     # loss.backward()
                     ddp_outp.backward(gradient=model.pipe_model.last_grads)
                     model.pipe_model.optimizer_step()
-                    optimizer.step()
+                    ddp_model_optimizer.step()
             print(f"Loader: {k}. Accuracy: {epoch_correct / epoch_all}")
 
 
@@ -285,7 +310,7 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size', type=int, default=15)
     args = parser.parse_args()
 
-    args.pp_group_size = 4
+    args.pp_group_size = PP_LAYERS
 
     assert args.world_size % args.pp_group_size == 0
 
