@@ -69,7 +69,7 @@ class DistMathOpsTest(DistTensorTestBase):
                     dist_x, dim=softmax_dim, dtype=torch.float32
                 )
                 self.assertTrue(dist_y.placements[0].is_shard(dim=shard_dim))
-                self.assertEqual(dist_y.to_logical_tensor(), local_y)
+                self.assertDTensorEqual(dist_y, local_y)
 
     # TODO: get test_softmax_with_bwd pass on CPU
     # DTensor's _softmax_backward_data produces wrong result on CPU on certain dimension.
@@ -108,11 +108,11 @@ class DistMathOpsTest(DistTensorTestBase):
                     dist_softmax.placements[0].is_shard(dim=shard_dim)
                 )
                 dist_y = dist_softmax.sum()
-                self.assertEqual(dist_y.to_logical_tensor(), local_y)
+                self.assertDTensorEqual(dist_y, local_y)
                 self.assertIsNone(dist_x.grad)
                 dist_y.backward()
                 self.assertIsNotNone(dist_x.grad)
-                self.assertEqual(dist_x_grad.to_logical_tensor(), x.grad)
+                self.assertDTensorEqual(dist_x.grad, x.grad)
 
 
 if __name__ == "__main__":

@@ -174,7 +174,7 @@ class DistTensorOpsTest(DistTensorTestBase):
 
         ones_like_dt = torch.ones_like(dist_tensor)
         ones_expected = torch.ones(dist_tensor.shape)
-        self.assertEqual(ones_expected, ones_like_dt.to_logical_tensor())
+        self.assertDTensorEqual(ones_expected, ones_like_dt)
 
     @with_comms
     def test_fill_inplace_partial_sum(self):
@@ -189,7 +189,7 @@ class DistTensorOpsTest(DistTensorTestBase):
         fill_expected = torch.full(
             dist_tensor.shape, 42, dtype=input_tensor.dtype
         )
-        self.assertEqual(fill_expected, dist_tensor.to_logical_tensor())
+        self.assertDTensorEqual(fill_expected, dist_tensor)
 
     @with_comms
     def test_zeros_like_partial_sum(self):
@@ -202,7 +202,7 @@ class DistTensorOpsTest(DistTensorTestBase):
 
         zeros_like_dt = torch.zeros_like(dist_tensor)
         zeros_expected = torch.zeros(dist_tensor.shape)
-        self.assertEqual(zeros_expected, zeros_like_dt.to_logical_tensor())
+        self.assertDTensorEqual(zeros_expected, zeros_like_dt)
 
     @with_comms
     def test_zero_inplace(self):
@@ -213,8 +213,8 @@ class DistTensorOpsTest(DistTensorTestBase):
         dist_tensor = DTensor.from_local(input_tensor, device_mesh, shard_spec)
         zeros_like_dt = torch.zero_(dist_tensor)
         zeros_expected = torch.zeros(4, 8)
-        self.assertEqual(zeros_expected, zeros_like_dt.to_local())
-        self.assertEqual(zeros_expected, dist_tensor.to_local())
+        self.assertDTensorEqual(zeros_expected, zeros_like_dt)
+        self.assertDTensorEqual(zeros_expected, dist_tensor)
 
     @with_comms
     def test_zeros_like(self):
@@ -225,7 +225,7 @@ class DistTensorOpsTest(DistTensorTestBase):
         dist_tensor = DTensor.from_local(input_tensor, device_mesh, shard_spec)
         zeros_like_dt = torch.zeros_like(dist_tensor)
         zeros_expected = torch.zeros(4, 8)
-        self.assertEqual(zeros_expected, zeros_like_dt.to_local())
+        self.assertDTensorEqual(zeros_expected, zeros_like_dt)
 
     def _test_op(self, mesh, op_call, *args, **kwargs):
         out = op_call(*args, **kwargs)
@@ -233,7 +233,7 @@ class DistTensorOpsTest(DistTensorTestBase):
         for d_args, d_kwargs in dtc:
             self.assertTrue(dtc.successful())
             d_out = op_call(*d_args, **d_kwargs)
-            self.assertEqual(d_out.to_logical_tensor(), out)
+            self.assertDTensorEqual(d_out, out)
 
     @with_comms
     def test_index(self):

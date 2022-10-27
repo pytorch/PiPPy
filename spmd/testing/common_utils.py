@@ -137,6 +137,14 @@ class DistTensorTestBase(MultiProcessTestCase):
                     out,
                 )
 
+    def assertDTensorEqual(self, x: torch.Tensor, y: torch.Tensor):
+        if isinstance(x, DTensor):
+            x = x.redistribute(x.device_mesh, x.device_mesh.ndim * [Replicate()]).to_local()
+        if isinstance(y, DTensor):
+            y = y.redistribute(y.device_mesh, y.device_mesh.ndim * [Replicate()]).to_local()
+
+        self.assertEqual(x, y)
+
 
 # wrapper to initialize comms (processgroup)
 def with_comms(

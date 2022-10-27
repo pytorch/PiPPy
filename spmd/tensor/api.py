@@ -3,7 +3,7 @@ import copy
 import warnings
 import torch
 from torch.utils._pytree import tree_flatten
-from typing import Dict, Callable, Optional, Sequence, cast
+from typing import Dict, Callable, Optional, Sequence, cast, List
 from spmd.tensor.device_mesh import get_global_device_mesh, DeviceMesh
 from spmd.tensor.placement_types import (
     Placement,
@@ -263,6 +263,7 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         local_tensor: torch.Tensor,
         device_mesh: Optional[DeviceMesh] = None,
         placements: Optional[Sequence[Placement]] = None,
+        *,
         run_check: bool = True,
     ) -> "DTensor":
         """
@@ -279,6 +280,8 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
                 have the same number of elements as `device_mesh.ndim`. If not
                 specified, we will by default replicate the tensor across the
                 `device_mesh` from the first rank of each dimension of the `device_mesh`.
+
+        Keyword Args:
             run_check (bool, optional): indicate whether to run check across ranks
                 to check meta information and data. if have :class:`Replicate` in
                 `placements`, the data on first rank of the device mesh dimension
@@ -312,11 +315,18 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
             local_tensor, device_mesh, placements, run_check
         )
 
-    def to_local(self) -> torch.Tensor:
+    def to_local(self, *, keep_partial: bool = False) -> torch.Tensor:
         """
         Get the local tensor of this DTensor on its current rank. For sharding it returns
         a local shard of the logical tensor view, for replication it returns the replica on
         its current rank.
+
+        Keyword Args:
+            keep_partial (bool, optional): This is a flag to indicate whether to keep the partial
+                placement of the DTensor when converting to a local tensor. The partial placement
+                refers to a type of DTensor that have values partitioned on that mesh dimension,
+                where we need further reduction to get meaningful shard or replicated values.
+                If not specified, by default we will reduce to replicate on that mesh dimension.
 
         Returns:
             A :class:`torch.Tensor` object that represents the local tensor of its current rank.
@@ -324,6 +334,17 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
         .. note:: `to_local` is differentiable, the `requires_grad` of the local tensor returned
             will depend on if the `DTensor` requires_grad or not.
         """
+        has_partial = False
+        no_partial_placements: List[Placement] = []
+        for p in self.placements:
+            if p.is_partial():
+                has_partial = True
+                no_partial_placements.append(Replicate())
+            else:
+                no_partial_placements.append(p)
+
+        if has_partial and not keep_partial:
+            self = self.redistribute(self.device_mesh, no_partial_placements)
         return ToTorchTensor.apply(self)  # pyre-ignore[16]: autograd func
 
     def to_logical_tensor(self) -> torch.Tensor:
