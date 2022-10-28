@@ -904,7 +904,10 @@ class PipeStageExecutor(EventRecorder):
 
         # Instead of return value let's do a send call
         if use_c10d:
-            torch.distributed.send(value, caller_stage)
+            if self.device.type == "cpu":
+                torch.distributed.send(value, caller_stage)
+            else:
+                torch.distributed.isend(value, caller_stage)
             return
 
         return value
@@ -931,7 +934,11 @@ class PipeStageExecutor(EventRecorder):
         )
 
         if use_c10d:
-            torch.distributed.recv(recv_buff, callee_stage)
+            work = None
+            if self.device.type == "cpu":
+                torch.distributed.recv(recv_buff, callee_stage)
+            else:
+                work = torch.distributed.irecv(recv_buff, callee_stage)
 
         def bottom_half(fut):
             logging.debug(
@@ -939,6 +946,10 @@ class PipeStageExecutor(EventRecorder):
                 f"for runlist item {runlist_key} arg_idx {arg_idx}"
             )
             if use_c10d:
+                if work:
+                    work.wait()
+                    while not work.is_completed():
+                        pass
                 self.rank_worker.update_run_list(
                     runlist_key, arg_idx, recv_buff
                 )
