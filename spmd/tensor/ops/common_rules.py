@@ -252,7 +252,7 @@ def pointwise_rule(
                 elif input.shape[i - start_dim] == 1:
                     # mark singleton dim char as a special "1" in einop rule
                     singleton_counter[i] += 1
-                    p = _replace_char_in_str(p, "1", i)
+                    p = _replace_char_in_str(p, "1", (i - start_dim))
 
         dimchars.append(p)
     out_dimchars = alphabet[:max_dim]
