@@ -9,7 +9,9 @@ from pippy.IR import (
     annotate_split_points,
 )
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B
+from pippy.ModelSplit import split_on_size_threshold, split_into_equal_size
 from pippy.utils import run_pippy
+
 
 __all__ = [
     "PipeSequential",
@@ -22,4 +24,6 @@ __all__ = [
     "annotate_split_points",
     "PipelineDriverFillDrain",
     "PipelineDriver1F1B",
+    "split_into_equal_size",
+    "split_on_size_threshold"
 ]
