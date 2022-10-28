@@ -65,7 +65,7 @@ flake8 pippy spmd test/spmd
 
 # mypy spmd test/spmd
 echo; echo "Running mypy ..."
-mypy --exclude '/pippy/fx' $(git ls-files '*.py' | grep -v pippy/fx | grep -v test/.*fx | grep -v examples/hf)
+mypy .
 (( RETVAL |= $? ))
 
 echo; echo "Running pylint ..."
