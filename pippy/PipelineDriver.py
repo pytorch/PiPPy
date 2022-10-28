@@ -11,6 +11,7 @@ from typing import Any, Callable, Dict, List, Tuple, Optional
 import torch
 import torch.distributed.rpc as rpc
 import pippy.fx
+import pippy.fx.passes
 
 from pippy.IR import Pipe
 from pippy.backward import (
@@ -163,6 +164,7 @@ class ValueReference:
     def __init__(self, stage_id, unique_key):
         self.stage_id = stage_id
         self.unique_key = unique_key
+        self.meta: Dict[str, Any] = {}
 
     stage_id: int
     unique_key: str
@@ -601,6 +603,24 @@ class PipeStageExecutor(EventRecorder):
         self.optim_init_cv = threading.Condition(self.optim_init_lock)
 
         self.lr_scheduler = None
+        self.device = self._find_mod_device()
+
+    def _find_mod_device(self):
+        # We assume that all parameters in the module are on the same device
+        # HACK: we assume the module has at least one parameter
+        param = next(self.mod.parameters(), None)
+        buffer = next(self.mod.buffers(), None)
+        if param is not None:
+            device = param.device
+        elif buffer is not None:
+            device = buffer.device
+        else:
+            logging.warning(
+                f"Module of stage {self.stage_id} has no parameter or buffer, "
+                f"cannot figure out device. Setting it to cpu"
+            )
+            device = torch.device("cpu")
+        return device
 
     def __getstate__(self):
         # Adding an empty __getstate__ function here to work around the DDP pickling issue (#153) that occurs when the
@@ -723,28 +743,11 @@ class PipeStageExecutor(EventRecorder):
         # We provide device to the Future constructor so that between
         # future.set_result() and future.wait() correct dependencies can be
         # captured
-        # We assume the output value is on the same device as the stage's
-        # module, and that all parameters in the module are on the same device
-        # HACK: we assume the module has at least one parameter
-        found_device = True
-        param = next(self.mod.parameters(), None)
-        buffer = next(self.mod.buffers(), None)
-        if param is not None:
-            device = param.device
-        elif buffer is not None:
-            device = buffer.device
-        else:
-            found_device = False
-            logging.warning(
-                f"Module of stage {self.stage_id} has no parameter or buffer, "
-                f"cannot figure out device. Setting it to cpu"
-            )
+        # We assume the output value is on the same device as the stage's parameters
 
         # Future constructor does not accept CPU device, must set to None
         future: torch.futures.Future = torch.futures.Future(
-            devices=None
-            if not found_device or device.type == "cpu"
-            else [device]
+            devices=None if self.device.type == "cpu" else [self.device]
         )
         # TODO: increase blocked_args_count for extra things like scheduling
         work_item = WorkItem(
@@ -869,7 +872,14 @@ class PipeStageExecutor(EventRecorder):
                 )
                 self.value_store_cv.notify_all()
 
-    def get_value(self, caller_stage, runlist_key, microbatch, value_ref_arg):
+    def get_value(
+        self,
+        caller_stage,
+        runlist_key,
+        microbatch,
+        value_ref_arg,
+        use_c10d=False,
+    ):
         callee_stage = value_ref_arg.stage_id
         logging.debug(
             f"[{callee_stage}][{microbatch}] Executing transfer of value "
@@ -892,6 +902,11 @@ class PipeStageExecutor(EventRecorder):
             if refcounted_future.release():
                 self.value_store.pop(value_ref_arg.unique_key)
 
+        # Instead of return value let's do a send call
+        if use_c10d:
+            torch.distributed.send(value, caller_stage)
+            return
+
         return value
 
     def async_transfer(self, microbatch, value_ref_arg, arg_idx, runlist_key):
@@ -899,18 +914,37 @@ class PipeStageExecutor(EventRecorder):
             f"[{self.stage_id}][{microbatch}] Requesting transfer of value {value_ref_arg} "
             f"for runlist item {runlist_key} arg_idx {arg_idx}"
         )
-        value_ref_executor_rref = self.peer_executors[value_ref_arg.stage_id]
+        callee_stage = value_ref_arg.stage_id
+        value_ref_executor_rref = self.peer_executors[callee_stage]
+
+        # Check if there is tensor meta in ValRef
+        use_c10d = False
+        if "tensor_meta" in value_ref_arg.meta:
+            tm = value_ref_arg.meta["tensor_meta"]
+            use_c10d = True
+            recv_buff = torch.empty(
+                tm.shape, dtype=tm.dtype, device=self.device
+            )
+
         fut = value_ref_executor_rref.rpc_async().get_value(
-            self.stage_id, runlist_key, microbatch, value_ref_arg
+            self.stage_id, runlist_key, microbatch, value_ref_arg, use_c10d
         )
 
+        if use_c10d:
+            torch.distributed.recv(recv_buff, callee_stage)
+
         def bottom_half(fut):
-            value = fut.value()
             logging.debug(
                 f"[{self.stage_id}][{microbatch}] Completing transfer of value {value_ref_arg} "
                 f"for runlist item {runlist_key} arg_idx {arg_idx}"
             )
-            self.rank_worker.update_run_list(runlist_key, arg_idx, value)
+            if use_c10d:
+                self.rank_worker.update_run_list(
+                    runlist_key, arg_idx, recv_buff
+                )
+            else:
+                value = fut.value()
+                self.rank_worker.update_run_list(runlist_key, arg_idx, value)
 
         return fut.then(bottom_half)
 
@@ -1193,6 +1227,7 @@ class PipelineDriverBase(torch.nn.Module):
         interleave_stages=False,
         _record_mem_dumps=False,
         checkpoint=False,
+        device: Optional[torch.device] = None,
     ):
         super().__init__()
         self.pipe = pipe
@@ -1213,6 +1248,7 @@ class PipelineDriverBase(torch.nn.Module):
         self._record_mem_dumps = _record_mem_dumps
         self.optimizer_inited = False
         self.checkpoint = checkpoint
+        self.device = device
 
     def _init_remote_executors(self):
         self.rank_worker_rrefs: Dict[int, torch.distributed.rpc.RRef] = {}
@@ -1305,12 +1341,31 @@ class PipelineDriverBase(torch.nn.Module):
         for stage_id, descr in enumerate(executor_descriptors):
             # Assign stages to rank workers in a round-robin fashion
             rank = self.all_ranks[stage_id % self.world_size]
+            if self.device is not None:
+                logging.debug(
+                    f"[root] Moving stage_id = {stage_id} mod to {self.device}"
+                )
+                descr.mod.to(self.device)
+            logging.debug(f"[root] Sending stage_id = {stage_id} mod to worker")
             self.remote_stage_executor_rrefs[descr.name] = (
                 stage_id,
                 self.rank_worker_rrefs[rank]
                 .remote()
                 .create_stage_executor(stage_id=stage_id, mod=descr.mod),
             )
+            if self.device is not None:
+                logging.debug(
+                    f"[root] Waiting stage_id = {stage_id} mod to be confirmed by worker"
+                )
+                while not self.remote_stage_executor_rrefs[descr.name][
+                    1
+                ].confirmed_by_owner():
+                    pass
+                logging.debug(
+                    f"[root] Deleting stage_id = {stage_id} mod on master"
+                )
+                descr.mod.to("cpu")
+                descr.mod = None
             self.stage_to_executor[stage_id] = self.remote_stage_executor_rrefs[
                 descr.name
             ][1]
@@ -1328,7 +1383,9 @@ class PipelineDriverBase(torch.nn.Module):
 
     def init_data_parallel(self, dp_group_size, dp_pg_cb=None):
         if dp_group_size <= 1:
-            logging.info('[root] Data parallel group size <= 1, skipping data parallel initialization')
+            logging.info(
+                "[root] Data parallel group size <= 1, skipping data parallel initialization"
+            )
             return
 
         n_stages = len(self.stage_to_executor)
@@ -1777,6 +1834,15 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
             print(node, self.env[node])
             self.env[node].to_here()
 
+        # Insert tensor meta to ValueReference returned by node call
+        if node.op == "call_function" or node.op == "call_module":
+            if "tensor_meta" in node.meta and isinstance(
+                node.meta["tensor_meta"],
+                pippy.fx.passes.shape_prop.TensorMetadata,
+            ):
+                val_ref: ValueReference = self.env[node]
+                val_ref.meta.setdefault("tensor_meta", node.meta["tensor_meta"])
+
         self.pc += 1
         return node
 
@@ -1822,6 +1888,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         interleave_stages=False,
         _record_mem_dumps=False,
         checkpoint=False,
+        device: Optional[torch.device] = None,
     ):
         super().__init__(
             pipe,
@@ -1836,6 +1903,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
             interleave_stages=interleave_stages,
             _record_mem_dumps=_record_mem_dumps,
             checkpoint=checkpoint,
+            device=device,
         )
         self.single_loss = single_loss
 
@@ -1970,6 +2038,7 @@ class PipelineDriver1F1B(PipelineDriverFillDrain):
         interleave_stages=False,
         _record_mem_dumps=False,
         checkpoint=False,
+        device: Optional[torch.device] = None,
     ):
         # In 1F1B with backward stages, the maximum number of outstanding
         # micro-batches equals the number of pipeline stages
@@ -1991,6 +2060,7 @@ class PipelineDriver1F1B(PipelineDriverFillDrain):
             interleave_stages=interleave_stages,
             _record_mem_dumps=_record_mem_dumps,
             checkpoint=checkpoint,
+            device=device,
         )
 
 
@@ -2008,6 +2078,7 @@ class PipelineDriverInterleaved1F1B(PipelineDriver1F1B):
         _debug_mask_minibatches: bool = False,
         _record_mem_dumps=False,
         checkpoint=False,
+        device: Optional[torch.device] = None,
     ):
         super().__init__(
             pipe,
@@ -2022,4 +2093,5 @@ class PipelineDriverInterleaved1F1B(PipelineDriver1F1B):
             interleave_stages=True,
             _record_mem_dumps=_record_mem_dumps,
             checkpoint=checkpoint,
+            device=device,
         )

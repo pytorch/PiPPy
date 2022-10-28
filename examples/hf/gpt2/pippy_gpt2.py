@@ -3,6 +3,7 @@ import argparse
 import inspect
 import logging
 import os
+import time
 from functools import reduce
 
 import torch
@@ -20,7 +21,6 @@ from pippy.visualizer import events_to_json
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
-
 
 schedules = {
     'FillDrain': PipelineDriverFillDrain,
@@ -40,32 +40,6 @@ def get_number_of_params(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-# TODO: Fails! Why??? https://gist.github.com/pbelevich/f4e78c6ed2fdabc8b02ab15e254935fd
-# def add_split_points(gpt2, layers_per_rank):
-#     for i in range(0, gpt2.config.n_layer // layers_per_rank):
-#         annotate_split_points(gpt2, {f'transformer.h.{i * layers_per_rank}': PipeSplitWrapper.SplitPoint.BEGINNING})
-#     annotate_split_points(gpt2, {
-#         f'transformer.h.{gpt2.config.n_layer // layers_per_rank - 1}': PipeSplitWrapper.SplitPoint.END})
-#     return gpt2.config.n_layer // layers_per_rank + 2
-
-
-# TODO: Fails! Why??? https://gist.github.com/pbelevich/f4e78c6ed2fdabc8b02ab15e254935fd
-# def add_split_points(gpt2, layers_per_rank):
-#     for i in range(0, gpt2.config.n_layer // layers_per_rank):
-#         annotate_split_points(gpt2, {f'transformer.h.{i * layers_per_rank}': PipeSplitWrapper.SplitPoint.BEGINNING})
-#     annotate_split_points(gpt2, {f'lm_head': PipeSplitWrapper.SplitPoint.BEGINNING})
-#     return gpt2.config.n_layer // layers_per_rank + 2
-
-
-# TODO: Fails! Why??? https://gist.github.com/pbelevich/f4e78c6ed2fdabc8b02ab15e254935fd
-# def add_split_points(gpt2, decoders_per_rank):
-#     annotate_split_points(gpt2, {f'transformer.drop': PipeSplitWrapper.SplitPoint.END})
-#     for i in range(0, gpt2.config.n_layer // decoders_per_rank):
-#         annotate_split_points(gpt2, {
-#             f'transformer.h.{i * decoders_per_rank + decoders_per_rank - 1}': PipeSplitWrapper.SplitPoint.END})
-#     return gpt2.config.n_layer // decoders_per_rank + 2
-
-
 def add_split_points(gpt2, decoders_per_rank):
     for i in range(0, gpt2.config.n_layer // decoders_per_rank):
         annotate_split_points(gpt2, {f'transformer.h.{i * decoders_per_rank}': PipeSplitWrapper.SplitPoint.BEGINNING})
@@ -73,14 +47,30 @@ def add_split_points(gpt2, decoders_per_rank):
     return gpt2.config.n_layer // decoders_per_rank + 2
 
 
-def run_master(_, args):
-    MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if args.replicate else MultiUseParameterConfig.TRANSMIT
-    print(f'REPLICATE config: {args.replicate} -> {MULTI_USE_PARAM_CONFIG}')
-    print("Using schedule:", args.schedule)
+def calc_flop(args, conf):
+    # https://arxiv.org/pdf/2104.04473.pdf page 8, formula 3
+    B = args.batch_size
+    s = args.seq_length
+    l = conf.n_layer
+    h = conf.n_embd
+    V = conf.vocab_size
+    return 96 * B * s * l * h * h * (1 + s/6/h + V/16/l/h)
 
+
+def run_master(_, args):
+    print(args)
+    MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if args.replicate else MultiUseParameterConfig.TRANSMIT
     assert args.world_size >= 4, "This program requires at least 3 workers + 1 master"
 
-    gpt2 = GPT2LMHeadModel(GPT2Config())
+    config = GPT2Config()
+    config.n_embd = args.n_embd or config.n_embd
+    config.n_layer = args.n_layer or config.n_layer
+    config.n_head = args.n_head or config.n_head
+    print("GPT-2 model instantiation started")
+    start = time.time()
+    gpt2 = GPT2LMHeadModel(config)
+    finish = time.time()
+    print(f"GPT-2 model instantiation finished in {(finish - start) / 60:1.2f} minutes")
     gpt2.eval()
     print(gpt2.config)
     print(f"GPT-2 total number of params = {get_number_of_params(gpt2) // 10 ** 6}M")
@@ -93,20 +83,23 @@ def run_master(_, args):
     number_of_workers = emb_head + gpt2.config.n_layer // decoders_per_rank  # 3 + a divider of gpt2.config.n_layer: [4, 5, 6, 7, 9, 15]
     print(f"number_of_workers = {number_of_workers}")
 
-    all_worker_ranks = list(range(1, 1 + number_of_workers))  # exclude master rank = 0
+    all_worker_ranks = list(range(args.exclude_master, args.exclude_master + number_of_workers))
     chunks = len(all_worker_ranks)
-    batches = 1
-    bs = 1 * chunks
-    seq_length = 16
+    seq_length = args.seq_length
+    batch_size = args.batch_size * chunks
+    vocab_size = gpt2.config.vocab_size
+
+    FLOP = calc_flop(args, config)
+
+    print(f"FLOP per iteration {FLOP}")
 
     device = args.device
     print("Using device:", device)
 
     gpt2_input_dict = {
-        'input_ids': torch.empty(bs, seq_length, dtype=torch.long, device=device).random_(gpt2.config.vocab_size),
-        'labels': torch.empty(bs, seq_length, dtype=torch.long, device=device).random_(gpt2.config.vocab_size),
-        'position_ids': torch.arange(0, seq_length, dtype=torch.long,
-                                     device=device)}  # needed because otherwise it is instantiated on cpu
+        'input_ids': torch.empty(batch_size, seq_length, dtype=torch.long, device=device).random_(vocab_size),
+        'labels': torch.empty(batch_size, seq_length, dtype=torch.long, device=device).random_(vocab_size),
+        'position_ids': torch.arange(0, seq_length, dtype=torch.long, device=device)}
 
     sm_cnt = add_split_points(gpt2, decoders_per_rank)
     assert sm_cnt == len(all_worker_ranks), f"sm_cnt = {sm_cnt} all_worker_ranks = {all_worker_ranks}"
@@ -123,7 +116,8 @@ def run_master(_, args):
     gpt2_pipe = Pipe.from_tracing(gpt2, MULTI_USE_PARAM_CONFIG, tracer=PiPPyHFTracer(), concrete_args=concrete_args,
                                   output_loss_value_spec=output_loss_value_spec, deep_copy_module=False)
     assert sm_cnt == len(list(gpt2_pipe.split_gm.children()))
-    gpt2_pipe.to(device)
+    if args.mode == 'small':
+        gpt2_pipe.to(device)
 
     # gpt2_pipe(**gpt2_input_dict)
 
@@ -133,29 +127,47 @@ def run_master(_, args):
     args_chunk_spec = ()
     kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'labels': TensorChunkSpec(0), 'position_ids': None}
     output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b), 'logits': TensorChunkSpec(0),
-                         'past_key_values': [[TensorChunkSpec(0) for _ in range(2)] for _ in range(12)]}
+                         'past_key_values': [[TensorChunkSpec(0) for _ in range(2)] for _ in range(config.n_layer)]}
+    if args.mode == 'large-cpu':
+        intermediate_device = device
+    else:
+        intermediate_device = None
     pipe_driver: PipelineDriverBase = schedules[args.schedule](gpt2_pipe, chunks, args_chunk_spec, kwargs_chunk_spec,
                                                                output_chunk_spec, len(all_worker_ranks),
                                                                all_ranks=all_worker_ranks,
                                                                _debug_mask_minibatches=False,
                                                                _record_mem_dumps=bool(args.record_mem_dumps),
-                                                               checkpoint=bool(args.checkpoint))
+                                                               checkpoint=bool(args.checkpoint),
+                                                               device=intermediate_device)
 
     this_file_name = os.path.splitext(os.path.basename(__file__))[0]
 
-    print('Running GPT2 pipeline.')
-    pipe_visualized_filename = f"{this_file_name}_visualized.json"
+    if args.warmup_batches > 0:
+        print(f'Running {args.warmup_batches} warm-up batches')
+        for i in range(args.warmup_batches):
+            pipe_driver(**gpt2_input_dict)
+
+    print(f'Running GPT-2 pipeline {args.batches} batches for TFLOP/s/GPU measurement.')
+
+    start = time.time()
+    for i in range(args.batches):
+        pipe_driver(**gpt2_input_dict)
+    finish = time.time()
+    total_latency = finish - start
+    print(f"TFLOP/s/GPU: {FLOP/1e12/total_latency}")
+
+    print(f'Running GPT-2 pipeline {args.batches} batches for visualization.')
     batches_events_contexts = []
-    for i in range(batches):
+    for i in range(args.batches):
         pipe_driver(**gpt2_input_dict)
         batches_events_contexts.append(pipe_driver.retrieve_events())
-
     all_events_contexts: EventsContext = reduce(lambda c1, c2: EventsContext().update(c1).update(c2),
                                                 batches_events_contexts, EventsContext())
+    pipe_visualized_filename = f"{this_file_name}_visualized.json"
     with open(pipe_visualized_filename, "w") as f:
         f.write(events_to_json(all_events_contexts))
     print(f"Saved {pipe_visualized_filename}")
-    print('Finished')
+    print('Finished.')
 
 
 if __name__ == "__main__":
@@ -167,8 +179,25 @@ if __name__ == "__main__":
     parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
     parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
     parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
+    parser.add_argument('--exclude_master', type=int, default=0, choices=[0, 1])
+
     parser.add_argument('--record_mem_dumps', type=int, default=0, choices=[0, 1])
     parser.add_argument('--checkpoint', type=int, default=0, choices=[0, 1])
+
+    parser.add_argument('--rpc_timeout', type=int, default=1800)
+    parser.add_argument('--num_worker_threads', type=int, default=512)
+
+    parser.add_argument('--batch_size', type=int, default=1)
+    parser.add_argument('--warmup_batches', type=int, default=0)
+    parser.add_argument('--batches', type=int, default=1)
+    parser.add_argument('--seq_length', type=int, default=16)
+
+    parser.add_argument('--n_embd', type=int, default=None)
+    parser.add_argument('--n_layer', type=int, default=None)
+    parser.add_argument('--n_head', type=int, default=None)
+
+    parser.add_argument('--mode', type=str, default='small', choices=['small', 'large-cpu'])
+
     args = parser.parse_args()
 
     run_pippy(run_master, args)

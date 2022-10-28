@@ -1,10 +1,14 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+
+from contextlib import contextmanager
+from dataclasses import dataclass
 import itertools
 import sys
 from functools import wraps
 from typing import (
     Any,
     Callable,
+    Generator,
     Iterator,
     Tuple,
     Dict,
@@ -26,6 +30,7 @@ from torch.testing._internal.common_distributed import (
 )
 
 from spmd import DeviceMesh, distribute_tensor, Shard, Replicate
+from spmd.tensor import redistribute
 from spmd.tensor.api import DTensor
 from spmd.tensor.placement_types import Placement
 
@@ -50,6 +55,35 @@ def skip_unless_torch_gpu(method: T) -> T:
     """
     # The builtin @skip_if_no_gpu relies on os.environ['WORLD_SIZE'] being set.
     return cast(T, skip_if_lt_x_gpu(NUM_DEVICES)(method))
+
+
+@dataclass
+class RedistributeProfile:
+    num_calls: int
+
+
+@contextmanager
+def redistribute_profiler() -> Generator[RedistributeProfile, None, None]:
+
+    orig_redistribute_dtensor = redistribute.redistribute_dtensor
+    profile: RedistributeProfile = RedistributeProfile(num_calls=0)
+
+    # pyre-ignore[53]
+    def patched_redistribute_dtensor(
+        input: DTensor,
+        device_mesh: DeviceMesh,
+        placements: Sequence[Placement],
+    ) -> DTensor:
+        result = orig_redistribute_dtensor(input, device_mesh, placements)
+        profile.num_calls += 1
+        return result
+
+    try:
+        # pyre-ignore[9]
+        redistribute.redistribute_dtensor = patched_redistribute_dtensor
+        yield profile
+    finally:
+        redistribute.redistribute_dtensor = orig_redistribute_dtensor
 
 
 class DistTensorTestBase(MultiProcessTestCase):
@@ -86,6 +120,22 @@ class DistTensorTestBase(MultiProcessTestCase):
     def setUp(self) -> None:
         super().setUp()
         self._spawn_processes()
+
+    # pyre-ignore[2]:
+    def _test_op(self, mesh: DeviceMesh, op_call, *args, **kwargs) -> None:
+        with redistribute_profiler() as profile:
+            out = op_call(*args, **kwargs)
+            dtc = DTensorConverter(mesh, args, kwargs)
+            for d_args, d_kwargs in dtc:
+                # pyre can't find assertTrue anymore?
+                self.assertEqual(dtc.successful(), True)
+                d_out = op_call(*d_args, **d_kwargs)
+                self.assertEqual(
+                    d_out.redistribute(
+                        mesh, [Replicate()] * mesh.ndim
+                    ).to_local(),
+                    out,
+                )
 
 
 # wrapper to initialize comms (processgroup)
@@ -250,7 +300,11 @@ class DTensorConverter(object):
                 # TODO: add bool tensor dtype support in c10d collective
                 if t.dtype == torch.bool:
                     r = DTensor(
-                        t, mesh, placements, requires_grad=t.requires_grad
+                        t,
+                        mesh,
+                        placements,
+                        size=t.size(),
+                        requires_grad=t.requires_grad,
                     )
                 else:
                     r = distribute_tensor(t, mesh, placements)
