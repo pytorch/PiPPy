@@ -109,7 +109,7 @@ def _redistribute_with_local_tensor(
                     local_tensor.clone(memory_format=torch.contiguous_format)
                 )
                 device_mesh.all_reduce(
-                    cloned_local, c10d.ReduceOp(partial_spec.reduce_op), mesh_dim=i
+                    cloned_local, c10d.ReduceOp(partial_spec.reduce_op), mesh_dim=i  # type: ignore
                 )
                 new_local_tensor = cloned_local
             elif current.is_shard():
@@ -130,7 +130,7 @@ def _redistribute_with_local_tensor(
                 new_local_tensor = target_placement._reduce_shard_tensor(
                     local_tensor,
                     device_mesh,
-                    c10d.ReduceOp(partial_spec.reduce_op),
+                    c10d.ReduceOp(partial_spec.reduce_op),  # type: ignore
                     i,
                 )
             elif current.is_replicate():
