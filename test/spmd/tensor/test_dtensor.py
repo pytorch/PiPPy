@@ -1,8 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 
-from torch.distributed.distributed_c10d import ReduceOp
-
 from torch.testing._internal.common_utils import run_tests
 from spmd.testing.common_utils import (  # type: ignore
     DistTensorTestBase,
@@ -102,7 +100,7 @@ class DistTensorTest(DistTensorTestBase):
         ddp_tensor = DTensor.from_local(local_tensor, device_mesh, replica_spec)
         self.assertEqual(ddp_tensor.size(), local_tensor.size())
 
-        partial_spec = [_Partial(ReduceOp.SUM)]
+        partial_spec = [_Partial()]
         partial_tensor = DTensor.from_local(
             local_tensor, device_mesh, partial_spec
         )

@@ -2,6 +2,7 @@
 from typing import Dict, List, Sequence, Tuple, cast
 
 import torch
+import torch.distributed.distributed_c10d as c10d
 from torch.distributed._spmd.comm_tensor import CommTensor
 import spmd.tensor.api as dtensor
 from spmd.tensor.placement_types import Placement, _Partial, Shard, Replicate
@@ -108,7 +109,7 @@ def _redistribute_with_local_tensor(
                     local_tensor.clone(memory_format=torch.contiguous_format)
                 )
                 device_mesh.all_reduce(
-                    cloned_local, partial_spec.reduce_op, mesh_dim=i
+                    cloned_local, c10d.ReduceOp(partial_spec.reduce_op), mesh_dim=i  # type: ignore
                 )
                 new_local_tensor = cloned_local
             elif current.is_shard():
@@ -125,8 +126,12 @@ def _redistribute_with_local_tensor(
             target_placement = cast(Shard, target)
             if current.is_partial():
                 # reduce shard (i.e. reduce_scatter) the current tensors
+                partial_spec = cast(_Partial, current)
                 new_local_tensor = target_placement._reduce_shard_tensor(
-                    local_tensor, device_mesh, i
+                    local_tensor,
+                    device_mesh,
+                    c10d.ReduceOp(partial_spec.reduce_op),  # type: ignore
+                    i,
                 )
             elif current.is_replicate():
                 # split the tensor and return the corresponding cloned local shard
