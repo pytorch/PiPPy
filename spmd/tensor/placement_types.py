@@ -133,7 +133,11 @@ class Shard(Placement):
         return output
 
     def _reduce_shard_tensor(
-        self, tensor: torch.Tensor, mesh: DeviceMesh, mesh_dim: int
+        self,
+        tensor: torch.Tensor,
+        mesh: DeviceMesh,
+        reduce_op: c10d.ReduceOp,
+        mesh_dim: int,
     ) -> torch.Tensor:
         """
         reduce and scatter a tensor on a mesh dimension
@@ -151,7 +155,7 @@ class Shard(Placement):
         # wrap with comm tensor
         scattered_list = [CommTensor(t) for t in scattered_list]
         output = torch.empty_like(scattered_list[my_coordinate])
-        mesh.reduce_scatter(CommTensor(output), scattered_list, mesh_dim=mesh_dim)  # type: ignore
+        mesh.reduce_scatter(CommTensor(output), scattered_list, op=reduce_op, mesh_dim=mesh_dim)  # type: ignore
         if pad_idx != 0 and my_coordinate >= pad_idx:
             output = self._unpad_tensor(output)
         return output
@@ -245,7 +249,7 @@ class _Partial(Placement):
     #
     # We can implement custom reductions as needed by subclassing this
     # class and override those contracts.
-    reduce_op: c10d.ReduceOp = c10d.ReduceOp.SUM  # type: ignore
+    reduce_op: c10d.ReduceOp.RedOpType = c10d.ReduceOp.RedOpType.SUM  # type: ignore
 
     def _to_replicate(
         self, tensor: torch.Tensor, mesh: DeviceMesh, mesh_dim: int
@@ -255,7 +259,7 @@ class _Partial(Placement):
         cloned_local = CommTensor(
             tensor.clone(memory_format=torch.contiguous_format)
         )
-        mesh.all_reduce(cloned_local, self.reduce_op, mesh_dim=mesh_dim)
+        mesh.all_reduce(cloned_local, c10d.ReduceOp(self.reduce_op), mesh_dim=mesh_dim)
         return cloned_local
 
     def _to_shard(

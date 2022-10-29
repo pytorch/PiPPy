@@ -14,6 +14,7 @@ from pippy import run_pippy
 from pippy.IR import MultiUseParameterConfig, Pipe, PipeSplitWrapper, annotate_split_points
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverInterleaved1F1B, \
     PipelineDriverBase
+from pippy import split_on_size_threshold, split_into_equal_size
 from pippy.events import EventsContext
 from pippy.hf import PiPPyHFTracer
 from pippy.microbatch import CustomReducer, TensorChunkSpec
@@ -136,9 +137,9 @@ def run_master(pp_ranks, args):
     print(f"number_of_workers = {number_of_workers}")
     # Specify auto_split policy for use by `from_tracing` call later
     if args.auto_split == "threshold":
-        split_policy = pippy.ModelSplit.split_on_size_threshold(490 * 1e6)
+        split_policy = split_on_size_threshold(490 * 1e6)
     elif args.auto_split == "equal_size":
-        split_policy = pippy.ModelSplit.split_into_equal_size(number_of_workers)
+        split_policy = split_into_equal_size(number_of_workers)
     else:
         # Manually insert split points before `from_tracing` call
         add_split_points(t5, number_of_workers)
