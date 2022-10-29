@@ -278,6 +278,32 @@ class CommonRulesTest(DistTensorTestBase):
             )
 
     @with_comms
+    def test_pointwise_rules_broadcasting(self):
+        mesh = DeviceMesh(self.device_type, torch.arange(self.world_size))
+
+        func_schema = self.parse_schema(
+            "where.self(Tensor condition, Tensor self, Tensor other) -> Tensor"
+        )
+        inp1, inp2, inp3 = [0], [], [-1, -1]
+        condition = DTensorSpec.from_dim_map(
+            mesh, inp1, [], shape=torch.Size([8])
+        )
+        self_tensor = DTensorSpec.from_dim_map(
+            mesh, inp2, [], shape=torch.Size([])
+        )
+        other_tensor = DTensorSpec.from_dim_map(
+            mesh, inp3, [], shape=torch.Size([1, 1])
+        )
+        # propagate point-wise sharding with broadcasting
+        output_sharding = pointwise_rule(
+            OpSchema(func_schema, (condition, self_tensor, other_tensor), {})
+        )
+        output_spec = output_sharding.output_spec
+        self.assertIsNotNone(output_spec)
+        self.assertEqual(output_spec.dim_map, [-1, 0])
+        self.assertEqual(output_spec.shape, [1, 8])
+
+    @with_comms
     def test_pointwise_rules_suggestion(self):
         mesh = DeviceMesh(self.device_type, torch.arange(self.world_size))
 
