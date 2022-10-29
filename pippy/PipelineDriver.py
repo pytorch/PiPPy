@@ -904,7 +904,11 @@ class PipeStageExecutor(EventRecorder):
 
         # Instead of return value let's do a send call
         if use_c10d:
-            torch.distributed.send(value, caller_stage)
+            if torch.distributed.get_backend() == "gloo":
+                # Gloo error out with isend, use send instead
+                torch.distributed.send(value, caller_stage)
+            else:
+                torch.distributed.isend(value, caller_stage)
             return
 
         return value
@@ -931,7 +935,12 @@ class PipeStageExecutor(EventRecorder):
         )
 
         if use_c10d:
-            torch.distributed.recv(recv_buff, callee_stage)
+            work = None
+            if torch.distributed.get_backend() == "gloo":
+                # Gloo error out with irecv, use recv instead
+                torch.distributed.recv(recv_buff, callee_stage)
+            else:
+                work = torch.distributed.irecv(recv_buff, callee_stage)
 
         def bottom_half(fut):
             logging.debug(
@@ -939,6 +948,14 @@ class PipeStageExecutor(EventRecorder):
                 f"for runlist item {runlist_key} arg_idx {arg_idx}"
             )
             if use_c10d:
+                if work:
+                    # For CUDA, wait() only ensure collective enqueue and compute-comm stream dependency
+                    work.wait()
+                    # Need to use is_completed() to sync back to CPU
+                    while not work.is_completed():
+                        pass
+                    # TODO: move compute-comm dependency to be entirely stream based, rather than based on CPU
+                    # conditional variable, see `update_run_list` below
                 self.rank_worker.update_run_list(
                     runlist_key, arg_idx, recv_buff
                 )
