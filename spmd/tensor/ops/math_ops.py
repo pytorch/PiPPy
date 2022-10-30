@@ -62,10 +62,13 @@ def softmax_bwd_rule(op_schema: OpSchema) -> OutputSharding:
     return pointwise_rule(op_schema)
 
 
-@register_prop_rule("aten.mean.default")
-def mean_rule(op_schema: OpSchema) -> OutputSharding:
-    return reduction_rule(op_schema, reduction_linear=False)
+# @register_prop_rule("aten.mean.default")
+# def mean_rule(op_schema: OpSchema) -> OutputSharding:
+#     return reduction_rule(op_schema, reduction_linear=False)
 
+# @register_prop_rule("aten.mean.dim")
+# def mean_dim_rule(op_schema: OpSchema) -> OutputSharding:
+#     return reduction_rule(op_schema, reduction_linear=False)
 
 @register_prop_rule("aten.var.dim")
 @register_prop_rule("aten.var.out")
@@ -96,9 +99,6 @@ def var_correction_rule(op_schema: OpSchema) -> OutputSharding:
 
     # keep_dim is a kwarg instead of arg for var.correction
     keep_dim = cast(bool, op_schema.kwargs_schema.get("keepdim", False))
-    print(f">>>>> var correction keep dim: {keep_dim}")
-    output_sharding = reduction_rule(
+    return reduction_rule(
         op_schema, dims=dims, keep_dim=keep_dim, reduction_linear=False
     )
-    print(f">>>> output sharding: {output_sharding}")
-    return output_sharding

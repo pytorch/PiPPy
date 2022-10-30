@@ -666,6 +666,7 @@ def register_prop_rule_map(
             # We only need the local shape to lower he call into the local op
             args = op_schema.args_schema
             if spec.shape_argnum is not None:
+                print(f">>>> generating local shape????")
                 op_schema.args_schema = (
                     args[: spec.shape_argnum]
                     + (tuple(local_out_shape),)
@@ -716,6 +717,3 @@ register_prop_rule_map("aten.expand.default", Tensor.expand)
 register_prop_rule_map("aten.permute.default", torch.permute)
 register_prop_rule_map("aten.repeat.default", Tensor.repeat)
 register_prop_rule_map("aten.transpose.int", torch.transpose)
-
-
-# register_prop_rule_map("aten.var.correction", torch.var)

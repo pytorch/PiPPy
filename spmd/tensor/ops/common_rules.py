@@ -45,11 +45,11 @@ def _gen_reshard_suggestions(
                 shape=input_spec.shape,
             )
         )
+    suggested_schema = OpSchema(op_schema.func_schema, tuple(suggested_arg_specs), {})
+    _inplace_rewrap_schema_suggestion(suggested_schema, op_schema)
     return OutputSharding(
         None,
-        schema_suggestions=[
-            OpSchema(op_schema.func_schema, tuple(suggested_arg_specs), {})
-        ],
+        schema_suggestions=[suggested_schema],
         failed_reason="Input placements op sharding propagation failed, need to reshard!",
     )
 
@@ -276,28 +276,17 @@ def pointwise_rule(
         # inplace op should keep the input sharding it writes to
         for out_dimchar, mesh_dim in zip(out_dimchars, input_specs[0].dim_map):
             enforce_sharding[out_dimchar] = mesh_dim
-
     elif op_schema.is_out_variant:
         out_spec = cast(DTensorSpec, op_schema.kwargs_schema["out"])
         for out_dimchar, mesh_dim in zip(out_dimchars, out_spec.dim_map):
             enforce_sharding[out_dimchar] = mesh_dim
 
-    output_sharding = einop_rule(
+    return einop_rule(
         fmt,
         einop_schema,
         linearity=linearity,
         enforce_sharding=enforce_sharding,
     )
-    if (
-        output_sharding.output_spec is None
-        and output_sharding.schema_suggestions is not None
-    ):
-        # sharding propagation failed, with reshard suggetion only have tensor specs,
-        # we will need to include back all non-tensor args/kwargs
-        suggested_schema = output_sharding.schema_suggestions[0]
-        _inplace_rewrap_schema_suggestion(suggested_schema, op_schema)
-
-    return output_sharding
 
 
 def linear_pointwise_rule(op_schema: OpSchema) -> OutputSharding:
@@ -321,17 +310,16 @@ def reduction_rule(
         ij->i - sum on dim
 
     reduction_linear means that the reduction `f` follows this rule:
-        f(f(a), f(b)) = f(a, b)
+        f([f(a), f(b)]) = f([a, b])
     """
     alphabet = "abcdefghijklmnopqrstuvwxyz"
     # reduction op usually begin with a single tensor
     input_spec = cast(DTensorSpec, op_schema.args_schema[0])
+    reduce_dims = range(input_spec.ndim) if dims is None else dims
     if not reduction_linear:
         # if the reduction is not linear, we need to clear the pending sum
         # on the input spec, also replicate the reducing dimension if the
         # reducing dimension is sharded, then suggest a resharding
-        reduce_dims = range(input_spec.ndim) if dims is None else dims
-
         reshard_dim_map = input_spec.dim_map
         needs_reshard = False
         for dim in reduce_dims:
@@ -354,7 +342,7 @@ def reduction_rule(
 
     input_chars = alphabet[: input_spec.ndim]
 
-    if dims is None:
+    if dims is None and not keep_dim:
         # reducing to a single scalar tensor, we just mark output as empty
         out_dimchars = ""
     else:
@@ -362,8 +350,14 @@ def reduction_rule(
         # it as a singleton "1" in the out_dimchars
         reduce_dim_char = ord("1") if keep_dim else None
         out_dimchars = input_chars.translate(
-            {ord(alphabet[dim]): reduce_dim_char for dim in dims}
+            {ord(alphabet[dim]): reduce_dim_char for dim in reduce_dims}
         )
-
     fmt = f"{input_chars}->{out_dimchars}"
-    return einop_rule(fmt, op_schema)
+
+    enforce_sharding: Dict[str, int] = {}
+    if op_schema.is_out_variant:
+        out_spec = cast(DTensorSpec, op_schema.kwargs_schema["out"])
+        for out_dimchar, mesh_dim in zip(out_dimchars, out_spec.dim_map):
+            enforce_sharding[out_dimchar] = mesh_dim
+
+    return einop_rule(fmt, op_schema, enforce_sharding=enforce_sharding)

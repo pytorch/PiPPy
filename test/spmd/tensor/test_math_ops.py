@@ -8,7 +8,7 @@ from spmd.testing.common_utils import (  # type: ignore
     with_comms,
     skip_unless_torch_gpu,
 )
-from spmd import distribute_tensor, Shard
+from spmd import distribute_tensor, Shard, Replicate
 import itertools
 
 

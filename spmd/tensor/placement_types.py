@@ -1,7 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional, List, Sequence, Union, Tuple, cast
+from typing import Optional, List, Sequence, Tuple, cast
 
 import torch
 import torch.distributed.distributed_c10d as c10d
@@ -214,32 +213,6 @@ class Replicate(Placement):
     # replicate placement
     pass
 
-
-class _ReduceOp(ABC):
-    # ReduceOp that supports non elementwise reduction
-
-    # a extension of c10d.ReduceOp to support custom reduction
-    @abstractmethod
-    def reduce_tensor(
-        self, tensor: torch.Tensor, mesh, mesh_dim
-    ) -> torch.Tensor:
-        # reduce tensor to a single tensor, by default elementwise reduction
-        # is allowed
-        ...
-
-
-class _ElementWiseReduceOp(_ReduceOp):
-    # ReduceOp that supports elementwise reduction
-
-    # a extension of c10d.ReduceOp to support custom reduction
-    def reduce_tensor(
-        self, tensor: torch.Tensor, mesh, mesh_dim
-    ) -> torch.Tensor:
-        # reduce tensor to a single tensor, by default elementwise reduction
-        # is allowed
-        ...
-
-
 @dataclass
 class _Partial(Placement):
     # This is a default partial placement with element-wise reduce op
@@ -271,7 +244,7 @@ class _Partial(Placement):
     ) -> torch.Tensor:
         # by default call reduce_shard_tensor of the shard_spec.
         shard_spec = cast(Shard, shard_spec)
-        return shard_spec._reduce_shard_tensor(tensor, mesh, mesh_dim)
+        return shard_spec._reduce_shard_tensor(tensor, mesh, c10d.ReduceOp(self.reduce_op), mesh_dim)
 
 
 # used internally to propagate the placements
