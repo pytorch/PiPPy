@@ -213,6 +213,7 @@ class Replicate(Placement):
     # replicate placement
     pass
 
+
 @dataclass
 class _Partial(Placement):
     # This is a default partial placement with element-wise reduce op
@@ -232,7 +233,9 @@ class _Partial(Placement):
         cloned_local = CommTensor(
             tensor.clone(memory_format=torch.contiguous_format)
         )
-        mesh.all_reduce(cloned_local, c10d.ReduceOp(self.reduce_op), mesh_dim=mesh_dim)
+        mesh.all_reduce(
+            cloned_local, c10d.ReduceOp(self.reduce_op), mesh_dim=mesh_dim
+        )
         return cloned_local
 
     def _to_shard(
@@ -244,7 +247,9 @@ class _Partial(Placement):
     ) -> torch.Tensor:
         # by default call reduce_shard_tensor of the shard_spec.
         shard_spec = cast(Shard, shard_spec)
-        return shard_spec._reduce_shard_tensor(tensor, mesh, c10d.ReduceOp(self.reduce_op), mesh_dim)
+        return shard_spec._reduce_shard_tensor(
+            tensor, mesh, c10d.ReduceOp(self.reduce_op), mesh_dim
+        )
 
 
 # used internally to propagate the placements

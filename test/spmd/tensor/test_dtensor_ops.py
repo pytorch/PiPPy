@@ -300,7 +300,6 @@ dtensor_fails = {
     xfail("max", "reduction_no_dim"),
     xfail("max", "reduction_with_dim"),
     xfail("maximum"),
-    xfail("mean"),
     xfail("median"),
     xfail("min", "binary"),
     xfail("min", "reduction_no_dim"),

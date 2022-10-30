@@ -45,7 +45,9 @@ def _gen_reshard_suggestions(
                 shape=input_spec.shape,
             )
         )
-    suggested_schema = OpSchema(op_schema.func_schema, tuple(suggested_arg_specs), {})
+    suggested_schema = OpSchema(
+        op_schema.func_schema, tuple(suggested_arg_specs), {}
+    )
     _inplace_rewrap_schema_suggestion(suggested_schema, op_schema)
     return OutputSharding(
         None,
@@ -75,6 +77,10 @@ def einop_rule(
 
     linearity in einop_rule means that the calling op `f` follows this rule:
         f(a + b) = f(a) + f(b)
+
+    In this case we can propagate the partial sum, note that linearity in einop
+    only applies to partial sum, not other operations like min/max (which are
+    associative but not linear).
     """
     # parse einop equation and extract arg specs
     inputs, outputs = equation.split("->")
@@ -197,7 +203,8 @@ def einop_rule(
             op_schema, input_dims, input_specs, dim_to_sharding, pending_sums
         )
 
-    # handle output pending sum if a dim appears in input but not output
+    # generate output pending sum if a dim is sharded, and it appears in input
+    # but not output
     for dim, shard_on_mesh in dim_to_sharding.items():
         if dim not in output_dims[0] and shard_on_mesh != -1:
             pending_sums.append(shard_on_mesh)
@@ -311,11 +318,14 @@ def reduction_rule(
 
     reduction_linear means that the reduction `f` follows this rule:
         f([f(a), f(b)]) = f([a, b])
+
+    reduction linear should be super set of linearity.
     """
     alphabet = "abcdefghijklmnopqrstuvwxyz"
     # reduction op usually begin with a single tensor
     input_spec = cast(DTensorSpec, op_schema.args_schema[0])
     reduce_dims = range(input_spec.ndim) if dims is None else dims
+
     if not reduction_linear:
         # if the reduction is not linear, we need to clear the pending sum
         # on the input spec, also replicate the reducing dimension if the
@@ -360,4 +370,9 @@ def reduction_rule(
         for out_dimchar, mesh_dim in zip(out_dimchars, out_spec.dim_map):
             enforce_sharding[out_dimchar] = mesh_dim
 
-    return einop_rule(fmt, op_schema, enforce_sharding=enforce_sharding)
+    return einop_rule(
+        fmt,
+        op_schema,
+        linearity=reduction_linear,
+        enforce_sharding=enforce_sharding,
+    )

@@ -28,7 +28,7 @@ _ENABLE_FALLBACK = False
 """
 Print information on ops input shape and sharding for debugging purposes.
 """
-_DEBUG_VERBOSE = True
+_DEBUG_VERBOSE = False
 
 
 @dataclass
