@@ -134,6 +134,7 @@ def prop_bucketize(op_schema: OpSchema) -> OutputSharding:
             output_spec=None,
             schema_suggestions=[
                 OpSchema(
+                    func_schema=op_schema.func_schema,
                     args_schema=(
                         input_schema,
                         DTensorSpec(
@@ -191,6 +192,7 @@ def _prop_all_but_dim(
             output_spec=None,
             schema_suggestions=[
                 OpSchema(
+                    func_schema=op_schema.func_schema,
                     args_schema=(suggested_input_spec,)
                     + op_schema.args_schema[1:],
                     kwargs_schema=op_schema.kwargs_schema,
@@ -222,6 +224,8 @@ def prop_slice(op_schema: OpSchema) -> OutputSharding:
         step = 1
     if end is None or end > input_spec.shape[dim]:
         end = input_spec.shape[dim]
+    if start < 0:
+        start += input_spec.shape[dim]
     if end < 0:
         end += input_spec.shape[dim]
 
@@ -287,6 +291,7 @@ def prop_slice_scatter(op_schema: OpSchema) -> OutputSharding:
             output_spec=None,
             schema_suggestions=[
                 OpSchema(
+                    func_schema=op_schema.func_schema,
                     args_schema=(
                         DTensorSpec(
                             mesh=input.mesh,
@@ -322,6 +327,7 @@ def prop_index_select(op_schema: OpSchema) -> OutputSharding:
 
     result = prop_index(
         OpSchema(
+            func_schema=op_schema.func_schema,
             args_schema=(values_spec, all_indices_spec),
             kwargs_schema=op_schema.kwargs_schema,
         )
@@ -329,6 +335,7 @@ def prop_index_select(op_schema: OpSchema) -> OutputSharding:
     if result.schema_suggestions:
         result.schema_suggestions = [
             OpSchema(
+                func_schema=op_schema.func_schema,
                 args_schema=(s.args_schema[0], dim, s.args_schema[1][dim]),
                 kwargs_schema=op_schema.kwargs_schema,
             )
@@ -365,6 +372,7 @@ def prop_index(op_schema: OpSchema) -> OutputSharding:
     #    Here, we piggyback on the pointwise sharding rule for indices.
     indices_out = pointwise_rule(
         OpSchema(
+            func_schema=op_schema.func_schema,
             args_schema=tuple(v[1] for v in valid_indices_spec),
             kwargs_schema={},
         )
@@ -436,7 +444,7 @@ def prop_index(op_schema: OpSchema) -> OutputSharding:
         value_shape = torch.Size(
             tuple(value_shape[:insert_dim])
             + tuple(indices_spec.shape)
-            + tuple(value_shape[insert_dim + 1 :])
+            + tuple(value_shape[insert_dim + len(valid_indices_spec) :])
         )
 
         result = OutputSharding(
@@ -453,6 +461,7 @@ def prop_index(op_schema: OpSchema) -> OutputSharding:
             output_spec=None,
             schema_suggestions=[
                 OpSchema(
+                    func_schema=op_schema.func_schema,
                     args_schema=(
                         DTensorSpec(
                             mesh=values_spec.mesh,

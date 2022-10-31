@@ -1,14 +1,13 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 
-from torch.distributed.distributed_c10d import ReduceOp
-
 from torch.testing._internal.common_utils import run_tests
 from spmd.testing.common_utils import (  # type: ignore
     DistTensorTestBase,
     with_comms,
 )
-from spmd.tensor import DeviceMesh, DTensor, Replicate, Shard, _Partial
+from spmd.tensor import DeviceMesh, DTensor, distribute_tensor
+from spmd.tensor.placement_types import _Partial, Replicate, Shard
 
 
 class DistTensorTest(DistTensorTestBase):
@@ -31,18 +30,29 @@ class DistTensorTest(DistTensorTestBase):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
         local_tensor = torch.randn(3, 3, requires_grad=True)
+        dist_tensor_shape = torch.Size([self.world_size * 3, 3])
         dist_tensor = DTensor(
-            local_tensor, device_mesh, shard_spec, requires_grad=True
+            local_tensor,
+            device_mesh,
+            shard_spec,
+            size=dist_tensor_shape,
+            requires_grad=True,
         )
         self.assertEqual(dist_tensor.size(), torch.Size((12, 3)))
 
         with self.assertWarnsRegex(UserWarning, "To construct"):
-            DTensor(local_tensor, device_mesh, shard_spec)
+            DTensor(
+                local_tensor, device_mesh, shard_spec, size=dist_tensor_shape
+            )
 
         local_tensor = torch.randn(3, 3, requires_grad=False)
         with self.assertWarnsRegex(UserWarning, "To construct"):
             dist_tensor = DTensor(
-                local_tensor, device_mesh, shard_spec, requires_grad=True
+                local_tensor,
+                device_mesh,
+                shard_spec,
+                size=dist_tensor_shape,
+                requires_grad=True,
             )
 
     @with_comms
@@ -50,21 +60,30 @@ class DistTensorTest(DistTensorTestBase):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard0_spec = [Shard(0)]
         local_tensor = torch.randn(4, 8)
-        dist_tensor = DTensor(local_tensor, device_mesh, shard0_spec)
+        global_shape = torch.Size([self.world_size * 4, 8])
+        dist_tensor = DTensor(
+            local_tensor, device_mesh, shard0_spec, size=global_shape
+        )
         # won't affect stride
         self.assertEqual(dist_tensor.stride(), (8, 1))
 
         shard1_spec = [Shard(1)]
         local_tensor = torch.randn(8, 4)
-        dist_tensor = DTensor(local_tensor, device_mesh, shard1_spec)
+        global_shape = torch.Size([8, self.world_size * 4])
+        dist_tensor = DTensor(
+            local_tensor, device_mesh, shard1_spec, size=global_shape
+        )
         # will affect stride after DT initialized
         self.assertEqual(dist_tensor.stride(), (16, 1))
 
         # if initialized from a transposed mat
         local_tensor = torch.randn(8, 4, 8)
         local_tensor_t = local_tensor.permute(1, 2, 0)
+        global_shape = torch.Size([4, self.world_size * 8, 8])
         self.assertEqual(local_tensor_t.stride(), (8, 1, 32))
-        dist_tensor = DTensor(local_tensor_t, device_mesh, shard1_spec)
+        dist_tensor = DTensor(
+            local_tensor_t, device_mesh, shard1_spec, size=global_shape
+        )
         self.assertEqual(dist_tensor.stride(), (32, 1, 128))
 
     @with_comms
@@ -81,7 +100,7 @@ class DistTensorTest(DistTensorTestBase):
         ddp_tensor = DTensor.from_local(local_tensor, device_mesh, replica_spec)
         self.assertEqual(ddp_tensor.size(), local_tensor.size())
 
-        partial_spec = [_Partial(ReduceOp.SUM)]
+        partial_spec = [_Partial()]
         partial_tensor = DTensor.from_local(
             local_tensor, device_mesh, partial_spec
         )
@@ -111,17 +130,22 @@ class DistTensorTest(DistTensorTestBase):
         self.assertEqual(local_tensor_with_grad.grad, expected_grad)
 
     @with_comms
-    def test_local_tensor(self):
+    def test_to_local(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
+        dist_tensor_shape = torch.Size([self.world_size * 3, 3])
         local_tensor_with_grad = torch.randn(
             3, 3, device=self.device_type, requires_grad=True
         )
 
         sharded_tensor = DTensor(
-            local_tensor_with_grad, device_mesh, shard_spec, requires_grad=True
+            local_tensor_with_grad,
+            device_mesh,
+            shard_spec,
+            size=dist_tensor_shape,
+            requires_grad=True,
         )
-        self.assertEqual(sharded_tensor.size(), torch.Size([12, 3]))
+        self.assertEqual(sharded_tensor.size(), dist_tensor_shape)
         self.assertEqual(sharded_tensor.to_local(), local_tensor_with_grad)
 
         # test dist tensor works with torch.Tensor during backwards
@@ -138,13 +162,10 @@ class DistTensorTest(DistTensorTestBase):
         res.sum().backward()
         self.assertIsNotNone(sharded_tensor.grad)
 
-        expected_grad = DTensor(torch.ones(3, 3) * 3, device_mesh, shard_spec)
-        self.assertEqual(
-            sharded_tensor.grad.to_local(), expected_grad.to_local()
-        )
+        self.assertEqual(sharded_tensor.grad.to_local(), torch.ones(3, 3) * 3)
 
     @with_comms
-    def test_from_local_then_local_tensor(self):
+    def test_from_local_then_to_local(self):
         # this test ensure end to end from torch.Tensor -> dist tensor -> torch.Tensor works
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
@@ -191,6 +212,40 @@ class DistTensorTest(DistTensorTestBase):
         shard_spec[0] = Replicate()
         self.assertTrue(sharded_tensor.placements is not shard_spec)
         self.assertNotEqual(sharded_tensor.placements, shard_spec)
+
+    @with_comms
+    def test_dtensor_spec_local_shard_offset(self):
+        device_mesh = DeviceMesh(
+            self.device_type, torch.arange(self.world_size).reshape(2, 2)
+        )
+        tensor_shape = (3 * self.world_size, 3 * self.world_size)
+        # sharding specs and its corresponding local shard offsets
+        shard_spec_and_offsets = [
+            (
+                [Shard(0), Replicate()],
+                (3 * (self.world_size // 2) * (self.rank // 2), 0),
+            ),
+            (
+                [Shard(1), Replicate()],
+                (0, 3 * (self.world_size // 2) * (self.rank // 2)),
+            ),
+            (
+                [Replicate(), Shard(0)],
+                (3 * (self.world_size // 2) * (self.rank % 2), 0),
+            ),
+            (
+                [Replicate(), Shard(1)],
+                (0, 3 * (self.world_size // 2) * (self.rank % 2)),
+            ),
+        ]
+
+        # loop through all sharding specs and check local shard offsets
+        logical_tensor = torch.randn(tensor_shape)
+        for shard_spec, expected_shard_offsets in shard_spec_and_offsets:
+            dtensor = distribute_tensor(logical_tensor, device_mesh, shard_spec)
+            self.assertEqual(
+                expected_shard_offsets, dtensor._spec.local_offsets
+            )
 
     @with_comms
     def test_tensor_properties(self):
