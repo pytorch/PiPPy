@@ -2,15 +2,15 @@
 import torch
 
 from torch.testing._internal.common_utils import run_tests
-from spmd.testing.common_utils import (  # type: ignore
-    DistTensorTestBase,
+from spmd.testing.common_dtensor import (  # type: ignore
+    DTensorTestBase,
     with_comms,
 )
 from spmd.tensor import DeviceMesh, DTensor, distribute_tensor
 from spmd.tensor.placement_types import _Partial, Replicate, Shard
 
 
-class DistTensorTest(DistTensorTestBase):
+class DTensorTest(DTensorTestBase):
     # @with_comms
     # def test_tensor_constructor(self):
     #     import spmd.tensor as dist_tensor
@@ -26,7 +26,7 @@ class DistTensorTest(DistTensorTestBase):
     #     dist_tensor.one_like(empty_tensor)
 
     @with_comms
-    def test_tensor_constructor(self):
+    def test_dtensor_constructor(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
         local_tensor = torch.randn(3, 3, requires_grad=True)
@@ -56,7 +56,7 @@ class DistTensorTest(DistTensorTestBase):
             )
 
     @with_comms
-    def test_tensor_stride(self):
+    def test_dtensor_stride(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard0_spec = [Shard(0)]
         local_tensor = torch.randn(4, 8)
@@ -87,7 +87,7 @@ class DistTensorTest(DistTensorTestBase):
         self.assertEqual(dist_tensor.stride(), (32, 1, 128))
 
     @with_comms
-    def test_tensor_from_local(self):
+    def test_from_local(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
         local_tensor = torch.randn(3, 3)
@@ -248,7 +248,7 @@ class DistTensorTest(DistTensorTestBase):
             )
 
     @with_comms
-    def test_tensor_properties(self):
+    def test_dtensor_properties(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         shard_spec = [Shard(0)]
         local_tensor = torch.randn(3, 3)
@@ -256,6 +256,96 @@ class DistTensorTest(DistTensorTestBase):
             local_tensor, device_mesh, shard_spec
         )
         self.assertEqual(sharded_tensor.device.type, self.device_type)
+
+
+class DTensorMeshTest(DTensorTestBase):
+    @property
+    def world_size(self):
+        return 8
+
+    @with_comms
+    def test_dtensor_device_mesh_device_conversion(self):
+        # construct a cuda device mesh
+        mesh = DeviceMesh(self.device_type, torch.arange(self.world_size))
+
+        # construct from a cpu local tensor with cuda device mesh
+        # should automatically convert the dist tensor to cuda
+        shard_spec = [Shard(0)]
+        local_tensor = torch.randn(3, 3)
+        dist_tensor = DTensor.from_local(local_tensor, mesh, shard_spec)
+        self.assertEqual(dist_tensor.device.type, self.device_type)
+        self.assertEqual(dist_tensor.to_local().device.type, self.device_type)
+
+    @with_comms
+    def test_dtensor_api_device_mesh_context_manager(self):
+        with DeviceMesh(self.device_type, list(range(self.world_size))) as mesh:
+            shard_spec = [Shard(0)]
+            local_tensor = torch.randn(3, 3)
+            sharded_tensor = DTensor.from_local(
+                local_tensor, device_mesh=mesh, placements=shard_spec
+            )
+
+        with DeviceMesh(self.device_type, list(range(self.world_size))):
+            shard_spec = [Shard(0)]
+            local_tensor = torch.randn(3, 3)
+            sharded_tensor = DTensor.from_local(
+                local_tensor, placements=shard_spec
+            )
+            replica_spec = [Replicate()]
+            replica_tensor = sharded_tensor.redistribute(
+                placements=replica_spec
+            )
+            self.assertEqual(
+                replica_tensor.size(), torch.Size([3 * self.world_size, 3])
+            )
+
+    @with_comms
+    def test_dtensor_2d_mesh(self):
+        mesh_tensor = torch.arange(4).reshape(2, 4)
+        # construct a cuda device mesh
+        mesh = DeviceMesh(self.device_type, mesh_tensor)
+
+        # construct a dist tensor on 2d device mesh and test if works
+        shard_spec = [Shard(0), Shard(1)]
+        local_tensor = torch.randn(3, 3)
+        dist_tensor = DTensor.from_local(local_tensor, mesh, shard_spec)
+        self.assertEqual(
+            dist_tensor.size(), torch.Size([3 * mesh.size(0), 3 * mesh.size(1)])
+        )
+        self.assertEqual(dist_tensor.device.type, self.device_type)
+        self.assertEqual(dist_tensor.to_local().device.type, self.device_type)
+
+        # if shard on the same tensor dimension
+        # we should correctly construct the global tensor size
+        shard_same_dim_spec = [Shard(0), Shard(0)]
+        local_tensor = torch.randn(3, 3)
+        dist_tensor = DTensor.from_local(
+            local_tensor, mesh, shard_same_dim_spec
+        )
+        self.assertEqual(
+            dist_tensor.size(), torch.Size([3 * self.world_size, 3])
+        )
+
+    @with_comms
+    def test_device_mesh_nd(self):
+        # construct a cuda device mesh
+        mesh_tensor = torch.arange(8).reshape(2, 2, 2)
+        mesh = DeviceMesh(self.device_type, mesh_tensor)
+        # construct a dist tensor on 3d device mesh and test if works
+        shard_spec = [Shard(0), Shard(1), Shard(2)]
+        local_tensor = torch.randn(3, 3, 3)
+        dist_tensor = DTensor.from_local(local_tensor, mesh, shard_spec)
+        self.assertEqual(dist_tensor.size(), torch.Size([6, 6, 6]))
+        self.assertEqual(dist_tensor.device.type, self.device_type)
+        self.assertEqual(dist_tensor.to_local().device.type, self.device_type)
+
+        # construct a dist tensor on 3d device mesh with some shards on same dim
+        shard_spec = [Shard(0), Shard(0), Shard(2)]
+        local_tensor = torch.randn(3, 3, 3)
+        dist_tensor = DTensor.from_local(local_tensor, mesh, shard_spec)
+        self.assertEqual(dist_tensor.size(), torch.Size([12, 3, 6]))
+        self.assertEqual(dist_tensor.device.type, self.device_type)
+        self.assertEqual(dist_tensor.to_local().device.type, self.device_type)
 
 
 if __name__ == "__main__":

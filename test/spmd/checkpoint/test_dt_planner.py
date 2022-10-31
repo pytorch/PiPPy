@@ -5,16 +5,16 @@ from typing import Dict, Union
 import torch
 import torch.distributed as dist
 import torch.distributed._shard.checkpoint as dist_cp
-from spmd import DeviceMesh, DTensor, Replicate
-from spmd import Shard as DShard
-from spmd import distribute_tensor
+from spmd.tensor import DeviceMesh, DTensor, Replicate
+from spmd.tensor import Shard as DShard
+from spmd.tensor import distribute_tensor
 from spmd.checkpoint.dt_planner import (
     DistributedTensorLoadPlanner,
     DistributedTensorSavePlanner,
 )
 from spmd.testing.checkpoint_utils import with_temp_dir
 from spmd.testing.common_utils import (
-    DistTensorTestBase,
+    DTensorTestBase,
     with_comms,
     skip_unless_torch_gpu,
 )
@@ -64,7 +64,7 @@ class MyModule(torch.nn.Module):
         self._extra_state_tensor = state["extra_state_tensor"]  # pyre-ignore[8]
 
 
-class DistributedTensorPlanner(DistTensorTestBase):
+class DistributedTensorPlanner(DTensorTestBase):
     @with_comms
     @skip_unless_torch_gpu
     @with_temp_dir

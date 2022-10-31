@@ -1,16 +1,16 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 from torch.testing._internal.common_utils import run_tests
-from spmd.testing.common_utils import (  # type: ignore
+from spmd.testing.common_dtensor import (  # type: ignore
     DTensorConverter,
-    DistTensorTestBase,
+    DTensorTestBase,
     with_comms,
 )
-from spmd import distribute_tensor, DeviceMesh, DTensor, Shard, Replicate
-from spmd.tensor.api import _Partial
+from spmd.tensor import distribute_tensor, DeviceMesh, DTensor
+from spmd.tensor.placement_types import Shard, Replicate, _Partial
 
 
-class DistTensorOpsTest(DistTensorTestBase):
+class DistTensorOpsTest(DTensorTestBase):
     @with_comms
     def test_aten_contiguous(self):
         # this op not covered by dtensor_ops

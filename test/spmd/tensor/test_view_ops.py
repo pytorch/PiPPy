@@ -2,12 +2,12 @@
 
 from typing import List, cast
 from spmd.tensor.placement_types import Placement
-from spmd.testing.common_utils import (  # type: ignore
-    DistTensorTestBase,
+from spmd.testing.common_dtensor import (  # type: ignore
+    DTensorTestBase,
     redistribute_profiler,
     with_comms,
 )
-from spmd import DeviceMesh, Shard, Replicate, distribute_tensor
+from spmd.tensor import DeviceMesh, Shard, Replicate, distribute_tensor
 from spmd.tensor.ops.view_ops import (
     ops,
     Singleton,
@@ -27,7 +27,7 @@ import torch
 import torch.distributed as dist
 
 
-class TestViewOps(DistTensorTestBase):
+class TestViewOps(DTensorTestBase):
     def test_view_groups(self):
         self.assertEquals(
             view_groups([2, 3], [3, 2]),

@@ -2,18 +2,18 @@
 import torch
 from torch.testing._internal.common_utils import run_tests
 from spmd.tensor.api import DTensor
-from spmd.testing.common_utils import (  # type: ignore
-    DistTensorTestBase,
+from spmd.testing.common_dtensor import (  # type: ignore
+    DTensorTestBase,
     with_comms,
     skip_unless_torch_gpu,
 )
-from spmd import distribute_tensor, DeviceMesh
+from spmd.tensor import distribute_tensor, DeviceMesh
 from spmd.tensor.placement_types import Placement, Shard, Replicate, _Partial
 from typing import List, Optional, cast
 import itertools
 
 
-class DistMatrixOpsTest(DistTensorTestBase):
+class DistMatrixOpsTest(DTensorTestBase):
     @with_comms
     def test_addmm(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))

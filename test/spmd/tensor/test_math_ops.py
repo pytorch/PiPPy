@@ -4,15 +4,15 @@ from torch.testing._internal.common_utils import run_tests
 
 from spmd.tensor import distribute_tensor
 from spmd.tensor.placement_types import Shard, Replicate
-from spmd.testing.common_utils import (  # type: ignore
-    DistTensorTestBase,
+from spmd.testing.common_dtensor import (  # type: ignore
+    DTensorTestBase,
     with_comms,
     skip_unless_torch_gpu,
 )
 import itertools
 
 
-class DistMathOpsTest(DistTensorTestBase):
+class DistMathOpsTest(DTensorTestBase):
     @with_comms
     def test_sum(self):
         device_mesh = self.build_device_mesh()

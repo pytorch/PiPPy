@@ -2,8 +2,8 @@
 import torch
 import torch.nn as nn
 from torch.testing._internal.common_utils import run_tests
-from spmd.testing.common_utils import DistTensorTestBase, with_comms  # type: ignore
-from spmd import (
+from spmd.testing.common_dtensor import DTensorTestBase, with_comms  # type: ignore
+from spmd.tensor import (
     distribute_tensor,
     distribute_module,
     DeviceMesh,
@@ -31,7 +31,7 @@ class MyModel(nn.Module):
             m.reset_parameters()
 
 
-class DTensorAPITest(DistTensorTestBase):
+class DTensorAPITest(DTensorTestBase):
     @with_comms
     def test_distribute_tensor(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))

@@ -16,7 +16,7 @@ from spmd.checkpoint.pg_planner import (
 )
 from spmd.testing.checkpoint_utils import with_temp_dir
 from spmd.testing.common_utils import (
-    DistTensorTestBase,
+    DTensorTestBase,
     with_comms,
     skip_unless_torch_gpu,
 )
@@ -64,7 +64,7 @@ class MyModule(torch.nn.Module):
         self._extra_state_tensor = state["extra_state_tensor"]  # pyre-ignore[8]
 
 
-class TestProcessGroupAwarePlanner(DistTensorTestBase):
+class TestProcessGroupAwarePlanner(DTensorTestBase):
     @with_comms
     @skip_unless_torch_gpu
     @with_temp_dir

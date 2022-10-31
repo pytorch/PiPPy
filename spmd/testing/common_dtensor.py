@@ -29,8 +29,7 @@ from torch.testing._internal.common_distributed import (
     skip_if_lt_x_gpu,
 )
 
-from spmd import DeviceMesh, distribute_tensor, Shard, Replicate
-from spmd.tensor import redistribute
+from spmd.tensor import DeviceMesh, Shard, Replicate, distribute_tensor, redistribute
 from spmd.tensor.api import DTensor
 from spmd.tensor.placement_types import Placement
 
@@ -86,7 +85,7 @@ def redistribute_profiler() -> Generator[RedistributeProfile, None, None]:
         redistribute.redistribute_dtensor = orig_redistribute_dtensor
 
 
-class DistTensorTestBase(MultiProcessTestCase):
+class DTensorTestBase(MultiProcessTestCase):
     @property
     def world_size(self) -> int:
         return NUM_DEVICES

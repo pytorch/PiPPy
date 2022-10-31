@@ -4,15 +4,15 @@ import torch
 
 from torch.testing._internal.common_utils import run_tests
 
-from spmd.testing.common_utils import (  # type: ignore
-    DistTensorTestBase,
+from spmd.testing.common_dtensor import (  # type: ignore
+    DTensorTestBase,
     with_comms,
 )
 from spmd.tensor import distribute_tensor, DeviceMesh, DTensor
 from spmd.tensor.placement_types import _Partial, Replicate, Shard
 
 
-class RedistributeTest(DistTensorTestBase):
+class RedistributeTest(DTensorTestBase):
     @with_comms
     def test_shard_to_replicate_forward_backward(self):
         # 1) test shard -> replicate forward
@@ -244,7 +244,7 @@ class RedistributeTest(DistTensorTestBase):
             )
 
 
-class MultiDimRedistributeTest(DistTensorTestBase):
+class MultiDimRedistributeTest(DTensorTestBase):
     @property
     def world_size(self) -> int:
         return 8

@@ -1,14 +1,14 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 from torch.testing._internal.common_utils import run_tests
-from spmd.testing.common_utils import (  # type: ignore
-    DistTensorTestBase,
+from spmd.testing.common_dtensor import (  # type: ignore
+    DTensorTestBase,
     with_comms,
 )
-from spmd import DeviceMesh, DTensor, Shard, Replicate, distribute_tensor
+from spmd.tensor import DeviceMesh, DTensor, Shard, Replicate, distribute_tensor
 
 
-class TPShardingOpsTest(DistTensorTestBase):
+class TPShardingOpsTest(DTensorTestBase):
     @with_comms
     def test_sharded_view(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))

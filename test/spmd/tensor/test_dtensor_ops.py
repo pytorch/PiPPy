@@ -21,10 +21,10 @@ from torch.testing._internal.common_device_type import (
 import torch.testing._internal.common_methods_invocations as common_ops
 from torch.testing._internal.common_methods_invocations import DecorateInfo
 
-from spmd import DTensor, DeviceMesh, Replicate
+from spmd.tensor import DTensor, DeviceMesh, Replicate
 from spmd.testing.dtensor_lagging_op_db import dtensor_lagging_op_db
-from spmd.testing.common_utils import (
-    DistTensorTestBase,
+from spmd.testing.common_dtensor import (
+    DTensorTestBase,
     TEST_SKIPS,
     DTensorConverter,
     DEVICE_TYPE,
@@ -652,7 +652,7 @@ def check_dtensor_func(test_case, test_func, opinfo, dry_run=False):
         test_case.destroy_pg()
 
 
-class TestDTensorOps(DistTensorTestBase):
+class TestDTensorOps(DTensorTestBase):
     @property
     def world_size(self) -> int:
         return NUM_DEVICES
