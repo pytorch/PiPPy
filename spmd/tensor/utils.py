@@ -1,12 +1,15 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 
 import torch
-from typing import Union, Dict, Tuple
+from typing import Union, Dict, Tuple, Optional, Sequence
 
 import spmd.tensor.api as dtensor
-from spmd.tensor.placement_types import DTensorSpec, OutputSpecType
+from spmd.tensor.placement_types import DTensorSpec
 
 ArgKwargsType = Union[Tuple[object, ...], Dict[str, object]]
+# ATen op schemas could have Tensor, Tuple[Tensor] and List[Tensor], so output type sould
+# be the same set of possiblities.
+OutputSpecType = Optional[Union[DTensorSpec, Sequence[DTensorSpec]]]
 
 
 def unwrap_local_tensor(e: "dtensor.DTensor") -> torch.Tensor:

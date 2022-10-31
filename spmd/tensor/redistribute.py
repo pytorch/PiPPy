@@ -2,8 +2,6 @@
 from typing import Dict, List, Sequence, Tuple, cast
 
 import torch
-import torch.distributed.distributed_c10d as c10d
-from torch.distributed._spmd.comm_tensor import CommTensor
 import spmd.tensor.api as dtensor
 from spmd.tensor.placement_types import Placement, _Partial, Shard, Replicate
 from spmd.tensor.device_mesh import DeviceMesh
@@ -103,15 +101,9 @@ def _redistribute_with_local_tensor(
             # Case 1: target is Replicate
             if current.is_partial():
                 partial_spec = cast(_Partial, current)
-                # out-of-place all_reduce to replicate, since the current partial DTensor
-                # might get used by other ops as well, so we can't inplace modify it
-                cloned_local = CommTensor(
-                    local_tensor.clone(memory_format=torch.contiguous_format)
+                new_local_tensor = partial_spec._to_replicate(
+                    local_tensor, device_mesh, i
                 )
-                device_mesh.all_reduce(
-                    cloned_local, c10d.ReduceOp(partial_spec.reduce_op), mesh_dim=i  # type: ignore
-                )
-                new_local_tensor = cloned_local
             elif current.is_shard():
                 current_placement = cast(Shard, current)
                 new_local_tensor = current_placement._to_replicate_tensor(
@@ -125,13 +117,9 @@ def _redistribute_with_local_tensor(
             # Case 2: target is Shard
             target_placement = cast(Shard, target)
             if current.is_partial():
-                # reduce shard (i.e. reduce_scatter) the current tensors
                 partial_spec = cast(_Partial, current)
-                new_local_tensor = target_placement._reduce_shard_tensor(
-                    local_tensor,
-                    device_mesh,
-                    c10d.ReduceOp(partial_spec.reduce_op),  # type: ignore
-                    i,
+                new_local_tensor = partial_spec._to_shard(
+                    local_tensor, device_mesh, i, target_placement
                 )
             elif current.is_replicate():
                 # split the tensor and return the corresponding cloned local shard

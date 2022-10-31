@@ -1,6 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 from dataclasses import dataclass
-from typing import Optional, List, Sequence, Union, Tuple, cast
+from typing import Optional, List, Sequence, Tuple, cast
 
 import torch
 import torch.distributed.distributed_c10d as c10d
@@ -9,7 +9,6 @@ from torch.distributed._spmd.comm_tensor import CommTensor
 from spmd.tensor.device_mesh import DeviceMesh
 
 
-@dataclass
 class Placement(object):
     # base class Placement type
 
@@ -84,7 +83,7 @@ class Shard(Placement):
             self.dim, start=0, length=tensor.size(self.dim) - 1
         )
 
-    def local_shard_size_on_dim(
+    def _local_shard_size_on_dim(
         self,
         size_on_dim: int,
         num_chunks: int,
@@ -217,8 +216,40 @@ class Replicate(Placement):
 
 @dataclass
 class _Partial(Placement):
-    # partial placement with reduce op
+    # This is a default partial placement with element-wise reduce op
+    # when doing reduction it follows the contract of `_to_replicate`
+    # and `_to_shard` to do the reduction and convert the local tensor
+    # to the corresponding state (replicate or shard)
+    #
+    # We can implement custom reductions as needed by subclassing this
+    # class and override those contracts.
     reduce_op: c10d.ReduceOp.RedOpType = c10d.ReduceOp.RedOpType.SUM  # type: ignore
+
+    def _to_replicate(
+        self, tensor: torch.Tensor, mesh: DeviceMesh, mesh_dim: int
+    ) -> torch.Tensor:
+        # out-of-place all_reduce to replicate, since the current partial DTensor
+        # might get used by other ops as well, so we can't inplace modify it
+        cloned_local = CommTensor(
+            tensor.clone(memory_format=torch.contiguous_format)
+        )
+        mesh.all_reduce(
+            cloned_local, c10d.ReduceOp(self.reduce_op), mesh_dim=mesh_dim  # type: ignore
+        )
+        return cloned_local
+
+    def _to_shard(
+        self,
+        tensor: torch.Tensor,
+        mesh: DeviceMesh,
+        mesh_dim: int,
+        shard_spec: Placement,
+    ) -> torch.Tensor:
+        # by default call reduce_shard_tensor of the shard_spec.
+        shard_spec = cast(Shard, shard_spec)
+        return shard_spec._reduce_shard_tensor(
+            tensor, mesh, c10d.ReduceOp(self.reduce_op), mesh_dim  # type: ignore
+        )
 
 
 # used internally to propagate the placements
@@ -309,7 +340,7 @@ class DTensorSpec(object):
                 assert (
                     shard_dim < self.ndim
                 ), f"Sharding dim {shard_dim} greater than tensor ndim {self.ndim}"
-                local_shard_size, _ = placement.local_shard_size_on_dim(
+                local_shard_size, _ = placement._local_shard_size_on_dim(
                     local_shape[shard_dim], mesh_dim_size, my_coordinate
                 )
                 assert isinstance(local_shard_size, int)
@@ -338,7 +369,7 @@ class DTensorSpec(object):
                 assert (
                     shard_dim < self.ndim
                 ), f"Sharding dim {shard_dim} greater than tensor ndim {self.ndim}"
-                shard_size, shard_offset = placement.local_shard_size_on_dim(
+                shard_size, shard_offset = placement._local_shard_size_on_dim(
                     local_shape[shard_dim],
                     mesh_dim_size,
                     my_coordinate,
@@ -392,10 +423,3 @@ class DTensorSpec(object):
                 placements[m] = Shard(i)
 
         return cls(mesh, placements, shape=shape, ndim=len(dim_map))
-
-
-# ATen op schemas could have Tensor, Tuple[Tensor] and List[Tensor], so output type sould
-# be the same set of possiblities.
-OutputSpecType = Optional[
-    Union[DTensorSpec, Tuple[DTensorSpec, ...], List[DTensorSpec]]
-]

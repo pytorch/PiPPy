@@ -428,7 +428,9 @@ class CommonRulesTest(DistTensorTestBase):
         )
         # reduction on dim 0
         output_sharding_0 = reduction_rule(
-            OpSchema(func_schema, (mat1_spec, 0), {})
+            OpSchema(func_schema, (mat1_spec, 0), {}),
+            dims=[0],
+            reduction_linear=True,
         )
         self.assertIsNotNone(output_sharding_0.output_spec)
         self.assertEqual(output_sharding_0.output_spec.dim_map, [-1])
@@ -438,7 +440,9 @@ class CommonRulesTest(DistTensorTestBase):
 
         # reduction on dim 1
         output_sharding_1 = reduction_rule(
-            OpSchema(func_schema, (mat1_spec, 1), {})
+            OpSchema(func_schema, (mat1_spec, 1), {}),
+            dims=[1],
+            reduction_linear=True,
         )
         self.assertIsNotNone(output_sharding_1.output_spec)
         self.assertEqual(output_sharding_1.output_spec.dim_map, [0])
@@ -447,7 +451,9 @@ class CommonRulesTest(DistTensorTestBase):
 
         # full reduction if not specify dim
         output_sharding_all_dim = reduction_rule(
-            OpSchema(func_schema, (mat1_spec,), {})
+            OpSchema(func_schema, (mat1_spec,), {}),
+            dims=[0, 1],
+            reduction_linear=True,
         )
         self.assertIsNotNone(output_sharding_all_dim.output_spec)
         self.assertEqual(output_sharding_all_dim.output_spec.dim_map, [])
