@@ -15,7 +15,7 @@ from spmd.checkpoint.pg_planner import (
     ProcessGroupAwareLoadPlanner,
 )
 from spmd.testing.checkpoint_utils import with_temp_dir
-from spmd.testing.common_utils import (
+from spmd.testing.common_dtensor import (
     DTensorTestBase,
     with_comms,
     skip_unless_torch_gpu,
