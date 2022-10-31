@@ -165,7 +165,7 @@ def resolve_pg_per_stage(pp_rank):
 def train_mode(
     model: torch.nn.Module,
     split_policy=None,
-    MULTI_USE_PARAM_CONFIG=None,
+     multi_use_param_spec=None,
     concrete_args=None,
     number_of_workers=0,
     args=None,
@@ -181,7 +181,7 @@ def train_mode(
 
     t5_pipe = Pipe.from_tracing(
         model,
-        MULTI_USE_PARAM_CONFIG,
+        multi_use_param_spec,
         tracer=PiPPyHFTracer(),
         concrete_args=concrete_args,
         output_loss_value_spec=output_loss_value_spec,
@@ -232,7 +232,7 @@ def train_mode(
 def inference_mode(
     model: torch.nn.Module,
     split_policy=None,
-    MULTI_USE_PARAM_CONFIG=None,
+    multi_use_param_spec=None,
     concrete_args=None,
     number_of_workers=0,
     args=None,
@@ -244,7 +244,7 @@ def inference_mode(
 
     t5_pipe = Pipe.from_tracing(
         model,
-        MULTI_USE_PARAM_CONFIG,
+        multi_use_param_spec,
         tracer=PiPPyHFTracer(),
         concrete_args=concrete_args,
         output_loss_value_spec=None,
@@ -365,7 +365,7 @@ def run_master(pp_ranks, args):
         pipe_driver = train_mode(
             model=t5,
             split_policy=split_policy,
-            MULTI_USE_PARAM_CONFIG=MULTI_USE_PARAM_CONFIG,
+            multi_use_param_spec=MULTI_USE_PARAM_CONFIG,
             concrete_args=concrete_args,
             number_of_workers=number_of_workers,
             args=args,
@@ -376,7 +376,7 @@ def run_master(pp_ranks, args):
         pipe_driver = inference_mode(
             model=t5,
             split_policy=split_policy,
-            MULTI_USE_PARAM_CONFIG=MULTI_USE_PARAM_CONFIG,
+            multi_use_param_spec=MULTI_USE_PARAM_CONFIG,
             concrete_args=concrete_args,
             number_of_workers=number_of_workers,
             args=args,
