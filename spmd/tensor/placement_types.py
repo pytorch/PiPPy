@@ -217,8 +217,8 @@ class Replicate(Placement):
 @dataclass
 class _Partial(Placement):
     # This is a default partial placement with element-wise reduce op
-    # when doing reduction it follows the contract of `to_replicate`
-    # and `to_shard` to do the reduction and convert the local tensor
+    # when doing reduction it follows the contract of `_to_replicate`
+    # and `_to_shard` to do the reduction and convert the local tensor
     # to the corresponding state (replicate or shard)
     #
     # We can implement custom reductions as needed by subclassing this

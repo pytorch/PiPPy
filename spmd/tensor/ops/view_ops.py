@@ -10,7 +10,6 @@ from typing import (
     Union,
     Sequence,
     cast,
-    List,
 )
 
 from spmd.tensor.placement_types import DTensorSpec, Placement, Replicate
@@ -482,11 +481,6 @@ ops: Dict[Callable[..., torch.Tensor], Op] = {
     ),
     torch.unsqueeze: Op(
         dim_map=lambda input, dim: dim_unsqueeze(input.ndim, dim)
-    ),
-    torch.var: Op(
-        dim_map=lambda input, dim=None, correction=None, keepdim=False: dim_reduction(
-            input.ndim, dim, keepdim
-        )
     ),
     Tensor.view: Op(
         dim_map=lambda input, *shape: view_groups(input.shape, shape),

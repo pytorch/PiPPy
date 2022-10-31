@@ -365,7 +365,6 @@ dtensor_fails = {
     xfail("nn.functional.interpolate", "nearest"),
     xfail("nn.functional.interpolate", "trilinear"),
     xfail("nn.functional.kl_div"),
-    xfail("nn.functional.l1_loss"),
     xfail("nn.functional.layer_norm"),
     xfail("nn.functional.leaky_relu"),
     xfail("nn.functional.linear"),

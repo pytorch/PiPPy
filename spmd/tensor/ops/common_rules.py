@@ -276,7 +276,6 @@ def pointwise_rule(
             )
 
     fmt = f"{','.join(p for p in dimchars)}->{out_dimchars}"
-    einop_schema = OpSchema(op_schema.func_schema, input_specs, {})
 
     enforce_sharding: Dict[str, int] = {}
     if op_schema.is_inplace:
@@ -290,7 +289,7 @@ def pointwise_rule(
 
     return einop_rule(
         fmt,
-        einop_schema,
+        op_schema,
         linearity=linearity,
         enforce_sharding=enforce_sharding,
     )
