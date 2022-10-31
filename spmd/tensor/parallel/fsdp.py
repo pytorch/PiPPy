@@ -304,7 +304,7 @@ def _chunk_tensor(
 
 def _pre_load_state_dict(
     tensor: torch.Tensor,
-) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+) -> Tuple[torch.Tensor, List[Shard]]:
     shards = cast(ShardedTensor, tensor).local_shards()
     if len(shards) == 1 and type(shards[0].tensor) is ShardedTensor:
         inner_tensor = cast(ShardedTensor, shards[0].tensor)
@@ -318,7 +318,7 @@ try:
         _set_fsdp_extensions,
         FSDPExtensions,
     )
-    from torch.distributed.fsdp._utils import _set_fsdp_flattened
+    from torch.distributed.fsdp._common_utils import _set_fsdp_flattened
 
     class DTensorExtensions(FSDPExtensions):
         def pre_flatten_transform(
@@ -347,7 +347,7 @@ try:
         def pre_load_state_dict_transform(
             self,
             tensor: torch.Tensor,
-        ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+        ) -> Tuple[torch.Tensor, List[Shard]]:
             return _pre_load_state_dict(tensor)
 
     _set_fsdp_extensions(DTensorExtensions())
