@@ -11,7 +11,7 @@ from typing import Any, Callable, Dict, List, Tuple, Optional
 import torch
 import torch.distributed.rpc as rpc
 import pippy.fx
-import pippy.fx.passes
+from pippy.fx.passes import shape_prop
 
 from pippy.IR import Pipe
 from pippy.backward import (
@@ -1245,6 +1245,7 @@ class PipelineDriverBase(torch.nn.Module):
         _record_mem_dumps=False,
         checkpoint=False,
         device: Optional[torch.device] = None,
+        use_c10d=False,
     ):
         super().__init__()
         self.pipe = pipe
@@ -1266,6 +1267,7 @@ class PipelineDriverBase(torch.nn.Module):
         self.optimizer_inited = False
         self.checkpoint = checkpoint
         self.device = device
+        self.use_c10d = use_c10d
 
     def _init_remote_executors(self):
         self.rank_worker_rrefs: Dict[int, torch.distributed.rpc.RRef] = {}
@@ -1855,13 +1857,26 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
         if node.op == "call_function" or node.op == "call_module":
             if "tensor_meta" in node.meta and isinstance(
                 node.meta["tensor_meta"],
-                pippy.fx.passes.shape_prop.TensorMetadata,
+                shape_prop.TensorMetadata,
             ):
                 val_ref: ValueReference = self.env[node]
                 val_ref.meta.setdefault("tensor_meta", node.meta["tensor_meta"])
 
         self.pc += 1
         return node
+
+    def propagate_shape(self, example_input):
+        logging.info("Propagating shape across split GraphModule")
+        sp = shape_prop.ShapeProp(self.module)
+        sp.propagate(*example_input)
+        for node in self.node_list:
+            logging.debug(f"Node: {node.name}, outputs: ")
+            if isinstance(node.meta['tensor_meta'], shape_prop.TensorMetadata):
+                logging.debug(f"- {node.meta['tensor_meta']}")
+            else:
+                # Multiple output tensors
+                for t_meta in node.meta['tensor_meta']:
+                    logging.debug(f"- {t_meta}")
 
 
 class _run_until_criteria:
@@ -1906,6 +1921,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         _record_mem_dumps=False,
         checkpoint=False,
         device: Optional[torch.device] = None,
+        use_c10d=False,
     ):
         super().__init__(
             pipe,
@@ -1921,6 +1937,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
             _record_mem_dumps=_record_mem_dumps,
             checkpoint=checkpoint,
             device=device,
+            use_c10d=use_c10d,
         )
         self.single_loss = single_loss
 
@@ -1969,6 +1986,13 @@ class PipelineDriverFillDrain(PipelineDriverBase):
                 batch_id=batch_id,
                 num_microbatches=self.chunks,
             )
+            # If user wants to use c10d for P2P, we would perform the shape propagation here. The shape prop is
+            # performed per batch, thus supporting dynamic shape in batch dimension. Dynamic shape in microbatch
+            # dimension is not yet supported, because all RemoteInterpreters share the same shape info (since they share
+            # the same split_gm)
+            if self.use_c10d and chunk == 0:
+                interp.propagate_shape(args_split[chunk])
+
             self.microbatch_interpreters.append(interp)
 
         logging.debug(
@@ -2056,6 +2080,7 @@ class PipelineDriver1F1B(PipelineDriverFillDrain):
         _record_mem_dumps=False,
         checkpoint=False,
         device: Optional[torch.device] = None,
+        use_c10d=False,
     ):
         # In 1F1B with backward stages, the maximum number of outstanding
         # micro-batches equals the number of pipeline stages
@@ -2078,6 +2103,7 @@ class PipelineDriver1F1B(PipelineDriverFillDrain):
             _record_mem_dumps=_record_mem_dumps,
             checkpoint=checkpoint,
             device=device,
+            use_c10d=use_c10d,
         )
 
 
@@ -2096,6 +2122,7 @@ class PipelineDriverInterleaved1F1B(PipelineDriver1F1B):
         _record_mem_dumps=False,
         checkpoint=False,
         device: Optional[torch.device] = None,
+        use_c10d=False,
     ):
         super().__init__(
             pipe,
@@ -2111,4 +2138,5 @@ class PipelineDriverInterleaved1F1B(PipelineDriver1F1B):
             _record_mem_dumps=_record_mem_dumps,
             checkpoint=checkpoint,
             device=device,
+            use_c10d=use_c10d,
         )

@@ -62,23 +62,6 @@ def inspect_split_module(
         print(submod)
 
 
-def shape_prop_pipe(
-        pipe: Pipe,
-        input,
-):
-    print("\n============= Propagate shape across GraphModule =============")
-    sp = shape_prop.ShapeProp(pipe.split_gm)
-    sp.propagate(input)
-    for node in pipe.split_gm.graph.nodes:
-        print(f"Node: {node.name}, outputs: ")
-        if isinstance(node.meta['tensor_meta'], pippy.fx.passes.shape_prop.TensorMetadata):
-            print(f"- {node.meta['tensor_meta']}")
-        else:
-            # Multiple output tensors
-            for t_meta in node.meta['tensor_meta']:
-                print(f"- {t_meta}")
-
-
 # For storing reference output from inside compiler
 ref_out = ()
 
@@ -126,9 +109,6 @@ def run_master(_, args):
         pipe = Pipe.from_tracing(gm, MULTI_USE_PARAM_CONFIG)
         inspect_split_module(pipe, 4)
 
-        # Propagate shape across Pipe
-        shape_prop_pipe(pipe, input)
-
         # Create PipelineDriver
         pipe_driver: PipelineDriverBase = schedules[args.schedule](
             pipe,
@@ -140,6 +120,7 @@ def run_master(_, args):
             _debug_mask_minibatches=True,
             _record_mem_dumps=bool(args.record_mem_dumps),
             checkpoint=bool(args.checkpoint),
+            use_c10d=True,
         )
 
         # Return a runtime Callable
@@ -193,6 +174,8 @@ def run_master(_, args):
 
     # Profiling run
     # This run would not trigger compilation
+    # Change the size to test dynamic shape support
+    ec_input = torch.randn(bs + 10, d_hid, device=args.device)
     with torch.autograd.profiler_legacy.profile(
             enabled=PROFILING_ENABLED
     ) as prof:
