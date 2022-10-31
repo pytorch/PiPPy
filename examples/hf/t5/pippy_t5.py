@@ -14,6 +14,7 @@ from pippy import run_pippy
 from pippy.IR import MultiUseParameterConfig, Pipe, PipeSplitWrapper, annotate_split_points
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverInterleaved1F1B, \
     PipelineDriverBase
+from pippy import split_on_size_threshold, split_into_equal_size
 from pippy.events import EventsContext
 from pippy.hf import PiPPyHFTracer
 from pippy.microbatch import CustomReducer, TensorChunkSpec
@@ -36,6 +37,14 @@ if VERBOSE:
 
 pippy.fx.Tracer.proxy_buffer_attributes = True
 
+def model_size(model_pipe):
+
+    total_params = 0
+    for i, sm in enumerate(model_pipe.split_gm.children()):
+        params = get_number_of_params(sm)
+        print(f"submod_{i} {params // 10 ** 6}M params")
+        total_params += params
+    print(f"total {total_params // 10 ** 6}M params")
 
 def get_number_of_params(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -136,9 +145,9 @@ def run_master(pp_ranks, args):
     print(f"number_of_workers = {number_of_workers}")
     # Specify auto_split policy for use by `from_tracing` call later
     if args.auto_split == "threshold":
-        split_policy = pippy.ModelSplit.split_on_size_threshold(490 * 1e6)
+        split_policy = split_on_size_threshold(490 * 1e6)
     elif args.auto_split == "equal_size":
-        split_policy = pippy.ModelSplit.split_into_equal_size(number_of_workers)
+        split_policy = split_into_equal_size(number_of_workers)
     else:
         # Manually insert split points before `from_tracing` call
         add_split_points(t5, number_of_workers)
@@ -153,9 +162,13 @@ def run_master(pp_ranks, args):
 
     torch.manual_seed(args.rank)
     inp = torch.empty(bs, seq_length, dtype=torch.long, device=device).random_(t5.config.vocab_size)
-    t5_input_dict = {'input_ids': inp, 'decoder_input_ids': inp,
-                     'labels': torch.empty(bs, seq_length, dtype=torch.long, device=device).random_(
-                         t5.config.vocab_size - 1)}
+
+    if args.mode == "train":
+        t5_input_dict = {'input_ids': inp, 'decoder_input_ids': inp,
+                        'labels': torch.empty(bs, seq_length, dtype=torch.long, device=device).random_(
+                            t5.config.vocab_size - 1)}
+    elif args.mode == "inference":
+        t5_input_dict = {'input_ids': inp, 'decoder_input_ids': inp}
 
     # print(t5)
 
@@ -164,41 +177,71 @@ def run_master(pp_ranks, args):
     concrete_args = {p.name: p.default for p in sig.parameters.values() if p.name not in input_names}
 
     print('Instantiating T5 Pipeline')
-    output_loss_value_spec = {'loss': True, 'logits': False,
-                              # 'past_key_values': False,
-                              'encoder_last_hidden_state': False}
-    t5_pipe = Pipe.from_tracing(t5, MULTI_USE_PARAM_CONFIG, tracer=PiPPyHFTracer(), concrete_args=concrete_args,
-                                output_loss_value_spec=output_loss_value_spec,
-                                split_policy=split_policy)
-    split_gm_children = list(t5_pipe.split_gm.children())
-    assert number_of_workers == len(
-        split_gm_children), f"number_of_workers = {number_of_workers} len(split_gm_children) = {len(split_gm_children)}"
+
+    def train_mode(t5, split_policy):
+
+        output_loss_value_spec = {'loss': True, 'logits': False,
+                                # 'past_key_values': False,
+                                'encoder_last_hidden_state': False}
+
+        t5_pipe = Pipe.from_tracing(t5, MULTI_USE_PARAM_CONFIG, tracer=PiPPyHFTracer(), concrete_args=concrete_args,
+                                    output_loss_value_spec=output_loss_value_spec,
+                                    split_policy=split_policy)
+        split_gm_children = list(t5_pipe.split_gm.children())
+        assert number_of_workers == len(
+            split_gm_children), f"number_of_workers = {number_of_workers} len(split_gm_children) = {len(split_gm_children)}"
     # t5_pipe.to(device) TODO: Uncomment this after https://github.com/pytorch/PiPPy/issues/142
 
     # t5_pipe(**t5_input_dict)
 
-    total_params = 0
-    for i, sm in enumerate(t5_pipe.split_gm.children()):
-        params = get_number_of_params(sm)
-        print(f"submod_{i} {params // 10 ** 6}M params")
-        total_params += params
-    print(f"total {total_params // 10 ** 6}M params")
+        model_size(t5_pipe)
 
-    args_chunk_spec = ()
-    kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'decoder_input_ids': TensorChunkSpec(0),
-                         'labels': TensorChunkSpec(0)}
-    output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b), 'logits': TensorChunkSpec(0),
-                         # 'past_key_values': [[TensorChunkSpec(0) for _ in range(36)] for _ in range(4)],
-                         'encoder_last_hidden_state': TensorChunkSpec(0)}
-    pipe_driver: PipelineDriverBase = schedules[args.schedule](t5_pipe, chunks, args_chunk_spec, kwargs_chunk_spec,
-                                                               output_chunk_spec,
-                                                               world_size=len(all_worker_ranks),
-                                                               all_ranks=all_worker_ranks,
+        args_chunk_spec = ()
+        kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'decoder_input_ids': TensorChunkSpec(0),
+                            'labels': TensorChunkSpec(0)}
+        output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b), 'logits': TensorChunkSpec(0),
+                            # 'past_key_values': [[TensorChunkSpec(0) for _ in range(36)] for _ in range(4)],
+                            'encoder_last_hidden_state': TensorChunkSpec(0)}
+        pipe_driver: PipelineDriverBase = schedules[args.schedule](t5_pipe, chunks, args_chunk_spec, kwargs_chunk_spec,
+                                                                output_chunk_spec,
+                                                                world_size=len(all_worker_ranks),
+                                                                all_ranks=all_worker_ranks,
+                                                                _debug_mask_minibatches=False,
+                                                                _record_mem_dumps=bool(args.record_mem_dumps),
+                                                                checkpoint=bool(args.checkpoint))
+
+        pipe_driver.init_data_parallel(dp_group_size=args.dp_group_size, dp_pg_cb=resolve_pg_per_stage)
+
+        return pipe_driver
+
+
+    def inference_mode(t5,split_policy):
+
+        args_chunk_spec = ()
+
+        t5_pipe = Pipe.from_tracing(t5, MULTI_USE_PARAM_CONFIG, tracer=PiPPyHFTracer(), concrete_args=concrete_args,
+                                output_loss_value_spec=None, split_policy=split_policy)
+
+        model_size(t5_pipe)
+
+        kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'decoder_input_ids': TensorChunkSpec(0)}
+
+        output_chunk_spec = {"logits": TensorChunkSpec(0),"encoder_last_hidden_state": TensorChunkSpec(0)}
+
+        pipe_driver: PipelineDriverBase = schedules[args.schedule](t5_pipe, chunks, args_chunk_spec, kwargs_chunk_spec,
+                                                                output_chunk_spec,
+                                                                world_size=len(all_worker_ranks),
+                                                                all_ranks=all_worker_ranks,
                                                                _debug_mask_minibatches=False,
                                                                _record_mem_dumps=bool(args.record_mem_dumps),
                                                                checkpoint=bool(args.checkpoint))
+        return pipe_driver
 
-    pipe_driver.init_data_parallel(dp_group_size=args.dp_group_size, dp_pg_cb=resolve_pg_per_stage)
+    if args.mode == "train":
+        pipe_driver = train_mode(t5, split_policy)
+    elif args.mode == "inference":
+        pipe_driver = inference_mode(t5,split_policy)
+
 
     this_file_name = os.path.splitext(os.path.basename(__file__))[0]
 
@@ -244,6 +287,7 @@ if __name__ == "__main__":
     parser.add_argument('--pp_group_size', type=int, default=8)
     parser.add_argument('--exclude_master', type=int, default=0, choices=[0, 1])
     parser.add_argument('--auto_split', type=str, default="")
+    parser.add_argument('--mode', type=str, default= "train", help="Choose the mode to run, options are train or inference",)
     args = parser.parse_args()
 
     assert args.world_size % args.pp_group_size == 0
