@@ -2,8 +2,6 @@
 import itertools
 import torch
 
-from torch.distributed.distributed_c10d import ReduceOp
-
 from torch.testing._internal.common_utils import run_tests
 
 from spmd.testing.common_utils import (  # type: ignore
@@ -129,7 +127,7 @@ class RedistributeTest(DistTensorTestBase):
         partial_local = torch.randn(
             12, 3, device=self.device_type, requires_grad=True
         )
-        partial_spec = [_Partial(ReduceOp.SUM)]
+        partial_spec = [_Partial()]
         replica_spec = [Replicate()]
         # test partial -> replicate, which trigger all_reduce
         partial_tensor = DTensor.from_local(
@@ -154,7 +152,7 @@ class RedistributeTest(DistTensorTestBase):
         local_tensor = torch.randn(
             12, 3, device=self.device_type, requires_grad=True
         )
-        partial_spec = _Partial(ReduceOp.SUM)
+        partial_spec = _Partial()
         replica_spec = Replicate()
         # 1) test replicate -> partial forward
         replica_tensor = distribute_tensor(
@@ -212,7 +210,7 @@ class RedistributeTest(DistTensorTestBase):
     @with_comms
     def test_partial_to_shard(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
-        partial_spec = [_Partial(ReduceOp.SUM)]
+        partial_spec = [_Partial()]
 
         input_sizes_and_shard_dim = [
             ((self.world_size * 3, 3), 0),

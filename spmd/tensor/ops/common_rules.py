@@ -234,7 +234,7 @@ def pointwise_rule(
     input_specs = op_schema.args_spec
     max_dim = max(input.ndim for input in input_specs)
     dimchars = []
-    dimchar_singleton_counter: Dict[str, int] = {}
+    singleton_counter: List[int] = [0] * max_dim
     for input in input_specs:
         start_dim = max_dim - input.ndim
         p = alphabet[start_dim:max_dim]
@@ -245,20 +245,22 @@ def pointwise_rule(
         # the non-singleton dimension, so that sharding propagation
         # should just ignore the singleton dimension.
         if len(input_specs) > 1:
-            for i, dim_length in enumerate(input.shape):
-                if dim_length == 1:
+            for i in range(max_dim):
+                if i < start_dim:
+                    # treat the leading miss dim chars as singleton
+                    singleton_counter[i] += 1
+                elif input.shape[i - start_dim] == 1:
                     # mark singleton dim char as a special "1" in einop rule
-                    dimchar_singleton_counter[p[i]] = (
-                        dimchar_singleton_counter.get(p[i], 0) + 1
-                    )
-                    p = _replace_char_in_str(p, "1", i)
+                    singleton_counter[i] += 1
+                    p = _replace_char_in_str(p, "1", (i - start_dim))
+
         dimchars.append(p)
     out_dimchars = alphabet[:max_dim]
     # check if we replace the all inputs dim char with singleton dimension,
     # if we replace all inputs, we also need to replace the output dimension.
     for output_dim_idx in range(len(out_dimchars)):
         out_dimchar = out_dimchars[output_dim_idx]
-        if dimchar_singleton_counter.get(out_dimchar, 0) == len(input_specs):
+        if singleton_counter[output_dim_idx] == len(input_specs):
             out_dimchars = _replace_char_in_str(
                 out_dimchars, "1", output_dim_idx
             )

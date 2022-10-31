@@ -202,8 +202,7 @@ class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
             layout=local_tensor.layout,
             requires_grad=requires_grad,
         )
-        # deepcopy and set spec, data should be handled
-        # by __init__ or from_local instead.
+        # deepcopy and set spec
         r._spec = DTensorSpec(
             device_mesh, copy.deepcopy(placements), shape=r.size()
         )
