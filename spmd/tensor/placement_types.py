@@ -234,7 +234,7 @@ class _Partial(Placement):
             tensor.clone(memory_format=torch.contiguous_format)
         )
         mesh.all_reduce(
-            cloned_local, c10d.ReduceOp(self.reduce_op), mesh_dim=mesh_dim
+            cloned_local, c10d.ReduceOp(self.reduce_op), mesh_dim=mesh_dim  # type: ignore
         )
         return cloned_local
 
@@ -248,7 +248,7 @@ class _Partial(Placement):
         # by default call reduce_shard_tensor of the shard_spec.
         shard_spec = cast(Shard, shard_spec)
         return shard_spec._reduce_shard_tensor(
-            tensor, mesh, c10d.ReduceOp(self.reduce_op), mesh_dim
+            tensor, mesh, c10d.ReduceOp(self.reduce_op), mesh_dim  # type: ignore
         )
 
 

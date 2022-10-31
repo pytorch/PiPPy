@@ -8,7 +8,9 @@ from spmd.tensor.ops.common_rules import reduction_rule, pointwise_rule
 from spmd.tensor.ops.utils import register_prop_rule, as_list, normalize_dims
 
 
-def _infer_reduction_dims(dims_arg, ndim) -> Optional[Sequence[int]]:
+def _infer_reduction_dims(
+    dims_arg: object, ndim: int
+) -> Optional[Sequence[int]]:
     if dims_arg is None:
         return None
     dims = cast(Sequence[int], as_list(dims_arg))
