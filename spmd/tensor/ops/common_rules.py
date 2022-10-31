@@ -2,10 +2,9 @@
 import math
 
 import torch
-from typing import List, Dict, Tuple, Optional, cast
+from typing import List, Sequence, Dict, Tuple, Optional, cast
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.placement_types import DTensorSpec
-from spmd.tensor.ops.utils import as_list
 
 
 def _replace_char_in_str(string: str, new_char: str, idx: int) -> str:
@@ -46,11 +45,13 @@ def _gen_reshard_suggestions(
                 shape=input_spec.shape,
             )
         )
+    suggested_schema = OpSchema(
+        op_schema.func_schema, tuple(suggested_arg_specs), {}
+    )
+    _inplace_rewrap_schema_suggestion(suggested_schema, op_schema)
     return OutputSharding(
         None,
-        schema_suggestions=[
-            OpSchema(op_schema.func_schema, tuple(suggested_arg_specs), {})
-        ],
+        schema_suggestions=[suggested_schema],
         failed_reason="Input placements op sharding propagation failed, need to reshard!",
     )
 
@@ -73,6 +74,13 @@ def einop_rule(
     Other ops could use this propagation algorithm when applied, note
     that einsum propagation only deal with list of specs (DTensor specs)
     as it only works on list of tensors!
+
+    linearity in einop_rule means that the calling op `f` follows this rule:
+        f(a + b) = f(a) + f(b)
+
+    In this case we can propagate the partial sum, note that linearity in einop
+    only applies to partial sum, not other operations like min/max (which are
+    associative but not linear).
     """
     # parse einop equation and extract arg specs
     inputs, outputs = equation.split("->")
@@ -195,11 +203,13 @@ def einop_rule(
             op_schema, input_dims, input_specs, dim_to_sharding, pending_sums
         )
 
-    # if no need to reshard, we directly generate the output sharding
+    # generate output pending sum if a dim is sharded, and it appears in input
+    # but not output
     for dim, shard_on_mesh in dim_to_sharding.items():
         if dim not in output_dims[0] and shard_on_mesh != -1:
             pending_sums.append(shard_on_mesh)
 
+    # if no need to reshard, we directly generate the output sharding
     output_dim_map = []
     output_shape = []
     for dim in output_dim:
@@ -234,7 +244,7 @@ def pointwise_rule(
     input_specs = op_schema.args_spec
     max_dim = max(input.ndim for input in input_specs)
     dimchars = []
-    dimchar_singleton_counter: Dict[str, int] = {}
+    singleton_counter: List[int] = [0] * max_dim
     for input in input_specs:
         start_dim = max_dim - input.ndim
         p = alphabet[start_dim:max_dim]
@@ -245,54 +255,44 @@ def pointwise_rule(
         # the non-singleton dimension, so that sharding propagation
         # should just ignore the singleton dimension.
         if len(input_specs) > 1:
-            for i, dim_length in enumerate(input.shape):
-                if dim_length == 1:
+            for i in range(max_dim):
+                if i < start_dim:
+                    # treat the leading miss dim chars as singleton
+                    singleton_counter[i] += 1
+                elif input.shape[i - start_dim] == 1:
                     # mark singleton dim char as a special "1" in einop rule
-                    dimchar_singleton_counter[p[i]] = (
-                        dimchar_singleton_counter.get(p[i], 0) + 1
-                    )
-                    p = _replace_char_in_str(p, "1", i)
+                    singleton_counter[i] += 1
+                    p = _replace_char_in_str(p, "1", (i - start_dim))
+
         dimchars.append(p)
     out_dimchars = alphabet[:max_dim]
     # check if we replace the all inputs dim char with singleton dimension,
     # if we replace all inputs, we also need to replace the output dimension.
     for output_dim_idx in range(len(out_dimchars)):
         out_dimchar = out_dimchars[output_dim_idx]
-        if dimchar_singleton_counter.get(out_dimchar, 0) == len(input_specs):
+        if singleton_counter[output_dim_idx] == len(input_specs):
             out_dimchars = _replace_char_in_str(
                 out_dimchars, "1", output_dim_idx
             )
 
     fmt = f"{','.join(p for p in dimchars)}->{out_dimchars}"
-    einop_schema = OpSchema(op_schema.func_schema, input_specs, {})
 
     enforce_sharding: Dict[str, int] = {}
     if op_schema.is_inplace:
         # inplace op should keep the input sharding it writes to
         for out_dimchar, mesh_dim in zip(out_dimchars, input_specs[0].dim_map):
             enforce_sharding[out_dimchar] = mesh_dim
-
     elif op_schema.is_out_variant:
         out_spec = cast(DTensorSpec, op_schema.kwargs_schema["out"])
         for out_dimchar, mesh_dim in zip(out_dimchars, out_spec.dim_map):
             enforce_sharding[out_dimchar] = mesh_dim
 
-    output_sharding = einop_rule(
+    return einop_rule(
         fmt,
-        einop_schema,
+        op_schema,
         linearity=linearity,
         enforce_sharding=enforce_sharding,
     )
-    if (
-        output_sharding.output_spec is None
-        and output_sharding.schema_suggestions is not None
-    ):
-        # sharding propagation failed, with reshard suggetion only have tensor specs,
-        # we will need to include back all non-tensor args/kwargs
-        suggested_schema = output_sharding.schema_suggestions[0]
-        _inplace_rewrap_schema_suggestion(suggested_schema, op_schema)
-
-    return output_sharding
 
 
 def linear_pointwise_rule(op_schema: OpSchema) -> OutputSharding:
@@ -304,34 +304,74 @@ def linear_pointwise_rule(op_schema: OpSchema) -> OutputSharding:
     return pointwise_rule(op_schema, linearity=True)
 
 
-def reduction_rule(op_schema: OpSchema) -> OutputSharding:
+def reduction_rule(
+    op_schema: OpSchema,
+    *,
+    dims: Optional[Sequence[int]] = None,
+    keep_dim: bool = False,
+    reduction_linear: bool = False,
+) -> OutputSharding:
     """
     Propagate the sharding for reduction operations. Examples:
         ij->i - sum on dim
+
+    reduction_linear means that the reduction `f` follows this rule:
+        f([f(a), f(b)]) = f([a, b])
+
+    reduction linear should be super set of linearity.
     """
     alphabet = "abcdefghijklmnopqrstuvwxyz"
     # reduction op usually begin with a single tensor
     input_spec = cast(DTensorSpec, op_schema.args_schema[0])
+    reduce_dims = range(input_spec.ndim) if dims is None else dims
+
+    if not reduction_linear:
+        # if the reduction is not linear, we need to clear the pending sum
+        # on the input spec, also replicate the reducing dimension if the
+        # reducing dimension is sharded, then suggest a resharding
+        reshard_dim_map = input_spec.dim_map
+        needs_reshard = False
+        for dim in reduce_dims:
+            if input_spec.dim_map[dim] != -1:
+                needs_reshard = True
+                reshard_dim_map[dim] = -1
+        needs_reshard = needs_reshard or len(input_spec.sums) > 0
+
+        if needs_reshard:
+            no_partial_spec = DTensorSpec.from_dim_map(
+                input_spec.mesh, reshard_dim_map, [], input_spec.shape
+            )
+            schema_suggestion = OpSchema(
+                op_schema.func_schema, tuple([no_partial_spec]), {}
+            )
+            _inplace_rewrap_schema_suggestion(schema_suggestion, op_schema)
+            return OutputSharding(
+                output_spec=None, schema_suggestions=[schema_suggestion]
+            )
+
     input_chars = alphabet[: input_spec.ndim]
 
-    if len(op_schema.args_schema) == 1:
+    if dims is None and not keep_dim:
         # reducing to a single scalar tensor, we just mark output as empty
         out_dimchars = ""
     else:
-        # this is usually a dim-based reduction op schema pattern, it
-        # might not be true for every op for other special cases, we
-        # need to specialize them as needed.
-        # TODO: add support for things like `torch.unique` where it
-        # does not follow the reduction op convention.
-        keep_dim = len(op_schema.args_schema) > 2 and bool(
-            op_schema.args_schema[2]
-        )
-        dim_list = as_list(op_schema.args_schema[1])
-        # keep_dim=True means output dim is a singleton dim
+        # if keep the reduction dim, we need to keep the dim char by marking
+        # it as a singleton "1" in the out_dimchars
         reduce_dim_char = ord("1") if keep_dim else None
         out_dimchars = input_chars.translate(
-            {ord(alphabet[cast(int, dim)]): reduce_dim_char for dim in dim_list}
+            {ord(alphabet[dim]): reduce_dim_char for dim in reduce_dims}
         )
-
     fmt = f"{input_chars}->{out_dimchars}"
-    return einop_rule(fmt, op_schema)
+
+    enforce_sharding: Dict[str, int] = {}
+    if op_schema.is_out_variant:
+        out_spec = cast(DTensorSpec, op_schema.kwargs_schema["out"])
+        for out_dimchar, mesh_dim in zip(out_dimchars, out_spec.dim_map):
+            enforce_sharding[out_dimchar] = mesh_dim
+
+    return einop_rule(
+        fmt,
+        op_schema,
+        linearity=reduction_linear,
+        enforce_sharding=enforce_sharding,
+    )

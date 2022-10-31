@@ -942,7 +942,7 @@ class Pipe(torch.nn.Module):
         tracer=None,
         output_loss_value_spec=None,
         deep_copy_module=False,
-        auto_parallel_strategy: Optional[
+        split_policy: Optional[
             Callable[[pippy.fx.GraphModule], pippy.fx.GraphModule]
         ] = None,
         **kwargs,
@@ -980,8 +980,8 @@ class Pipe(torch.nn.Module):
         finally:
             _pipeline_tracer = old__pipeline_tracer
 
-        if auto_parallel_strategy is not None:
-            traced = auto_parallel_strategy(traced)
+        if split_policy is not None:
+            traced = split_policy(traced)
 
         return Pipe._from_traced(
             mod,

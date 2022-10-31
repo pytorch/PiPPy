@@ -84,6 +84,14 @@ def _redistribute_with_local_tensor(
     sorted_placements.sort(key=_replicate_then_shard)
 
     for i, (current, target) in sorted_placements:
+        my_coordinate = device_mesh.get_coordinate_on_dim(i)
+        num_chunks = device_mesh.size(dim=i)
+        # TODO: what should happen if rank is not in the mesh?
+        # see issue https://github.com/pytorch/tau/pull/492
+        assert (
+            my_coordinate is not None
+        ), "Rank if not part of mesh"  # TODO: figure out behavior here
+
         if current == target:
             # short cut, just use the original local tensor
             new_local_tensor = local_tensor
@@ -93,49 +101,35 @@ def _redistribute_with_local_tensor(
             # Case 1: target is Replicate
             if current.is_partial():
                 partial_spec = cast(_Partial, current)
-                # all_reduce
-                new_local_tensor = device_mesh.all_reduce(
-                    local_tensor, partial_spec.reduce_op, mesh_dim=i
+                new_local_tensor = partial_spec._to_replicate(
+                    local_tensor, device_mesh, i
                 )
             elif current.is_shard():
-                assert (
-                    current.is_shard()
-                ), f"Current placement should be shard but found {current}"
-                # for shard, all_gather all shards and return a tensor that
-                # is replicated on the previously sharded dimension
-                shard_spec = cast(Shard, current)
-                new_size = list(local_tensor.size())
-                new_size[shard_spec.dim] *= device_mesh.size(
-                    i
-                )  # only works for evenly sharded tensors
-                # TODO: support uneven sharding
-                new_local_tensor = device_mesh.all_gather(
-                    local_tensor,
-                    new_size,
-                    mesh_dim=i,
-                    tensor_dim=shard_spec.dim,
+                current_placement = cast(Shard, current)
+                new_local_tensor = current_placement._to_replicate_tensor(
+                    local_tensor, size, device_mesh, i
+                )
+            else:
+                raise RuntimeError(
+                    f"redistribute from {current_placements} to {target_placements} not supported yet"
                 )
         elif target.is_shard():
             # Case 2: target is Shard
-            target_dim = target.dim  # type: ignore
-            num_chunks = device_mesh.size(dim=i)
-            chunk_size = (
-                local_tensor.size(target_dim) // num_chunks
-            )  # this may already be sharded on a differernt mesh dimension
-            my_rank = device_mesh.get_coordinate_on_dim(dim=i)
-            assert (
-                my_rank is not None
-            ), f"Rank: {device_mesh.get_rank()} is not part of the mesh!"  # TODO: figure out behavior here
+            target_placement = cast(Shard, target)
             if current.is_partial():
-                # reduce scatter the current tensors
-                new_local_tensor = device_mesh.reduce_scatter(
-                    local_tensor, mesh_dim=i, tensor_dim=target_dim
+                partial_spec = cast(_Partial, current)
+                new_local_tensor = partial_spec._to_shard(
+                    local_tensor, device_mesh, i, target_placement
                 )
             elif current.is_replicate():
-                # slice/narrow the tensor to corresponding local shard then return shard tensor
-                new_local_tensor = local_tensor.narrow(
-                    target_dim, my_rank * chunk_size, chunk_size
+                # split the tensor and return the corresponding cloned local shard
+                shards, _ = target_placement._split_tensor(
+                    local_tensor,
+                    num_chunks,
+                    with_padding=False,
+                    contiguous=False,
                 )
+                new_local_tensor = shards[my_coordinate].clone()
             else:
                 # NOTE: this case shouldn't hit _decompose_sharding, decompose sharding should
                 # decompose Shard(0) -> Shard(1) into Shard(0) -> Replicate -> Shard(1)
@@ -143,7 +137,7 @@ def _redistribute_with_local_tensor(
                     current.is_shard()
                 ), f"Current placement should be shard but found {current}"
                 shard_spec = cast(Shard, current)
-                if shard_spec.dim != target_dim:
+                if shard_spec.dim != target_placement.dim:
                     # TODO: enable this with all_to_all
                     raise NotImplementedError(
                         "Changing sharding dim is not supported yet!"
@@ -153,8 +147,7 @@ def _redistribute_with_local_tensor(
             if current.is_replicate():
                 # For replicate -> partial, we zero out all other ranks of the current mesh dim
                 # and leave only 1 rank have the data, to perform a "zero cost" reshard.
-                my_rank_on_mesh_dim = device_mesh.get_coordinate_on_dim(i)
-                if my_rank_on_mesh_dim is not None and my_rank_on_mesh_dim != 0:
+                if my_coordinate is not None and my_coordinate != 0:
                     new_local_tensor = local_tensor.zero_()
                 else:
                     new_local_tensor = local_tensor
@@ -180,8 +173,9 @@ def redistribute_dtensor(
         # TODO: alltoall reshuffling to change device_mesh if they are not the same
         raise NotImplementedError("Cross device mesh comm not supported yet!")
 
+    local_tensor = input._local_tensor
     new_local_tensor = _redistribute_with_local_tensor(
-        input.to_local(),
+        local_tensor,
         input.size(),
         device_mesh,
         input.placements,
@@ -192,7 +186,8 @@ def redistribute_dtensor(
         new_local_tensor,
         device_mesh,
         placements,
-        requires_grad=new_local_tensor.requires_grad,
+        size=input.size(),
+        requires_grad=local_tensor.requires_grad,
     )
 
 

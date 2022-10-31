@@ -1,13 +1,14 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+from dataclasses import dataclass
+from typing import Optional, List, Sequence, Tuple, cast
+
 import torch
 import torch.distributed.distributed_c10d as c10d
+from torch.distributed._spmd.comm_tensor import CommTensor
 
-from dataclasses import dataclass
-from typing import Optional, List, Sequence, Union, Tuple, cast
 from spmd.tensor.device_mesh import DeviceMesh
 
 
-@dataclass
 class Placement(object):
     # base class Placement type
 
@@ -30,6 +31,182 @@ class Shard(Placement):
     # shard placement, shard on a dim
     dim: int
 
+    def _split_tensor(
+        self,
+        tensor: torch.Tensor,
+        num_chunks: int,
+        *,
+        with_padding: bool = True,
+        contiguous: bool = True,
+    ) -> Tuple[List[torch.Tensor], int]:
+        # NOTE: For with_padding option, we pad the tensor on each rank before calling
+        # the collectives (i.e. scatter/all_gather, etc.). This is because for gloo
+        # backend, it does not support uneven collectives, nccl supports some, but
+        # it might be slow compared to even size collective, we need to pad tensor
+        # before really calling the collective, and unpad/narrow it afterwards
+        # TODO: consider if we should remove this logic once ProcessGroupGloo
+        # support uneven list, and collective perfomance on par
+        assert (
+            self.dim <= tensor.ndim
+        ), f"Sharding dim {self.dim} greater than tensor ndim {tensor.ndim}"
+        assert (
+            tensor.size(self.dim) >= num_chunks
+        ), f"Tensors to be sharded on dim {self.dim} must be at least as large as the number of devices in that dimension {num_chunks}"
+        # split tensor over dimension `dim` into n slices with padding if necessary
+        tensor_list = list(tensor.tensor_split(num_chunks, self.dim))
+        idx_start_to_pad = tensor.size(self.dim) % num_chunks
+        if with_padding or contiguous:
+            shard_list = []
+            for i, shard in enumerate(tensor_list):
+                if (
+                    with_padding
+                    and idx_start_to_pad != 0
+                    and i >= idx_start_to_pad
+                ):
+                    shard = self._pad_tensor(shard)
+                # input tensors are expected to be congtiguous by the collective backend
+                shard = shard.contiguous() if contiguous else shard
+                shard_list.append(shard)
+            return shard_list, idx_start_to_pad
+        else:
+            return tensor_list, idx_start_to_pad
+
+    def _pad_tensor(self, tensor: torch.Tensor) -> torch.Tensor:
+        # pad tensor by 1 on the shard dim
+        pad = [0, 0] * (tensor.ndim - self.dim)
+        pad[-1] = 1
+        return torch.nn.functional.pad(tensor, pad)
+
+    def _unpad_tensor(self, tensor: torch.Tensor) -> torch.Tensor:
+        # unpad tensor by 1 on the shard dim
+        return tensor.narrow(
+            self.dim, start=0, length=tensor.size(self.dim) - 1
+        )
+
+    def _local_shard_size_on_dim(
+        self,
+        size_on_dim: int,
+        num_chunks: int,
+        rank: int,
+        return_offset: bool = False,
+    ) -> Tuple[int, int]:
+        """
+        returns the local shard size and offset on a given tensor dim
+        """
+        assert (
+            size_on_dim >= num_chunks
+        ), f"Size to be sharded on dim {self.dim} must be at least as large as the number of devices in that dimension {num_chunks}"
+        split_size, pad_idx = divmod(size_on_dim, num_chunks)
+        local_shard_size = (
+            split_size + 1 if pad_idx != 0 and rank < pad_idx else split_size
+        )
+        local_offset_on_dim = -1
+        if return_offset:
+            local_offset_on_dim = (
+                rank * split_size + pad_idx if rank >= pad_idx else rank
+            )
+        return (local_shard_size, local_offset_on_dim)
+
+    def _shard_tensor(
+        self, tensor: torch.Tensor, mesh: DeviceMesh, mesh_dim: int
+    ) -> torch.Tensor:
+        """
+        shard and scatter a tensor on a mesh dimension (use coordinate
+        0 on the mesh dimension as source of truth)
+        """
+        my_coordinate = mesh.get_coordinate_on_dim(mesh_dim)
+        num_chunks = mesh.size(dim=mesh_dim)
+        # TODO: what should happen if rank is not in the mesh?
+        # see issue https://github.com/pytorch/tau/pull/492
+        assert (
+            my_coordinate is not None
+        ), "Rank if not part of mesh"  # TODO: figure out behavior here
+        scatter_list, pad_idx = self._split_tensor(
+            tensor, num_chunks, with_padding=True, contiguous=True
+        )
+        output = torch.empty_like(scatter_list[my_coordinate])
+        mesh.scatter(output, scatter_list, mesh_dim=mesh_dim)
+
+        if pad_idx != 0 and my_coordinate >= pad_idx:
+            output = self._unpad_tensor(output)
+        return output
+
+    def _reduce_shard_tensor(
+        self,
+        tensor: torch.Tensor,
+        mesh: DeviceMesh,
+        reduce_op: c10d.ReduceOp,
+        mesh_dim: int,
+    ) -> torch.Tensor:
+        """
+        reduce and scatter a tensor on a mesh dimension
+        """
+        my_coordinate = mesh.get_coordinate_on_dim(mesh_dim)
+        num_chunks = mesh.size(dim=mesh_dim)
+        # TODO: what should happen if rank is not in the mesh?
+        # see issue https://github.com/pytorch/tau/pull/492
+        assert (
+            my_coordinate is not None
+        ), "Rank if not part of mesh"  # TODO: figure out behavior here
+        scattered_list, pad_idx = self._split_tensor(
+            tensor, num_chunks, with_padding=True, contiguous=True
+        )
+        # wrap with comm tensor
+        scattered_list = [CommTensor(t) for t in scattered_list]
+        output = torch.empty_like(scattered_list[my_coordinate])
+        mesh.reduce_scatter(CommTensor(output), scattered_list, op=reduce_op, mesh_dim=mesh_dim)  # type: ignore
+        if pad_idx != 0 and my_coordinate >= pad_idx:
+            output = self._unpad_tensor(output)
+        return output
+
+    def _to_replicate_tensor(
+        self,
+        local_tensor: torch.Tensor,
+        size: torch.Size,
+        mesh: DeviceMesh,
+        mesh_dim: int,
+    ) -> torch.Tensor:
+        """
+        This function all_gather all shards and return a tensor that
+        is replicated on the previously sharded mesh dimension
+        """
+        my_coordinate = mesh.get_coordinate_on_dim(mesh_dim)
+        num_chunks = mesh.size(dim=mesh_dim)
+        # TODO: what should happen if rank is not in the mesh?
+        # see issue https://github.com/pytorch/tau/pull/492
+        assert (
+            my_coordinate is not None
+        ), "Rank if not part of mesh"  # TODO: figure out behavior here
+        # check if it needs to pad input tensor before all_gather
+        pad_idx = size[self.dim] % num_chunks
+        if pad_idx != 0 and my_coordinate >= pad_idx:
+            local_tensor = self._pad_tensor(local_tensor).contiguous()
+
+        gathered_list = []
+        # N.B. CommTensor does not change eager mode behavior. During tracing, it
+        # makes sure communication result is properly waited before subsequent
+        # read operations.
+        for _ in range(num_chunks):
+            gathered_list.append(
+                CommTensor(
+                    torch.empty_like(
+                        local_tensor,
+                        memory_format=torch.contiguous_format,
+                    )
+                )
+            )
+
+        mesh.all_gather(gathered_list, CommTensor(local_tensor.contiguous()), mesh_dim=mesh_dim)  # type: ignore
+        # unpad the tensor if the input tensor was padded
+        if pad_idx != 0:
+            gathered_list = [
+                self._unpad_tensor(gathered_tensor)  # type: ignore
+                if i >= pad_idx
+                else gathered_tensor
+                for i, gathered_tensor in enumerate(gathered_list)
+            ]
+        return torch.cat(gathered_list, dim=self.dim)  # type: ignore
+
 
 @dataclass
 class Replicate(Placement):
@@ -39,8 +216,40 @@ class Replicate(Placement):
 
 @dataclass
 class _Partial(Placement):
-    # partial placement with reduce op
-    reduce_op: c10d.ReduceOp = c10d.ReduceOp.SUM  # type: ignore
+    # This is a default partial placement with element-wise reduce op
+    # when doing reduction it follows the contract of `_to_replicate`
+    # and `_to_shard` to do the reduction and convert the local tensor
+    # to the corresponding state (replicate or shard)
+    #
+    # We can implement custom reductions as needed by subclassing this
+    # class and override those contracts.
+    reduce_op: c10d.ReduceOp.RedOpType = c10d.ReduceOp.RedOpType.SUM  # type: ignore
+
+    def _to_replicate(
+        self, tensor: torch.Tensor, mesh: DeviceMesh, mesh_dim: int
+    ) -> torch.Tensor:
+        # out-of-place all_reduce to replicate, since the current partial DTensor
+        # might get used by other ops as well, so we can't inplace modify it
+        cloned_local = CommTensor(
+            tensor.clone(memory_format=torch.contiguous_format)
+        )
+        mesh.all_reduce(
+            cloned_local, c10d.ReduceOp(self.reduce_op), mesh_dim=mesh_dim  # type: ignore
+        )
+        return cloned_local
+
+    def _to_shard(
+        self,
+        tensor: torch.Tensor,
+        mesh: DeviceMesh,
+        mesh_dim: int,
+        shard_spec: Placement,
+    ) -> torch.Tensor:
+        # by default call reduce_shard_tensor of the shard_spec.
+        shard_spec = cast(Shard, shard_spec)
+        return shard_spec._reduce_shard_tensor(
+            tensor, mesh, c10d.ReduceOp(self.reduce_op), mesh_dim  # type: ignore
+        )
 
 
 # used internally to propagate the placements
@@ -116,19 +325,26 @@ class DTensorSpec(object):
     def local_shape(self) -> Tuple[int, ...]:
         """
         Compute the shape of a local shard of the given DTensor on its current
-        global rank.
+        coordinate of the mesh.
         """
-        # TODO: support uneven sharding
         assert (
             self.shape is not None
         ), "DTensorSpec does not contain global shape."
         local_shape = list(self.shape)  # start with global shape
         for idx, placement in enumerate(self.placements):
+            mesh_dim_size = self.mesh.size(idx)
+            my_coordinate = self.mesh.get_coordinate_on_dim(idx)
+            assert my_coordinate is not None, "Rank not part of mesh!"
             if isinstance(placement, Shard):
+                shard_dim = placement.dim
                 assert (
-                    local_shape[placement.dim] % self.mesh.size(idx) == 0
-                ), f"Only even sharding supported for now. (Got {local_shape[placement.dim]} // {self.mesh.size(idx)} for mesh idx {idx}"
-                local_shape[placement.dim] //= self.mesh.size(idx)
+                    shard_dim < self.ndim
+                ), f"Sharding dim {shard_dim} greater than tensor ndim {self.ndim}"
+                local_shard_size, _ = placement._local_shard_size_on_dim(
+                    local_shape[shard_dim], mesh_dim_size, my_coordinate
+                )
+                assert isinstance(local_shard_size, int)
+                local_shape[shard_dim] = local_shard_size
         return tuple(local_shape)
 
     @property
@@ -142,20 +358,25 @@ class DTensorSpec(object):
             self.shape is not None
         ), "DTensorSpec does not contain global shape."
         local_offsets = [0] * self.ndim
-        for idx, mesh_dim in enumerate(self.dim_map):
-            if mesh_dim > -1:
-                my_coordinate = self.mesh.get_coordinate_on_dim(mesh_dim)
-                # TODO: what should happen if rank is not in the mesh?
-                # see issue https://github.com/pytorch/tau/pull/492
-                assert (
-                    my_coordinate is not None
-                ), "Rank if not part of mesh"  # TODO: figure out behavior here
-                mesh_dim_size = self.mesh.size(mesh_dim)
-                quot, rem = divmod(self.shape[idx], mesh_dim_size)
-                local_offsets[idx] = my_coordinate * quot + (
-                    rem if my_coordinate >= rem else my_coordinate
-                )
+        local_shape = list(self.shape)
 
+        for idx, placement in enumerate(self.placements):
+            mesh_dim_size = self.mesh.size(idx)
+            my_coordinate = self.mesh.get_coordinate_on_dim(idx)
+            assert my_coordinate is not None, "Rank not part of mesh!"
+            if isinstance(placement, Shard):
+                shard_dim = placement.dim
+                assert (
+                    shard_dim < self.ndim
+                ), f"Sharding dim {shard_dim} greater than tensor ndim {self.ndim}"
+                shard_size, shard_offset = placement._local_shard_size_on_dim(
+                    local_shape[shard_dim],
+                    mesh_dim_size,
+                    my_coordinate,
+                    return_offset=True,
+                )
+                local_shape[shard_dim] = shard_size
+                local_offsets[shard_dim] = shard_offset
         return tuple(local_offsets)
 
     @classmethod
@@ -202,10 +423,3 @@ class DTensorSpec(object):
                 placements[m] = Shard(i)
 
         return cls(mesh, placements, shape=shape, ndim=len(dim_map))
-
-
-# ATen op schemas could have Tensor, Tuple[Tensor] and List[Tensor], so output type sould
-# be the same set of possiblities.
-OutputSpecType = Optional[
-    Union[DTensorSpec, Tuple[DTensorSpec, ...], List[DTensorSpec]]
-]

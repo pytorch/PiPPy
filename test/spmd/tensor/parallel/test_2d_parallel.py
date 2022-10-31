@@ -69,7 +69,9 @@ def _replicate_input_tensor(
 ) -> torch.nn.Module:
     def hook_func(_, input):
         if not isinstance(input[0], DT):
-            return DT(input[0], device_mesh, replica_placement)
+            return DT.from_local(
+                input[0], device_mesh, replica_placement, run_check=False
+            )
 
     module.register_forward_pre_hook(hook_func)
     return module
