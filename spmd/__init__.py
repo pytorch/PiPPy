@@ -5,7 +5,6 @@ from spmd.api import Schema, SPMD
 from spmd.tensor.placement_types import Shard, Replicate
 
 
-
 # All public APIs from spmd package
 __all__ = [
     "DeviceMesh",

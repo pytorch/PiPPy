@@ -29,7 +29,13 @@ from torch.testing._internal.common_distributed import (
     skip_if_lt_x_gpu,
 )
 
-from spmd.tensor import DeviceMesh, Shard, Replicate, distribute_tensor, redistribute
+from spmd.tensor import (
+    DeviceMesh,
+    Shard,
+    Replicate,
+    distribute_tensor,
+    redistribute,
+)
 from spmd.tensor.api import DTensor
 from spmd.tensor.placement_types import Placement
 
