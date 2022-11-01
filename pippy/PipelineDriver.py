@@ -1871,11 +1871,11 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
         sp.propagate(*example_input)
         for node in self.node_list:
             logging.debug(f"Node: {node.name}, outputs: ")
-            if isinstance(node.meta['tensor_meta'], shape_prop.TensorMetadata):
+            if isinstance(node.meta["tensor_meta"], shape_prop.TensorMetadata):
                 logging.debug(f"- {node.meta['tensor_meta']}")
             else:
                 # Multiple output tensors
-                for t_meta in node.meta['tensor_meta']:
+                for t_meta in node.meta["tensor_meta"]:
                     logging.debug(f"- {t_meta}")
 
 
