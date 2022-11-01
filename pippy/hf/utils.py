@@ -228,9 +228,7 @@ class PiPPyTrainer(Trainer):
             transformers.optimization.TYPE_TO_SCHEDULER_FUNCTION[
                 self.args.lr_scheduler_type
             ],
-            num_warmup_steps=self.args.get_warmup_steps(
-                self.args.max_steps
-            ),
+            num_warmup_steps=self.args.get_warmup_steps(self.args.max_steps),
             num_training_steps=self.args.max_steps,
         )
         return self.lr_scheduler
