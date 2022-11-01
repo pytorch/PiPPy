@@ -53,9 +53,9 @@ def model_size(model_pipe):
     total_params = 0
     for i, sm in enumerate(model_pipe.split_gm.children()):
         params = get_number_of_params(sm)
-        print(f"submod_{i} {params // 10 ** 6}M params")
+        logging.debug(f"submod_{i} {params // 10 ** 6}M params")
         total_params += params
-    print(f"total {total_params // 10 ** 6}M params")
+    logging.debug(f"total {total_params // 10 ** 6}M params")
 
 
 def get_number_of_params(model):
@@ -292,8 +292,8 @@ def run_master(pp_ranks, args):
         if args.replicate
         else MultiUseParameterConfig.TRANSMIT
     )
-    print(f"REPLICATE config: {args.replicate} -> {MULTI_USE_PARAM_CONFIG}")
-    print("Using schedule:", args.schedule)
+    logging.debug(f"REPLICATE config: {args.replicate} -> {MULTI_USE_PARAM_CONFIG}")
+    logging.debug("Using schedule:", args.schedule)
 
     device = args.device
 
@@ -308,11 +308,12 @@ def run_master(pp_ranks, args):
         device
     )  # TODO: Delete this after https://github.com/pytorch/PiPPy/issues/142
     t5.eval()
-    print(t5.config)
-    print(f"T5 total number of params = {get_number_of_params(t5) // 10 ** 6}M")
+    logging.debug(t5.config)
+    logging.debug(f"T5 total number of params = {get_number_of_params(t5) // 10 ** 6}M")
 
     number_of_workers = len(pp_ranks) - pippy.utils.exclude_master
-    print(f"number_of_workers = {number_of_workers}")
+    logging.debug(f"number_of_workers = {number_of_workers}")
+
     # Specify auto_split policy for use by `from_tracing` call later
     if args.auto_split == "threshold":
         split_policy = split_on_size_threshold(490 * 1e6)
@@ -331,7 +332,7 @@ def run_master(pp_ranks, args):
     bs = args.batch_size * chunks
     seq_length = args.seq_length
 
-    print("Using device:", device)
+    logging.debug("Using device:", device)
 
     torch.manual_seed(args.rank)
     inp = torch.empty(bs, seq_length, dtype=torch.long, device=device).random_(
@@ -402,14 +403,14 @@ def run_master(pp_ranks, args):
         )
         with open(pipe_visualized_filename, "w") as f:
             f.write(events_to_json(all_events_contexts))
-        print(f"Saved {pipe_visualized_filename}")
+        logging.debug(f"Saved {pipe_visualized_filename}")
     print("Finished")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--world_size", type=int, default=int(os.getenv("WORLD_SIZE", 8))
+        "--world_size", type=int, default=int(os.getenv("WORLD_SIZE", 2))
     )
     parser.add_argument("--rank", type=int, default=int(os.getenv("RANK", -1)))
     parser.add_argument(
@@ -450,9 +451,9 @@ if __name__ == "__main__":
         "--record_mem_dumps", type=int, default=0, choices=[0, 1]
     )
     parser.add_argument("--checkpoint", type=int, default=1, choices=[0, 1])
-    parser.add_argument("--pp_group_size", type=int, default=8)
+    parser.add_argument("--pp_group_size", type=int, default=2)
     parser.add_argument("--exclude_master", type=int, default=0, choices=[0, 1])
-    parser.add_argument("--auto_split", type=str, default="")
+    parser.add_argument("--auto_split", type=str, default="equal_size")
     parser.add_argument(
         "--mode",
         type=str,
