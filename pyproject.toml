@@ -4,6 +4,7 @@ line-length = 80
 [tool.mypy]
 warn_unused_configs = true
 ignore_missing_imports = true
+follow_imports = "skip"
 exclude = [
   '^pippy/fx',
   '^test/.*fx',
