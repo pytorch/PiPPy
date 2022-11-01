@@ -8,4 +8,5 @@ exclude = [
   '^pippy/fx',
   '^test/.*fx',
   '^examples/hf',
+  '^docs',
 ]
