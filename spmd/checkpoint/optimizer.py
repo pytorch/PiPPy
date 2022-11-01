@@ -26,7 +26,7 @@ from torch.distributed._shard.checkpoint.planner_helpers import (
 )
 from torch.distributed.remote_device import _remote_device
 
-from spmd import DTensor as DT
+from spmd.tensor import DTensor as DT
 from torch.distributed._shard.checkpoint.default_planner import (
     DefaultLoadPlanner,
 )
