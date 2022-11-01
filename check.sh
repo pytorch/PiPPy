@@ -65,7 +65,7 @@ flake8 pippy spmd test/spmd
 
 # mypy spmd test/spmd
 echo; echo "Running mypy ..."
-mypy .
+mypy spmd pippy test examples
 (( RETVAL |= $? ))
 
 echo; echo "Running pylint ..."
