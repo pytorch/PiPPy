@@ -44,8 +44,6 @@ VERBOSE = bool(int(os.environ.get("VERBOSE", False)))
 
 if VERBOSE:
     logging.getLogger().setLevel(logging.DEBUG)
-else:
-    logging.getLogger().setLevel(logging.INFO)
 
 pippy.fx.Tracer.proxy_buffer_attributes = True
 
@@ -54,9 +52,9 @@ def print_model_size(model_pipe):
     total_params = 0
     for i, sm in enumerate(model_pipe.split_gm.children()):
         params = get_number_of_params(sm)
-        logging.info(f"submod_{i} {params // 10 ** 6}M params")
+        print(f"submod_{i} {params // 10 ** 6}M params")
         total_params += params
-    logging.info(f"total {total_params // 10 ** 6}M params")
+    print(f"total {total_params // 10 ** 6}M params")
 
 
 def get_number_of_params(model):
@@ -198,18 +196,22 @@ def transform_into_pipeline(
     # t5_pipe(**t5_input_dict)
 
     args_chunk_spec = ()
+
     kwargs_chunk_spec = {
         "input_ids": TensorChunkSpec(0),
         "decoder_input_ids": TensorChunkSpec(0),
     }
-    output_chunk_spec = {
-        "logits": TensorChunkSpec(0),
-        "encoder_last_hidden_state": TensorChunkSpec(0),
-    }
-
     if args.train:
         kwargs_chunk_spec.setdefault("labels", TensorChunkSpec(0))
-        output_chunk_spec.setdefault("loss", CustomReducer(torch.tensor(0.0), lambda a, b: a + b))
+
+    if args.train:
+        output_chunk_spec = {"loss": CustomReducer(torch.tensor(0.0), lambda a, b: a + b)}
+    else:
+        output_chunk_spec = {}
+    output_chunk_spec.update({
+        "logits": TensorChunkSpec(0),
+        "encoder_last_hidden_state": TensorChunkSpec(0),
+    })
 
     pipe_driver: PipelineDriverBase = schedules[args.schedule](
         t5_pipe,
@@ -235,8 +237,8 @@ def run_master(pp_ranks, args):
         if args.replicate
         else MultiUseParameterConfig.TRANSMIT
     )
-    logging.info(f"REPLICATE config: {args.replicate} -> {MULTI_USE_PARAM_CONFIG}")
-    logging.info("Using schedule:", args.schedule)
+    print(f"REPLICATE config: {args.replicate} -> {MULTI_USE_PARAM_CONFIG}")
+    print("Using schedule:", args.schedule)
 
     device = args.device
 
@@ -251,11 +253,11 @@ def run_master(pp_ranks, args):
         device
     )  # TODO: Delete this after https://github.com/pytorch/PiPPy/issues/142
     t5.eval()
-    logging.info(t5.config)
-    logging.info(f"T5 total number of params = {get_number_of_params(t5) // 10 ** 6}M")
+    print(t5.config)
+    print(f"T5 total number of params = {get_number_of_params(t5) // 10 ** 6}M")
 
     number_of_workers = len(pp_ranks) - pippy.utils.exclude_master
-    logging.info(f"number_of_workers = {number_of_workers}")
+    print(f"number_of_workers = {number_of_workers}")
 
     # Specify auto_split policy for use by `from_tracing` call later
     if args.auto_split == "threshold":
@@ -275,7 +277,7 @@ def run_master(pp_ranks, args):
     bs = args.batch_size * chunks
     seq_length = args.seq_length
 
-    logging.info("Using device:", device)
+    print("Using device:", device)
 
     torch.manual_seed(args.rank)
     inp = torch.empty(bs, seq_length, dtype=torch.long, device=device).random_(
@@ -301,7 +303,7 @@ def run_master(pp_ranks, args):
         if p.name not in input_names
     }
 
-    logging.info("Instantiating T5 Pipeline")
+    print("Instantiating T5 Pipeline")
     pipe_driver = transform_into_pipeline(
         model=t5,
         number_of_workers=number_of_workers,
@@ -313,7 +315,7 @@ def run_master(pp_ranks, args):
         all_worker_ranks=all_worker_ranks,
     )
 
-    logging.info("Running T5 pipeline.")
+    print("Running T5 pipeline.")
     this_file_name = os.path.splitext(os.path.basename(__file__))[0]
     pipe_visualized_filename = f"{this_file_name}_visualized_{args.rank}.json"
     batches_events_contexts = []
@@ -330,8 +332,8 @@ def run_master(pp_ranks, args):
         )
         with open(pipe_visualized_filename, "w") as f:
             f.write(events_to_json(all_events_contexts))
-        logging.info(f"Saved {pipe_visualized_filename}")
-    logging.info("Finished")
+        print(f"Saved {pipe_visualized_filename}")
+    print("Finished")
 
 
 if __name__ == "__main__":
