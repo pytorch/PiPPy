@@ -1,3 +1,19 @@
 [tool.black]
 line-length = 80
 
+[tool.mypy]
+warn_unused_configs = true
+ignore_missing_imports = true
+warn_redundant_casts = true
+show_error_codes = true
+show_column_numbers = true
+check_untyped_defs = true
+follow_imports = "silent"
+warn_unused_ignores = false
+exclude = [
+  '^pippy/fx',
+  '^test/.*fx',
+  '^test/hf',
+  '^examples/hf',
+  '^docs',
+]

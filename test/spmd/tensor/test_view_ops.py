@@ -2,8 +2,8 @@
 
 from typing import List, cast
 from spmd.tensor.placement_types import Placement
-from spmd.testing.common_utils import (  # type: ignore
-    DistTensorTestBase,
+from spmd.testing.common_dtensor import (
+    DTensorTestBase,
     redistribute_profiler,
     with_comms,
 )
