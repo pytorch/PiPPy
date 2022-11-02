@@ -54,7 +54,7 @@ def _create_colwise_spec(
         ]
     else:
         placements = [
-            f"rank:{idx}/{_gen_rank_device(dist.get_global_rank(pg, idx))}"
+            f"rank:{idx}/{_gen_rank_device(dist.get_global_rank(pg, idx))}"  # pyre-ignore[6]
             for idx in range(pg.size())  # type: ignore[16]
         ]
     return ChunkShardingSpec(  # pyre-ignore[28]
@@ -279,7 +279,7 @@ def load_sharded_optimizer_state_dict(
                 torch.Size(alloc_size), value.properties
             )
             local_shards = []
-            current_rank = dist.get_rank(dp_pg)
+            current_rank = dist.get_rank(dp_pg)  # pyre-ignore[6]
             for shard_md in st_md.shards_metadata:
                 if (
                     cast(_remote_device, shard_md.placement).rank()

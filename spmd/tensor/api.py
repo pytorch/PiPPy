@@ -65,7 +65,7 @@ class ToTorchTensor(torch.autograd.Function):
 class FromTorchTensor(torch.autograd.Function):
     @staticmethod
     def forward(  # type: ignore[override]
-        ctx,
+        ctx,  # pyre-ignore[2]: Parameter must be annotated.
         input: torch.Tensor,
         device_mesh: DeviceMesh,
         placements: Sequence[Placement],
