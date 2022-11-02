@@ -224,6 +224,7 @@ def transform_into_pipeline(
         _debug_mask_minibatches=False,
         _record_mem_dumps=bool(args.record_mem_dumps),
         checkpoint=bool(args.checkpoint) if args.train else False,
+        use_c10d = False if args.train else True,   # Safe to use c10d in inference mode
     )
     return pipe_driver
 

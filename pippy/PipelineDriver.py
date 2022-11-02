@@ -1854,7 +1854,8 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
             self.env[node].to_here()
 
         # Insert tensor meta to ValueReference returned by node call
-        if node.op == "call_function" or node.op == "call_module":
+        # TODO: there is some problem with "call_function", disabling for now
+        if node.op == "call_module":
             if "tensor_meta" in node.meta and isinstance(
                 node.meta["tensor_meta"],
                 shape_prop.TensorMetadata,
@@ -1865,18 +1866,20 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
         self.pc += 1
         return node
 
-    def propagate_shape(self, example_input):
+    def propagate_shape(self, args, kwargs):
         logging.info("Propagating shape across split GraphModule")
         sp = shape_prop.ShapeProp(self.module)
-        sp.propagate(*example_input)
+        # Not sure why FX's propagate API takes only args. Hence we unpack kwargs.values() without keys here
+        sp.propagate(*args, *kwargs.values())
         for node in self.node_list:
             logging.debug(f"Node: {node.name}, outputs: ")
-            if isinstance(node.meta["tensor_meta"], shape_prop.TensorMetadata):
-                logging.debug(f"- {node.meta['tensor_meta']}")
-            else:
-                # Multiple output tensors
-                for t_meta in node.meta["tensor_meta"]:
-                    logging.debug(f"- {t_meta}")
+            if "tensor_meta" in node.meta:
+                if isinstance(node.meta["tensor_meta"], shape_prop.TensorMetadata):
+                    logging.debug(f"- {node.meta['tensor_meta']}")
+                else:
+                    # Multiple output tensors
+                    for t_meta in node.meta["tensor_meta"]:
+                        logging.debug(f"- {t_meta}")
 
 
 class _run_until_criteria:
@@ -1991,7 +1994,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
             # dimension is not yet supported, because all RemoteInterpreters share the same shape info (since they share
             # the same split_gm)
             if self.use_c10d and chunk == 0:
-                interp.propagate_shape(args_split[chunk])
+                interp.propagate_shape(args_split[chunk], kwargs_split[chunk])
 
             self.microbatch_interpreters.append(interp)
 
