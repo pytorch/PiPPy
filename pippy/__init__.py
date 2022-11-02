@@ -1,6 +1,4 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-import logging
-import os
 from pippy.IR import (
     PipeSequential,
     LossWrapper,
@@ -29,10 +27,3 @@ __all__ = [
     "split_into_equal_size",
     "split_on_size_threshold",
 ]
-
-pippy_debug = os.environ.get("PIPPY_DEBUG", "OFF")
-
-if pippy_debug == "INFO":
-    logging.getLogger().setLevel(logging.INFO)
-elif pippy_debug == "DEBUG":
-    logging.getLogger().setLevel(logging.DEBUG)
