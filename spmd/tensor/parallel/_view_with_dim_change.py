@@ -29,7 +29,7 @@ class _ViewAndRedistribute(torch.autograd.Function):
     @staticmethod
     # pyre-fixme[14]: Inconsistent override.
     def forward(  # type: ignore[override]
-        ctx,
+        ctx,  # pyre-ignore[2]: Parameter must be annotated.
         self: DT,
         sharding_dim: int,
         shape: Tuple[int, ...],

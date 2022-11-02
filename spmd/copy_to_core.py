@@ -1,3 +1,5 @@
+# pyre-ignore-all-errors
+#
 # util file to copy files to core, note that this file should
 # be run from the tau/ root directory, and pytorch directory
 # should be in the same directory as tau.
