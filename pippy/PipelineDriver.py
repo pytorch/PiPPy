@@ -1874,7 +1874,9 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
         for node in self.node_list:
             logging.debug(f"Node: {node.name}, outputs: ")
             if "tensor_meta" in node.meta:
-                if isinstance(node.meta["tensor_meta"], shape_prop.TensorMetadata):
+                if isinstance(
+                    node.meta["tensor_meta"], shape_prop.TensorMetadata
+                ):
                     logging.debug(f"- {node.meta['tensor_meta']}")
                 else:
                     # Multiple output tensors
