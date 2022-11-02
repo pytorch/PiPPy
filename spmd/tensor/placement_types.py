@@ -1,5 +1,4 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-# pyre-ignore-all_errors[6]
 
 from dataclasses import dataclass
 from typing import Optional, List, Sequence, Tuple, cast
@@ -157,7 +156,10 @@ class Shard(Placement):
         scattered_list = [CommTensor(t) for t in scattered_list]
         output = torch.empty_like(scattered_list[my_coordinate])
         mesh.reduce_scatter(
-            CommTensor(output), scattered_list, op=reduce_op, mesh_dim=mesh_dim
+            CommTensor(output),
+            scattered_list,  # pyre-ignore[6]
+            op=reduce_op,
+            mesh_dim=mesh_dim,
         )
         if pad_idx != 0 and my_coordinate >= pad_idx:
             output = self._unpad_tensor(output)
