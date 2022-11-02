@@ -621,6 +621,14 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
             ]:
                 self.skipTest("BART models flakiness")
 
+            # TODO: support Segformer models https://github.com/pytorch/tau/issues/592
+            if model_cls in [
+                SegformerModel,
+                SegformerForImageClassification,
+                SegformerForSemanticSegmentation
+            ]:
+                self.skipTest("Need to support Segformer models")
+
             model, splitter = generate_hf_model(model_cls)
 
             submodules_cnt = splitter(model)
@@ -887,6 +895,14 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
                 PLBartForSequenceClassification,
             ]:
                 self.skipTest("BART models flakiness")
+
+            # TODO: support Segformer models https://github.com/pytorch/tau/issues/592
+            if model_cls in [
+                SegformerModel,
+                SegformerForImageClassification,
+                SegformerForSemanticSegmentation
+            ]:
+                self.skipTest("Need to support Segformer models")
 
             model, splitter = generate_hf_model(model_cls)
             model.eval()  # Disable nondeterminism for testing
