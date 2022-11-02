@@ -1,8 +1,9 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+# Owner(s): ["oncall: distributed"]
 
 from typing import List, cast
 from spmd.tensor.placement_types import Placement
-from spmd.testing.common_dtensor import (  # type: ignore
+from spmd.testing.common_dtensor import (
     DTensorTestBase,
     redistribute_profiler,
     with_comms,

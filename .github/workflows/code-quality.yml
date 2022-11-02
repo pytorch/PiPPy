@@ -26,7 +26,7 @@ jobs:
         if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
         pip install --pre torchvision -f https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html
         pip install git+https://github.com/pbelevich/transformers.git@compatible_with_pt_master
-        pip install "black<23" pylint==v3.0.0a5 mypy==v0.902 flake8 pyre-check==0.9.15
+        pip install "black<23" pylint==v3.0.0a5 mypy==v0.960 flake8==3.8.2 pyre-check==0.9.15
     - name: Static Analysis Checks
       if: always()
       run: ./check.sh --keep-going

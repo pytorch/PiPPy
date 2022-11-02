@@ -1,22 +1,22 @@
 # util file to copy files to core, note that this file should
 # be run from the tau/ root directory, and pytorch directory
 # should be in the same directory as tau.
-# 
+#
 # cmd: python spmd/copy_to_core.py
-# 
+#
 import shutil
 import os
 import glob
 import re
 
-# path to source directory
+# path to source/dest directory
 tau_src_dir = "./spmd/tensor/"
-tau_test_dir = "./test/spmd/tensor/"
-common_testing_dtensor = "./spmd/testing/common_dtensor.py"
-
-# path to destination directory
 pytorch_dest_dir = "../pytorch/torch/distributed/_tensor/"
+
+tau_test_dir = "./test/spmd/tensor/"
 pytorch_test_dir = "../pytorch/test/distributed/_tensor/"
+
+common_testing_dtensor = "./spmd/testing/common_dtensor.py"
 pytorch_common_testing_dtensor = (
     "../pytorch/torch/testing/_internal/common_dtensor.py"
 )

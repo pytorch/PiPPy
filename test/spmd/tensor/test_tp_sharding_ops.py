@@ -1,7 +1,9 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+# Owner(s): ["oncall: distributed"]
+
 import torch
 from torch.testing._internal.common_utils import run_tests
-from spmd.testing.common_dtensor import (  # type: ignore
+from spmd.testing.common_dtensor import (
     DTensorTestBase,
     with_comms,
 )
