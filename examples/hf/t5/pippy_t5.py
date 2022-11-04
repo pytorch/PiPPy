@@ -383,7 +383,7 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint", type=int, default=1, choices=[0, 1])
     parser.add_argument("--pp_group_size", type=int, default=2)
     parser.add_argument("--exclude_master", type=int, default=0, choices=[0, 1])
-    parser.add_argument("--auto_split", type=str, default="equal_size")
+    parser.add_argument("--auto_split", type=str, default=None)
     parser.add_argument(
         "--train",
         type=int,
