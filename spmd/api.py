@@ -1,3 +1,5 @@
+import logging
+
 import torch
 import torch.fx as fx
 import torch.distributed as dist
@@ -20,6 +22,9 @@ from spmd.tensor.placement_types import Placement, Shard, Replicate, _Partial
 from spmd.tensor.dispatch import operator_dispatch, propagate_input_sharding
 from spmd.tensor.redistribute import _redistribute_with_local_tensor
 
+from . import config
+
+log = logging.getLogger(__name__)
 
 @dataclass
 class Schema:
@@ -124,12 +129,13 @@ def _convert_to_distributed(
     inps: List[torch.Tensor],
     schemas: List[Schema],
     _allow_partial: bool = False,
+    debug_str="",
 ) -> fx.GraphModule:
     node_to_obj: Dict[fx.Node, object] = {}
     # map local op node in traced_f to its corresponding subgraph of
     # DTensor ops.
     replacements: Dict[torch.fx.Node, torch.fx.GraphModule] = {}
-
+    log.debug(f"{debug_str} Original graph {gm}")
     for i, node in enumerate(gm.graph.nodes):
         if node.op == "placeholder":
             assert i < len(
@@ -228,6 +234,8 @@ def _convert_to_distributed(
         else:
             raise ValueError(f"Unrecognized node {node}")
 
+    log.debug(f"{debug_str} graph post allreduce insertion {gm}")
+
     # replace nodes in local traced graph with DTensor's dispatch graph
     for node in gm.graph.nodes:
         if node not in replacements:
@@ -264,7 +272,7 @@ def _convert_to_distributed(
     gm.graph.lint()
     gm.graph.eliminate_dead_code()
     gm.recompile()
-
+    log.debug(f"{debug_str} graph after dtensor subgraph {gm}")
     return gm
 
 
@@ -272,6 +280,7 @@ class SPMD(nn.Module):
     # TODO: add schema_override
     def __init__(self, module: nn.Module, schema: Schema) -> None:
         super().__init__()
+        init_logging(config.log_level)
         assert schema.placements == [
             Replicate()
         ], "SPMD only support Replicate() parameters for now"
@@ -284,7 +293,24 @@ class SPMD(nn.Module):
         self._schema: Schema = schema
         self._compiled_m: Optional[nn.Module] = None
 
-    def _compile(
+    def _fw_compile(self, gm: fx.GraphModule, inps: List[torch.Tensor]
+    ) -> fx.GraphModule:
+        def is_param(t: torch.Tensor) -> bool:
+            # N.B.: id(t) and id(param) does not match
+            return t.storage().data_ptr() in [
+                p.storage().data_ptr() for p in self._local_module.parameters()
+            ]
+
+        shard_schema: Schema = Schema(
+            mesh=self._schema.mesh, placements=[Shard(0)]
+        )
+        schemas: List[Schema] = [
+            self._schema if is_param(inp) else shard_schema for inp in inps
+        ]
+        log.debug(f"schemas for FW pass are {schemas} with num inputs {len(inps)}")
+        return _convert_to_distributed(gm, inps, schemas, debug_str="fw")
+
+    def _bw_compile(
         self, gm: fx.GraphModule, inps: List[torch.Tensor]
     ) -> fx.GraphModule:
         def is_param(t: torch.Tensor) -> bool:
@@ -299,8 +325,8 @@ class SPMD(nn.Module):
         schemas: List[Schema] = [
             self._schema if is_param(inp) else shard_schema for inp in inps
         ]
-
-        return _convert_to_distributed(gm, inps, schemas)
+        log.debug(f"schemas for BW pass are {schemas} with num inputs {len(inps)}")
+        return _convert_to_distributed(gm, inps, schemas, debug_str="bw")
 
     def forward(
         self, *args: Tuple[object], **kwargs: Dict[str, object]
@@ -308,8 +334,8 @@ class SPMD(nn.Module):
         if self._compiled_m is None:
             self._compiled_m = aot_module(
                 self._local_module,
-                self._compile,
-                self._compile,
+                self._fw_compile,
+                self._bw_compile,
             )
 
         return cast(nn.Module, self._compiled_m)(*args, **kwargs)
