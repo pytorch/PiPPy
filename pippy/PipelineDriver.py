@@ -697,6 +697,12 @@ class PipeStageExecutor(EventRecorder):
                     self.mod, process_group=dp_pg_for_stage
                 )
 
+    def create_future(self):
+        # Future constructor does not accept CPU device, must set to None
+        return torch.futures.Future(
+            devices=None if self.device.type == "cpu" else [self.device]
+        )
+
     def invoke(
         self,
         output_unique_key: str,
@@ -746,9 +752,8 @@ class PipeStageExecutor(EventRecorder):
         # We assume the output value is on the same device as the stage's parameters
 
         # Future constructor does not accept CPU device, must set to None
-        future: torch.futures.Future = torch.futures.Future(
-            devices=None if self.device.type == "cpu" else [self.device]
-        )
+        future: torch.futures.Future = self.create_future()
+
         # TODO: increase blocked_args_count for extra things like scheduling
         work_item = WorkItem(
             stage_id=self.stage_id,
@@ -905,7 +910,7 @@ class PipeStageExecutor(EventRecorder):
         # Instead of return value let's do a send call
         if use_c10d:
             if torch.distributed.get_backend() == "gloo":
-                # Gloo error out with isend, use send instead
+                # Gloo P2P does not support work.get_future, so we use send instead
                 torch.distributed.send(value, caller_stage)
             else:
                 torch.distributed.isend(value, caller_stage)
@@ -935,33 +940,32 @@ class PipeStageExecutor(EventRecorder):
         )
 
         if use_c10d:
-            work = None
             if torch.distributed.get_backend() == "gloo":
-                # Gloo error out with irecv, use recv instead
+                # Gloo P2P does not support work.get_future, so we need to:
+                # - manually create the Future,
+                # - use recv instead, and
+                # - manually set_result to the Future
+                fut: torch.futures.Future = self.create_future()
                 torch.distributed.recv(recv_buff, callee_stage)
+                fut.set_result(recv_buff)
             else:
                 work = torch.distributed.irecv(recv_buff, callee_stage)
+                fut = work.get_future()
 
         def bottom_half(fut):
             logging.debug(
                 f"[{self.stage_id}][{microbatch}] Completing transfer of value {value_ref_arg} "
                 f"for runlist item {runlist_key} arg_idx {arg_idx}"
             )
-            if use_c10d:
-                if work:
-                    # For CUDA, wait() only ensure collective enqueue and compute-comm stream dependency
-                    work.wait()
-                    # Need to use is_completed() to sync back to CPU
-                    while not work.is_completed():
-                        pass
-                    # TODO: move compute-comm dependency to be entirely stream based, rather than based on CPU
-                    # conditional variable, see `update_run_list` below
-                self.rank_worker.update_run_list(
-                    runlist_key, arg_idx, recv_buff
-                )
-            else:
-                value = fut.value()
-                self.rank_worker.update_run_list(runlist_key, arg_idx, value)
+            value = fut.value()
+            # It is awkward that the Work class in PyTorch fixes the result return to a List:
+            #   def result(self) -> List[Tensor]: ...
+            # See torch/_C/_distributed_c10d.pyi
+            # We don't expect P2P operations to actually result in a List, hence unpacking and getting the first and
+            # only tensor out
+            if isinstance(value, List):
+                value = value[0]
+            self.rank_worker.update_run_list(runlist_key, arg_idx, value)
 
         return fut.then(bottom_half)
 
