@@ -224,7 +224,6 @@ def transform_into_pipeline(
         _debug_mask_minibatches=False,
         _record_mem_dumps=bool(args.record_mem_dumps),
         checkpoint=bool(args.checkpoint) if args.train else False,
-        use_c10d = False if args.train else True,   # Safe to use c10d in inference mode
     )
     return pipe_driver
 
@@ -340,7 +339,7 @@ def run_master(pp_ranks, args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--world_size", type=int, default=int(os.getenv("WORLD_SIZE", 2))
+        "--world_size", type=int, default=int(os.getenv("WORLD_SIZE", 8))
     )
     parser.add_argument("--rank", type=int, default=int(os.getenv("RANK", -1)))
     parser.add_argument(
@@ -381,9 +380,9 @@ if __name__ == "__main__":
         "--record_mem_dumps", type=int, default=0, choices=[0, 1]
     )
     parser.add_argument("--checkpoint", type=int, default=1, choices=[0, 1])
-    parser.add_argument("--pp_group_size", type=int, default=2)
+    parser.add_argument("--pp_group_size", type=int, default=8)
     parser.add_argument("--exclude_master", type=int, default=0, choices=[0, 1])
-    parser.add_argument("--auto_split", type=str, default="equal_size")
+    parser.add_argument("--auto_split", type=str, default=None)
     parser.add_argument(
         "--train",
         type=int,
@@ -393,6 +392,8 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    if (args.pp_group_size > args.world_size):
+       args.pp_group_size = args.world_size
     assert args.world_size % args.pp_group_size == 0
 
     args.dp_group_size = args.world_size // args.pp_group_size
