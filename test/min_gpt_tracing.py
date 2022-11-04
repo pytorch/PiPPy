@@ -114,7 +114,7 @@ model.eval()
 
 x = torch.tensor([[1, 2, 3, 4]], dtype=torch.long)
 stock_traced = pippy.fx.symbolic_trace(model, concrete_args={"targets": None})
-torch.testing.assert_allclose(stock_traced(x)[0], model(x)[0])
+torch.testing.assert_close(stock_traced(x)[0], model(x)[0])
 
 # Specify split points
 sp_spec = {
@@ -124,7 +124,7 @@ sp_spec = {
 annotate_split_points(model, sp_spec)
 
 traced_pipe = Pipe.from_tracing(model, concrete_args={"targets": None})
-torch.testing.assert_allclose(traced_pipe(x)[0], model(x)[0])
+torch.testing.assert_close(traced_pipe(x)[0], model(x)[0])
 
 assert list(dict(traced_pipe.split_gm.named_children()).keys()) == [
     "submod_0",
