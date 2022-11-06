@@ -1,7 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 import torch.nn as nn
-import functools
 from torch.testing._internal.common_utils import run_tests
 from spmd.testing.common_utils import DistTensorTestBase, with_comms, NUM_DEVICES, skip_unless_torch_gpu  # type: ignore
 from spmd import (

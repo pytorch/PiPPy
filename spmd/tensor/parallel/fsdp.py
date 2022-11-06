@@ -1,5 +1,4 @@
 import warnings
-import functools
 import copy
 from typing import List, NamedTuple, Optional, Tuple, cast
 
