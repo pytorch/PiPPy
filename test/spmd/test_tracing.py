@@ -10,8 +10,8 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.testing._internal.common_utils import run_tests
 
 from spmd.api import SPMD, Schema
-from spmd.testing.common_dtensor import (
-    DTensorTestBase,
+from spmd.testing.common_utils import (
+    DistTensorTestBase,
     with_comms,
 )
 from spmd.tensor import (

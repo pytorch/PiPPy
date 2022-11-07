@@ -487,7 +487,7 @@ def generate_inputs_for_model(model_cls, model, include_loss_args=False):
 def recursive_value_check(out, ref_out):
     if isinstance(out, torch.Tensor):
         assert isinstance(ref_out, torch.Tensor)
-        torch.testing.assert_allclose(out, ref_out)
+        torch.testing.assert_close(out, ref_out)
     elif isinstance(out, (tuple, list)):
         assert isinstance(ref_out, type(out))
         for a, b in zip(out, ref_out):
@@ -620,6 +620,14 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
                 PLBartForSequenceClassification,
             ]:
                 self.skipTest("BART models flakiness")
+
+            # TODO: support Segformer models https://github.com/pytorch/tau/issues/592
+            if model_cls in [
+                SegformerModel,
+                SegformerForImageClassification,
+                SegformerForSemanticSegmentation,
+            ]:
+                self.skipTest("Need to support Segformer models")
 
             model, splitter = generate_hf_model(model_cls)
 
@@ -888,6 +896,14 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
             ]:
                 self.skipTest("BART models flakiness")
 
+            # TODO: support Segformer models https://github.com/pytorch/tau/issues/592
+            if model_cls in [
+                SegformerModel,
+                SegformerForImageClassification,
+                SegformerForSemanticSegmentation,
+            ]:
+                self.skipTest("Need to support Segformer models")
+
             model, splitter = generate_hf_model(model_cls)
             model.eval()  # Disable nondeterminism for testing
             submodules_cnt = splitter(model)
@@ -1035,7 +1051,7 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
                     continue
                 v_ref = ref_grads[k_ref]
                 # TODO figure out numerical issues
-                # torch.testing.assert_allclose(v_test, v_ref)
+                # torch.testing.assert_close(v_test, v_ref)
 
             print(
                 f"Correctness check for model {model_cls.__name__}_{multi_use_param_config} passed",

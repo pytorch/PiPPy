@@ -25,5 +25,5 @@ __all__ = [
     "PipelineDriverFillDrain",
     "PipelineDriver1F1B",
     "split_into_equal_size",
-    "split_on_size_threshold"
+    "split_on_size_threshold",
 ]

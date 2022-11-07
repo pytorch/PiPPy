@@ -4,8 +4,8 @@ import torch
 
 from torch.testing._internal.common_utils import run_tests
 
-from spmd.testing.common_dtensor import (
-    DTensorTestBase,
+from spmd.testing.common_utils import (
+    DistTensorTestBase,
     with_comms,
 )
 from spmd.tensor import distribute_tensor, DeviceMesh, DTensor
