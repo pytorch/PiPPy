@@ -1,7 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 import torch.nn as nn
-import functools
 from torch.testing._internal.common_utils import run_tests
 from spmd.testing.common_utils import DistTensorTestBase, with_comms, NUM_DEVICES, skip_unless_torch_gpu  # type: ignore
 from spmd import (
@@ -46,10 +45,6 @@ def _aggregate_local_tensor(module: torch.nn.Module) -> torch.nn.Module:
     return module
 
 
-def _gradient_hook(param, grad):
-    param._local_tensor.grad = grad._local_tensor
-
-
 def shard_mlp(m, device_type, tp_size):
     start_idx = 0
     device_mesh = DeviceMesh(
@@ -75,9 +70,6 @@ def shard_mlp(m, device_type, tp_size):
                 )
                 module.register_parameter("weight", sharded_weight)
                 module.register_parameter("bias", sharded_bias)
-                module.weight.register_hook(
-                    functools.partial(_gradient_hook, module.weight)
-                )
             elif name == "net2":
                 sharded_weight = nn.Parameter(
                     distribute_tensor(
@@ -150,8 +142,6 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
 
         output.sum().backward()
         output_tp.sum().backward()
-        # This is for FSDP + TP integration.
-        self.assertTrue(model_tp.net1.weight._local_tensor.grad is not None)
 
         device_mesh = model_tp.net1.weight.device_mesh
         replicate = [Replicate()] * device_mesh.ndim
