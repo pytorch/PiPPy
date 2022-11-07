@@ -625,7 +625,7 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
             if model_cls in [
                 SegformerModel,
                 SegformerForImageClassification,
-                SegformerForSemanticSegmentation
+                SegformerForSemanticSegmentation,
             ]:
                 self.skipTest("Need to support Segformer models")
 
@@ -900,7 +900,7 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
             if model_cls in [
                 SegformerModel,
                 SegformerForImageClassification,
-                SegformerForSemanticSegmentation
+                SegformerForSemanticSegmentation,
             ]:
                 self.skipTest("Need to support Segformer models")
 

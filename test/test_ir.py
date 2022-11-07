@@ -688,9 +688,7 @@ class TestIR(unittest.TestCase):
         assert len(args_split) == NCHUNKS
         for chunk_idx, arg in enumerate(args_split):
             assert isinstance(arg, tuple) and len(arg) == 1
-            torch.testing.assert_close(
-                arg[0], x[chunk_idx : chunk_idx + 1, :]
-            )
+            torch.testing.assert_close(arg[0], x[chunk_idx : chunk_idx + 1, :])
 
         assert len(kwargs_split) == NCHUNKS
         for i, kwarg in enumerate(kwargs_split):
