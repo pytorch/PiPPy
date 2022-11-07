@@ -11,12 +11,12 @@ from spmd.testing.common_utils import (
 )
 from spmd.tensor import (
     distribute_tensor,
-    distribute_module,
     DeviceMesh,
     DTensor,
     Shard,
     Replicate,
 )
+from spmd import distribute_module
 from spmd.tensor.parallel import (
     TensorParallelMultiheadAttention,
     tp_shard_self_attn,
