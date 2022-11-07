@@ -1,7 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 from torch.testing._internal.common_utils import run_tests
-from spmd.testing.common_dtensor import (
+from spmd.testing.common_utils import (
     DTensorConverter,
     DistTensorTestBase,
     with_comms,
