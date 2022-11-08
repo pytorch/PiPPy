@@ -1,24 +1,54 @@
+import logging
+
+from dataclasses import dataclass
+from enum import auto, Enum
+from functools import partial
+from typing import cast, Dict, List, Optional, Sequence, Tuple
+
 import torch
-import torch.fx as fx
 import torch.distributed as dist
+import torch.fx as fx
 import torch.nn as nn
+
+from functorch.compile import aot_module
 from torch.distributed._spmd.comm_tensor import _get_tracer
 from torch.fx.experimental.proxy_tensor import make_fx, proxy_slot
 from torch.utils._pytree import tree_flatten, tree_map
 
-from functorch.compile import aot_module
-
-from dataclasses import dataclass
-from functools import partial
-from typing import Dict, List, Optional, Sequence, Tuple, cast
-
-from spmd.tensor import (
-    DTensor,
-    DeviceMesh,
-)
-from spmd.tensor.placement_types import Placement, Shard, Replicate, _Partial
+from spmd.tensor import DeviceMesh, DTensor
 from spmd.tensor.dispatch import operator_dispatch, propagate_input_sharding
+from spmd.tensor.placement_types import _Partial, Placement, Replicate, Shard
 from spmd.tensor.redistribute import _redistribute_with_local_tensor
+
+logger = logging.getLogger(__name__)
+
+
+class TrainingPhase(Enum):
+    FORWARD = auto()
+    BACKWARD = auto()
+    OPTIMIZATION = auto()
+
+
+class OP(str, Enum):
+    CALL_FUNCTION = "call_function"
+    GET_ATTR = "get_attr"
+    OUTPUT = "output"
+    PLACEHOLDER = "placeholder"
+
+
+def rank0_debug(*args, **kwargs) -> None:
+    if dist.is_initialized() and dist.get_rank() == 0:
+        logger.debug(*args, **kwargs)
+
+
+def rank0_info(*args, **kwargs) -> None:
+    if dist.is_initialized() and dist.get_rank() == 0:
+        logger.info(*args, **kwargs)
+
+
+def rank0_warning(*args, **kwargs) -> None:
+    if dist.is_initialized() and dist.get_rank() == 0:
+        logger.warning(*args, **kwargs)
 
 
 @dataclass
@@ -119,139 +149,114 @@ def _get_dtensor_dispatch_graph(
     return make_fx(dispatch)(tree_map(unwrap_local, args))
 
 
-def _convert_to_distributed(
+def _convert_output(
     gm: fx.GraphModule,
-    inps: List[torch.Tensor],
-    schemas: List[Schema],
-    _allow_partial: bool = False,
-) -> fx.GraphModule:
-    node_to_obj: Dict[fx.Node, object] = {}
-    # map local op node in traced_f to its corresponding subgraph of
-    # DTensor ops.
-    replacements: Dict[torch.fx.Node, torch.fx.GraphModule] = {}
-
-    for i, node in enumerate(gm.graph.nodes):
-        if node.op == "placeholder":
-            assert i < len(
-                inps
-            ), f"got more placeholer nodes ({i + 1}) than inputs ({len(inps)})"
-            node_to_obj[node] = DTensor.from_local(
-                inps[i], schemas[i].mesh, schemas[i].placements
-            )
-        elif isinstance(node.target, torch._ops.OpOverload):
-            replacements[node] = _get_dtensor_dispatch_graph(node, node_to_obj)
-        elif node.op == "output":
-            if not _allow_partial:
-                new_args = []
-                has_partial = False
-                for a in node.args[0]:
-                    if not isinstance(a, fx.Node):
-                        new_args.append(a)
-                        continue
-                    obj = node_to_obj[a]
-                    if isinstance(obj, DTensor) and isinstance(
-                        obj.placements[0], _Partial
-                    ):
-                        has_partial = True
-
-                        def dummy_add(
-                            grad: torch.Tensor, zero: torch.Tensor
-                        ) -> torch.Tensor:
-                            return grad + zero
-
-                        grad: torch.Tensor = obj._local_tensor
-                        zero: torch.Tensor = torch.zeros_like(obj._local_tensor)
-
-                        traced_add = make_fx(dummy_add)(grad, zero)
-
-                        placeholders = [
-                            n
-                            for n in traced_add.graph.nodes
-                            if n.op == "placeholder"
-                        ]
-                        call_functions = [
-                            n
-                            for n in traced_add.graph.nodes
-                            if n.op == "call_function"
-                        ]
-                        assert len(placeholders) == 2
-                        assert len(call_functions) == 1
-                        node_to_obj[placeholders[0]] = obj
-                        node_to_obj[placeholders[1]] = zero
-                        traced_dispatch = _get_dtensor_dispatch_graph(
-                            call_functions[0], node_to_obj
-                        )
-                        traced_dispatch.graph.lint()
-
-                        wait = [
-                            n
-                            for n in traced_dispatch.graph.nodes
-                            if n.name == "wait_comm"
-                        ]
-                        add = [
-                            n
-                            for n in traced_dispatch.graph.nodes
-                            if n.name == "add"
-                        ]
-                        assert len(wait) == 1 and len(add) == 1
-                        add[0].replace_all_uses_with(wait[0])
-                        traced_dispatch.graph.lint()
-                        traced_dispatch.graph.eliminate_dead_code()
-
-                        value_remap: Dict[fx.Node, fx.Node] = {}
-                        for dtn in traced_dispatch.graph.nodes:
-                            if dtn.op == "placeholder":
-                                # do nothing, ignore placeholders, as it has
-                                # already been prepared in value_remap
-                                value_remap[dtn] = a
-                            elif dtn.op == "output":
-                                assert (
-                                    len(dtn.args) == 1 and len(dtn.args[0]) == 1
-                                ), f"Expecting single output, but got {dtn.args}"
-                                new_args.append(value_remap[dtn.args[0][0]])
-                            else:
-                                if dtn.op == "get_attr":
-                                    setattr(
-                                        gm,
-                                        dtn.target,
-                                        getattr(traced_dispatch, dtn.target),
-                                    )
-                                with gm.graph.inserting_before(node):
-                                    value_remap[dtn] = gm.graph.node_copy(
-                                        dtn, lambda n: value_remap[n]
-                                    )
-
-                if has_partial:
-                    gm.graph.erase_node(node)
-                    gm.graph.output(new_args)
-                break
-        else:
-            raise ValueError(f"Unrecognized node {node}")
-
-    # replace nodes in local traced graph with DTensor's dispatch graph
-    for node in gm.graph.nodes:
-        if node not in replacements:
+    node: fx.Node,
+    node_to_obj: Dict[fx.Node, DTensor],
+) -> None:
+    new_args = []
+    has_partial = False
+    for argument in node.args[0]:
+        if not isinstance(argument, fx.Node):
+            new_args.append(argument)
+            continue
+        obj = node_to_obj[argument]
+        if not (
+            isinstance(obj, DTensor) and isinstance(obj.placements[0], _Partial)
+        ):
             continue
 
-        traced_dispatch = replacements[node]
+        has_partial = True
+
+        def dummy_add(grad: torch.Tensor, zero: torch.Tensor) -> torch.Tensor:
+            return grad + zero
+
+        grad: torch.Tensor = obj._local_tensor
+        zero: torch.Tensor = torch.zeros_like(obj._local_tensor)
+
+        traced_add = make_fx(dummy_add)(grad, zero)
+
+        placeholders = [
+            n for n in traced_add.graph.nodes if n.op == OP.PLACEHOLDER
+        ]
+        call_functions = [
+            n for n in traced_add.graph.nodes if n.op == OP.CALL_FUNCTION
+        ]
+        assert len(placeholders) == 2
+        assert len(call_functions) == 1
+        node_to_obj[placeholders[0]] = obj
+        node_to_obj[placeholders[1]] = zero
+        traced_dispatch = _get_dtensor_dispatch_graph(
+            call_functions[0], node_to_obj
+        )
+        traced_dispatch.graph.lint()
+
+        wait = [n for n in traced_dispatch.graph.nodes if n.name == "wait_comm"]
+        add = [n for n in traced_dispatch.graph.nodes if n.name == "add"]
+        assert len(wait) == 1 and len(add) == 1
+        add[0].replace_all_uses_with(wait[0])
+        traced_dispatch.graph.lint()
+        traced_dispatch.graph.eliminate_dead_code()
+
+        value_remap: Dict[fx.Node, fx.Node] = {}
+        for dtn in traced_dispatch.graph.nodes:
+            if dtn.op == OP.PLACEHOLDER:
+                # do nothing, ignore placeholders, as it has
+                # already been prepared in value_remap
+                value_remap[dtn] = argument
+            elif dtn.op == OP.OUTPUT:
+                assert (
+                    len(dtn.args) == 1 and len(dtn.args[0]) == 1
+                ), f"Expecting single output, but got {dtn.args}"
+                new_args.append(value_remap[dtn.args[0][0]])
+            else:
+                if dtn.op == OP.GET_ATTR:
+                    setattr(
+                        gm,
+                        dtn.target,
+                        getattr(traced_dispatch, dtn.target),
+                    )
+                with gm.graph.inserting_before(node):
+                    value_remap[dtn] = gm.graph.node_copy(
+                        dtn, lambda n: value_remap[n]
+                    )
+    if has_partial:
+        rank0_info("The output has partial arguments.")
+        gm.graph.erase_node(node)
+        gm.graph.output(new_args)
+    else:
+        rank0_info("The output does not have partial arguments.")
+    return
+
+
+def _rebuild_graph(
+    gm: fx.GraphModule,
+    node_replacements: Dict[torch.fx.Node, torch.fx.GraphModule],
+) -> None:
+    # replace nodes in local traced graph with DTensor's dispatch graph
+    for node in gm.graph.nodes:
+        if node not in node_replacements:
+            continue
+
+        traced_dispatch = node_replacements[node]
         # Map DT's dispatch graph input placeholder nodes to the ones in
         # local traced graph. It uses index-based accessing, which is
         # brittle, just for testing purpose.
         flatten_args, _ = tree_flatten(node.args)
         i, value_remap = 0, {}
         for dtn in traced_dispatch.graph.nodes:
-            if dtn.op == "placeholder":
+            if dtn.op == OP.PLACEHOLDER:
                 value_remap[dtn] = flatten_args[i]
                 i += 1
 
         # insert DT's dispatch graph to traced local graph.
         with gm.graph.inserting_before(node):
             for dtn in traced_dispatch.graph.nodes:
-                if dtn.op == "placeholder":
+                if dtn.op == OP.PLACEHOLDER:
                     # do nothing, ignore placeholders, as it has already
                     # been prepared in value_remap
                     pass
-                elif dtn.op == "output":
+                elif dtn.op == OP.OUTPUT:
                     assert (
                         len(dtn.args) == 1 and len(dtn.args[0]) == 1
                     ), f"Expecting single output, but got {dtn.args}"
@@ -265,6 +270,41 @@ def _convert_to_distributed(
     gm.graph.eliminate_dead_code()
     gm.recompile()
 
+
+def _convert_to_distributed(
+    training_phase: TrainingPhase,
+    gm: fx.GraphModule,
+    inps: List[torch.Tensor],
+    schemas: List[Schema],
+    _allow_partial: bool = False,
+) -> fx.GraphModule:
+    node_to_obj: Dict[fx.Node, object] = {}
+    # map local op node in traced_f to its corresponding subgraph of
+    # DTensor ops.
+    node_replacements: Dict[torch.fx.Node, torch.fx.GraphModule] = {}
+
+    rank0_info(f"Training phase: {training_phase}")
+    for i, node in enumerate(gm.graph.nodes):
+        rank0_info(f"node{i}: op={node.op} target={node.target}")
+        if node.op == OP.PLACEHOLDER:
+            assert i < len(
+                inps
+            ), f"got more placeholer nodes ({i + 1}) than inputs ({len(inps)})"
+            node_to_obj[node] = DTensor.from_local(
+                inps[i], schemas[i].mesh, schemas[i].placements
+            )
+        elif isinstance(node.target, torch._ops.OpOverload):
+            node_replacements[node] = _get_dtensor_dispatch_graph(
+                node, node_to_obj
+            )
+        elif node.op == OP.OUTPUT:
+            if not _allow_partial:
+                _convert_output(gm, node, node_to_obj)
+                break
+        else:
+            raise ValueError(f"Unrecognized node {node}")
+
+    _rebuild_graph(gm, node_replacements)
     return gm
 
 
@@ -285,7 +325,10 @@ class SPMD(nn.Module):
         self._compiled_m: Optional[nn.Module] = None
 
     def _compile(
-        self, gm: fx.GraphModule, inps: List[torch.Tensor]
+        self,
+        training_phase: TrainingPhase,
+        gm: fx.GraphModule,
+        inps: List[torch.Tensor],
     ) -> fx.GraphModule:
         def is_param(t: torch.Tensor) -> bool:
             # N.B.: id(t) and id(param) does not match
@@ -300,7 +343,7 @@ class SPMD(nn.Module):
             self._schema if is_param(inp) else shard_schema for inp in inps
         ]
 
-        return _convert_to_distributed(gm, inps, schemas)
+        return _convert_to_distributed(training_phase, gm, inps, schemas)
 
     def forward(
         self, *args: Tuple[object], **kwargs: Dict[str, object]
@@ -308,8 +351,8 @@ class SPMD(nn.Module):
         if self._compiled_m is None:
             self._compiled_m = aot_module(
                 self._local_module,
-                self._compile,
-                self._compile,
+                partial(self._compile, TrainingPhase.FORWARD),
+                partial(self._compile, TrainingPhase.BACKWARD),
             )
 
         return cast(nn.Module, self._compiled_m)(*args, **kwargs)
