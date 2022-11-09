@@ -826,6 +826,10 @@ class PipeStageExecutor(EventRecorder):
 
         # Batch recv per callee stage
         for callee_stage, batch_refs in callee_stage_dict.items():
+            value_ref_executor_rref = self.peer_executors[callee_stage]
+            value_ref_executor_rref.rpc_async().batch_get_value(
+                self.stage_id, output_unique_key, cur_microbatch, batch_refs,
+            )
             self.batch_async_transfer(cur_microbatch, output_unique_key, callee_stage, batch_refs)
 
         """
@@ -1001,14 +1005,14 @@ class PipeStageExecutor(EventRecorder):
         caller_stage,
         runlist_key,
         microbatch,
-        batch_ref_list,
+        batch_refs,
     ):
         logging.debug(
             f"[{self.stage_id}][{microbatch}] Executing batch transfer of "
-            f"{len(batch_ref_list)} values initiated by stage {caller_stage} for {runlist_key}"
+            f"{len(batch_refs)} values initiated by stage {caller_stage} for {runlist_key}"
         )
 
-        for value_ref_arg in batch_ref_list:
+        for _, value_ref_arg in batch_refs.items():
             logging.debug(
                 f"[{self.stage_id}][{microbatch}] Executing transfer of value "
                 f"{value_ref_arg} initiated by stage {caller_stage} for {runlist_key}"
@@ -1038,14 +1042,7 @@ class PipeStageExecutor(EventRecorder):
             f"[{self.stage_id}][{microbatch}] Requesting batch transfer of {len(batch_refs)} values "
             f"for runlist item {runlist_key} from stage {callee_stage}"
         )
-        value_ref_executor_rref = self.peer_executors[callee_stage]
         futures = []
-
-        # Assume use_c10d is True
-        remote_fut = value_ref_executor_rref.rpc_async().batch_get_value(
-            self.stage_id, runlist_key, microbatch, batch_refs.values(),
-        )
-        futures.append(remote_fut)
 
         for arg_idx, value_ref_arg in batch_refs.items():
             tm = value_ref_arg.meta["tensor_meta"]
