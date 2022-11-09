@@ -20,35 +20,23 @@ from spmd.tensor.dispatch import operator_dispatch, propagate_input_sharding
 from spmd.tensor.placement_types import _Partial, Placement, Replicate, Shard
 from spmd.tensor.redistribute import _redistribute_with_local_tensor
 
-logger = logging.getLogger(__name__)
+from .utils import rank0_info
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 class TrainingPhase(Enum):
     FORWARD = auto()
     BACKWARD = auto()
-    OPTIMIZATION = auto()
 
 
 class OP(str, Enum):
     CALL_FUNCTION = "call_function"
+    CALL_MODULE = "call_module"
+    CALL_METHOD = "call_method"
     GET_ATTR = "get_attr"
     OUTPUT = "output"
     PLACEHOLDER = "placeholder"
-
-
-def rank0_debug(*args, **kwargs) -> None:
-    if dist.is_initialized() and dist.get_rank() == 0:
-        logger.debug(*args, **kwargs)
-
-
-def rank0_info(*args, **kwargs) -> None:
-    if dist.is_initialized() and dist.get_rank() == 0:
-        logger.info(*args, **kwargs)
-
-
-def rank0_warning(*args, **kwargs) -> None:
-    if dist.is_initialized() and dist.get_rank() == 0:
-        logger.warning(*args, **kwargs)
 
 
 @dataclass
@@ -152,7 +140,7 @@ def _get_dtensor_dispatch_graph(
 def _convert_output(
     gm: fx.GraphModule,
     node: fx.Node,
-    node_to_obj: Dict[fx.Node, DTensor],
+    node_to_obj: Dict[fx.Node, object],
 ) -> None:
     new_args = []
     has_partial = False
@@ -221,11 +209,11 @@ def _convert_output(
                         dtn, lambda n: value_remap[n]
                     )
     if has_partial:
-        rank0_info("The output has partial arguments.")
+        rank0_info(logger, "The output has partial arguments.")
         gm.graph.erase_node(node)
         gm.graph.output(new_args)
     else:
-        rank0_info("The output does not have partial arguments.")
+        rank0_info(logger, "The output does not have partial arguments.")
     return
 
 
@@ -283,9 +271,9 @@ def _convert_to_distributed(
     # DTensor ops.
     node_replacements: Dict[torch.fx.Node, torch.fx.GraphModule] = {}
 
-    rank0_info(f"Training phase: {training_phase}")
+    rank0_info(logger, f"Training phase: {training_phase}")
     for i, node in enumerate(gm.graph.nodes):
-        rank0_info(f"node{i}: op={node.op} target={node.target}")
+        rank0_info(logger, f"node{i}: op={node.op} target={node.target}")
         if node.op == OP.PLACEHOLDER:
             assert i < len(
                 inps
