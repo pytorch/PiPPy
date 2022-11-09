@@ -3,7 +3,7 @@ import logging
 from dataclasses import dataclass
 from enum import auto, Enum
 from functools import partial
-from typing import cast, Dict, List, Optional, Sequence, Tuple
+from typing import cast, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import torch
 import torch.distributed as dist
@@ -11,14 +11,14 @@ import torch.fx as fx
 import torch.nn as nn
 
 from functorch.compile import aot_module
-from torch.distributed._spmd.comm_tensor import _get_tracer
-from torch.fx.experimental.proxy_tensor import make_fx, proxy_slot
-from torch.utils._pytree import tree_flatten, tree_map
 
 from spmd.tensor import DeviceMesh, DTensor
 from spmd.tensor.dispatch import operator_dispatch, propagate_input_sharding
 from spmd.tensor.placement_types import _Partial, Placement, Replicate, Shard
 from spmd.tensor.redistribute import _redistribute_with_local_tensor
+from torch.distributed._spmd.comm_tensor import _get_tracer
+from torch.fx.experimental.proxy_tensor import make_fx, proxy_slot
+from torch.utils._pytree import tree_flatten, tree_map
 
 from .log_utils import rank0_info
 
@@ -144,7 +144,7 @@ def _convert_output(
 ) -> None:
     new_args = []
     has_partial = False
-    for argument in node.args[0]:
+    for argument in node.args[0]:  # type: ignore
         if not isinstance(argument, fx.Node):
             new_args.append(argument)
             continue
