@@ -20,7 +20,7 @@ from spmd.tensor.dispatch import operator_dispatch, propagate_input_sharding
 from spmd.tensor.placement_types import _Partial, Placement, Replicate, Shard
 from spmd.tensor.redistribute import _redistribute_with_local_tensor
 
-from .utils import rank0_info
+from .log_utils import rank0_info
 
 logger: logging.Logger = logging.getLogger(__name__)
 
