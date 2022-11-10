@@ -807,8 +807,9 @@ class PipeStageExecutor(EventRecorder):
             )
         """
 
-        # Sort Value Ref Args based on providing stage
-        # Dict[callee_stage, Dict[my_arg_idx, value_ref]]
+        # Group Value Ref Args based on source stage
+        # `callee_stage_dict` has the following structure:
+        #   Dict[callee_stage, Dict[my_arg_idx, value_ref]]
         callee_stage_dict: Dict[int, Dict[int, ValueReference]] = {}
         for arg_idx, value_ref_arg in enumerate(value_ref_args):
             if "tensor_meta" in value_ref_arg.meta:
@@ -817,7 +818,7 @@ class PipeStageExecutor(EventRecorder):
                 batch_refs[arg_idx] = value_ref_arg
             else:
                 logging.debug(
-                    f"[{self.stage_id}][{cur_microbatch}] Launching asynchronous data transfer for "
+                    f"[{self.stage_id}][{cur_microbatch}] Launching RPC data transfer for "
                     f"ValueReference {arg_idx} {value_ref_arg}"
                 )
                 self.async_transfer(
@@ -827,10 +828,10 @@ class PipeStageExecutor(EventRecorder):
         # Batch recv per callee stage
         for callee_stage, batch_refs in callee_stage_dict.items():
             value_ref_executor_rref = self.peer_executors[callee_stage]
-            value_ref_executor_rref.rpc_async().batch_get_value(
+            value_ref_executor_rref.rpc_async().batch_send(
                 self.stage_id, output_unique_key, cur_microbatch, batch_refs,
             )
-            self.batch_async_transfer(cur_microbatch, output_unique_key, callee_stage, batch_refs)
+            self.batch_recv(cur_microbatch, output_unique_key, callee_stage, batch_refs)
 
         """
         if DEBUG:
@@ -1000,7 +1001,7 @@ class PipeStageExecutor(EventRecorder):
 
         return fut.then(bottom_half)
 
-    def batch_get_value(
+    def batch_send(
         self,
         caller_stage,
         runlist_key,
@@ -1037,7 +1038,7 @@ class PipeStageExecutor(EventRecorder):
             else:
                 torch.distributed.isend(value, caller_stage)
 
-    def batch_async_transfer(self, microbatch, runlist_key, callee_stage, batch_refs):
+    def batch_recv(self, microbatch, runlist_key, callee_stage, batch_refs):
         logging.debug(
             f"[{self.stage_id}][{microbatch}] Requesting batch transfer of {len(batch_refs)} values "
             f"for runlist item {runlist_key} from stage {callee_stage}"
