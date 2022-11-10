@@ -44,10 +44,16 @@ class Schema:
 
 
 def _is_partial_dtensor(obj: object) -> bool:
-    """check if object is 1) DTensor and  2) with placement of _Partial"""
-    is_partial = isinstance(obj, DTensor) and isinstance(
-        obj.placements[0], _Partial
-    )
+    """check if object is 1) DTensor and  2) with any placement of _Partial"""
+    if not isinstance(obj, DTensor):
+        return False
+
+    is_partial = False
+    for placement in obj.placements:
+        if isinstance(placement, _Partial):
+            is_partial = True
+            break
+
     return is_partial
 
 
@@ -188,10 +194,10 @@ def _convert_output(
             continue
         obj = node_to_obj[argument]
 
-        if not _is_partial_dtensor(obj):
-            continue
+        has_partial = _is_partial_dtensor(obj)
 
-        has_partial = True
+        if not has_partial:
+            continue
 
         # we know it's a dtensor from is partial DT check...
         dt = cast(DTensor, obj)
