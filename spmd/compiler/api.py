@@ -193,7 +193,10 @@ def _convert_output(
 
         has_partial = True
 
-        traced_dispatch = _build_dummy_add_graph(obj, node_to_obj)
+        # we know it's a dtensor from is partial DT check...
+        dt = cast(DTensor, obj)
+
+        traced_dispatch = _build_dummy_add_graph(dt, node_to_obj)
 
         wait = [n for n in traced_dispatch.graph.nodes if n.name == "wait_comm"]
         add = [n for n in traced_dispatch.graph.nodes if n.name == "add"]
