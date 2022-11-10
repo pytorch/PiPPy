@@ -816,9 +816,14 @@ class PipeStageExecutor(EventRecorder):
         for callee_stage, batch_refs in callee_stage_dict.items():
             value_ref_executor_rref = self.peer_executors[callee_stage]
             value_ref_executor_rref.rpc_async().batch_send(
-                self.stage_id, output_unique_key, cur_microbatch, batch_refs,
+                self.stage_id,
+                output_unique_key,
+                cur_microbatch,
+                batch_refs,
             )
-            self.batch_recv(cur_microbatch, output_unique_key, callee_stage, batch_refs)
+            self.batch_recv(
+                cur_microbatch, output_unique_key, callee_stage, batch_refs
+            )
 
         with self.value_store_cv:
             assert output_unique_key not in self.value_store, (
@@ -929,7 +934,10 @@ class PipeStageExecutor(EventRecorder):
         value_ref_executor_rref = self.peer_executors[callee_stage]
 
         fut = value_ref_executor_rref.rpc_async().get_value(
-            self.stage_id, runlist_key, microbatch, value_ref_arg,
+            self.stage_id,
+            runlist_key,
+            microbatch,
+            value_ref_arg,
         )
 
         def bottom_half(fut):
@@ -1002,7 +1010,7 @@ class PipeStageExecutor(EventRecorder):
                 fut.set_result(recv_buff)
             else:
                 work = torch.distributed.irecv(recv_buff, callee_stage)
-                fut = work.get_future()
+                fut = work.get_future()     # type: ignore[attr-defined]
 
             def bottom_half(fut):
                 logging.debug(
