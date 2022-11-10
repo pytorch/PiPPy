@@ -3,7 +3,7 @@ import logging
 from dataclasses import dataclass
 from enum import auto, Enum
 from functools import partial
-from typing import cast, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import cast, Dict, List, Optional, Sequence, Tuple
 
 import torch
 import torch.distributed as dist
