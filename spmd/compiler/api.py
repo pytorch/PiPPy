@@ -43,7 +43,7 @@ class Schema:
     placements: List[Placement]
 
 
-def _is_partial_dtensor(obj: DTensor) -> bool:
+def _is_partial_dtensor(obj: object) -> bool:
     """check if object is 1) DTensor and  2) with placement of _Partial"""
     is_partial = isinstance(obj, DTensor) and isinstance(
         obj.placements[0], _Partial
@@ -143,6 +143,38 @@ def _get_dtensor_dispatch_graph(
     return make_fx(dispatch)(tree_map(unwrap_local, args))
 
 
+def _build_dummy_add_graph(
+    dt: DTensor, node_to_obj: Dict[fx.Node, object]
+) -> fx.GraphModule:
+    """creates a graph for a dummy add function from a partial DTensor.
+    This dummy add is then used for expansion into a CommTensor expanded graph"""
+
+    def dummy_add(grad: torch.Tensor, zero: torch.Tensor) -> torch.Tensor:
+        return grad + zero
+
+    grad: torch.Tensor = dt._local_tensor
+    zero: torch.Tensor = torch.zeros_like(dt._local_tensor)
+
+    traced_add = make_fx(dummy_add)(grad, zero)
+
+    placeholders = [n for n in traced_add.graph.nodes if n.op == OP.PLACEHOLDER]
+    call_functions = [
+        n for n in traced_add.graph.nodes if n.op == OP.CALL_FUNCTION
+    ]
+    assert len(placeholders) == 2
+    assert len(call_functions) == 1
+    node_to_obj[placeholders[0]] = dt
+    node_to_obj[placeholders[1]] = zero
+
+    traced_dispatch = _get_dtensor_dispatch_graph(
+        call_functions[0], node_to_obj
+    )
+
+    traced_dispatch.graph.lint()
+
+    return traced_dispatch
+
+
 def _convert_output(
     gm: fx.GraphModule,
     node: fx.Node,
@@ -161,28 +193,7 @@ def _convert_output(
 
         has_partial = True
 
-        def dummy_add(grad: torch.Tensor, zero: torch.Tensor) -> torch.Tensor:
-            return grad + zero
-
-        grad: torch.Tensor = obj._local_tensor
-        zero: torch.Tensor = torch.zeros_like(obj._local_tensor)
-
-        traced_add = make_fx(dummy_add)(grad, zero)
-
-        placeholders = [
-            n for n in traced_add.graph.nodes if n.op == OP.PLACEHOLDER
-        ]
-        call_functions = [
-            n for n in traced_add.graph.nodes if n.op == OP.CALL_FUNCTION
-        ]
-        assert len(placeholders) == 2
-        assert len(call_functions) == 1
-        node_to_obj[placeholders[0]] = obj
-        node_to_obj[placeholders[1]] = zero
-        traced_dispatch = _get_dtensor_dispatch_graph(
-            call_functions[0], node_to_obj
-        )
-        traced_dispatch.graph.lint()
+        traced_dispatch = _build_dummy_add_graph(obj, node_to_obj)
 
         wait = [n for n in traced_dispatch.graph.nodes if n.name == "wait_comm"]
         add = [n for n in traced_dispatch.graph.nodes if n.name == "add"]
