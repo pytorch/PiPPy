@@ -1,24 +1,22 @@
 import logging
-
 from dataclasses import dataclass
-from enum import auto, Enum
+from enum import Enum, auto
 from functools import partial
-from typing import cast, Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple, cast
 
 import torch
 import torch.distributed as dist
 import torch.fx as fx
 import torch.nn as nn
-
-from functorch.compile import aot_module
-
-from spmd.tensor import DeviceMesh, DTensor
-from spmd.tensor.dispatch import operator_dispatch, propagate_input_sharding
-from spmd.tensor.placement_types import _Partial, Placement, Replicate, Shard
-from spmd.tensor.redistribute import _redistribute_with_local_tensor
+from functorch.compile import aot_module, make_boxed_func
 from torch.distributed._spmd.comm_tensor import _get_tracer
 from torch.fx.experimental.proxy_tensor import make_fx, proxy_slot
 from torch.utils._pytree import tree_flatten, tree_map
+
+from spmd.tensor import DeviceMesh, DTensor
+from spmd.tensor.dispatch import operator_dispatch, propagate_input_sharding
+from spmd.tensor.placement_types import Placement, Replicate, Shard, _Partial
+from spmd.tensor.redistribute import _redistribute_with_local_tensor
 
 from .log_utils import rank0_info
 
@@ -43,6 +41,14 @@ class OP(str, Enum):
 class Schema:
     mesh: DeviceMesh
     placements: List[Placement]
+
+
+def _is_partial_dtensor(obj: object) -> bool:
+    """check if object is 1) DTensor and  2) with placement of _Partial"""
+    is_partial = isinstance(obj, DTensor) and isinstance(
+        obj.placements[0], _Partial
+    )
+    return is_partial
 
 
 def _dispatch_with_local_tensors(
@@ -149,9 +155,8 @@ def _convert_output(
             new_args.append(argument)
             continue
         obj = node_to_obj[argument]
-        if not (
-            isinstance(obj, DTensor) and isinstance(obj.placements[0], _Partial)
-        ):
+
+        if not _is_partial_dtensor(obj):
             continue
 
         has_partial = True
@@ -293,7 +298,8 @@ def _convert_to_distributed(
             raise ValueError(f"Unrecognized node {node}")
 
     _rebuild_graph(gm, node_replacements)
-    return gm
+
+    return make_boxed_func(gm)
 
 
 class SPMD(nn.Module):
