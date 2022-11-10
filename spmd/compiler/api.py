@@ -43,7 +43,7 @@ class Schema:
     placements: List[Placement]
 
 
-def _is_partial_dtensor(obj: object) -> bool:
+def _is_partial_dtensor(obj: DTensor) -> bool:
     """check if object is 1) DTensor and  2) with placement of _Partial"""
     is_partial = isinstance(obj, DTensor) and isinstance(
         obj.placements[0], _Partial
