@@ -60,9 +60,12 @@ def get_output_node(gm: fx.GraphModule) -> fx.Node:
 def pretty_print_graph(gm: fx.GraphModule, header: str = "graph"):
     """print graphs with surrounding markers to make spotting in console easy"""
 
-    print(f"\n\n ======= {header}  ============")
-    print(f"{gm.graph.print_tabular()}\n")
-    print(f"-----------------------------------------------")
+    rank0_info(
+        logger,
+        f"\n\n ======= {header}  ============"
+        f"{gm.graph.print_tabular()}\n"
+        f"-----------------------------------------------",
+    )
 
 
 def graph_cleanup(gm: fx.GraphModule) -> None:
