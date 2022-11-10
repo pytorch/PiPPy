@@ -153,7 +153,8 @@ def _build_dummy_add_graph(
     dt: DTensor, node_to_obj: Dict[fx.Node, object]
 ) -> fx.GraphModule:
     """creates a graph for a dummy add function from a partial DTensor.
-    This dummy add is then used for expansion into a CommTensor expanded graph"""
+    This dummy add is used for triggering all_reduce on a Partial DTensor 
+    during the DTensor expansion of the traced graph.""""
 
     def dummy_add(grad: torch.Tensor, zero: torch.Tensor) -> torch.Tensor:
         return grad + zero
