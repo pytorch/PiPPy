@@ -202,15 +202,6 @@ jobs:
         run: |
           sudo rm -rf /home/ec2-user/actions-runner/_work/PiPPy/PiPPy/* || true
       - uses: actions/checkout@v2
-      - name: Clean up previous CUDA driver installations
-        shell: bash
-        run: |
-          set -x
-          yum list installed | grep nvidia || true
-          yum list installed | grep cuda || true
-          sudo yum remove -y cuda || true
-          sudo yum remove -y cuda-drivers || true
-          sudo yum remove -y "*nvidia*" || true
       - name: Install nvidia driver, nvidia-docker runtime, set GPU_FLAG
         uses: pytorch/test-infra/.github/actions/setup-nvidia@main
       - name: Pull Docker image
