@@ -791,22 +791,6 @@ class PipeStageExecutor(EventRecorder):
                 output_unique_key, work_item
             )
 
-        # Spawn asynchronous data transfers for each of the ValueRef arguments.
-        """
-        _futures = []
-        for arg_idx, value_ref_arg in enumerate(value_ref_args):
-            logging.debug(
-                f"[{self.stage_id}][{cur_microbatch}] Launching asynchronous data transfer for "
-                f"ValueReference {arg_idx} {value_ref_arg}"
-            )
-            assert self.peer_executors is not None
-            _futures.append(
-                self.async_transfer(
-                    cur_microbatch, value_ref_arg, arg_idx, output_unique_key
-                )
-            )
-        """
-
         # Group Value Ref Args based on source stage
         # `callee_stage_dict` has the following structure:
         #   Dict[callee_stage, Dict[my_arg_idx, value_ref]]
@@ -817,6 +801,7 @@ class PipeStageExecutor(EventRecorder):
                 batch_refs = callee_stage_dict.setdefault(callee_stage, {})
                 batch_refs[arg_idx] = value_ref_arg
             else:
+                # For non-tensor (e.g. a value or a size vector), we use RPC to spawn asynchronous data transfer
                 logging.debug(
                     f"[{self.stage_id}][{cur_microbatch}] Launching RPC data transfer for "
                     f"ValueReference {arg_idx} {value_ref_arg}"
@@ -825,20 +810,14 @@ class PipeStageExecutor(EventRecorder):
                     cur_microbatch, value_ref_arg, arg_idx, output_unique_key
                 )
 
-        # Batch recv per callee stage
+        # For tensors, we use c10d two-sided send/recv
+        # Batch call per source stage to reduce number of RPC threads
         for callee_stage, batch_refs in callee_stage_dict.items():
             value_ref_executor_rref = self.peer_executors[callee_stage]
             value_ref_executor_rref.rpc_async().batch_send(
                 self.stage_id, output_unique_key, cur_microbatch, batch_refs,
             )
             self.batch_recv(cur_microbatch, output_unique_key, callee_stage, batch_refs)
-
-        """
-        if DEBUG:
-            # Make exceptions visible
-            for fut in _futures:
-                fut.wait()
-        """
 
         with self.value_store_cv:
             assert output_unique_key not in self.value_store, (
