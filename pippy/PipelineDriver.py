@@ -1010,7 +1010,7 @@ class PipeStageExecutor(EventRecorder):
                 fut.set_result(recv_buff)
             else:
                 work = torch.distributed.irecv(recv_buff, callee_stage)
-                fut = work.get_future()     # type: ignore[attr-defined]
+                fut = work.get_future()  # type: ignore[attr-defined]
 
             def bottom_half(fut):
                 logging.debug(
