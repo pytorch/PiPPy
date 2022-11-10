@@ -71,9 +71,7 @@ jobs:
         with:
           github-secret: ${{ secrets.GITHUB_TOKEN }}
       - name: Install nvidia driver, nvidia-docker runtime, set GPU_FLAG
-        run: |
-          bash .github/workflows/install_nvidia_utils_linux.sh || true
-          echo "GPU_FLAG=--gpus all" >> "${GITHUB_ENV}"
+        uses: pytorch/test-infra/.github/actions/setup-nvidia@main
       - name: Pull Docker image
         run: |
           retry () {
