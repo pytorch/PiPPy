@@ -840,6 +840,8 @@ class PipeStageExecutor(EventRecorder):
         self, indices: List[Tuple[str, int, ValueReference, int]]
     ):
         for index_tuple in indices:
+            # `output_unique_key` is the key for the indexed output value (single)
+            # `value_ref.unique_key` is the key for the overall output of current stage (can have multiple values)
             (output_unique_key, output_refcount, value_ref, idx) = index_tuple
             logging.debug(
                 f"[{self.stage_id}] Received getitem call: {(output_unique_key, output_refcount, value_ref, idx)}"
@@ -1678,16 +1680,18 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
             else node.users.keys()
         )
         if target is operator.getitem and isinstance(args[0], ValueReference):
-            stage_id = args[0].stage_id
+            val_ref = args[0]
+            stage_id = val_ref.stage_id
             num_users = len(users)
-            if not torch.is_grad_enabled() and args[0].unique_key == "noop":
+            if not torch.is_grad_enabled() and val_ref.unique_key == "noop":
                 return ValueReference(stage_id, "noop")
             elif num_users == 0:
                 # TODO: investigate why there are getitem calls with 0 users
                 return ValueReference(stage_id, "noop")
             else:
                 indices = self.stage_output_indices.setdefault(stage_id, [])
-                index_tuple = (invocation_key, num_users, args[0], args[1])
+                arg_idx = args[1]
+                index_tuple = (invocation_key, num_users, val_ref, arg_idx)
                 logging.debug(
                     f"[root][{self.cur_microbatch}] Appending getitem tuple to stage {stage_id}: {index_tuple}"
                 )
