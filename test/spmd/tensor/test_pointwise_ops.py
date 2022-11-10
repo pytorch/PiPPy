@@ -130,7 +130,7 @@ class DistElementwiseOpsTest(DistTensorTestBase):
 
         input_tensor = torch.randn(
             *input_size,
-            device=self.device_type,  # type: ignore
+            device=self.device_type,
             requires_grad=True,
         )
 

@@ -2,7 +2,7 @@
 import torch
 from torch.testing._internal.common_utils import run_tests
 from spmd.tensor.api import DTensor
-from spmd.testing.common_utils import (  # type: ignore
+from spmd.testing.common_utils import (
     DistTensorTestBase,
     with_comms,
     skip_unless_torch_gpu,
@@ -291,7 +291,6 @@ class DistMatrixOpsTest(DistTensorTestBase):
             itertools.product(placement_specs, placement_specs)
         )
 
-        shard_specs_comb = [spec for spec in shard_specs_comb]
         # tests that currently pass
         for spec in shard_specs_comb:
             test_placement_comb([spec[0]], [spec[1]])

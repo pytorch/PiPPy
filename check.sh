@@ -65,7 +65,7 @@ flake8 pippy spmd test/spmd
 
 # mypy spmd test/spmd
 echo; echo "Running mypy ..."
-mypy spmd pippy test examples
+mypy spmd pippy
 # Silent error from mypy for now
 # (( RETVAL |= $? ))
 
