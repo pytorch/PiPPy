@@ -8,7 +8,7 @@ from torch.distributed.distributed_c10d import (
     get_world_size,
 )
 from torch.testing._internal.common_utils import run_tests
-from spmd.testing.common_utils import (  # type: ignore
+from spmd.testing.common_utils import (
     DistTensorTestBase,
     with_comms,
 )
