@@ -395,7 +395,7 @@ class RankWorker(EventRecorder):
                     kwargs, extract_tensor_args, dont_traverse_size
                 )
                 logging.debug(
-                    f"[{self.rank}][{work_item.microbatch_id}] Running forward module"
+                    f"[{self.rank}][{work_item.microbatch_id}] Running forward module"  # type: ignore[union-attr]
                 )
 
                 def forward_maybe_with_ddp(args, kwargs):
@@ -403,7 +403,7 @@ class RankWorker(EventRecorder):
                         stage_executor.mod,
                         torch.nn.parallel.distributed.DistributedDataParallel,
                     ):
-                        with stage_executor.mod.no_sync():
+                        with stage_executor.mod.no_sync():  # type: ignore[operator]
                             out_val = stage_executor.mod(*args, **kwargs)
                     else:
                         out_val = stage_executor.mod(*args, **kwargs)
@@ -486,9 +486,9 @@ class RankWorker(EventRecorder):
                     == 0
                 ):
                     # HACK: reaching into DDP implementation details here. Is there a better way?
-                    stage_executor.mod.reducer.prepare_for_backward(
+                    stage_executor.mod.reducer.prepare_for_backward(  # type: ignore[union-attr, operator]
                         list(
-                            torch.nn.parallel.distributed._find_tensors(
+                            torch.nn.parallel.distributed._find_tensors(  # type: ignore[attr-defined]
                                 kwargs["stage_output"]
                             )
                         )
@@ -594,7 +594,7 @@ class PipeStageExecutor(EventRecorder):
         self.value_store_cv = threading.Condition(self.value_store_lock)
         self.value_store: Dict[str, RefcountedFuture] = {}
 
-        self.peer_executors: Dict[int, torch._C._distributed_rpc.PyRRef] = None
+        self.peer_executors: Dict[int, torch._C._distributed_rpc.PyRRef] = None  # type: ignore[assignment]
         self._record_mem_dumps = _record_mem_dumps
 
         self.optimizer = None
@@ -676,7 +676,7 @@ class PipeStageExecutor(EventRecorder):
 
         # Fill the mapping
         for rank in all_ranks:
-            stage = store.get(rank)
+            stage = store.get(rank)  # type: ignore[assignment]
             stage_to_dp_ranks[int(stage)].append(int(rank))
 
         # Create DP process group for each stage
@@ -840,6 +840,8 @@ class PipeStageExecutor(EventRecorder):
         self, indices: List[Tuple[str, int, ValueReference, int]]
     ):
         for index_tuple in indices:
+            # `output_unique_key` is the key for the indexed output value (single)
+            # `value_ref.unique_key` is the key for the overall output of current stage (can have multiple values)
             (output_unique_key, output_refcount, value_ref, idx) = index_tuple
             logging.debug(
                 f"[{self.stage_id}] Received getitem call: {(output_unique_key, output_refcount, value_ref, idx)}"
@@ -945,12 +947,12 @@ class PipeStageExecutor(EventRecorder):
                 # - manually create the Future,
                 # - use recv instead, and
                 # - manually set_result to the Future
-                fut: torch.futures.Future = self.create_future()
+                fut: torch.futures.Future = self.create_future()  # type: ignore[no-redef]
                 torch.distributed.recv(recv_buff, callee_stage)
                 fut.set_result(recv_buff)
             else:
                 work = torch.distributed.irecv(recv_buff, callee_stage)
-                fut = work.get_future()
+                fut = work.get_future()  # type: ignore[attr-defined]
 
         def bottom_half(fut):
             logging.debug(
@@ -1006,7 +1008,7 @@ class PipeStageExecutor(EventRecorder):
         return self.lr_scheduler
 
     def step_lr_scheduler(self, *args, **kwargs):
-        self.lr_scheduler.step(*args, **kwargs)
+        self.lr_scheduler.step(*args, **kwargs)  # type: ignore[union-attr]
 
     def _check_cleanup(self) -> bool:
         if len(self.value_store):
@@ -1106,7 +1108,7 @@ class PipelineOptimizer(torch.optim.Optimizer):
         self.param_groups = []
 
         # Collect RRefs to remote parameters
-        param_group = {"params": []}
+        param_group = {"params": []}  # type: ignore[var-annotated]
 
         for optim in self.remote_optims:
             remote_state = optim.rpc_sync().__getstate__()
@@ -1275,7 +1277,7 @@ class PipelineDriverBase(torch.nn.Module):
 
     def _init_remote_executors(self):
         self.rank_worker_rrefs: Dict[int, torch.distributed.rpc.RRef] = {}
-        self.remote_stage_executor_rrefs: Dict[
+        self.remote_stage_executor_rrefs: Dict[  # type: ignore[syntax]
             str, (int, torch.distributed.rpc.RRef)
         ] = {}
 
@@ -1388,7 +1390,7 @@ class PipelineDriverBase(torch.nn.Module):
                     f"[root] Deleting stage_id = {stage_id} mod on master"
                 )
                 descr.mod.to("cpu")
-                descr.mod = None
+                descr.mod = None  # type: ignore[assignment]
             self.stage_to_executor[stage_id] = self.remote_stage_executor_rrefs[
                 descr.name
             ][1]
@@ -1678,16 +1680,18 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
             else node.users.keys()
         )
         if target is operator.getitem and isinstance(args[0], ValueReference):
-            stage_id = args[0].stage_id
+            val_ref = args[0]
+            stage_id = val_ref.stage_id
             num_users = len(users)
-            if not torch.is_grad_enabled() and args[0].unique_key == "noop":
+            if not torch.is_grad_enabled() and val_ref.unique_key == "noop":
                 return ValueReference(stage_id, "noop")
             elif num_users == 0:
                 # TODO: investigate why there are getitem calls with 0 users
                 return ValueReference(stage_id, "noop")
             else:
                 indices = self.stage_output_indices.setdefault(stage_id, [])
-                index_tuple = (invocation_key, num_users, args[0], args[1])
+                arg_idx = args[1]
+                index_tuple = (invocation_key, num_users, val_ref, arg_idx)
                 logging.debug(
                     f"[root][{self.cur_microbatch}] Appending getitem tuple to stage {stage_id}: {index_tuple}"
                 )
@@ -2064,7 +2068,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
                 local_results.append(local_result[0])
                 last_grads.append(local_result[1])
 
-            self.last_grads = last_grads
+            self.last_grads = last_grads  # type: ignore[assignment]
         else:
             local_results = local_results_and_last_grads
 

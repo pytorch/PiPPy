@@ -72,7 +72,7 @@ def stage_backward(
         )
 
         torch.autograd.backward(
-            stage_output_tensors, grad_tensors=output_grad_tensors
+            stage_output_tensors, grad_tensors=output_grad_tensors  # type: ignore[arg-type]
         )
 
         grad_inputs = []

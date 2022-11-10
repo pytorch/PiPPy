@@ -63,7 +63,7 @@ class EventsContext:
         return self
 
     def reset(self):
-        self.__init__()
+        self.__init__()  # type: ignore[misc]
 
 
 class EventRecorder:
