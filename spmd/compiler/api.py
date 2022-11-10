@@ -18,6 +18,7 @@ from spmd.tensor.dispatch import operator_dispatch, propagate_input_sharding
 from spmd.tensor.placement_types import Placement, Replicate, Shard, _Partial
 from spmd.tensor.redistribute import _redistribute_with_local_tensor
 
+from .graph_utils import OP
 from .log_utils import rank0_info
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -26,15 +27,6 @@ logger: logging.Logger = logging.getLogger(__name__)
 class TrainingPhase(Enum):
     FORWARD = auto()
     BACKWARD = auto()
-
-
-class OP(str, Enum):
-    CALL_FUNCTION = "call_function"
-    CALL_MODULE = "call_module"
-    CALL_METHOD = "call_method"
-    GET_ATTR = "get_attr"
-    OUTPUT = "output"
-    PLACEHOLDER = "placeholder"
 
 
 @dataclass
@@ -152,8 +144,11 @@ def _get_dtensor_dispatch_graph(
 def _build_dummy_add_graph(
     dt: DTensor, node_to_obj: Dict[fx.Node, object]
 ) -> fx.GraphModule:
-    """creates a graph for a dummy add function from a partial DTensor.
-    This dummy add is then used for expansion into a CommTensor expanded graph"""
+    """
+    creates a graph for a dummy add function from a partial DTensor.
+    This dummy add is used for triggering all_reduce on a Partial DTensor
+    during the DTensor expansion of the traced graph.
+    """
 
     def dummy_add(grad: torch.Tensor, zero: torch.Tensor) -> torch.Tensor:
         return grad + zero
