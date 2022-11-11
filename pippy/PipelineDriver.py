@@ -11,7 +11,7 @@ from typing import Any, Callable, Dict, List, Tuple, Optional
 import torch
 import torch.distributed.rpc as rpc
 import pippy.fx
-import pippy.fx.passes
+from pippy.fx.passes import shape_prop
 
 from pippy.IR import Pipe
 from pippy.backward import (
@@ -395,7 +395,7 @@ class RankWorker(EventRecorder):
                     kwargs, extract_tensor_args, dont_traverse_size
                 )
                 logging.debug(
-                    f"[{self.rank}][{work_item.microbatch_id}] Running forward module"
+                    f"[{self.rank}][{work_item.microbatch_id}] Running forward module"  # type: ignore[union-attr]
                 )
 
                 def forward_maybe_with_ddp(args, kwargs):
@@ -403,7 +403,7 @@ class RankWorker(EventRecorder):
                         stage_executor.mod,
                         torch.nn.parallel.distributed.DistributedDataParallel,
                     ):
-                        with stage_executor.mod.no_sync():
+                        with stage_executor.mod.no_sync():  # type: ignore[operator]
                             out_val = stage_executor.mod(*args, **kwargs)
                     else:
                         out_val = stage_executor.mod(*args, **kwargs)
@@ -486,9 +486,9 @@ class RankWorker(EventRecorder):
                     == 0
                 ):
                     # HACK: reaching into DDP implementation details here. Is there a better way?
-                    stage_executor.mod.reducer.prepare_for_backward(
+                    stage_executor.mod.reducer.prepare_for_backward(  # type: ignore[union-attr, operator]
                         list(
-                            torch.nn.parallel.distributed._find_tensors(
+                            torch.nn.parallel.distributed._find_tensors(  # type: ignore[attr-defined]
                                 kwargs["stage_output"]
                             )
                         )
@@ -594,7 +594,7 @@ class PipeStageExecutor(EventRecorder):
         self.value_store_cv = threading.Condition(self.value_store_lock)
         self.value_store: Dict[str, RefcountedFuture] = {}
 
-        self.peer_executors: Dict[int, torch._C._distributed_rpc.PyRRef] = None
+        self.peer_executors: Dict[int, torch._C._distributed_rpc.PyRRef] = None  # type: ignore[assignment]
         self._record_mem_dumps = _record_mem_dumps
 
         self.optimizer = None
@@ -676,7 +676,7 @@ class PipeStageExecutor(EventRecorder):
 
         # Fill the mapping
         for rank in all_ranks:
-            stage = store.get(rank)
+            stage = store.get(rank)  # type: ignore[assignment]
             stage_to_dp_ranks[int(stage)].append(int(rank))
 
         # Create DP process group for each stage
@@ -696,6 +696,12 @@ class PipeStageExecutor(EventRecorder):
                 self.mod = torch.nn.parallel.DistributedDataParallel(
                     self.mod, process_group=dp_pg_for_stage
                 )
+
+    def create_future(self):
+        # Future constructor does not accept CPU device, must set to None
+        return torch.futures.Future(
+            devices=None if self.device.type == "cpu" else [self.device]
+        )
 
     def invoke(
         self,
@@ -746,9 +752,8 @@ class PipeStageExecutor(EventRecorder):
         # We assume the output value is on the same device as the stage's parameters
 
         # Future constructor does not accept CPU device, must set to None
-        future: torch.futures.Future = torch.futures.Future(
-            devices=None if self.device.type == "cpu" else [self.device]
-        )
+        future: torch.futures.Future = self.create_future()
+
         # TODO: increase blocked_args_count for extra things like scheduling
         work_item = WorkItem(
             stage_id=self.stage_id,
@@ -786,24 +791,39 @@ class PipeStageExecutor(EventRecorder):
                 output_unique_key, work_item
             )
 
-        # Spawn asynchronous data transfers for each of the ValueRef arguments.
-        _futures = []
+        # Group Value Ref Args based on source stage
+        # `callee_stage_dict` has the following structure:
+        #   Dict[callee_stage, Dict[my_arg_idx, value_ref]]
+        callee_stage_dict: Dict[int, Dict[int, ValueReference]] = {}
         for arg_idx, value_ref_arg in enumerate(value_ref_args):
-            logging.debug(
-                f"[{self.stage_id}][{cur_microbatch}] Launching asynchronous data transfer for "
-                f"ValueReference {arg_idx} {value_ref_arg}"
-            )
-            assert self.peer_executors is not None
-            _futures.append(
+            # Check if the ValRef corresponds to a tensor
+            if "tensor_meta" in value_ref_arg.meta:
+                callee_stage = value_ref_arg.stage_id
+                batch_refs = callee_stage_dict.setdefault(callee_stage, {})
+                batch_refs[arg_idx] = value_ref_arg
+            else:
+                # For non-tensor (e.g. a value or a size vector), we use RPC to spawn asynchronous data transfer
+                logging.debug(
+                    f"[{self.stage_id}][{cur_microbatch}] Launching RPC data transfer for "
+                    f"ValueReference {arg_idx} {value_ref_arg}"
+                )
                 self.async_transfer(
                     cur_microbatch, value_ref_arg, arg_idx, output_unique_key
                 )
-            )
 
-        if DEBUG:
-            # Make exceptions visible
-            for fut in _futures:
-                fut.wait()
+        # For tensors, we use c10d two-sided send/recv
+        # Batch call per source stage to reduce number of RPC threads
+        for callee_stage, batch_refs in callee_stage_dict.items():
+            value_ref_executor_rref = self.peer_executors[callee_stage]
+            value_ref_executor_rref.rpc_async().batch_send(
+                self.stage_id,
+                output_unique_key,
+                cur_microbatch,
+                batch_refs,
+            )
+            self.batch_recv(
+                cur_microbatch, output_unique_key, callee_stage, batch_refs
+            )
 
         with self.value_store_cv:
             assert output_unique_key not in self.value_store, (
@@ -835,6 +855,8 @@ class PipeStageExecutor(EventRecorder):
         self, indices: List[Tuple[str, int, ValueReference, int]]
     ):
         for index_tuple in indices:
+            # `output_unique_key` is the key for the indexed output value (single)
+            # `value_ref.unique_key` is the key for the overall output of current stage (can have multiple values)
             (output_unique_key, output_refcount, value_ref, idx) = index_tuple
             logging.debug(
                 f"[{self.stage_id}] Received getitem call: {(output_unique_key, output_refcount, value_ref, idx)}"
@@ -878,7 +900,6 @@ class PipeStageExecutor(EventRecorder):
         runlist_key,
         microbatch,
         value_ref_arg,
-        use_c10d=False,
     ):
         callee_stage = value_ref_arg.stage_id
         logging.debug(
@@ -902,11 +923,6 @@ class PipeStageExecutor(EventRecorder):
             if refcounted_future.release():
                 self.value_store.pop(value_ref_arg.unique_key)
 
-        # Instead of return value let's do a send call
-        if use_c10d:
-            torch.distributed.send(value, caller_stage)
-            return
-
         return value
 
     def async_transfer(self, microbatch, value_ref_arg, arg_idx, runlist_key):
@@ -917,36 +933,103 @@ class PipeStageExecutor(EventRecorder):
         callee_stage = value_ref_arg.stage_id
         value_ref_executor_rref = self.peer_executors[callee_stage]
 
-        # Check if there is tensor meta in ValRef
-        use_c10d = False
-        if "tensor_meta" in value_ref_arg.meta:
-            tm = value_ref_arg.meta["tensor_meta"]
-            use_c10d = True
-            recv_buff = torch.empty(
-                tm.shape, dtype=tm.dtype, device=self.device
-            )
-
         fut = value_ref_executor_rref.rpc_async().get_value(
-            self.stage_id, runlist_key, microbatch, value_ref_arg, use_c10d
+            self.stage_id,
+            runlist_key,
+            microbatch,
+            value_ref_arg,
         )
-
-        if use_c10d:
-            torch.distributed.recv(recv_buff, callee_stage)
 
         def bottom_half(fut):
             logging.debug(
                 f"[{self.stage_id}][{microbatch}] Completing transfer of value {value_ref_arg} "
                 f"for runlist item {runlist_key} arg_idx {arg_idx}"
             )
-            if use_c10d:
-                self.rank_worker.update_run_list(
-                    runlist_key, arg_idx, recv_buff
-                )
-            else:
-                value = fut.value()
-                self.rank_worker.update_run_list(runlist_key, arg_idx, value)
+            value = fut.value()
+            self.rank_worker.update_run_list(runlist_key, arg_idx, value)
 
         return fut.then(bottom_half)
+
+    def batch_send(
+        self,
+        caller_stage,
+        runlist_key,
+        microbatch,
+        batch_refs,
+    ):
+        logging.debug(
+            f"[{self.stage_id}][{microbatch}] Executing batch transfer of "
+            f"{len(batch_refs)} values initiated by stage {caller_stage} for {runlist_key}"
+        )
+
+        for _, value_ref_arg in batch_refs.items():
+            logging.debug(
+                f"[{self.stage_id}][{microbatch}] Executing transfer of value "
+                f"{value_ref_arg} initiated by stage {caller_stage} for {runlist_key}"
+            )
+            with self.value_store_cv:
+                # Waiting for the indexed future for this arg to be created
+                while value_ref_arg.unique_key not in self.value_store:
+                    self.value_store_cv.wait()
+                # Now the indexed future is created
+                refcounted_future = self.value_store[value_ref_arg.unique_key]
+
+            value = refcounted_future.future.wait()
+
+            with self.value_store_lock:
+                if refcounted_future.release():
+                    self.value_store.pop(value_ref_arg.unique_key)
+
+            # Instead of return value let's do a send call
+            if torch.distributed.get_backend() == "gloo":
+                # Gloo P2P does not support work.get_future, so we use send instead
+                torch.distributed.send(value, caller_stage)
+            else:
+                torch.distributed.isend(value, caller_stage)
+
+    def batch_recv(self, microbatch, runlist_key, callee_stage, batch_refs):
+        logging.debug(
+            f"[{self.stage_id}][{microbatch}] Requesting batch transfer of {len(batch_refs)} values "
+            f"for runlist item {runlist_key} from stage {callee_stage}"
+        )
+        futures = []
+
+        for arg_idx, value_ref_arg in batch_refs.items():
+            tm = value_ref_arg.meta["tensor_meta"]
+            recv_buff = torch.empty(
+                tm.shape, dtype=tm.dtype, device=self.device
+            )
+
+            if torch.distributed.get_backend() == "gloo":
+                # Gloo P2P does not support work.get_future, so we need to:
+                # - manually create the Future,
+                # - use recv instead, and
+                # - manually set_result to the Future
+                fut: torch.futures.Future = self.create_future()
+                torch.distributed.recv(recv_buff, callee_stage)
+                fut.set_result(recv_buff)
+            else:
+                work = torch.distributed.irecv(recv_buff, callee_stage)
+                fut = work.get_future()  # type: ignore[attr-defined]
+
+            def bottom_half(fut):
+                logging.debug(
+                    f"[{self.stage_id}][{microbatch}] Completing transfer of value {value_ref_arg} "
+                    f"for runlist item {runlist_key} arg_idx {arg_idx}"
+                )
+                value = fut.value()
+                # It is awkward that the Work class in PyTorch fixes the result return to a List:
+                #   def result(self) -> List[Tensor]: ...
+                # See torch/_C/_distributed_c10d.pyi
+                # We don't expect P2P operations to actually result in a List, hence unpacking and getting the first and
+                # only tensor out
+                if isinstance(value, List):
+                    value = value[0]
+                self.rank_worker.update_run_list(runlist_key, arg_idx, value)
+
+            futures.append(fut.then(bottom_half))
+
+        return futures
 
     def get_grad(self, qualname):
         mod = self.mod
@@ -985,7 +1068,7 @@ class PipeStageExecutor(EventRecorder):
         return self.lr_scheduler
 
     def step_lr_scheduler(self, *args, **kwargs):
-        self.lr_scheduler.step(*args, **kwargs)
+        self.lr_scheduler.step(*args, **kwargs)  # type: ignore[union-attr]
 
     def _check_cleanup(self) -> bool:
         if len(self.value_store):
@@ -1085,7 +1168,7 @@ class PipelineOptimizer(torch.optim.Optimizer):
         self.param_groups = []
 
         # Collect RRefs to remote parameters
-        param_group = {"params": []}
+        param_group = {"params": []}  # type: ignore[var-annotated]
 
         for optim in self.remote_optims:
             remote_state = optim.rpc_sync().__getstate__()
@@ -1228,6 +1311,7 @@ class PipelineDriverBase(torch.nn.Module):
         _record_mem_dumps=False,
         checkpoint=False,
         device: Optional[torch.device] = None,
+        use_c10d=False,
     ):
         super().__init__()
         self.pipe = pipe
@@ -1249,10 +1333,11 @@ class PipelineDriverBase(torch.nn.Module):
         self.optimizer_inited = False
         self.checkpoint = checkpoint
         self.device = device
+        self.use_c10d = use_c10d
 
     def _init_remote_executors(self):
         self.rank_worker_rrefs: Dict[int, torch.distributed.rpc.RRef] = {}
-        self.remote_stage_executor_rrefs: Dict[
+        self.remote_stage_executor_rrefs: Dict[  # type: ignore[syntax]
             str, (int, torch.distributed.rpc.RRef)
         ] = {}
 
@@ -1365,7 +1450,7 @@ class PipelineDriverBase(torch.nn.Module):
                     f"[root] Deleting stage_id = {stage_id} mod on master"
                 )
                 descr.mod.to("cpu")
-                descr.mod = None
+                descr.mod = None  # type: ignore[assignment]
             self.stage_to_executor[stage_id] = self.remote_stage_executor_rrefs[
                 descr.name
             ][1]
@@ -1655,16 +1740,18 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
             else node.users.keys()
         )
         if target is operator.getitem and isinstance(args[0], ValueReference):
-            stage_id = args[0].stage_id
+            val_ref = args[0]
+            stage_id = val_ref.stage_id
             num_users = len(users)
-            if not torch.is_grad_enabled() and args[0].unique_key == "noop":
+            if not torch.is_grad_enabled() and val_ref.unique_key == "noop":
                 return ValueReference(stage_id, "noop")
             elif num_users == 0:
                 # TODO: investigate why there are getitem calls with 0 users
                 return ValueReference(stage_id, "noop")
             else:
                 indices = self.stage_output_indices.setdefault(stage_id, [])
-                index_tuple = (invocation_key, num_users, args[0], args[1])
+                arg_idx = args[1]
+                index_tuple = (invocation_key, num_users, val_ref, arg_idx)
                 logging.debug(
                     f"[root][{self.cur_microbatch}] Appending getitem tuple to stage {stage_id}: {index_tuple}"
                 )
@@ -1835,16 +1922,34 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
             self.env[node].to_here()
 
         # Insert tensor meta to ValueReference returned by node call
-        if node.op == "call_function" or node.op == "call_module":
+        # TODO: there is some problem with "call_function", disabling for now
+        if node.op == "call_module":
             if "tensor_meta" in node.meta and isinstance(
                 node.meta["tensor_meta"],
-                pippy.fx.passes.shape_prop.TensorMetadata,
+                shape_prop.TensorMetadata,
             ):
                 val_ref: ValueReference = self.env[node]
                 val_ref.meta.setdefault("tensor_meta", node.meta["tensor_meta"])
 
         self.pc += 1
         return node
+
+    def propagate_shape(self, args, kwargs):
+        logging.info("Propagating shape across split GraphModule")
+        sp = shape_prop.ShapeProp(self.module)
+        # Not sure why FX's propagate API takes only args. Hence we unpack kwargs.values() without keys here
+        sp.propagate(*args, *kwargs.values())
+        for node in self.node_list:
+            logging.debug(f"Node: {node.name}, outputs: ")
+            if "tensor_meta" in node.meta:
+                if isinstance(
+                    node.meta["tensor_meta"], shape_prop.TensorMetadata
+                ):
+                    logging.debug(f"- {node.meta['tensor_meta']}")
+                else:
+                    # Multiple output tensors
+                    for t_meta in node.meta["tensor_meta"]:
+                        logging.debug(f"- {t_meta}")
 
 
 class _run_until_criteria:
@@ -1889,6 +1994,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         _record_mem_dumps=False,
         checkpoint=False,
         device: Optional[torch.device] = None,
+        use_c10d=False,
     ):
         super().__init__(
             pipe,
@@ -1904,6 +2010,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
             _record_mem_dumps=_record_mem_dumps,
             checkpoint=checkpoint,
             device=device,
+            use_c10d=use_c10d,
         )
         self.single_loss = single_loss
 
@@ -1952,6 +2059,13 @@ class PipelineDriverFillDrain(PipelineDriverBase):
                 batch_id=batch_id,
                 num_microbatches=self.chunks,
             )
+            # If user wants to use c10d for P2P, we would perform the shape propagation here. The shape prop is
+            # performed per batch, thus supporting dynamic shape in batch dimension. Dynamic shape in microbatch
+            # dimension is not yet supported, because all RemoteInterpreters share the same shape info (since they share
+            # the same split_gm)
+            if self.use_c10d and chunk == 0:
+                interp.propagate_shape(args_split[chunk], kwargs_split[chunk])
+
             self.microbatch_interpreters.append(interp)
 
         logging.debug(
@@ -2014,7 +2128,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
                 local_results.append(local_result[0])
                 last_grads.append(local_result[1])
 
-            self.last_grads = last_grads
+            self.last_grads = last_grads  # type: ignore[assignment]
         else:
             local_results = local_results_and_last_grads
 
@@ -2039,6 +2153,7 @@ class PipelineDriver1F1B(PipelineDriverFillDrain):
         _record_mem_dumps=False,
         checkpoint=False,
         device: Optional[torch.device] = None,
+        use_c10d=False,
     ):
         # In 1F1B with backward stages, the maximum number of outstanding
         # micro-batches equals the number of pipeline stages
@@ -2061,6 +2176,7 @@ class PipelineDriver1F1B(PipelineDriverFillDrain):
             _record_mem_dumps=_record_mem_dumps,
             checkpoint=checkpoint,
             device=device,
+            use_c10d=use_c10d,
         )
 
 
@@ -2079,6 +2195,7 @@ class PipelineDriverInterleaved1F1B(PipelineDriver1F1B):
         _record_mem_dumps=False,
         checkpoint=False,
         device: Optional[torch.device] = None,
+        use_c10d=False,
     ):
         super().__init__(
             pipe,
@@ -2094,4 +2211,5 @@ class PipelineDriverInterleaved1F1B(PipelineDriver1F1B):
             _record_mem_dumps=_record_mem_dumps,
             checkpoint=checkpoint,
             device=device,
+            use_c10d=use_c10d,
         )

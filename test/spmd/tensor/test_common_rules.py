@@ -278,6 +278,32 @@ class CommonRulesTest(DistTensorTestBase):
             )
 
     @with_comms
+    def test_pointwise_rules_broadcasting(self):
+        mesh = DeviceMesh(self.device_type, torch.arange(self.world_size))
+
+        func_schema = self.parse_schema(
+            "where.self(Tensor condition, Tensor self, Tensor other) -> Tensor"
+        )
+        inp1, inp2, inp3 = [0], [], [-1, -1]
+        condition = DTensorSpec.from_dim_map(
+            mesh, inp1, [], shape=torch.Size([8])
+        )
+        self_tensor = DTensorSpec.from_dim_map(
+            mesh, inp2, [], shape=torch.Size([])
+        )
+        other_tensor = DTensorSpec.from_dim_map(
+            mesh, inp3, [], shape=torch.Size([1, 1])
+        )
+        # propagate point-wise sharding with broadcasting
+        output_sharding = pointwise_rule(
+            OpSchema(func_schema, (condition, self_tensor, other_tensor), {})
+        )
+        output_spec = output_sharding.output_spec
+        self.assertIsNotNone(output_spec)
+        self.assertEqual(output_spec.dim_map, [-1, 0])
+        self.assertEqual(output_spec.shape, [1, 8])
+
+    @with_comms
     def test_pointwise_rules_suggestion(self):
         mesh = DeviceMesh(self.device_type, torch.arange(self.world_size))
 
@@ -375,7 +401,6 @@ class CommonRulesTest(DistTensorTestBase):
         mat2_spec = DTensorSpec.from_dim_map(
             mesh, mat2, [], shape=torch.Size([12, 1, 8])
         )
-        print(f">> mat1 spec: {mat1_spec}")
         output_sharding = pointwise_rule(
             OpSchema(func_schema, (mat1_spec, mat2_spec), {})
         )
@@ -403,7 +428,9 @@ class CommonRulesTest(DistTensorTestBase):
         )
         # reduction on dim 0
         output_sharding_0 = reduction_rule(
-            OpSchema(func_schema, (mat1_spec, 0), {})
+            OpSchema(func_schema, (mat1_spec, 0), {}),
+            dims=[0],
+            reduction_linear=True,
         )
         self.assertIsNotNone(output_sharding_0.output_spec)
         self.assertEqual(output_sharding_0.output_spec.dim_map, [-1])
@@ -413,7 +440,9 @@ class CommonRulesTest(DistTensorTestBase):
 
         # reduction on dim 1
         output_sharding_1 = reduction_rule(
-            OpSchema(func_schema, (mat1_spec, 1), {})
+            OpSchema(func_schema, (mat1_spec, 1), {}),
+            dims=[1],
+            reduction_linear=True,
         )
         self.assertIsNotNone(output_sharding_1.output_spec)
         self.assertEqual(output_sharding_1.output_spec.dim_map, [0])
@@ -422,7 +451,9 @@ class CommonRulesTest(DistTensorTestBase):
 
         # full reduction if not specify dim
         output_sharding_all_dim = reduction_rule(
-            OpSchema(func_schema, (mat1_spec,), {})
+            OpSchema(func_schema, (mat1_spec,), {}),
+            dims=[0, 1],
+            reduction_linear=True,
         )
         self.assertIsNotNone(output_sharding_all_dim.output_spec)
         self.assertEqual(output_sharding_all_dim.output_spec.dim_map, [])

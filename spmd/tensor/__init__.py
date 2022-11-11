@@ -69,34 +69,32 @@ def distribute_tensor(
             )
         return tensor
 
-    # distribute the tensor according to PlacementSpec
+    local_tensor = tensor
+
+    # distribute the tensor according to the placements.
     for idx, placement in enumerate(placements):
         if placement.is_shard():
             placement = cast(Shard, placement)
-            shard_dim = placement.dim
-            assert (
-                shard_dim <= tensor.ndim
-            ), f"Sharding dim {shard_dim} greater than tensor ndim {tensor.ndim}"
-
-            local_tensor = device_mesh.scatter(
-                tensor, mesh_dim=idx, tensor_dim=shard_dim
-            )
+            output = placement._shard_tensor(local_tensor, device_mesh, idx)
             # scatter call could not return a tensor with correct requires_grad
             # field, as ProcessGroupNCCL refuse to take a tensor with requires_grad
             # to do inplace update! So we manually set it here
-            local_tensor.requires_grad_(tensor.requires_grad)
-            tensor = local_tensor
+            output.requires_grad_(tensor.requires_grad)
+            local_tensor = output
         elif placement.is_replicate():
-            tensor = device_mesh.broadcast(tensor, mesh_dim=idx)
+            local_tensor = local_tensor.contiguous()
+            device_mesh.broadcast(local_tensor, mesh_dim=idx)
         else:
             raise RuntimeError(
                 f"Trying to distribute tensor with unsupported placements {placement} on device mesh dimension {idx}!"
             )
 
+    assert local_tensor is not None, "distributing a tensor should not be None"
     return DTensor(
-        tensor,
+        local_tensor,
         device_mesh,
         placements,
+        size=tensor.size(),
         requires_grad=tensor.requires_grad,
     )
 

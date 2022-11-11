@@ -1,6 +1,9 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+import functools
+import operator
+
 import torch
-from typing import List, Union
+from typing import List, Union, Sequence, Iterable
 from spmd.tensor.api import DTensor
 
 
@@ -54,3 +57,25 @@ def as_list(
         return x
     else:
         return [x]
+
+
+def normalize_dim(dim: int, ndim: int) -> int:
+    return dim if dim >= 0 else dim + ndim
+
+
+def normalize_dims(dims: Union[int, Sequence[int]], ndim: int) -> Sequence[int]:
+    """
+    normalize a dim or a sequence of dims, so that they
+    are all positive.
+    """
+    if isinstance(dims, int):
+        dims = (normalize_dim(dims, ndim),)
+    elif isinstance(dims, list):
+        dims = [normalize_dim(dim, ndim) for dim in dims]
+    elif isinstance(dims, tuple):
+        dims = tuple([normalize_dim(dim, ndim) for dim in dims])
+    return dims
+
+
+def prod(xs: Iterable[int]) -> int:
+    return functools.reduce(operator.mul, xs, 1)

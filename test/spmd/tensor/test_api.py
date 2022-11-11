@@ -2,15 +2,15 @@
 import torch
 import torch.nn as nn
 from torch.testing._internal.common_utils import run_tests
-from spmd.testing.common_utils import DistTensorTestBase, with_comms  # type: ignore
-from spmd import (
+from spmd.testing.common_utils import DistTensorTestBase, with_comms
+from spmd.tensor import (
     distribute_tensor,
-    distribute_module,
     DeviceMesh,
     DTensor,
     Shard,
     Replicate,
 )
+from spmd import distribute_module
 
 
 class MyModel(nn.Module):
@@ -78,6 +78,30 @@ class DTensorAPITest(DistTensorTestBase):
         with self.assertRaisesRegex(ValueError, "to a different placements"):
             new_spec = [Shard(0), Replicate()]
             distribute_tensor(dtensor, device_mesh, new_spec)
+
+    @with_comms
+    def test_distribute_tensor_uneven_sharding(self):
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
+        input_sizes_and_shard_dims = [
+            ((self.world_size * 3 + 1, 3, 3), 0),
+            ((self.world_size * 3 + 2, 3, 3), 0),
+            ((3, self.world_size * 3 + 1, 3), 1),
+            ((3, self.world_size * 3 + 2, 3), 1),
+            ((3, 3, self.world_size * 3 + 1), 2),
+            ((3, 3, self.world_size * 3 + 2), 2),
+        ]
+        for input_size, shard_dim in input_sizes_and_shard_dims:
+            shard_spec = [Shard(shard_dim)]
+            tensor_to_shard = torch.randn(input_size)
+            splitted_tensor_list = tensor_to_shard.tensor_split(
+                self.world_size, dim=shard_dim
+            )
+            dist_tensor = distribute_tensor(
+                tensor_to_shard, device_mesh, shard_spec
+            )
+            self.assertEqual(dist_tensor.size(), torch.Size(input_size))
+            local_tensor = dist_tensor.to_local()
+            self.assertEqual(local_tensor, splitted_tensor_list[self.rank])
 
     @with_comms
     def test_distribute_module(self):

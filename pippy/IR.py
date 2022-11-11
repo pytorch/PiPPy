@@ -2,7 +2,7 @@
 import copy
 import operator
 from enum import Enum
-from typing import Callable, cast, Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.fx as torch_fx
@@ -567,16 +567,16 @@ class Pipe(torch.nn.Module):
                         parameter_kind = Parameter.POSITIONAL_OR_KEYWORD
                         param_name = node.target
                         if node.target.startswith("**"):
-                            parameter_kind = Parameter.VAR_KEYWORD
+                            parameter_kind = Parameter.VAR_KEYWORD  # type: ignore[assignment]
                             param_name = param_name[2:]
                         elif node.target.startswith("*"):
-                            parameter_kind = Parameter.VAR_POSITIONAL
+                            parameter_kind = Parameter.VAR_POSITIONAL  # type: ignore[assignment]
                             param_name = param_name[1:]
                         parameters.append(Parameter(param_name, parameter_kind))
             signature = Signature(parameters)
             ba = signature.bind(*args, **kwargs)
             ba.apply_defaults()
-            executor_args = ba.arguments.values()
+            executor_args = ba.arguments.values()  # type: ignore[assignment]
 
         res = self.executor.run(*executor_args)
 
@@ -802,11 +802,6 @@ class Pipe(torch.nn.Module):
                     "multi_use_param_spec must be MultiUseParamSpec enum or dict"
                 )
 
-        multi_use_params_qualnames = cast(
-            Dict[str, Optional[MultiUseParameterConfig]],
-            multi_use_params_qualnames,
-        )
-
         # TODO: do we maintain the invariant that `Node.users` is topologically ordered? I don't think so
         node_to_first_user: Dict[pippy.fx.Node, pippy.fx.Node] = {}
         for node in split.graph.nodes:
@@ -942,7 +937,7 @@ class Pipe(torch.nn.Module):
         tracer=None,
         output_loss_value_spec=None,
         deep_copy_module=False,
-        auto_parallel_strategy: Optional[
+        split_policy: Optional[
             Callable[[pippy.fx.GraphModule], pippy.fx.GraphModule]
         ] = None,
         **kwargs,
@@ -980,8 +975,8 @@ class Pipe(torch.nn.Module):
         finally:
             _pipeline_tracer = old__pipeline_tracer
 
-        if auto_parallel_strategy is not None:
-            traced = auto_parallel_strategy(traced)
+        if split_policy is not None:
+            traced = split_policy(traced)
 
         return Pipe._from_traced(
             mod,

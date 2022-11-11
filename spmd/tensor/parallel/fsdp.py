@@ -1,5 +1,4 @@
 import warnings
-import functools
 import copy
 from typing import List, NamedTuple, Optional, Tuple, cast
 
@@ -206,21 +205,12 @@ def _unflatten_tensor(
             process_group=cast(dist.ProcessGroup, sharding_info.process_group),
         )
     else:
-
-        def _dt_gradient_hook(
-            param: DistributedTensor, grad: DistributedTensor
-        ) -> None:
-            param.grad = grad
-            param._local_tensor.grad = grad._local_tensor
-
-        result = dtensor = DistributedTensor.from_local(
+        result = DistributedTensor.from_local(
             tensor,
             device_mesh=sharding_info.device_mesh,
             placements=sharding_info.placements,
             run_check=False,
         )
-        if dtensor.requires_grad:
-            dtensor.register_hook(functools.partial(_dt_gradient_hook, dtensor))
 
     _set_fsdp_flattened(result)
     return result
@@ -307,8 +297,9 @@ def _pre_load_state_dict(
 ) -> Tuple[torch.Tensor, List[Shard]]:
     shards = cast(ShardedTensor, tensor).local_shards()
     if len(shards) == 1 and type(shards[0].tensor) is ShardedTensor:
-        inner_tensor = cast(ShardedTensor, shards[0].tensor)
-        shards = inner_tensor.local_shards()
+        inner_tensor = shards[0].tensor
+        shards = inner_tensor.local_shards()  # pyre-ignore[16]
+        tensor = inner_tensor
 
     return (tensor, shards if len(shards) > 0 else [])
 
@@ -318,7 +309,7 @@ try:
         _set_fsdp_extensions,
         FSDPExtensions,
     )
-    from torch.distributed.fsdp._utils import _set_fsdp_flattened
+    from torch.distributed.fsdp._common_utils import _set_fsdp_flattened
 
     class DTensorExtensions(FSDPExtensions):
         def pre_flatten_transform(
@@ -348,7 +339,7 @@ try:
             self,
             tensor: torch.Tensor,
         ) -> Tuple[torch.Tensor, List[Shard]]:
-            return _pre_load_state_dict(tensor)  # type: ignore
+            return _pre_load_state_dict(tensor)
 
     _set_fsdp_extensions(DTensorExtensions())
 

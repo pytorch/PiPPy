@@ -22,7 +22,6 @@ from pippy.PipelineDriver import (
     PipelineDriver1F1B,
     PipelineDriverInterleaved1F1B,
 )
-from pippy.fx.passes import shape_prop
 from pippy.microbatch import TensorChunkSpec
 
 PROFILING_ENABLED = True
@@ -109,15 +108,6 @@ def run_master(_, args):
         pipe = Pipe.from_tracing(gm, MULTI_USE_PARAM_CONFIG)
         inspect_split_module(pipe, 4)
 
-        # Propagate shape across GraphModule
-        print("\n============= Propagate shape across GraphModule =============")
-        sp = shape_prop.ShapeProp(pipe.split_gm)
-        sp.propagate(input)
-        for node in pipe.split_gm.graph.nodes:
-            print(f"Node: {node.name}")
-            for t_meta in node.meta['tensor_meta']:
-                print(f"- {t_meta}")
-
         # Create PipelineDriver
         pipe_driver: PipelineDriverBase = schedules[args.schedule](
             pipe,
@@ -129,6 +119,7 @@ def run_master(_, args):
             _debug_mask_minibatches=True,
             _record_mem_dumps=bool(args.record_mem_dumps),
             checkpoint=bool(args.checkpoint),
+            use_c10d=True,
         )
 
         # Return a runtime Callable
@@ -169,11 +160,11 @@ def run_master(_, args):
     # Optimize and distribute model using Dynamo + PiPPy
     ec = dynamo.optimize(my_pippy_compiler)(ec)
 
+    print(f"\n======= Runtime tests =======")
     ec_input = torch.randn(bs, d_hid, device=args.device)
     # This would already be output returned by PiPPy's distributed pipeline
     pipe_out = ec(ec_input)
 
-    print(f"\n======= Runtime tests =======")
     # Check correctness
     torch.testing.assert_close(pipe_out, ref_out[0])
     print(
@@ -182,6 +173,8 @@ def run_master(_, args):
 
     # Profiling run
     # This run would not trigger compilation
+    # Change the size to test dynamic shape support
+    ec_input = torch.randn(bs + 10, d_hid, device=args.device)
     with torch.autograd.profiler_legacy.profile(
             enabled=PROFILING_ENABLED
     ) as prof:

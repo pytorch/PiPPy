@@ -2,7 +2,7 @@
 
 from typing import List, cast
 from spmd.tensor.placement_types import Placement
-from spmd.testing.common_utils import (  # type: ignore
+from spmd.testing.common_utils import (
     DistTensorTestBase,
     redistribute_profiler,
     with_comms,

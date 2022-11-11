@@ -3,16 +3,18 @@ from dataclasses import dataclass
 from typing import List, Callable, Dict, Tuple, Optional, cast
 
 import torch
-from torch.utils._pytree import tree_map
+from torch.utils._pytree import tree_map, tree_flatten, tree_unflatten
 from torchgen.model import FunctionSchema, SchemaKind
 
 import spmd.tensor.api as dtensor
-from spmd.tensor.placement_types import DTensorSpec, OutputSpecType
+from spmd.tensor.placement_types import DTensorSpec
+from spmd.tensor.redistribute import redistribute_dtensor
 from spmd.tensor.utils import (
+    ArgKwargsType,
+    OutputSpecType,
     unwrap_local_tensor,
-    wrap,
     unwrap_schema,
-    pack_args_kwargs_with_local_tensor,
+    wrap,
 )
 
 
@@ -117,6 +119,28 @@ class OutputSharding:
     output_spec: OutputSpecType
     schema_suggestions: Optional[List[OpSchema]] = None
     failed_reason: Optional[str] = None
+
+
+def pack_args_kwargs_with_local_tensor(
+    args: ArgKwargsType,
+    args_schema: ArgKwargsType,
+    redistribute_with_schema: bool = False,
+) -> ArgKwargsType:
+    flatten_args, args_tree_spec = tree_flatten(args)
+    flatten_args_schema, _ = tree_flatten(args_schema)
+
+    for i, arg in enumerate(flatten_args):
+        if isinstance(arg, dtensor.DTensor):
+            if redistribute_with_schema:
+                target_spec = flatten_args_schema[i]
+                arg = redistribute_dtensor(
+                    arg, target_spec.mesh, target_spec.placements
+                )
+
+            # reuse the schema list and update it with local tensor
+            flatten_args_schema[i] = arg._local_tensor
+
+    return tree_unflatten(flatten_args_schema, args_tree_spec)
 
 
 def _reshape_alias(

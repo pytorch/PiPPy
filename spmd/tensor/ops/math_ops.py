@@ -1,22 +1,50 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import cast
+from typing import cast, Optional, Sequence
 
 from spmd.tensor.api import DTensor
 from spmd.tensor.placement_types import DTensorSpec
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.ops.common_rules import reduction_rule, pointwise_rule
-from spmd.tensor.ops.utils import register_prop_rule
+from spmd.tensor.ops.utils import register_prop_rule, as_list, normalize_dims
 
 
-reduction_ops = [
-    "aten.all.default",
-    "aten.sum.SymInt",
+def _infer_reduction_dims(
+    dims_arg: object, ndim: int
+) -> Optional[Sequence[int]]:
+    if dims_arg is None:
+        return None
+    dims = cast(Sequence[int], as_list(dims_arg))
+    dims = normalize_dims(dims, ndim)
+    empty_dims = [[0], [-1], []]
+    if ndim == 0 and dims_arg in empty_dims:
+        return None
+    return dims
+
+
+@register_prop_rule("aten.all.default")
+def default_reduction_rule(op_schema: OpSchema) -> OutputSharding:
+    return reduction_rule(op_schema, reduction_linear=True)
+
+
+def sum_rule(op_schema: OpSchema) -> OutputSharding:
+    args_schema = op_schema.args_schema
+    input_spec = cast(DTensorSpec, args_schema[0])
+    dims = None
+    if len(args_schema) > 1:
+        dims = _infer_reduction_dims(args_schema[1], input_spec.ndim)
+
+    keep_dim = len(args_schema) > 2 and bool(args_schema[2])
+    return reduction_rule(
+        op_schema, dims=dims, keep_dim=keep_dim, reduction_linear=True
+    )
+
+
+sum_ops = [
     "aten.sum.default",
     "aten.sum.dim_IntList",
 ]
-
-for reduction_op in reduction_ops:
-    DTensor._op_to_rules[reduction_op] = reduction_rule
+for sum_op in sum_ops:
+    DTensor._op_to_rules[sum_op] = sum_rule
 
 
 @register_prop_rule("aten._softmax.default")
@@ -45,3 +73,69 @@ def softmax_bwd_rule(op_schema: OpSchema) -> OutputSharding:
             "Cannot run _softmax_backward_data on sharding dimension!"
         )
     return pointwise_rule(op_schema)
+
+
+def mean_rule(op_schema: OpSchema) -> OutputSharding:
+    args_schema = op_schema.args_schema
+    input_spec = cast(DTensorSpec, args_schema[0])
+    dims = None
+    # if length of args > 1, we check args to find dims
+    if len(args_schema) > 1:
+        dims = _infer_reduction_dims(args_schema[1], input_spec.ndim)
+
+    keep_dim = len(args_schema) > 2 and bool(args_schema[2])
+    return reduction_rule(
+        op_schema, dims=dims, keep_dim=keep_dim, reduction_linear=False
+    )
+
+
+mean_ops = [
+    "aten.mean.default",
+    "aten.mean.dim",
+    "aten.mean.out",
+]
+
+for mean_op in mean_ops:
+    DTensor._op_to_rules[mean_op] = mean_rule
+
+
+def var_rule(op_schema: OpSchema) -> OutputSharding:
+    args_schema = op_schema.args_schema
+    input_spec = cast(DTensorSpec, args_schema[0])
+    dims = None
+    # if length of args > 1, we check args to find dims, note that
+    # var.default have unbias arg as the first argument, so we want
+    # to check if it's not bool
+    if len(args_schema) > 1 and not isinstance(args_schema[1], bool):
+        dims = _infer_reduction_dims(args_schema[1], input_spec.ndim)
+
+    keep_dim = len(args_schema) > 3 and bool(args_schema[3])
+    return reduction_rule(
+        op_schema, dims=dims, keep_dim=keep_dim, reduction_linear=False
+    )
+
+
+var_ops = [
+    "aten.var.default",
+    "aten.var.dim",
+    "aten.var.out",
+]
+
+for var_op in var_ops:
+    DTensor._op_to_rules[var_op] = var_rule
+
+
+@register_prop_rule("aten.var.correction")
+@register_prop_rule("aten.var.correction_out")
+def var_correction_rule(op_schema: OpSchema) -> OutputSharding:
+    args_schema = op_schema.args_schema
+    input_spec = cast(DTensorSpec, args_schema[0])
+    dims = None
+    if len(args_schema) > 1:
+        dims = _infer_reduction_dims(args_schema[1], input_spec.ndim)
+
+    # keep_dim is a kwarg instead of arg for var.correction
+    keep_dim = cast(bool, op_schema.kwargs_schema.get("keepdim", False))
+    return reduction_rule(
+        op_schema, dims=dims, keep_dim=keep_dim, reduction_linear=False
+    )
