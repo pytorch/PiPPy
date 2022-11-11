@@ -9,7 +9,6 @@ from spmd.testing.common_utils import (
     skip_unless_torch_gpu,
 )
 from spmd.tensor import (
-    distribute_tensor,
     DeviceMesh,
     Replicate,
 )
@@ -56,9 +55,9 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         model = MLPModule(self.device_type)
         model_tp = MLPModule(self.device_type)
         # Test MLP recognition
-        from spmd.tensor.parallel.api import _isMLP
+        from spmd.tensor.parallel.api import _is_mlp
 
-        self.assertTrue(_isMLP(model_tp))
+        self.assertTrue(_is_mlp(model_tp))
 
         # Ensure model are initialized the same way.
         self.assertEqual(model.net1.weight, model_tp.net1.weight)

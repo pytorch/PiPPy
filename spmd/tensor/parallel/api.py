@@ -2,7 +2,7 @@
 import torch
 import torch.nn as nn
 import functools
-from typing import Sequence, Tuple, Callable
+from typing import Sequence, Tuple, Callable, cast
 from spmd.tensor import (
     distribute_tensor,
     DTensor,
@@ -76,7 +76,7 @@ def _shard_self_attn(
                 module.register_module(n, tp_multi_head_attention)
 
 
-def _isMLP(module: nn.Module) -> bool:
+def _is_mlp(module: nn.Module) -> bool:
     # We assume that the structure of MLP to shard defined in object way as below:
     #   * -> (Linear -> * -> Linear)+ -> *
     # positive even number of Linear layers interleaved by activation/norm/dropout
@@ -86,12 +86,8 @@ def _isMLP(module: nn.Module) -> bool:
     return len(linear_submodules) > 0 and len(linear_submodules) % 2 == 0
 
 
-def _gradient_hook(param: DTensor, grad: DTensor) -> None:
-    param._local_tensor.grad = grad._local_tensor
-
-
 def _shard_mlp(name: str, module: nn.Module, device_mesh: DeviceMesh) -> None:
-    if _isMLP(module):
+    if _is_mlp(module):
         col_wise_sharding: Sequence[Placement] = [Shard(0)]
         row_wise_sharding: Sequence[Placement] = [Shard(1)]
         replicate: Sequence[Placement] = [Replicate()] * device_mesh.ndim
@@ -103,20 +99,34 @@ def _shard_mlp(name: str, module: nn.Module, device_mesh: DeviceMesh) -> None:
             if i % 2 == 0:
                 # shard Linear layer column-wisely
                 sharded_weight = nn.Parameter(
-                    distribute_tensor(m.weight, device_mesh, col_wise_sharding)
+                    distribute_tensor(
+                        cast(torch.Tensor, m.weight),
+                        device_mesh,
+                        col_wise_sharding,
+                    )
                 )
                 sharded_bias = nn.Parameter(
-                    distribute_tensor(m.bias, device_mesh, col_wise_sharding)
+                    distribute_tensor(
+                        cast(torch.Tensor, m.bias),
+                        device_mesh,
+                        col_wise_sharding,
+                    )
                 )
                 m.register_parameter("weight", sharded_weight)
                 m.register_parameter("bias", sharded_bias)
             else:
                 # shard Linear layer row-wisely
                 sharded_weight = nn.Parameter(
-                    distribute_tensor(m.weight, device_mesh, row_wise_sharding)
+                    distribute_tensor(
+                        cast(torch.Tensor, m.weight),
+                        device_mesh,
+                        row_wise_sharding,
+                    )
                 )
                 replicated_bias = nn.Parameter(
-                    distribute_tensor(m.bias, device_mesh, replicate)
+                    distribute_tensor(
+                        cast(torch.Tensor, m.bias), device_mesh, replicate
+                    )
                 )
                 m.register_parameter("weight", sharded_weight)
                 m.register_parameter("bias", replicated_bias)
