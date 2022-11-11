@@ -4,7 +4,7 @@ from typing import Optional
 
 import torch.fx as fx
 
-from .log_utils import rank0_info
+from .log_utils import rank0_debug, rank0_info
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ class OP(str, Enum):
     PLACEHOLDER = "placeholder"
 
 
-def get_node_tensor_size(node: fx.Node, debug: bool = False) -> Optional[int]:
+def get_node_tensor_numel(node: fx.Node) -> Optional[int]:
     """takes an fx node, and if tensor data available, optionally displays and returns numel"""
     size = None
     tdata = node.meta.get("tensor_meta")
@@ -31,8 +31,7 @@ def get_node_tensor_size(node: fx.Node, debug: bool = False) -> Optional[int]:
     m, n = tdata.shape
     size = m * n
 
-    if debug:
-        rank0_info(logger, f"--> tensor of size {size} found for {node=}\n")
+    rank0_debug(logger, f"--> tensor of size {size} found for {node=}\n")
 
     return size
 
