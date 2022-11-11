@@ -1,14 +1,10 @@
 import logging
-from enum import Enum, auto
-from typing import Dict, List, Optional, Sequence, Tuple, cast
+from enum import Enum
+from typing import Optional
 
-import torch
-import torch.distributed as dist
 import torch.fx as fx
-import torch.nn as nn
-import torch.utils._pytree as pytree
 
-from .log_utils import rank0_info
+from .log_utils import rank0_debug, rank0_info
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -24,7 +20,7 @@ class OP(str, Enum):
     PLACEHOLDER = "placeholder"
 
 
-def get_node_tensor_size(node: fx.Node, debug=False) -> int:
+def get_node_tensor_numel(node: fx.Node) -> Optional[int]:
     """takes an fx node, and if tensor data available, optionally displays and returns numel"""
     size = None
     tdata = node.meta.get("tensor_meta")
@@ -35,18 +31,17 @@ def get_node_tensor_size(node: fx.Node, debug=False) -> int:
     m, n = tdata.shape
     size = m * n
 
-    if debug:
-        rank0_info(logger, f"--> tensor of size {size} found for {node=}\n")
+    rank0_debug(logger, f"--> tensor of size {size} found for {node=}\n")
 
     return size
 
 
-def get_output_node(gm: fx.GraphModule) -> fx.Node:
+def get_output_node(gm: fx.GraphModule) -> Optional[fx.Node]:
     """take a graphmodule and returns the graph output node
     we traverse in reverse to expedite it, with the idea that last node should be output"""
 
     if gm.graph is None:
-        raise ValueError(f"missing graph from graph module")
+        raise ValueError("missing graph from graph module")
     output_node = None
 
     for node in reversed(gm.graph.nodes):
@@ -57,12 +52,15 @@ def get_output_node(gm: fx.GraphModule) -> fx.Node:
     return output_node
 
 
-def pretty_print_graph(gm: fx.GraphModule, header: str = "graph"):
+def pretty_print_graph(gm: fx.GraphModule, header: str = "graph") -> None:
     """print graphs with surrounding markers to make spotting in console easy"""
 
-    print(f"\n\n ======= {header}  ============")
-    print(f"{gm.graph.print_tabular()}\n")
-    print(f"-----------------------------------------------")
+    rank0_info(
+        logger,
+        f"\n\n ======= {header}  ============"
+        f"{gm.graph.print_tabular()}\n"
+        f"-----------------------------------------------",
+    )
 
 
 def graph_cleanup(gm: fx.GraphModule) -> None:
