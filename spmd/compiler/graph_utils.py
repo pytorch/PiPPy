@@ -1,12 +1,7 @@
 import logging
-from enum import Enum, auto
-from typing import Dict, List, Optional, Sequence, Tuple, cast
+from enum import Enum
 
-import torch
-import torch.distributed as dist
 import torch.fx as fx
-import torch.nn as nn
-import torch.utils._pytree as pytree
 
 from .log_utils import rank0_info
 
@@ -24,9 +19,9 @@ class OP(str, Enum):
     PLACEHOLDER = "placeholder"
 
 
-def get_node_tensor_size(node: fx.Node, debug=False) -> int:
+def get_node_tensor_size(node: fx.Node, debug: bool = False) -> int:
     """takes an fx node, and if tensor data available, optionally displays and returns numel"""
-    size = None
+    size: int = None
     tdata = node.meta.get("tensor_meta")
     if tdata is None:
         # assert tdata is not None, f"failed to locate metadata for node {node}"
@@ -57,12 +52,15 @@ def get_output_node(gm: fx.GraphModule) -> fx.Node:
     return output_node
 
 
-def pretty_print_graph(gm: fx.GraphModule, header: str = "graph"):
+def pretty_print_graph(gm: fx.GraphModule, header: str = "graph") -> None:
     """print graphs with surrounding markers to make spotting in console easy"""
 
-    print(f"\n\n ======= {header}  ============")
-    print(f"{gm.graph.print_tabular()}\n")
-    print(f"-----------------------------------------------")
+    rank0_info(
+        logger,
+        f"\n\n ======= {header}  ============"
+        f"{gm.graph.print_tabular()}\n"
+        f"-----------------------------------------------",
+    )
 
 
 def graph_cleanup(gm: fx.GraphModule) -> None:
