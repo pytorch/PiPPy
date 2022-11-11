@@ -20,9 +20,9 @@ class OP(str, Enum):
     PLACEHOLDER = "placeholder"
 
 
-def get_node_tensor_size(node: fx.Node, debug: bool = False) -> int:
+def get_node_tensor_size(node: fx.Node, debug: bool = False) -> Optional[int]:
     """takes an fx node, and if tensor data available, optionally displays and returns numel"""
-    size: int = 0
+    size = None
     tdata = node.meta.get("tensor_meta")
     if tdata is None:
         # assert tdata is not None, f"failed to locate metadata for node {node}"
@@ -37,7 +37,7 @@ def get_node_tensor_size(node: fx.Node, debug: bool = False) -> int:
     return size
 
 
-def get_output_node(gm: fx.GraphModule) -> Optional[Any]:
+def get_output_node(gm: fx.GraphModule) -> Optional[fx.Node]:
     """take a graphmodule and returns the graph output node
     we traverse in reverse to expedite it, with the idea that last node should be output"""
 
