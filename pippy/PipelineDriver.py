@@ -606,8 +606,8 @@ class PipeStageExecutor(EventRecorder):
         self.device = self._find_mod_device()
 
         # Send/recv order normalization
-        self.callee_send_tag: Dict[int, int] = {}   # callee stage: tag seq num
-        self.caller_recv_tag: Dict[int, int] = {}   # caller stage: tag seq num
+        self.callee_send_tag: Dict[int, int] = {}  # callee stage: tag seq num
+        self.caller_recv_tag: Dict[int, int] = {}  # caller stage: tag seq num
         self.callee_send_tag_lock = threading.Lock()
         self.caller_recv_tag_lock = threading.Lock()
         self.caller_recv_tag_cv = threading.Condition(self.caller_recv_tag_lock)
@@ -833,7 +833,11 @@ class PipeStageExecutor(EventRecorder):
                     tag,
                 )
                 self.batch_recv(
-                    cur_microbatch, output_unique_key, callee_stage, batch_refs, tag
+                    cur_microbatch,
+                    output_unique_key,
+                    callee_stage,
+                    batch_refs,
+                    tag,
                 )
 
         with self.value_store_cv:
@@ -1006,7 +1010,9 @@ class PipeStageExecutor(EventRecorder):
             self.caller_recv_tag[caller_stage] += 1
             self.caller_recv_tag_cv.notify_all()
 
-    def batch_recv(self, microbatch, runlist_key, callee_stage, batch_refs, tag):
+    def batch_recv(
+        self, microbatch, runlist_key, callee_stage, batch_refs, tag
+    ):
         logging.debug(
             f"[{self.stage_id}][{microbatch}] Receiving batch {tag} of {len(batch_refs)} values "
             f"for runlist item {runlist_key} from stage {callee_stage}"
