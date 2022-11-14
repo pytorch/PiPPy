@@ -1,13 +1,18 @@
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional, Iterable
+from typing import Iterable, List, Optional
 
-import graph_utils as gu
 import torch
 import torch.distributed as dist
 import torch.fx as fx
-from graph_utils import OP
+from graph_utils import (
+    OP,
+    get_node_tensor_numel,
+    get_output_node,
+    graph_cleanup,
+    pretty_print_graph,
+)
 
 
 # enum for the supported fusion comm types
@@ -55,7 +60,7 @@ class GraphInfo:
                 self.first = node
                 break
 
-        self.output = gu.get_output_node(gm)
+        self.output = get_output_node(gm)
         assert (
             self.output is not None
         ), f"unable to locate output node in gm {gm.graph}"
@@ -139,12 +144,12 @@ def _scan_graph_for_fusion_elements(
 
                 fe.output_name = node.name
 
-                fe.clone_node = fe.node_list[0]
+                fe.clone_node = curr_node_list[0]  # fe.node_list[0]
                 fe.comm_node = fe.node_list[3]
                 fe.wait_node = node
 
                 # compute size of this fe
-                fe.size = gu.get_node_tensor_numel(fe.clone_node)
+                fe.size = get_node_tensor_numel(fe.clone_node)
                 element_list.append(fe)
 
             curr_count = 0
@@ -169,9 +174,9 @@ def run_fusion(main_gm: fx.GraphModule) -> bool:
     )
 
     # final review print
-    gu.graph_cleanup(main_gm)
+    graph_cleanup(main_gm)
 
-    gu.pretty_print_graph(main_gm, "final version, fusion pass")
+    pretty_print_graph(main_gm, "final version, fusion pass")
 
     result = True  # TODO - make this mean something
     return result
