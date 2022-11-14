@@ -27,7 +27,7 @@ class Comm_Type(str, Enum):
 @dataclass
 class FusionElement:
     comm_type: Optional[Comm_Type] = None
-    node_list: List = field(default_factory=lambda: [])
+    node_list: List = field(default_factory=lambda: [])  # type: ignore
     size: int = 0
     prev_node: Optional[fx.Node] = None  # node that was before start of section
     next_node: Optional[fx.Node] = None  # node that was after end of section
