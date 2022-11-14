@@ -6,7 +6,7 @@ from typing import Iterable, List, Optional
 import torch
 import torch.distributed as dist
 import torch.fx as fx
-from graph_utils import (
+from .graph_utils import (
     OP,
     get_node_tensor_numel,
     get_output_node,
@@ -91,7 +91,7 @@ def _insert_buffer_node(
 def _scan_graph_for_fusion_elements(
     gm: fx.GraphModule,
     comm_type: Comm_Type = Comm_Type.allreduce,
-) -> Optional[List]:
+) -> Optional[List[FusionElement]]:
     """scan entire graph for matching sections of CommTensor style expansions
     returns list of FusionElements that match comm_type"""
 
@@ -149,7 +149,7 @@ def _scan_graph_for_fusion_elements(
                 fe.wait_node = node
 
                 # compute size of this fe
-                fe.size = get_node_tensor_numel(fe.clone_node)
+                fe.size = get_node_tensor_numel(fe.clone_node)  # type: ignore (confuses optional[node] with node...)
                 element_list.append(fe)
 
             curr_count = 0
