@@ -605,6 +605,13 @@ class PipeStageExecutor(EventRecorder):
         self.lr_scheduler = None
         self.device = self._find_mod_device()
 
+        # Send/recv order normalization
+        self.callee_send_tag: Dict[int, int] = {}  # callee stage: tag seq num
+        self.caller_recv_tag: Dict[int, int] = {}  # caller stage: tag seq num
+        self.callee_send_tag_lock = threading.Lock()
+        self.caller_recv_tag_lock = threading.Lock()
+        self.caller_recv_tag_cv = threading.Condition(self.caller_recv_tag_lock)
+
     def _find_mod_device(self):
         # We assume that all parameters in the module are on the same device
         # HACK: we assume the module has at least one parameter
@@ -813,17 +820,25 @@ class PipeStageExecutor(EventRecorder):
 
         # For tensors, we use c10d two-sided send/recv
         # Batch call per source stage to reduce number of RPC threads
-        for callee_stage, batch_refs in callee_stage_dict.items():
-            value_ref_executor_rref = self.peer_executors[callee_stage]
-            value_ref_executor_rref.rpc_async().batch_send(
-                self.stage_id,
-                output_unique_key,
-                cur_microbatch,
-                batch_refs,
-            )
-            self.batch_recv(
-                cur_microbatch, output_unique_key, callee_stage, batch_refs
-            )
+        with self.callee_send_tag_lock:
+            for callee_stage, batch_refs in callee_stage_dict.items():
+                value_ref_executor_rref = self.peer_executors[callee_stage]
+                tag = self.callee_send_tag.setdefault(callee_stage, 0)
+                self.callee_send_tag[callee_stage] += 1
+                value_ref_executor_rref.rpc_async().batch_send(
+                    self.stage_id,
+                    output_unique_key,
+                    cur_microbatch,
+                    batch_refs,
+                    tag,
+                )
+                self.batch_recv(
+                    cur_microbatch,
+                    output_unique_key,
+                    callee_stage,
+                    batch_refs,
+                    tag,
+                )
 
         with self.value_store_cv:
             assert output_unique_key not in self.value_store, (
@@ -956,17 +971,20 @@ class PipeStageExecutor(EventRecorder):
         runlist_key,
         microbatch,
         batch_refs,
+        tag,
     ):
+        # Wait till this batch's turn to send
+        with self.caller_recv_tag_cv:
+            self.caller_recv_tag.setdefault(caller_stage, 0)
+            while self.caller_recv_tag[caller_stage] < tag:
+                self.caller_recv_tag_cv.wait()
+
         logging.debug(
-            f"[{self.stage_id}][{microbatch}] Executing batch transfer of "
+            f"[{self.stage_id}][{microbatch}] Sending batch {tag} of "
             f"{len(batch_refs)} values initiated by stage {caller_stage} for {runlist_key}"
         )
 
         for _, value_ref_arg in batch_refs.items():
-            logging.debug(
-                f"[{self.stage_id}][{microbatch}] Executing transfer of value "
-                f"{value_ref_arg} initiated by stage {caller_stage} for {runlist_key}"
-            )
             with self.value_store_cv:
                 # Waiting for the indexed future for this arg to be created
                 while value_ref_arg.unique_key not in self.value_store:
@@ -983,13 +1001,20 @@ class PipeStageExecutor(EventRecorder):
             # Instead of return value let's do a send call
             if torch.distributed.get_backend() == "gloo":
                 # Gloo P2P does not support work.get_future, so we use send instead
-                torch.distributed.send(value, caller_stage)
+                torch.distributed.send(value, caller_stage, tag=tag)
             else:
-                torch.distributed.isend(value, caller_stage)
+                torch.distributed.isend(value, caller_stage, tag=tag)
 
-    def batch_recv(self, microbatch, runlist_key, callee_stage, batch_refs):
+        # Notify next send that's potentially waiting
+        with self.caller_recv_tag_cv:
+            self.caller_recv_tag[caller_stage] += 1
+            self.caller_recv_tag_cv.notify_all()
+
+    def batch_recv(
+        self, microbatch, runlist_key, callee_stage, batch_refs, tag
+    ):
         logging.debug(
-            f"[{self.stage_id}][{microbatch}] Requesting batch transfer of {len(batch_refs)} values "
+            f"[{self.stage_id}][{microbatch}] Receiving batch {tag} of {len(batch_refs)} values "
             f"for runlist item {runlist_key} from stage {callee_stage}"
         )
         futures = []
@@ -1006,10 +1031,10 @@ class PipeStageExecutor(EventRecorder):
                 # - use recv instead, and
                 # - manually set_result to the Future
                 fut: torch.futures.Future = self.create_future()
-                torch.distributed.recv(recv_buff, callee_stage)
+                torch.distributed.recv(recv_buff, callee_stage, tag=tag)
                 fut.set_result(recv_buff)
             else:
-                work = torch.distributed.irecv(recv_buff, callee_stage)
+                work = torch.distributed.irecv(recv_buff, callee_stage, tag=tag)
                 fut = work.get_future()  # type: ignore[attr-defined]
 
             def bottom_half(fut):

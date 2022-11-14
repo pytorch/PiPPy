@@ -213,6 +213,10 @@ def transform_into_pipeline(
         "encoder_last_hidden_state": TensorChunkSpec(0),
     })
 
+    # We can use c10d for inference mode now
+    use_c10d = False if args.train else True
+    print(f"use_c10d: {use_c10d}")
+
     pipe_driver: PipelineDriverBase = schedules[args.schedule](
         t5_pipe,
         chunks,
@@ -224,6 +228,7 @@ def transform_into_pipeline(
         _debug_mask_minibatches=False,
         _record_mem_dumps=bool(args.record_mem_dumps),
         checkpoint=bool(args.checkpoint) if args.train else False,
+        use_c10d=use_c10d,
     )
     return pipe_driver
 
