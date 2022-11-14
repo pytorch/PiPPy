@@ -2,25 +2,14 @@ import logging
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
-from functools import partial
-from typing import Dict, List, Optional, Sequence, Tuple, cast
+from typing import Dict, List, Optional
 
 import graph_utils as gu
 import torch
 import torch.distributed as dist
 import torch.fx as fx
-import torch.nn as nn
-import torch.utils._pytree as pytree
-from functorch.compile import aot_module, make_boxed_func
-from graph_utils import OP
-from torch.distributed._spmd.comm_tensor import _get_tracer
-from torch.fx.experimental.proxy_tensor import make_fx, proxy_slot
-from torch.utils._pytree import tree_flatten, tree_map
 
-from spmd.tensor import DeviceMesh, DTensor
-from spmd.tensor.dispatch import operator_dispatch, propagate_input_sharding
-from spmd.tensor.placement_types import Placement, Replicate, Shard, _Partial
-from spmd.tensor.redistribute import _redistribute_with_local_tensor
+from graph_utils import OP
 
 # enum for the supported fusion comm types
 class Comm_Type(str, Enum):
