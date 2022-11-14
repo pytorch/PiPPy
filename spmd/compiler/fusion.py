@@ -149,7 +149,7 @@ def _scan_graph_for_fusion_elements(
                 fe.wait_node = node
 
                 # compute size of this fe
-                fe.size = get_node_tensor_numel(fe.clone_node)  # type: ignore (confuses optional[node] with node...)
+                fe.size = get_node_tensor_numel(fe.clone_node)  # type: ignore
                 element_list.append(fe)
 
             curr_count = 0
