@@ -1,7 +1,7 @@
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Iterable
 
 import graph_utils as gu
 import torch
@@ -41,7 +41,7 @@ class GraphInfo:
     output: Optional[fx.Node] = None
     first: Optional[fx.Node] = None
 
-    def update_info(self, gm, debug=True):
+    def update_info(self, gm: fx.GraphModule, debug: bool = True) -> None:
         """get the len, input and output nodes"""
         graph_len = gm.graph._len
         if not graph_len:
@@ -67,7 +67,7 @@ class GraphInfo:
 
 
 def _insert_buffer_node(
-    gm: fx.GraphModule, insert_before_node: fx.Node, buffer_size: int
+    gm: fx.GraphModule, insert_before_node: fx.Node, buffer_size: Iterable[int]
 ) -> fx.Node:
     """insert a torch.empty node in front of insert_before_node"""
     with gm.graph.inserting_before(insert_before_node):
@@ -86,7 +86,7 @@ def _insert_buffer_node(
 def _scan_graph_for_fusion_elements(
     gm: fx.GraphModule,
     comm_type: Comm_Type = Comm_Type.allreduce,
-) -> Optional[list]:
+) -> Optional[List]:
     """scan entire graph for matching sections of CommTensor style expansions
     returns list of FusionElements that match comm_type"""
 
@@ -144,7 +144,7 @@ def _scan_graph_for_fusion_elements(
                 fe.wait_node = node
 
                 # compute size of this fe
-                fe.size = gu.get_node_tensor_size(fe.clone_node)
+                fe.size = gu.get_node_tensor_numel(fe.clone_node)
                 element_list.append(fe)
 
             curr_count = 0
