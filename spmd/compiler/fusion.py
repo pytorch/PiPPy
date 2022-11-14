@@ -1,8 +1,7 @@
-import logging
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Optional
 
 import graph_utils as gu
 import torch
@@ -52,12 +51,14 @@ class GraphInfo:
         nodelist = gm.graph.nodes
 
         for i, node in enumerate(nodelist):
-            if node.op == "placeholder":
+            if node.op == OP.PLACEHOLDER:
                 self.first = node
                 break
 
         self.output = gu.get_output_node(gm)
-        assert self.output is not None, f"unable to locate output node"
+        assert (
+            self.output is not None
+        ), f"unable to locate output node in gm {gm.graph}"
 
         if debug:
             print(
@@ -71,11 +72,13 @@ def _insert_buffer_node(
     """insert a torch.empty node in front of insert_before_node"""
     with gm.graph.inserting_before(insert_before_node):
         new_buffer_node = gm.graph.create_node(
-            "call_function",
+            OP.CALL_FUNCTION,
             target=torch.empty,
             args=tuple(buffer_size),  # TODO - need device
         )
-    assert new_buffer_node is not None, f"failed to create buffer node"
+    assert (
+        new_buffer_node is not None
+    ), f"failed to create buffer node, size={buffer_size}"
 
     return new_buffer_node
 
@@ -170,4 +173,5 @@ def run_fusion(main_gm: fx.GraphModule) -> bool:
 
     gu.pretty_print_graph(main_gm, "final version, fusion pass")
 
-    return True
+    result = True  # TODO - make this mean something
+    return result
