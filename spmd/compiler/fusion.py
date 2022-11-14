@@ -1,14 +1,14 @@
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import List, Optional
 
 import graph_utils as gu
 import torch
 import torch.distributed as dist
 import torch.fx as fx
-
 from graph_utils import OP
+
 
 # enum for the supported fusion comm types
 class Comm_Type(str, Enum):
@@ -21,25 +21,25 @@ class Comm_Type(str, Enum):
 
 @dataclass
 class FusionElement:
-    comm_type: None
-    node_list: list = field(default_factory=lambda: [])
+    comm_type: Optional[Comm_Type] = None
+    node_list: List = field(default_factory=lambda: [])
     size: int = 0
-    prev_node: fx.Node = None  # node that was before start of section
-    next_node: fx.Node = None  # node that was after end of section
+    prev_node: Optional[fx.Node] = None  # node that was before start of section
+    next_node: Optional[fx.Node] = None  # node that was after end of section
     processed: bool = False
     output_name: str = ""
-    clone_node: fx.Node = None
-    comm_node: fx.Node = None
-    wait_node: fx.Node = None
+    clone_node: Optional[fx.Node] = None
+    comm_node: Optional[fx.Node] = None
+    wait_node: Optional[fx.Node] = None
 
 
 @dataclass
 class GraphInfo:
     len: int = 0
-    global_buffer: fx.Node = None
+    global_buffer: Optional[fx.Node] = None
     global_buffer_size: int = 0
-    output: fx.Node = None
-    first: fx.Node = None
+    output: Optional[fx.Node] = None
+    first: Optional[fx.Node] = None
 
     def update_info(self, gm, debug=True):
         """get the len, input and output nodes"""
