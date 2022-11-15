@@ -375,6 +375,7 @@ dtensor_fails = {
     xfail("nn.functional.margin_ranking_loss"),
     xfail("nn.functional.max_pool1d"),
     xfail("nn.functional.max_pool2d"),
+    xfail("nn.functional.max_pool2d", "with_indices"),
     xfail("nn.functional.max_pool3d"),
     xfail("nn.functional.max_unpool1d"),
     xfail("nn.functional.max_unpool1d", "grad"),
