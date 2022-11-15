@@ -22,6 +22,7 @@ from spmd.tensor.parallel import (
     replicate_input,
     replicate_output,
 )
+import spmd.tensor.parallel as tp
 
 
 class MLPModule(torch.nn.Module):
@@ -120,10 +121,27 @@ class MultiheadAttnWrap(nn.Module):
 
 
 class DistTensorParallelExampleTest(DistTensorTestBase):
-    """
     @with_comms
-    def test_parallelize_linear(self):
-    """
+    def test_row_wise_parallel(self):
+        # test RowwiseParallel
+        rowwise = tp.RowwiseParallel()
+        torch.manual_seed(5)
+        model = nn.Linear(10, 16, device=self.device_type)
+        torch.manual_seed(5)
+        model_tp = nn.Linear(10, 16, device=self.device_type)
+        inp = torch.rand(8, 10, device=self.device_type)
+
+        # parallelize model_tp
+        LR = 0.25
+        device_mesh = DeviceMesh(self.device_type, list(range(NUM_DEVICES)))
+        tp._parallelize_linear(model_tp, rowwise, device_mesh)
+        optim = torch.optim.SGD(model.parameters(), lr=LR)
+        optim_tp = torch.optim.SGD(model_tp.parameters(), lr=LR)
+
+        output = model(inp)
+        output_tp = model_tp(inp)
+        self.assertEqual(output, output_tp.to_local())
+
 
     @with_comms
     def test_mlp_megatron_e2e(self):
