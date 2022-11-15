@@ -85,7 +85,8 @@ def _insert_fusion_buffer_node(
         new_buffer_node = gm.graph.create_node(
             OP.CALL_FUNCTION,
             target=torch.empty,
-            args=tuple(buffer_size),  # TODO - need device
+            # TODO - need device from DTensor to put buffer on gpu
+            args=tuple(buffer_size),
         )
     assert (
         new_buffer_node is not None
