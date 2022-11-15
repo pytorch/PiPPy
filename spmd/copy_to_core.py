@@ -17,6 +17,9 @@ pytorch_dest_dir = "../pytorch/torch/distributed/_tensor/"
 
 tau_test_dir = "./test/spmd/tensor/"
 pytorch_test_dir = "../pytorch/test/distributed/_tensor/"
+pytorch_common_test_dir = (
+    "../pytorch/torch/testing/_internal/distributed/_tensor/"
+)
 
 common_testing_dtensor_folder = [
     "./spmd/testing/common_dtensor.py",
@@ -35,6 +38,11 @@ if os.path.exists(pytorch_dest_dir):
 
 if os.path.exists(pytorch_test_dir):
     shutil.rmtree(pytorch_test_dir)
+
+if os.path.exists(pytorch_common_test_dir):
+    shutil.rmtree(pytorch_common_test_dir)
+
+os.makedirs(pytorch_common_test_dir)
 
 # First, copying all the files in the source directory to pytorch directory
 shutil.copytree(tau_src_dir, pytorch_dest_dir)
