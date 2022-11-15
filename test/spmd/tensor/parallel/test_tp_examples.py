@@ -120,10 +120,10 @@ class MultiheadAttnWrap(nn.Module):
 
 
 class DistTensorParallelExampleTest(DistTensorTestBase):
+    """
     @with_comms
     def test_parallelize_linear(self):
-
-
+    """
 
     @with_comms
     def test_mlp_megatron_e2e(self):

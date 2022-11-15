@@ -14,12 +14,20 @@ from spmd.tensor import (
 from spmd.tensor.parallel import TensorParallelMultiheadAttention
 
 
-def _shard_input_1d(tensor: Union[torch.Tensor, DTensor], device_mesh: Optional[DeviceMesh]=None, dim: int=0) -> DTensor:
+def _shard_input_1d(
+    tensor: Union[torch.Tensor, DTensor],
+    device_mesh: Optional[DeviceMesh] = None,
+    dim: int = 0,
+) -> DTensor:
     sharding = [Shard(dim)]
     if isinstance(torch.Tensor, tensor):
+        return DTensor.from_local(tensor, device_mesh, sharding)
     elif isinstance(DTensor, tensor):
+        return tensor.redistribute(device_mesh, sharding)
     else:
-        raise RuntimeError("Input to _shard_input_1d must be either torch.Tensor or DTensor!")
+        raise RuntimeError(
+            "Input to _shard_input_1d must be either torch.Tensor or DTensor!"
+        )
 
 
 def MakeInputShard1D(dim: int) -> functools.partial[DTensor]:
@@ -27,18 +35,34 @@ def MakeInputShard1D(dim: int) -> functools.partial[DTensor]:
     return functools.partial(_shard_input_1d, dim=dim)
 
 
-def _replicate_input_1d(tensor: Union[torch.Tensor, DTensor], device_mesh: Optional[DeviceMesh]=None) -> DTensor:
+def _replicate_input_1d(
+    tensor: Union[torch.Tensor, DTensor],
+    device_mesh: Optional[DeviceMesh] = None,
+) -> DTensor:
     replicate = [Replicate()]
     if isinstance(torch.Tensor, tensor):
-        
+        return DTensor.from_local(tensor, device_mesh, replicate)
     elif isinstance(DTensor, tensor):
+        return tensor.redistribute(device_mesh, replicate)
     else:
-        raise RuntimeError("Input to _replicate_input_1d must be either torch.Tensor or DTensor!")
+        raise RuntimeError(
+            "Input to _replicate_input_1d must be either torch.Tensor or DTensor!"
+        )
 
 
 def MakeInputReplicated() -> functools.partial[DTensor]:
     # This function generates input handler for 1-D mesh device only
     return functools.partial(_replicate_input_1d)
+
+
+def _replicate_output_1d(tensor: DTensor) -> torch.Tensor:
+    assert isinstance(tensor, DTensor) and tensor.device_mesh.ndim == 1
+    return replicate_output(tensor)
+
+
+def MakeOutputReplicated() -> functools.partial[torch.Tensor]:
+    # This function generates input handler for 1-D mesh device only
+    return functools.partial(_replicate_output_1d)
 
 
 @dataclass
@@ -47,7 +71,10 @@ class ParallelStyle(object):
     The parallel style user wants the module or submodule to be sharded.
     Users can extend this class to build their own parallel style with customized input/output preparations.
     """
-    _prepare_input: Callable[[Union[torch.Tensor, DTensor], Optional[DeviceMesh]], DTensor]
+
+    _prepare_input: Callable[
+        [Union[torch.Tensor, DTensor], Optional[DeviceMesh]], DTensor
+    ]
     _prepare_output: Callable[[DTensor], Union[Tensor, DTensor]]
 
 
@@ -55,16 +82,22 @@ class RowwiseParallel(ParallelStyle):
     """
     Partitioning the row of a module. We assume the input to be a Shard(-1) DTensor and output to be a replicated DTensor.
     """
+
+    """
     def __init__(self):
         super().__init__(MakeInputShard(-1), MakeOutputReplicated())
+    """
 
 
 class ColwiseParallel(ParallelStyle):
     """
     Partitioning the column of a tensor or module. We assume the input to be a Replicated DTensor and output to be a Shard(-1) DTensor.
     """
+
+    """
     def __init__(self):
         super().__init__(MakeInputReplicated(), None)
+    """
 
 
 class PairwiseParallel(ParallelStyle):
@@ -72,10 +105,23 @@ class PairwiseParallel(ParallelStyle):
     We concatenate colwise and rowwise styles as a fixed pair like what Megatron-LM(https://arxiv.org/abs/1909.08053) is doing. We assume both input and output to a Replicated DTensor. We now only support Multihead Attention, MLP and transformer for this style.
     We also need to assume the input is a nn.Multihead Attention, nn.Transformer or even-number layers of nn.Linear for now.
     """
+
     def __init__(self):
         super().__init__(MakeInputReplicated(), MakeOutputReplicated())
 
 
+def _parallelize_linear(
+    module: nn.Module,
+    parallel_style: ParallelStyle=ColwiseParallel(),
+    device_mesh: DeviceMesh=None,
+    tp_mesh_dim: int=0,
+) -> None:
+    if not isinstance(nn.Linear, module):
+        raise RuntimeError(
+            ""
+        )
+
+# TODO: deprecate old TP api
 def _replicate_input(
     inputs: Sequence[torch.Tensor], device_mesh: DeviceMesh
 ) -> Tuple[DTensor, ...]:
