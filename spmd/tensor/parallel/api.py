@@ -19,6 +19,12 @@ def _shard_input_1d(
     device_mesh: Optional[DeviceMesh] = None,
     dim: int = 0,
 ) -> DTensor:
+    if device_mesh is None:
+        if isinstance(DTensor, tensor):
+            device_mesh = tensor.device_mesh
+
+    assert device_mesh is not None, "_replicate_input_1d: device mesh is not 1D"
+
     sharding = [Shard(dim)]
     if isinstance(torch.Tensor, tensor):
         return DTensor.from_local(tensor, device_mesh, sharding)
@@ -39,6 +45,12 @@ def _replicate_input_1d(
     tensor: Union[torch.Tensor, DTensor],
     device_mesh: Optional[DeviceMesh] = None,
 ) -> DTensor:
+    if device_mesh is None:
+        if isinstance(DTensor, tensor):
+            device_mesh = tensor.device_mesh
+
+    assert device_mesh is not None, "_replicate_input_1d: device mesh is not 1D"
+
     replicate = [Replicate()]
     if isinstance(torch.Tensor, tensor):
         return DTensor.from_local(tensor, device_mesh, replicate)
@@ -56,7 +68,9 @@ def MakeInputReplicated() -> functools.partial[DTensor]:
 
 
 def _replicate_output_1d(tensor: DTensor) -> torch.Tensor:
-    assert isinstance(tensor, DTensor) and tensor.device_mesh.ndim == 1
+    assert (
+        isinstance(tensor, DTensor) and tensor.device_mesh.ndim == 1
+    ), "_replicate_output_1d: device mesh is not 1D"
     return replicate_output(tensor)
 
 
@@ -83,10 +97,8 @@ class RowwiseParallel(ParallelStyle):
     Partitioning the row of a module. We assume the input to be a Shard(-1) DTensor and output to be a replicated DTensor.
     """
 
-    """
     def __init__(self):
         super().__init__(MakeInputShard(-1), MakeOutputReplicated())
-    """
 
 
 class ColwiseParallel(ParallelStyle):
@@ -94,10 +106,8 @@ class ColwiseParallel(ParallelStyle):
     Partitioning the column of a tensor or module. We assume the input to be a Replicated DTensor and output to be a Shard(-1) DTensor.
     """
 
-    """
     def __init__(self):
         super().__init__(MakeInputReplicated(), None)
-    """
 
 
 class PairwiseParallel(ParallelStyle):
@@ -110,16 +120,68 @@ class PairwiseParallel(ParallelStyle):
         super().__init__(MakeInputReplicated(), MakeOutputReplicated())
 
 
-def _parallelize_linear(
+def _parallelize_linear_1d(
     module: nn.Module,
-    parallel_style: ParallelStyle=ColwiseParallel(),
-    device_mesh: DeviceMesh=None,
-    tp_mesh_dim: int=0,
+    parallel_style: ParallelStyle = ColwiseParallel(),
+    device_mesh: DeviceMesh = None,
+    tp_mesh_dim: int = 0,  # TODO: remove this param???
 ) -> None:
     if not isinstance(nn.Linear, module):
         raise RuntimeError(
-            ""
+            f"{module} is not a torch.nn.Linear module but _parallelize_linear was called!"
         )
+
+    if not isinstance(ParallelStyle, parallel_style):
+        raise RuntimeError(
+            f"parallel_style passed to _parallelize_linear is not a ParallelStyle object but {parallel_style}!"
+        )
+
+    col_wise_sharding: Sequence[Placement] = [Shard(0)]
+    row_wise_sharding: Sequence[Placement] = [Shard(1)]
+    replicate: Sequence[Placement] = [Replicate()]
+
+    def linear_module_placements(
+        parallel_style: ParallelStyle,
+    ) -> Tuple[Sequence[Placement], Sequence[Placement]]:
+        if isinstance(RowwiseParallel, parallel_style):
+            return row_wise_sharding, replicate
+        elif isinstance(ColwiseParallel, parallel_style):
+            return col_wise_sharding, col_wise_sharding
+        elif isinstance(PairwiseParallel, parallel_style):
+            raise RuntimeError(f"{parallel_style} is not supported!")
+        else:
+            raise RuntimeError(f"{parallel_style} is not supported!")
+
+    # placements
+    linear_placements, bias_placements = linear_module_placements(
+        parallel_style
+    )
+    # params
+    sharded_weight = nn.Parameter(
+        distribute_tensor(module.weight, device_mesh, linear_placements)
+    )
+    module.register_parameter("weight", sharded_weight)
+    if module.bias is not None:
+        replicated_bias = nn.Parameter(
+            distribute_tensor(module.bias, device_mesh, replicate)
+        )
+        module.register_parameter("bias", bias_placements)
+    # input
+    if parallel_style._prepare_input is not None:
+        input_fn: Callable[
+            [Sequence[Union[torch.Tensor, DTensor]], Tuple[DTensor, ...]]
+        ] = lambda inputs: [
+            parallel_style._prepare_input(tensor, device_mesh)
+            for tensor in inputs
+        ]
+        module.register_forward_pre_hook(lambda _, inputs: input_fn(inputs))  # type: ignore
+    # output
+    if parallel_style._prepare_output is not None:
+        output_fn = parallel_style._prepare_output
+        module.register_forward_hook(
+            lambda mod, inputs, outputs: output_fn(outputs)  # type: ignore
+        )
+
 
 # TODO: deprecate old TP api
 def _replicate_input(
