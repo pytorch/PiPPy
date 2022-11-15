@@ -11,6 +11,10 @@ from spmd.tensor import DeviceMesh, DTensor, Shard, Replicate, distribute_tensor
 
 
 class TPShardingOpsTest(DTensorTestBase):
+    @property
+    def world_size(self) -> int:
+        return 4
+
     @with_comms
     def test_sharded_view(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
