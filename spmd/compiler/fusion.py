@@ -1,3 +1,4 @@
+import logging
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
@@ -6,6 +7,7 @@ from typing import Iterable, List, Optional
 import torch
 import torch.distributed as dist
 import torch.fx as fx
+
 from .graph_utils import (
     OP,
     get_node_tensor_numel,
@@ -13,10 +15,12 @@ from .graph_utils import (
     graph_cleanup,
     pretty_print_graph,
 )
+from .log_utils import rank0_debug
 
+logger: logging.Logger = logging.getLogger(__name__)
 
 # enum for the supported fusion comm types
-class Comm_Type(str, Enum):
+class CommType(str, Enum):
     allreduce = "allreduce_"
     allgather = "allgather_"
     broadcast = "broadcast_"
@@ -26,8 +30,11 @@ class Comm_Type(str, Enum):
 
 @dataclass
 class FusionElement:
-    comm_type: Optional[Comm_Type] = None
-    node_list: List = field(default_factory=lambda: [])  # type: ignore
+    """This class tracks the nodes for a DTensor expanded communication collective in the graph"""
+
+    in_graph: bool = False
+    comm_type: Optional[CommType] = None
+    node_list: List[object] = field(default_factory=lambda: [])
     size: int = 0
     prev_node: Optional[fx.Node] = None  # node that was before start of section
     next_node: Optional[fx.Node] = None  # node that was after end of section
@@ -46,7 +53,7 @@ class GraphInfo:
     output: Optional[fx.Node] = None
     first: Optional[fx.Node] = None
 
-    def update_info(self, gm: fx.GraphModule, debug: bool = True) -> None:
+    def update_info(self, gm: fx.GraphModule) -> None:
         """get the len, input and output nodes"""
         graph_len = gm.graph._len
         if not graph_len:
@@ -65,13 +72,12 @@ class GraphInfo:
             self.output is not None
         ), f"unable to locate output node in gm {gm.graph}"
 
-        if debug:
-            print(
-                f"updated info - len = {self.len} input = {self.first}, output = {self.output}"
-            )
+        rank0_debug(
+            f"updated graph_info - len = {self.len} input = {self.first}, output = {self.output}"
+        )
 
 
-def _insert_buffer_node(
+def _insert_fusion_buffer_node(
     gm: fx.GraphModule, insert_before_node: fx.Node, buffer_size: Iterable[int]
 ) -> fx.Node:
     """insert a torch.empty node in front of insert_before_node"""
@@ -90,35 +96,32 @@ def _insert_buffer_node(
 
 def _scan_graph_for_fusion_elements(
     gm: fx.GraphModule,
-    comm_type: Comm_Type = Comm_Type.allreduce,
+    comm_type: CommType = CommType.allreduce,
 ) -> Optional[List[FusionElement]]:
     """scan entire graph for matching sections of CommTensor style expansions
-    returns list of FusionElements that match comm_type"""
+    returns list of FusionElements that match CommType"""
 
     element_list = []
 
-    fe_pattern = [
+    fe_sequence = [
         "clone",
         "_tensor_constant",
         "_tensor_constant",
-        comm_type,
+        CommType,
         "comm_result",
         "getitem",
         "getitem",
         "wait_comm",
     ]
 
-    fe_size = len(fe_pattern) - 1
-    curr_count = 0
+    fe_size = len(fe_sequence) - 1
+    index = 0
     curr_node_list = []
-    rank = dist.get_rank()
 
     for i, node in enumerate(gm.graph.nodes):
+        pattern = fe_sequence[index]
 
-        pattern = fe_pattern[curr_count]
-
-        if curr_count < fe_size:
-
+        if index < fe_size:
             if node.name.startswith(pattern):
                 curr_node_list.append(node)
                 curr_count += 1
@@ -128,7 +131,7 @@ def _scan_graph_for_fusion_elements(
                 curr_node_list.clear()
                 continue
 
-        if curr_count == fe_size:
+        elif index == fe_size:
             # should be last node
             if node.name.startswith(pattern):
                 curr_node_list.append(node)
@@ -148,7 +151,6 @@ def _scan_graph_for_fusion_elements(
                 fe.comm_node = fe.node_list[3]
                 fe.wait_node = node
 
-                # compute size of this fe
                 fe.size = get_node_tensor_numel(fe.clone_node)  # type: ignore
                 element_list.append(fe)
 
@@ -159,24 +161,22 @@ def _scan_graph_for_fusion_elements(
     return element_list
 
 
-def run_fusion(main_gm: fx.GraphModule) -> bool:
+def run_comm_fusion(gm: fx.GraphModule) -> bool:
     """main entry into remapping graph for all_reduce fusion"""
 
     result = False
 
     # get our main graph info
     graph_info = GraphInfo()
-    graph_info.update_info(main_gm)
+    graph_info.update_info(gm)
 
     # scan graph for all comm sections (fusion elements)
-    fe_list = _scan_graph_for_fusion_elements(
-        main_gm, comm_type=Comm_Type.allreduce
-    )
+    fe_list = _scan_graph_for_fusion_elements(gm, comm_type=CommType.allreduce)
 
     # final review print
-    graph_cleanup(main_gm)
+    graph_cleanup(gm)
 
-    pretty_print_graph(main_gm, "final version, fusion pass")
+    pretty_print_graph(gm, "final version, fusion pass")
 
     result = True  # TODO - make this mean something
     return result
