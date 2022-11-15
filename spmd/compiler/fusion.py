@@ -5,7 +5,6 @@ from enum import Enum
 from typing import Iterable, List, Optional
 
 import torch
-import torch.distributed as dist
 import torch.fx as fx
 
 from .graph_utils import (
@@ -34,7 +33,7 @@ class FusionElement:
 
     in_graph: bool = False
     comm_type: Optional[CommType] = None
-    node_list: List[object] = field(default_factory=lambda: [])
+    node_list: Optional[List[fx.Node]] = field(default_factory=lambda: [])
     size: int = 0
     prev_node: Optional[fx.Node] = None  # node that was before start of section
     next_node: Optional[fx.Node] = None  # node that was after end of section
@@ -73,7 +72,8 @@ class GraphInfo:
         ), f"unable to locate output node in gm {gm.graph}"
 
         rank0_debug(
-            f"updated graph_info - len = {self.len} input = {self.first}, output = {self.output}"
+            logger,
+            f"updated graph_info - len = {self.len} input = {self.first}, output = {self.output}",
         )
 
 
@@ -124,10 +124,10 @@ def _scan_graph_for_fusion_elements(
         if index < fe_size:
             if node.name.startswith(pattern):
                 curr_node_list.append(node)
-                curr_count += 1
+                index += 1
                 continue
             else:
-                curr_count == 0
+                index = 0
                 curr_node_list.clear()
                 continue
 
@@ -154,7 +154,7 @@ def _scan_graph_for_fusion_elements(
                 fe.size = get_node_tensor_numel(fe.clone_node)  # type: ignore
                 element_list.append(fe)
 
-            curr_count = 0
+            index = 0
             curr_node_list.clear()
             continue
 
