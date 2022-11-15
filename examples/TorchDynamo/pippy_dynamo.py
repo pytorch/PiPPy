@@ -160,11 +160,11 @@ def run_master(_, args):
     # Optimize and distribute model using Dynamo + PiPPy
     ec = dynamo.optimize(my_pippy_compiler)(ec)
 
+    print(f"\n======= Runtime tests =======")
     ec_input = torch.randn(bs, d_hid, device=args.device)
     # This would already be output returned by PiPPy's distributed pipeline
     pipe_out = ec(ec_input)
 
-    print(f"\n======= Runtime tests =======")
     # Check correctness
     torch.testing.assert_close(pipe_out, ref_out[0])
     print(

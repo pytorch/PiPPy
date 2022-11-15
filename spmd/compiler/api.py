@@ -1,25 +1,24 @@
 import logging
-
 from dataclasses import dataclass
-from enum import auto, Enum
+from enum import Enum, auto
 from functools import partial
-from typing import cast, Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple, cast
 
 import torch
 import torch.distributed as dist
 import torch.fx as fx
 import torch.nn as nn
-
-from functorch.compile import aot_module
-
-from spmd.tensor import DeviceMesh, DTensor
-from spmd.tensor.dispatch import operator_dispatch, propagate_input_sharding
-from spmd.tensor.placement_types import _Partial, Placement, Replicate, Shard
-from spmd.tensor.redistribute import _redistribute_with_local_tensor
+from functorch.compile import aot_module, make_boxed_func
 from torch.distributed._spmd.comm_tensor import _get_tracer
 from torch.fx.experimental.proxy_tensor import make_fx, proxy_slot
 from torch.utils._pytree import tree_flatten, tree_map
 
+from spmd.tensor import DeviceMesh, DTensor
+from spmd.tensor.dispatch import operator_dispatch, propagate_input_sharding
+from spmd.tensor.placement_types import Placement, Replicate, Shard, _Partial
+from spmd.tensor.redistribute import _redistribute_with_local_tensor
+
+from .graph_utils import OP
 from .log_utils import rank0_info
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -30,19 +29,24 @@ class TrainingPhase(Enum):
     BACKWARD = auto()
 
 
-class OP(str, Enum):
-    CALL_FUNCTION = "call_function"
-    CALL_MODULE = "call_module"
-    CALL_METHOD = "call_method"
-    GET_ATTR = "get_attr"
-    OUTPUT = "output"
-    PLACEHOLDER = "placeholder"
-
-
 @dataclass
 class Schema:
     mesh: DeviceMesh
     placements: List[Placement]
+
+
+def _is_partial_dtensor(obj: object) -> bool:
+    """check if object is 1) DTensor and  2) with any placement of _Partial"""
+    if not isinstance(obj, DTensor):
+        return False
+
+    is_partial = False
+    for placement in obj.placements:
+        if isinstance(placement, _Partial):
+            is_partial = True
+            break
+
+    return is_partial
 
 
 def _dispatch_with_local_tensors(
@@ -137,6 +141,41 @@ def _get_dtensor_dispatch_graph(
     return make_fx(dispatch)(tree_map(unwrap_local, args))
 
 
+def _build_dummy_add_graph(
+    dt: DTensor, node_to_obj: Dict[fx.Node, object]
+) -> fx.GraphModule:
+    """
+    creates a graph for a dummy add function from a partial DTensor.
+    This dummy add is used for triggering all_reduce on a Partial DTensor
+    during the DTensor expansion of the traced graph.
+    """
+
+    def dummy_add(grad: torch.Tensor, zero: torch.Tensor) -> torch.Tensor:
+        return grad + zero
+
+    grad: torch.Tensor = dt._local_tensor
+    zero: torch.Tensor = torch.zeros_like(dt._local_tensor)
+
+    traced_add = make_fx(dummy_add)(grad, zero)
+
+    placeholders = [n for n in traced_add.graph.nodes if n.op == OP.PLACEHOLDER]
+    call_functions = [
+        n for n in traced_add.graph.nodes if n.op == OP.CALL_FUNCTION
+    ]
+    assert len(placeholders) == 2
+    assert len(call_functions) == 1
+    node_to_obj[placeholders[0]] = dt
+    node_to_obj[placeholders[1]] = zero
+
+    traced_dispatch = _get_dtensor_dispatch_graph(
+        call_functions[0], node_to_obj
+    )
+
+    traced_dispatch.graph.lint()
+
+    return traced_dispatch
+
+
 def _convert_output(
     gm: fx.GraphModule,
     node: fx.Node,
@@ -149,35 +188,16 @@ def _convert_output(
             new_args.append(argument)
             continue
         obj = node_to_obj[argument]
-        if not (
-            isinstance(obj, DTensor) and isinstance(obj.placements[0], _Partial)
-        ):
+
+        has_partial = _is_partial_dtensor(obj)
+
+        if not has_partial:
             continue
 
-        has_partial = True
+        # we know it's a dtensor from is partial DT check...
+        dt = cast(DTensor, obj)
 
-        def dummy_add(grad: torch.Tensor, zero: torch.Tensor) -> torch.Tensor:
-            return grad + zero
-
-        grad: torch.Tensor = obj._local_tensor
-        zero: torch.Tensor = torch.zeros_like(obj._local_tensor)
-
-        traced_add = make_fx(dummy_add)(grad, zero)
-
-        placeholders = [
-            n for n in traced_add.graph.nodes if n.op == OP.PLACEHOLDER
-        ]
-        call_functions = [
-            n for n in traced_add.graph.nodes if n.op == OP.CALL_FUNCTION
-        ]
-        assert len(placeholders) == 2
-        assert len(call_functions) == 1
-        node_to_obj[placeholders[0]] = obj
-        node_to_obj[placeholders[1]] = zero
-        traced_dispatch = _get_dtensor_dispatch_graph(
-            call_functions[0], node_to_obj
-        )
-        traced_dispatch.graph.lint()
+        traced_dispatch = _build_dummy_add_graph(dt, node_to_obj)
 
         wait = [n for n in traced_dispatch.graph.nodes if n.name == "wait_comm"]
         add = [n for n in traced_dispatch.graph.nodes if n.name == "add"]
@@ -293,7 +313,8 @@ def _convert_to_distributed(
             raise ValueError(f"Unrecognized node {node}")
 
     _rebuild_graph(gm, node_replacements)
-    return gm
+
+    return make_boxed_func(gm)
 
 
 class SPMD(nn.Module):
