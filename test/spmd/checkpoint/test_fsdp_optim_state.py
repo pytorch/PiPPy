@@ -13,15 +13,15 @@ import spmd.checkpoint.adv_planner as ap
 import spmd.checkpoint.optimizer as opt
 
 from spmd.testing.checkpoint_utils import with_temp_dir
-from spmd.testing.common_utils import (
-    DistTensorTestBase,
+from spmd.testing.common_dtensor import (
+    DTensorTestBase,
     with_comms,
 )
 from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 from torch.testing._internal.common_utils import run_tests
 
 
-class FsdpOptimStateCheckpoint(DistTensorTestBase):
+class FsdpOptimStateCheckpoint(DTensorTestBase):
     @with_comms
     @skip_if_lt_x_gpu(4)
     @with_temp_dir
