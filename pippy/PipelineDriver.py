@@ -605,6 +605,13 @@ class PipeStageExecutor(EventRecorder):
         self.lr_scheduler = None
         self.device = self._find_mod_device()
 
+        # Send/recv order normalization
+        self.callee_send_tag: Dict[int, int] = {}  # callee stage: tag seq num
+        self.caller_recv_tag: Dict[int, int] = {}  # caller stage: tag seq num
+        self.callee_send_tag_lock = threading.Lock()
+        self.caller_recv_tag_lock = threading.Lock()
+        self.caller_recv_tag_cv = threading.Condition(self.caller_recv_tag_lock)
+
     def _find_mod_device(self):
         # We assume that all parameters in the module are on the same device
         # HACK: we assume the module has at least one parameter
@@ -791,24 +798,47 @@ class PipeStageExecutor(EventRecorder):
                 output_unique_key, work_item
             )
 
-        # Spawn asynchronous data transfers for each of the ValueRef arguments.
-        _futures = []
+        # Group Value Ref Args based on source stage
+        # `callee_stage_dict` has the following structure:
+        #   Dict[callee_stage, Dict[my_arg_idx, value_ref]]
+        callee_stage_dict: Dict[int, Dict[int, ValueReference]] = {}
         for arg_idx, value_ref_arg in enumerate(value_ref_args):
-            logging.debug(
-                f"[{self.stage_id}][{cur_microbatch}] Launching asynchronous data transfer for "
-                f"ValueReference {arg_idx} {value_ref_arg}"
-            )
-            assert self.peer_executors is not None
-            _futures.append(
+            # Check if the ValRef corresponds to a tensor
+            if "tensor_meta" in value_ref_arg.meta:
+                callee_stage = value_ref_arg.stage_id
+                batch_refs = callee_stage_dict.setdefault(callee_stage, {})
+                batch_refs[arg_idx] = value_ref_arg
+            else:
+                # For non-tensor (e.g. a value or a size vector), we use RPC to spawn asynchronous data transfer
+                logging.debug(
+                    f"[{self.stage_id}][{cur_microbatch}] Launching RPC data transfer for "
+                    f"ValueReference {arg_idx} {value_ref_arg}"
+                )
                 self.async_transfer(
                     cur_microbatch, value_ref_arg, arg_idx, output_unique_key
                 )
-            )
 
-        if DEBUG:
-            # Make exceptions visible
-            for fut in _futures:
-                fut.wait()
+        # For tensors, we use c10d two-sided send/recv
+        # Batch call per source stage to reduce number of RPC threads
+        with self.callee_send_tag_lock:
+            for callee_stage, batch_refs in callee_stage_dict.items():
+                value_ref_executor_rref = self.peer_executors[callee_stage]
+                tag = self.callee_send_tag.setdefault(callee_stage, 0)
+                self.callee_send_tag[callee_stage] += 1
+                value_ref_executor_rref.rpc_async().batch_send(
+                    self.stage_id,
+                    output_unique_key,
+                    cur_microbatch,
+                    batch_refs,
+                    tag,
+                )
+                self.batch_recv(
+                    cur_microbatch,
+                    output_unique_key,
+                    callee_stage,
+                    batch_refs,
+                    tag,
+                )
 
         with self.value_store_cv:
             assert output_unique_key not in self.value_store, (
@@ -885,7 +915,6 @@ class PipeStageExecutor(EventRecorder):
         runlist_key,
         microbatch,
         value_ref_arg,
-        use_c10d=False,
     ):
         callee_stage = value_ref_arg.stage_id
         logging.debug(
@@ -909,15 +938,6 @@ class PipeStageExecutor(EventRecorder):
             if refcounted_future.release():
                 self.value_store.pop(value_ref_arg.unique_key)
 
-        # Instead of return value let's do a send call
-        if use_c10d:
-            if torch.distributed.get_backend() == "gloo":
-                # Gloo P2P does not support work.get_future, so we use send instead
-                torch.distributed.send(value, caller_stage)
-            else:
-                torch.distributed.isend(value, caller_stage)
-            return
-
         return value
 
     def async_transfer(self, microbatch, value_ref_arg, arg_idx, runlist_key):
@@ -928,31 +948,12 @@ class PipeStageExecutor(EventRecorder):
         callee_stage = value_ref_arg.stage_id
         value_ref_executor_rref = self.peer_executors[callee_stage]
 
-        # Check if there is tensor meta in ValRef
-        use_c10d = False
-        if "tensor_meta" in value_ref_arg.meta:
-            tm = value_ref_arg.meta["tensor_meta"]
-            use_c10d = True
-            recv_buff = torch.empty(
-                tm.shape, dtype=tm.dtype, device=self.device
-            )
-
         fut = value_ref_executor_rref.rpc_async().get_value(
-            self.stage_id, runlist_key, microbatch, value_ref_arg, use_c10d
+            self.stage_id,
+            runlist_key,
+            microbatch,
+            value_ref_arg,
         )
-
-        if use_c10d:
-            if torch.distributed.get_backend() == "gloo":
-                # Gloo P2P does not support work.get_future, so we need to:
-                # - manually create the Future,
-                # - use recv instead, and
-                # - manually set_result to the Future
-                fut: torch.futures.Future = self.create_future()  # type: ignore[no-redef]
-                torch.distributed.recv(recv_buff, callee_stage)
-                fut.set_result(recv_buff)
-            else:
-                work = torch.distributed.irecv(recv_buff, callee_stage)
-                fut = work.get_future()  # type: ignore[attr-defined]
 
         def bottom_half(fut):
             logging.debug(
@@ -960,16 +961,100 @@ class PipeStageExecutor(EventRecorder):
                 f"for runlist item {runlist_key} arg_idx {arg_idx}"
             )
             value = fut.value()
-            # It is awkward that the Work class in PyTorch fixes the result return to a List:
-            #   def result(self) -> List[Tensor]: ...
-            # See torch/_C/_distributed_c10d.pyi
-            # We don't expect P2P operations to actually result in a List, hence unpacking and getting the first and
-            # only tensor out
-            if isinstance(value, List):
-                value = value[0]
             self.rank_worker.update_run_list(runlist_key, arg_idx, value)
 
         return fut.then(bottom_half)
+
+    def batch_send(
+        self,
+        caller_stage,
+        runlist_key,
+        microbatch,
+        batch_refs,
+        tag,
+    ):
+        # Wait till this batch's turn to send
+        with self.caller_recv_tag_cv:
+            self.caller_recv_tag.setdefault(caller_stage, 0)
+            while self.caller_recv_tag[caller_stage] < tag:
+                self.caller_recv_tag_cv.wait()
+
+        logging.debug(
+            f"[{self.stage_id}][{microbatch}] Sending batch {tag} of "
+            f"{len(batch_refs)} values initiated by stage {caller_stage} for {runlist_key}"
+        )
+
+        for _, value_ref_arg in batch_refs.items():
+            with self.value_store_cv:
+                # Waiting for the indexed future for this arg to be created
+                while value_ref_arg.unique_key not in self.value_store:
+                    self.value_store_cv.wait()
+                # Now the indexed future is created
+                refcounted_future = self.value_store[value_ref_arg.unique_key]
+
+            value = refcounted_future.future.wait()
+
+            with self.value_store_lock:
+                if refcounted_future.release():
+                    self.value_store.pop(value_ref_arg.unique_key)
+
+            # Instead of return value let's do a send call
+            if torch.distributed.get_backend() == "gloo":
+                # Gloo P2P does not support work.get_future, so we use send instead
+                torch.distributed.send(value, caller_stage, tag=tag)
+            else:
+                torch.distributed.isend(value, caller_stage, tag=tag)
+
+        # Notify next send that's potentially waiting
+        with self.caller_recv_tag_cv:
+            self.caller_recv_tag[caller_stage] += 1
+            self.caller_recv_tag_cv.notify_all()
+
+    def batch_recv(
+        self, microbatch, runlist_key, callee_stage, batch_refs, tag
+    ):
+        logging.debug(
+            f"[{self.stage_id}][{microbatch}] Receiving batch {tag} of {len(batch_refs)} values "
+            f"for runlist item {runlist_key} from stage {callee_stage}"
+        )
+        futures = []
+
+        for arg_idx, value_ref_arg in batch_refs.items():
+            tm = value_ref_arg.meta["tensor_meta"]
+            recv_buff = torch.empty(
+                tm.shape, dtype=tm.dtype, device=self.device
+            )
+
+            if torch.distributed.get_backend() == "gloo":
+                # Gloo P2P does not support work.get_future, so we need to:
+                # - manually create the Future,
+                # - use recv instead, and
+                # - manually set_result to the Future
+                fut: torch.futures.Future = self.create_future()
+                torch.distributed.recv(recv_buff, callee_stage, tag=tag)
+                fut.set_result(recv_buff)
+            else:
+                work = torch.distributed.irecv(recv_buff, callee_stage, tag=tag)
+                fut = work.get_future()  # type: ignore[attr-defined]
+
+            def bottom_half(fut):
+                logging.debug(
+                    f"[{self.stage_id}][{microbatch}] Completing transfer of value {value_ref_arg} "
+                    f"for runlist item {runlist_key} arg_idx {arg_idx}"
+                )
+                value = fut.value()
+                # It is awkward that the Work class in PyTorch fixes the result return to a List:
+                #   def result(self) -> List[Tensor]: ...
+                # See torch/_C/_distributed_c10d.pyi
+                # We don't expect P2P operations to actually result in a List, hence unpacking and getting the first and
+                # only tensor out
+                if isinstance(value, List):
+                    value = value[0]
+                self.rank_worker.update_run_list(runlist_key, arg_idx, value)
+
+            futures.append(fut.then(bottom_half))
+
+        return futures
 
     def get_grad(self, qualname):
         mod = self.mod
