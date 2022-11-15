@@ -52,9 +52,13 @@ import_pattern = re.compile(r"import spmd.tensor")
 replace_import_pattern = "import torch.distributed._tensor"
 
 from_import_testing_pattern = re.compile(r"from spmd.testing")
-replace_from_import_testing_pattern = "from torch.testing._internal.distributed._tensor"
+replace_from_import_testing_pattern = (
+    "from torch.testing._internal.distributed._tensor"
+)
 import_testing_pattern = re.compile(r"import spmd.testing")
-replace_import_testing_pattern = "import torch.testing._internal.distributed._tensor"
+replace_import_testing_pattern = (
+    "import torch.testing._internal.distributed._tensor"
+)
 
 
 for filename in glob.iglob(pytorch_dest_dir + "**/*.py", recursive=True):
