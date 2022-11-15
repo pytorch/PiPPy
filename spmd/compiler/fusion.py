@@ -146,10 +146,10 @@ def _scan_graph_for_fusion_elements(
                 fe.next_node = node.next
 
                 fe.output_name = node.name
-
-                fe.clone_node = curr_node_list[0]  
-                fe.comm_node = curr_node_list[3]
                 fe.wait_node = node
+
+                fe.clone_node = curr_node_list[0]
+                fe.comm_node = curr_node_list[3]
 
                 fe.size = get_node_tensor_numel(fe.clone_node)  # type: ignore
                 element_list.append(fe)
