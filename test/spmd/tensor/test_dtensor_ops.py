@@ -443,6 +443,7 @@ dtensor_fails = {
     xfail("roll"),
     xfail("rot90"),
     xfail("rsub"),
+    xfail("scalar_tensor"),
     xfail("scatter_add"),
     xfail("scatter"),
     xfail("scatter_reduce", "amax"),
