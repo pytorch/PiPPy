@@ -19,12 +19,10 @@ from torch.testing._internal.common_device_type import (
     instantiate_device_type_tests,
 )
 import torch.testing._internal.common_methods_invocations as common_ops
-from torch.testing._internal.common_methods_invocations import (
-    op_db,
-    DecorateInfo,
-)
+from torch.testing._internal.common_methods_invocations import DecorateInfo
 
 from spmd.tensor import DTensor, DeviceMesh, Replicate
+from spmd.testing.dtensor_lagging_op_db import dtensor_lagging_op_db
 from spmd.testing.common_dtensor import (
     DTensorTestBase,
     TEST_SKIPS,
@@ -77,7 +75,7 @@ def skip(op_name, variant_name="", *, device_type=None, dtypes=None):
 
 
 def skipOps(test_case_name, base_test_name, to_skip):
-    all_opinfos = op_db
+    all_opinfos = dtensor_lagging_op_db
     for xfail in to_skip:
         op_name, variant_name, device_type, dtypes, expected_failure = xfail
         matching_opinfos = [
@@ -668,7 +666,7 @@ class TestDTensorOps(DTensorTestBase):
     # when feel necessary later (i.e when adding quantization support).
     @unittest.skipIf(TEST_WITH_ASAN, "Skipped under ASAN")
     @suppress_warnings
-    @ops(op_db, allowed_dtypes=(torch.float,))
+    @ops(dtensor_lagging_op_db, allowed_dtypes=(torch.float,))
     @skipOps("TestDTensorOps", "test_dtensor_op_db", dtensor_fails)
     def test_dtensor_op_db(self, dtype, op):
         pg_backend = "nccl" if DEVICE_TYPE == "cuda" else "gloo"
