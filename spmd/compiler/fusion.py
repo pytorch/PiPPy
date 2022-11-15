@@ -33,7 +33,7 @@ class FusionElement:
 
     in_graph: bool = False
     comm_type: Optional[CommType] = None
-    node_list: Optional[List[fx.Node]] = field(default_factory=lambda: [])
+    node_list: Optional[List[fx.Node]] = field(default_factory=lambda: [])  # type: ignore
     size: int = 0
     prev_node: Optional[fx.Node] = None  # node that was before start of section
     next_node: Optional[fx.Node] = None  # node that was after end of section
