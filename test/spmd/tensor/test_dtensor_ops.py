@@ -328,6 +328,7 @@ dtensor_fails = {
     xfail("nn.functional.adaptive_max_pool1d"),
     xfail("nn.functional.adaptive_max_pool2d"),
     xfail("nn.functional.adaptive_max_pool3d"),
+    xfail("nn.functional.alpha_dropout"),
     xfail("nn.functional.avg_pool1d"),
     xfail("nn.functional.avg_pool2d"),
     xfail("nn.functional.avg_pool3d"),
