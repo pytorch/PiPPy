@@ -142,13 +142,13 @@ def _scan_graph_for_fusion_elements(
 
                 # need to fully populate this fe...
                 # we will be removing/rewriting the node list so we save prev and next
-                fe.prev_node = fe.node_list[0].prev
+                fe.prev_node = curr_node_list[0].prev
                 fe.next_node = node.next
 
                 fe.output_name = node.name
 
-                fe.clone_node = curr_node_list[0]  # fe.node_list[0]
-                fe.comm_node = fe.node_list[3]
+                fe.clone_node = curr_node_list[0]  
+                fe.comm_node = curr_node_list[3]
                 fe.wait_node = node
 
                 fe.size = get_node_tensor_numel(fe.clone_node)  # type: ignore
