@@ -122,26 +122,27 @@ class MultiheadAttnWrap(nn.Module):
 
 class DistTensorParallelExampleTest(DistTensorTestBase):
     @with_comms
-    def test_row_wise_parallel(self):
-        # test RowwiseParallel
-        rowwise = tp.RowwiseParallel()
-        torch.manual_seed(5)
-        model = nn.Linear(10, 16, device=self.device_type)
-        torch.manual_seed(5)
-        model_tp = nn.Linear(10, 16, device=self.device_type)
-        inp = torch.rand(8, 10, device=self.device_type)
+    def test_replicate_input_1d(self):
+        tensor = torch.rand(8, 16, device=self.device_type)
+        with self.assertRaisesRegex(
+            AssertionError, "_replicate_input_1d: device mesh is not 1D"
+        ):
+            dtensor = tp.style._replicate_input_1d(tensor)
 
-        # parallelize model_tp
-        LR = 0.25
         device_mesh = DeviceMesh(self.device_type, list(range(NUM_DEVICES)))
-        tp._parallelize_linear(model_tp, rowwise, device_mesh)
-        optim = torch.optim.SGD(model.parameters(), lr=LR)
-        optim_tp = torch.optim.SGD(model_tp.parameters(), lr=LR)
-
-        output = model(inp)
-        output_tp = model_tp(inp)
-        self.assertEqual(output, output_tp.to_local())
-
+        # test 1
+        dtensor = tp.style._replicate_input_1d(tensor, device_mesh)
+        self.assertEqual(tensor, dtensor.to_local())
+        # test 2
+        dtensor = tp.style._replicate_input_1d(dtensor)
+        self.assertEqual(tensor, dtensor.to_local())
+        # test 3
+        dtensor = tp.style._replicate_input_1d(dtensor, device_mesh)
+        self.assertEqual(tensor, dtensor.to_local())
+    """
+    @with_comms
+    def test_col_wise_parallel(self):
+    """
 
     @with_comms
     def test_mlp_megatron_e2e(self):
