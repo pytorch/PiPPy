@@ -1,18 +1,19 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+# Owner(s): ["oncall: distributed"]
+
 from typing import Sequence, Any, Dict, Callable, Optional
 from unittest import skip
 
 import torch
 from torch import Tensor
 from torch.testing._internal.common_utils import run_tests
-from spmd.testing.common_utils import (
-    DistTensorTestBase,
+from spmd.testing.common_dtensor import (
+    DTensorTestBase,
     with_comms,
     skip_unless_torch_gpu,
 )
 
-from spmd.tensor import distribute_tensor
-from spmd import DeviceMesh, DTensor
+from spmd.tensor import DeviceMesh, DTensor, distribute_tensor
 from spmd.tensor.placement_types import (
     Shard,
     Replicate,
@@ -72,7 +73,7 @@ def deepcopy_convert_from_dtensor(val: Any) -> Any:
     return pytree.tree_map(f, [val])[0]
 
 
-class DistElementwiseOpsTest(DistTensorTestBase):
+class DistElementwiseOpsTest(DTensorTestBase):
     def _compare_pairwise_ops(
         self,
         *,

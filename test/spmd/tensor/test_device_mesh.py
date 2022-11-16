@@ -1,4 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+# Owner(s): ["oncall: distributed"]
+
 import torch
 
 from torch.distributed.distributed_c10d import (
@@ -8,53 +10,18 @@ from torch.distributed.distributed_c10d import (
     get_world_size,
 )
 from torch.testing._internal.common_utils import run_tests
-from spmd.testing.common_utils import (
-    DistTensorTestBase,
+from spmd.testing.common_dtensor import (
+    DTensorTestBase,
     with_comms,
 )
-from spmd.tensor import DeviceMesh, DTensor, Shard, Replicate
+from spmd.tensor.device_mesh import DeviceMesh
+from spmd.tensor.placement_types import Shard
 
 
-class DeviceMeshTest(DistTensorTestBase):
+class DeviceMeshTest(DTensorTestBase):
     @property
     def world_size(self):
         return 8
-
-    @with_comms
-    def test_device_mesh_basics(self):
-        # construct a cuda device mesh
-        mesh = DeviceMesh(self.device_type, [0, 1, 2, 3])
-
-        # construct from a cpu local tensor with cuda device mesh
-        # should automatically convert the dist tensor to cuda
-        shard_spec = [Shard(0)]
-        local_tensor = torch.randn(3, 3)
-        dist_tensor = DTensor.from_local(local_tensor, mesh, shard_spec)
-        self.assertEqual(dist_tensor.device.type, self.device_type)
-        self.assertEqual(dist_tensor.to_local().device.type, self.device_type)
-
-    @with_comms
-    def test_device_mesh_context_manager(self):
-        with DeviceMesh(self.device_type, list(range(self.world_size))) as mesh:
-            shard_spec = [Shard(0)]
-            local_tensor = torch.randn(3, 3)
-            sharded_tensor = DTensor.from_local(
-                local_tensor, device_mesh=mesh, placements=shard_spec
-            )
-
-        with DeviceMesh(self.device_type, list(range(self.world_size))):
-            shard_spec = [Shard(0)]
-            local_tensor = torch.randn(3, 3)
-            sharded_tensor = DTensor.from_local(
-                local_tensor, placements=shard_spec
-            )
-            replica_spec = [Replicate()]
-            replica_tensor = sharded_tensor.redistribute(
-                placements=replica_spec
-            )
-            self.assertEqual(
-                replica_tensor.size(), torch.Size([3 * self.world_size, 3])
-            )
 
     @with_comms
     def test_device_mesh_2d(self):
@@ -80,23 +47,6 @@ class DeviceMeshTest(DistTensorTestBase):
                 dim_ranks[0] if self.rank in dim_ranks[0] else dim_ranks[1]
             )
             self.assertEqual(global_ranks, current_rank_expected_group_ranks)
-
-        # construct a dist tensor on 2d device mesh and test if works
-        shard_spec = [Shard(0), Shard(1)]
-        local_tensor = torch.randn(3, 3)
-        dist_tensor = DTensor.from_local(local_tensor, mesh, shard_spec)
-        self.assertEqual(dist_tensor.size(), torch.Size([6, 6]))
-        self.assertEqual(dist_tensor.device.type, self.device_type)
-        self.assertEqual(dist_tensor.to_local().device.type, self.device_type)
-
-        # if shard on the same tensor dimension
-        # we should correctly construct the global tensor size
-        shard_same_dim_spec = [Shard(0), Shard(0)]
-        local_tensor = torch.randn(3, 3)
-        dist_tensor = DTensor.from_local(
-            local_tensor, mesh, shard_same_dim_spec
-        )
-        self.assertEqual(dist_tensor.size(), torch.Size([12, 3]))
 
     @with_comms
     def test_device_mesh_2d_from_dim_groups(self):
@@ -130,14 +80,6 @@ class DeviceMeshTest(DistTensorTestBase):
                 dim_ranks[0] if self.rank in dim_ranks[0] else dim_ranks[1]
             )
             self.assertEqual(global_ranks, current_rank_expected_group_ranks)
-
-        # construct a dist tensor on 2d device mesh and test if works
-        shard_spec = [Shard(0), Shard(1)]
-        local_tensor = torch.randn(3, 3)
-        dist_tensor = DTensor.from_local(local_tensor, mesh, shard_spec)
-        self.assertEqual(dist_tensor.size(), torch.Size([6, 6]))
-        self.assertEqual(dist_tensor.device.type, self.device_type)
-        self.assertEqual(dist_tensor.to_local().device.type, self.device_type)
 
     @with_comms
     def test_device_mesh_dim_groups_error(self):
@@ -203,24 +145,8 @@ class DeviceMeshTest(DistTensorTestBase):
                 if self.rank in ranks:
                     self.assertEqual(global_ranks, ranks.tolist())
 
-        # construct a dist tensor on 3d device mesh and test if works
-        shard_spec = [Shard(0), Shard(1), Shard(2)]
-        local_tensor = torch.randn(3, 3, 3)
-        dist_tensor = DTensor.from_local(local_tensor, mesh, shard_spec)
-        self.assertEqual(dist_tensor.size(), torch.Size([6, 6, 6]))
-        self.assertEqual(dist_tensor.device.type, self.device_type)
-        self.assertEqual(dist_tensor.to_local().device.type, self.device_type)
 
-        # construct a dist tensor on 3d device mesh with some shards on same dim
-        shard_spec = [Shard(0), Shard(0), Shard(2)]
-        local_tensor = torch.randn(3, 3, 3)
-        dist_tensor = DTensor.from_local(local_tensor, mesh, shard_spec)
-        self.assertEqual(dist_tensor.size(), torch.Size([12, 3, 6]))
-        self.assertEqual(dist_tensor.device.type, self.device_type)
-        self.assertEqual(dist_tensor.to_local().device.type, self.device_type)
-
-
-class DeviceMeshCollectiveTest(DistTensorTestBase):
+class DeviceMeshCollectiveTest(DTensorTestBase):
     @property
     def world_size(self):
         return 8

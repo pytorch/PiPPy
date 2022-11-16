@@ -32,7 +32,7 @@ from torch.distributed._shard.checkpoint.planner_helpers import (
 from torch.distributed._shard.metadata import ShardMetadata
 from torch.distributed._shard.sharded_tensor.shard import Shard
 
-from spmd import DTensor
+from spmd.tensor import DTensor
 
 
 def init_logger() -> logging.Logger:

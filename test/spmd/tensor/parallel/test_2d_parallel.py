@@ -1,3 +1,5 @@
+# Owner(s): ["oncall: distributed"]
+
 from typing import Any
 
 
@@ -7,7 +9,13 @@ import torch.distributed as dist
 from torch.distributed._shard.sharded_tensor.api import ShardedTensor
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
-from spmd import distribute_tensor, DeviceMesh, DTensor as DT, Shard, Replicate
+from spmd.tensor import (
+    distribute_tensor,
+    DeviceMesh,
+    DTensor as DT,
+    Shard,
+    Replicate,
+)
 
 import torch.distributed.distributed_c10d as distributed_c10d
 
@@ -15,8 +23,8 @@ from torch.testing._internal.common_utils import run_tests
 from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 from spmd.tensor.parallel.fsdp import is_available
 
-from spmd.testing.common_utils import (
-    DistTensorTestBase,
+from spmd.testing.common_dtensor import (
+    DTensorTestBase,
     with_comms,
 )
 
@@ -149,7 +157,7 @@ def is_nested_tensor(val: Any) -> bool:
     return False
 
 
-class Test2dParallelIntegration(DistTensorTestBase):
+class Test2dParallelIntegration(DTensorTestBase):
     @with_comms
     @skip_if_lt_x_gpu(4)
     def test_2d_fsdp_integration_functionality(self) -> None:
