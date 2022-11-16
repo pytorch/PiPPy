@@ -69,7 +69,7 @@ class TensorParallelStyleTest(DTensorTestBase):
         output = [dtensor]
         with self.assertRaisesRegex(
             AssertionError,
-            f"output of Tensor Parallel is actually {type(output)} not DTensor.",
+            f"Expect output of Tensor Parallel to be a DTensor, but found {type(output)}.",
         ):
             func(output, device_mesh)
         device_mesh = DeviceMesh(self.device_type, [[0, 1], [2, 3]])

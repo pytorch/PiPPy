@@ -4,15 +4,14 @@ import torch
 from spmd.tensor import DeviceMesh, DTensor
 from typing import Callable, Optional, Union
 
+_Prepare_Output_Func_Type = Callable[
+    [DTensor, Optional[DeviceMesh], Optional[int]], Union[torch.Tensor, DTensor]
+]
+
 
 def _prepare_output_validate(
-    _prepare_output_func: Callable[
-        [DTensor, Optional[DeviceMesh], Optional[int]],
-        Union[torch.Tensor, DTensor],
-    ]
-) -> Callable[
-    [DTensor, Optional[DeviceMesh], Optional[int]], Union[torch.Tensor, DTensor]
-]:
+    _prepare_output_func: _Prepare_Output_Func_Type
+) -> _Prepare_Output_Func_Type:
     """
     Inject common validation logics for _prepare_output funcs via this
     decorator, including verifying that output needs to be a DTensor
@@ -34,14 +33,15 @@ def _prepare_output_validate(
 
     @functools.wraps(_prepare_output_func)
     def wrapper(*args, **kwargs):  # pyre-ignore[2, 3]
-        assert len(args) >= 2, "_prepare_output need at least two args."
+        assert len(args) >= 1, "_prepare_output need at least one arg."
         output = args[0]
-        device_mesh = args[1]
         assert isinstance(
             output, DTensor
-        ), f"output of Tensor Parallel is actually {type(output)} not DTensor."
-        if device_mesh is None:
+        ), f"Expect output of Tensor Parallel to be a DTensor, but found {type(output)}."
+        if len(args) < 2:
             device_mesh = output.device_mesh
+        else:
+            device_mesh = args[1]
 
         assert (
             device_mesh.ndim == 1

@@ -38,7 +38,7 @@ def make_output_replicate_1d(
             DeviceMesh is passed in. If no DeviceMesh is passed in, we will reuse the
             one from output DTensor.
     Return:
-        (DTensor): A DTensor made repliacted.
+        (DTensor): A DTensor made replicate.
     """
 
     return output.redistribute(device_mesh, [Replicate()])
