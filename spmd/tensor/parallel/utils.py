@@ -10,7 +10,7 @@ _Prepare_Output_Func_Type = Callable[
 
 
 def _prepare_output_validate(
-    _prepare_output_func: _Prepare_Output_Func_Type
+    _prepare_output_func: _Prepare_Output_Func_Type,
 ) -> _Prepare_Output_Func_Type:
     """
     Inject common validation logics for _prepare_output funcs via this
