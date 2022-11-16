@@ -9,9 +9,4 @@ from spmd.tensor.parallel.api import (
     replicate_output,
 )
 
-from spmd.tensor.parallel.style import (
-    ParallelStyle,
-    RowwiseParallel,
-    ColwiseParallel,
-    PairwiseParallel,
-)
+import spmd.tensor.parallel.style
