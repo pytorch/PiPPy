@@ -27,7 +27,7 @@ def make_output_shard_1d(
 
 @_prepare_output_validate  # type: ignore[arg-type] # pyre-ignore[56]
 def make_output_replicate_1d(
-    output: DTensor, device_mesh: Optional[DeviceMesh] = None,
+    output: DTensor, device_mesh: Optional[DeviceMesh] = None
 ) -> DTensor:
     """
     Convert Output DTensor to a replicated DTensor. This will be used in ParallelStyle.
