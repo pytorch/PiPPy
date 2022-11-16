@@ -1,17 +1,19 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+# Owner(s): ["oncall: distributed"]
+
 import torch
 from torch.testing._internal.common_utils import run_tests
-from spmd.testing.common_utils import (
-    DistTensorTestBase,
+from spmd.testing.common_dtensor import (
+    DTensorTestBase,
     with_comms,
 )
-from spmd import DeviceMesh, DTensor, Shard
+from spmd.tensor import DeviceMesh, DTensor, Shard
 from spmd.tensor.parallel._view_with_dim_change import (
     _view_with_sharding_dim_change,
 )
 
 
-class TPViewShardingDimChangeTest(DistTensorTestBase):
+class TPViewShardingDimChangeTest(DTensorTestBase):
     @with_comms
     def test_view_with_sharding_dim_change(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
