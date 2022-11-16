@@ -1,11 +1,11 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
-from typing import Union, Optional
+from typing import Optional
 from spmd.tensor import DTensor, Shard, Replicate, DeviceMesh
 from spmd.tensor.parallel.utils import _prepare_output_validate
 
 
-@_prepare_output_validate  # type: ignore[arg-type] # pyre-ignore[1]
+@_prepare_output_validate  # type: ignore[arg-type] # pyre-ignore[56]
 def make_output_shard_1d(
     output: DTensor, device_mesh: Optional[DeviceMesh] = None, dim: int = 0
 ) -> DTensor:
@@ -25,7 +25,7 @@ def make_output_shard_1d(
     return output.redistribute(device_mesh, [Shard(dim)])
 
 
-@_prepare_output_validate  # type: ignore[arg-type] # pyre-ignore[1]
+@_prepare_output_validate  # type: ignore[arg-type] # pyre-ignore[56]
 def make_output_replicate_1d(
     output: DTensor, device_mesh: Optional[DeviceMesh] = None,
 ) -> DTensor:
@@ -44,7 +44,7 @@ def make_output_replicate_1d(
     return output.redistribute(device_mesh, [Replicate()])
 
 
-@_prepare_output_validate  # type: ignore[arg-type] # pyre-ignore[1]
+@_prepare_output_validate  # type: ignore[arg-type] # pyre-ignore[56]
 def make_output_tensor(
     output: DTensor, device_mesh: Optional[DeviceMesh] = None
 ) -> torch.Tensor:

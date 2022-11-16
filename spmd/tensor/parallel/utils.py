@@ -33,7 +33,7 @@ def _prepare_output_validate(
     """
 
     @functools.wraps(_prepare_output_func)
-    def wrapper(*args, **kwargs): # pyre-ignore[2, 3]
+    def wrapper(*args, **kwargs):  # pyre-ignore[2, 3]
         assert len(args) >= 2, "_prepare_output need at least two args."
         output = args[0]
         device_mesh = args[1]
