@@ -33,7 +33,7 @@ def _prepare_output_validate(
 
     @functools.wraps(_prepare_output_func)
     def wrapper(*args, **kwargs):  # pyre-ignore[2, 3]
-        assert len(args) >= 1, "_prepare_output need at least one arg."
+        assert len(args) >= 1, "_prepare_output needs at least one arg."
         output = args[0]
         assert isinstance(
             output, DTensor
