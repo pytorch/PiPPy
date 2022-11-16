@@ -121,17 +121,9 @@ def get_box_for(
     device_mesh = tensor.device_mesh
     assert device_mesh.ndim == 1, "Only 1D DeviceMeshes currently handled"
 
-    placement = tensor.placements[0]
-    offsets = [0] * len(tensor.size())
-    num_chunks = device_mesh.size(dim=0)
-
-    if tensor.placements[0].is_shard():
-        shard_dim = placement.dim  # type: ignore # pyre-ignore[16]
-        chunk_size = tensor.size(shard_dim) // num_chunks
-        offsets[shard_dim] = chunk_size
-
     size = tensor.to_local().size()
-    offsets = [val * idx for val in offsets]  # type: ignore
+    offsets = tensor._spec.local_offsets
+
     return (torch.Size(offsets), size)
 
 
