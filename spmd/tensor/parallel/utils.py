@@ -14,8 +14,8 @@ def _prepare_output_validate(
     [DTensor, Optional[DeviceMesh], Optional[int]], Union[torch.Tensor, DTensor]
 ]:
     """
-    Inject common validation logics for _prepare_output funcs via this 
-    decorator, including verifying that output needs to be a DTensor 
+    Inject common validation logics for _prepare_output funcs via this
+    decorator, including verifying that output needs to be a DTensor
     and only 1D Device Mesh is passed in.
     Example::
         >>> @_prepare_output_validate
@@ -26,7 +26,7 @@ def _prepare_output_validate(
         >>> make_output_shard_1d(dt, device_mesh, 1)
         >>> # This will call '_prepare_output_validate' first
     Args:
-        _prepare_output_func (Callable): The func we want to inject the 
+        _prepare_output_func (Callable): The func we want to inject the
             validation into.
     Return:
         func (Callable): Same input func with validation logic added.
