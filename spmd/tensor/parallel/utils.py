@@ -45,7 +45,7 @@ def _prepare_output_validate(
 
         assert (
             device_mesh.ndim == 1
-        ), f"{_prepare_output_func.__name__}: device mesh is not 1D"
+        ), f"device_mesh has dims {device_mesh.ndim} but expcted to be 1 for output."
         return _prepare_output_func(*args, **kwargs)
 
     return wrapper
