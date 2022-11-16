@@ -22,7 +22,6 @@ from spmd.tensor.parallel import (
     replicate_input,
     replicate_output,
 )
-import spmd.tensor.parallel as tp
 
 
 class MLPModule(torch.nn.Module):
@@ -121,56 +120,6 @@ class MultiheadAttnWrap(nn.Module):
 
 
 class DistTensorParallelExampleTest(DistTensorTestBase):
-    @with_comms
-    def test_replicate_input_1d(self):
-        tensor = torch.rand(8, 16, device=self.device_type)
-        with self.assertRaisesRegex(
-            AssertionError,
-            "device_mesh is not passed nor can be inferred in replicate_input_1d",
-        ):
-            dtensor = tp.style.replicate_input_1d(tensor)
-        device_mesh = DeviceMesh(self.device_type, [[0, 1], [2, 3]])
-        with self.assertRaisesRegex(
-            AssertionError, "replicate_input_1d: device mesh is not 1D"
-        ):
-            dtensor = tp.style.replicate_input_1d(tensor, device_mesh)
-
-        device_mesh = DeviceMesh(self.device_type, list(range(NUM_DEVICES)))
-        # test 1
-        dtensor = tp.style.replicate_input_1d(tensor, device_mesh)
-        self.assertEqual(tensor, dtensor.to_local())
-        # test 2
-        dtensor = tp.style.replicate_input_1d(dtensor)
-        self.assertEqual(tensor, dtensor.to_local())
-        # test 3
-        dtensor = tp.style.replicate_input_1d(dtensor, device_mesh)
-        self.assertEqual(tensor, dtensor.to_local())
-
-    @with_comms
-    def test_shard_input_1d(self):
-        tensor = torch.rand(8, 16, device=self.device_type)
-        with self.assertRaisesRegex(
-            AssertionError,
-            "device_mesh is not passed nor can be inferred in shard_input_1d",
-        ):
-            dtensor = tp.style.shard_input_1d(tensor)
-        device_mesh = DeviceMesh(self.device_type, [[0, 1], [2, 3]])
-        with self.assertRaisesRegex(
-            AssertionError, "shard_input_1d: device mesh is not 1D"
-        ):
-            dtensor = tp.style.shard_input_1d(tensor, device_mesh)
-
-        device_mesh = DeviceMesh(self.device_type, list(range(NUM_DEVICES)))
-        # test 1
-        dtensor = tp.style.shard_input_1d(tensor, device_mesh)
-        self.assertEqual(tensor, dtensor.to_local())
-        # test 2
-        dtensor = tp.style.shard_input_1d(dtensor)
-        self.assertEqual(tensor, dtensor.to_local())
-        # test 3
-        dtensor = tp.style.shard_input_1d(dtensor, device_mesh)
-        self.assertEqual(tensor, dtensor.to_local())
-
     @with_comms
     def test_mlp_megatron_e2e(self):
         inp_size = [5, 10]
