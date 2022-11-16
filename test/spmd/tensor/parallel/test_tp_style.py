@@ -1,41 +1,54 @@
-<<<<<<< HEAD
+# Owner(s): ["oncall: distributed"]
 # Copyright (c) Meta Platforms, Inc. and affiliates
+
 import torch
 from torch.testing._internal.common_utils import run_tests
+from spmd.testing.common_dtensor import DTensorTestBase, with_comms
 from spmd.testing.common_utils import (
     DistTensorTestBase,
     with_comms,
     NUM_DEVICES,
 )
 from spmd.tensor import (
+    distribute_tensor,
+    DTensor,
+    Shard,
+    Replicate,
     DeviceMesh,
+)
+from spmd.tensor.parallel.style import (
+    make_input_shard_1d,
+    make_input_replicate_1d,
+    make_output_shard_1d,
+    make_output_replicate_1d,
+    make_output_tensor,
 )
 import spmd.tensor.parallel as tp
 
 
-class DistTensorParallelExampleTest(DistTensorTestBase):
+class TensorParallelStyleTest(DTensorTestBase):
     @with_comms
     def test_make_input_replicate_1d(self):
         tensor = torch.rand(8, 16, device=self.device_type)
         with self.assertRaisesRegex(
             AssertionError, "device_mesh is not passed nor can be inferred"
         ):
-            dtensor = tp.style.make_input_replicate_1d(tensor)
+            dtensor = make_input_replicate_1d(tensor)
         device_mesh = DeviceMesh(self.device_type, [[0, 1], [2, 3]])
         with self.assertRaisesRegex(
             AssertionError, "device_mesh dim is [0-9]+ but expcted to be 1"
         ):
-            dtensor = tp.style.make_input_replicate_1d(tensor, device_mesh)
+            dtensor = make_input_replicate_1d(tensor, device_mesh)
 
         device_mesh = DeviceMesh(self.device_type, list(range(NUM_DEVICES)))
         # test 1
-        dtensor = tp.style.make_input_replicate_1d(tensor, device_mesh)
+        dtensor = make_input_replicate_1d(tensor, device_mesh)
         self.assertEqual(tensor, dtensor.to_local())
         # test 2
-        dtensor = tp.style.make_input_replicate_1d(dtensor)
+        dtensor = make_input_replicate_1d(dtensor)
         self.assertEqual(tensor, dtensor.to_local())
         # test 3
-        dtensor = tp.style.make_input_replicate_1d(dtensor, device_mesh)
+        dtensor = make_input_replicate_1d(dtensor, device_mesh)
         self.assertEqual(tensor, dtensor.to_local())
 
     @with_comms
@@ -44,41 +57,25 @@ class DistTensorParallelExampleTest(DistTensorTestBase):
         with self.assertRaisesRegex(
             AssertionError, "device_mesh is not passed nor can be inferred"
         ):
-            dtensor = tp.style.make_input_shard_1d(tensor)
+            dtensor = put_shard_1d(tensor)
         device_mesh = DeviceMesh(self.device_type, [[0, 1], [2, 3]])
         with self.assertRaisesRegex(
             AssertionError, "device_mesh dim is [0-9]+ but expcted to be 1"
         ):
-            dtensor = tp.style.make_input_shard_1d(tensor, device_mesh)
+            dtensor = make_input_shard_1d(tensor, device_mesh)
 
         device_mesh = DeviceMesh(self.device_type, list(range(NUM_DEVICES)))
         # test 1
-        dtensor = tp.style.make_input_shard_1d(tensor, device_mesh)
+        dtensor = make_input_shard_1d(tensor, device_mesh)
         self.assertEqual(tensor, dtensor.to_local())
         # test 2
-        dtensor = tp.style.make_input_shard_1d(dtensor)
+        dtensor = make_input_shard_1d(dtensor)
         self.assertEqual(tensor, dtensor.to_local())
         # test 3
-        dtensor = tp.style.make_input_shard_1d(dtensor, device_mesh)
+        dtensor = make_input_shard_1d(dtensor, device_mesh)
         self.assertEqual(tensor, dtensor.to_local())
 
 
-if __name__ == "__main__":
-    run_tests()
-=======
-# Owner(s): ["oncall: distributed"]
-
-import torch
-from spmd.testing.common_dtensor import DTensorTestBase, with_comms
-from spmd.tensor import distribute_tensor, DeviceMesh, Shard, Replicate
-from spmd.tensor.parallel.style import (
-    make_output_shard_1d,
-    make_output_replicate_1d,
-    make_output_tensor,
-)
-
-
-class TensorParallelStyleTest(DTensorTestBase):
     # Common logic for testing prepare output funcs
     def _test_prepare_output(self, func, spec, dim=None):
         device_mesh = DeviceMesh(self.device_type, [0, 1, 2, 3])
@@ -152,4 +149,7 @@ class TensorParallelStyleTest(DTensorTestBase):
         self._test_prepare_output_error(make_output_shard_1d)
         self._test_prepare_output_error(make_output_replicate_1d)
         self._test_prepare_output_error(make_output_tensor)
->>>>>>> origin/prepare_out
+
+
+if __name__ == "__main__":
+    run_tests()
