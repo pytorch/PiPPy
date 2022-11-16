@@ -82,7 +82,7 @@ class TestIR(unittest.TestCase):
         ]
 
         x = torch.randn(50, 512)
-        torch.testing.assert_allclose(self.seq(x), pipe(x))
+        torch.testing.assert_close(self.seq(x), pipe(x))
 
         # Check exact qualname mapping
         expected_map = {
@@ -98,7 +98,7 @@ class TestIR(unittest.TestCase):
     def test_tracing_transmit(self):
         ec_pipe = Pipe.from_tracing(self.ec, MultiUseParameterConfig.TRANSMIT)
         x = torch.randn(5, 512)
-        torch.testing.assert_allclose(self.ec(x), ec_pipe(x))
+        torch.testing.assert_close(self.ec(x), ec_pipe(x))
         assert ec_pipe.replicated_params == [
             {"submod_1": "lin.weight", "submod_2": "lin.weight"},
             {"submod_1": "lin.bias", "submod_2": "lin.bias"},
@@ -119,7 +119,7 @@ class TestIR(unittest.TestCase):
             self.ec, MultiUseParameterConfig.REPLICATE
         )
         x = torch.randn(5, 512)
-        torch.testing.assert_allclose(self.ec(x), ec_pipe_replicated(x))
+        torch.testing.assert_close(self.ec(x), ec_pipe_replicated(x))
         assert ec_pipe_replicated.replicated_params == [
             {"submod_0": "moved_mm_param", "submod_1": "moved_mm_param"},
             {"submod_1": "lin.weight", "submod_2": "lin.weight"},
@@ -151,7 +151,7 @@ class TestIR(unittest.TestCase):
         pm = PipeMod()
         pm_pipe = Pipe.from_tracing(pm, MultiUseParameterConfig.TRANSMIT)
         x = torch.randn(5, 3)
-        torch.testing.assert_allclose(pm_pipe(x), pm(x))
+        torch.testing.assert_close(pm_pipe(x), pm(x))
         assert pm_pipe.replicated_params == []
         check_qualname_mapping(old=pm, new=pm_pipe)
 
@@ -176,8 +176,8 @@ class TestIR(unittest.TestCase):
             pipe.remap_qualname(name): copy.copy(val.grad)
             for name, val in pipe.named_parameters()
         }
-        torch.testing.assert_allclose(test_out, mse_loss(self.seq(x), target))
-        torch.testing.assert_allclose(test_out, loss_wrapper(x, target))
+        torch.testing.assert_close(test_out, mse_loss(self.seq(x), target))
+        torch.testing.assert_close(test_out, loss_wrapper(x, target))
 
         ref_optim.zero_grad()
         ref_out = loss_wrapper(x, target)
@@ -189,7 +189,7 @@ class TestIR(unittest.TestCase):
 
         for name, ref_grad in ref_grads.items():
             assert name in test_grads
-            torch.testing.assert_allclose(test_grads[name], ref_grad)
+            torch.testing.assert_close(test_grads[name], ref_grad)
 
     def test_loss_backward_tracing(self):
         mse_loss = torch.nn.MSELoss()
@@ -211,7 +211,7 @@ class TestIR(unittest.TestCase):
             ec_pipe_with_loss.remap_qualname(name): copy.copy(val.grad)
             for name, val in ec_pipe_with_loss.named_parameters()
         }
-        torch.testing.assert_allclose(test_out, mse_loss(self.ec(x), target))
+        torch.testing.assert_close(test_out, mse_loss(self.ec(x), target))
 
         ref_optim.zero_grad()
         ref_out = mse_loss(self.ec(x), target)
@@ -223,7 +223,7 @@ class TestIR(unittest.TestCase):
 
         for name, ref_grad in ref_grads.items():
             assert name in test_grads
-            torch.testing.assert_allclose(test_grads[name], ref_grad)
+            torch.testing.assert_close(test_grads[name], ref_grad)
 
     def test_grad_accumulation(self):
         # TODO: test grad accumulation in runtime
@@ -282,7 +282,7 @@ class TestIR(unittest.TestCase):
             ec_pipe_with_loss.remap_qualname(name): copy.copy(val.grad)
             for name, val in ec_pipe_with_loss.named_parameters()
         }
-        torch.testing.assert_allclose(test_out, mse_loss(self.ec(x), target))
+        torch.testing.assert_close(test_out, mse_loss(self.ec(x), target))
 
         ref_optim.zero_grad()
         ref_out = mse_loss(self.ec(x), target)
@@ -328,7 +328,7 @@ class TestIR(unittest.TestCase):
         for k_test, v_test in test_grads.items():
             k_ref = pipe.remap_qualname(k_test)
             v_ref = ref_grads[k_ref]
-            torch.testing.assert_allclose(v_test, v_ref)
+            torch.testing.assert_close(v_test, v_ref)
 
     def test_custom_tracer_serialization(self):
         class CustomTracer(pippy.fx.Tracer):
@@ -404,7 +404,7 @@ class TestIR(unittest.TestCase):
 
         tc = TestCode()
         tc_pipe = Pipe.from_tracing(tc)
-        torch.testing.assert_allclose(
+        torch.testing.assert_close(
             tc_pipe(torch.ones(5, 5)), 2 * torch.ones(5, 5)
         )
 
@@ -429,7 +429,7 @@ class TestIR(unittest.TestCase):
 
         tc = TestCode()
         tc_pipe = Pipe.from_tracing(tc)
-        torch.testing.assert_allclose(
+        torch.testing.assert_close(
             tc_pipe(torch.ones(5, 5)), 3 * torch.ones(5, 5)
         )
 
@@ -473,7 +473,7 @@ class TestIR(unittest.TestCase):
         annotate_split_points(b, {"b": PipeSplitWrapper.SplitPoint.BEGINNING})
         pipe = Pipe.from_tracing(b)
         x = torch.randn(5, 5)
-        torch.testing.assert_allclose(pipe(x), b(x))
+        torch.testing.assert_close(pipe(x), b(x))
         assert "submod_1" in dict(pipe.split_gm.named_modules())
 
     def test_from_tracing_preserves_buffer(self):
@@ -483,7 +483,7 @@ class TestIR(unittest.TestCase):
         assert "moved_buffer" in dict(pipe.split_gm.submod_1.named_buffers())
         # NB: identity comparison
         assert ec.buffer is pipe.split_gm.submod_1.moved_buffer
-        torch.testing.assert_allclose(
+        torch.testing.assert_close(
             ec.buffer, pipe.split_gm.submod_1.moved_buffer
         )
 
@@ -491,7 +491,7 @@ class TestIR(unittest.TestCase):
         assert "moved_buffer" in dict(pipe.split_gm.submod_1.named_buffers())
         # NB: identity comparison is not possible because pipe has a deepcopy of the original parameters
         assert ec.buffer is not pipe.split_gm.submod_1.moved_buffer
-        torch.testing.assert_allclose(
+        torch.testing.assert_close(
             ec.buffer, pipe.split_gm.submod_1.moved_buffer
         )
 
@@ -547,7 +547,7 @@ class TestIR(unittest.TestCase):
         annotate_split_points(b, {"f.submod": PipeSplitWrapper.SplitPoint.END})
         pipe = Pipe.from_tracing(b)
         x = torch.randn(5, 5)
-        torch.testing.assert_allclose(pipe(x), b(x))
+        torch.testing.assert_close(pipe(x), b(x))
         assert "submod_1" in dict(pipe.split_gm.named_modules())
 
     def test_annotate_split_points_nonexistent_module(self):
@@ -635,8 +635,8 @@ class TestIR(unittest.TestCase):
         pipe = Pipe.from_tracing(tm)
         pipe_out = pipe(x, input_nt)
 
-        torch.testing.assert_allclose(pipe_out["added"], ref_out["added"])
-        torch.testing.assert_allclose(
+        torch.testing.assert_close(pipe_out["added"], ref_out["added"])
+        torch.testing.assert_close(
             pipe_out["multiplied"], ref_out["multiplied"]
         )
 
@@ -654,7 +654,7 @@ class TestIR(unittest.TestCase):
         assert len(args_split) == NCHUNKS
         for arg in args_split:
             assert isinstance(arg, tuple) and len(arg) == 1
-            torch.testing.assert_allclose(arg[0], x)
+            torch.testing.assert_close(arg[0], x)
 
         # kwargs should have 5 chunks that contain a SpecialInputNamedTuple at the 'input_nt' key
         # `input_nt` should have rows of `input_nt.my_tensor` split along dimension 0.
@@ -669,7 +669,7 @@ class TestIR(unittest.TestCase):
             )
             input_nt_to_test = kwarg["input_nt"]
             assert isinstance(input_nt_to_test, SpecialInputNamedTuple)
-            torch.testing.assert_allclose(
+            torch.testing.assert_close(
                 input_nt_to_test.my_tensor, input_nt.my_tensor[i : i + 1, :]
             )
             assert input_nt_to_test.my_integer == 42
@@ -688,9 +688,7 @@ class TestIR(unittest.TestCase):
         assert len(args_split) == NCHUNKS
         for chunk_idx, arg in enumerate(args_split):
             assert isinstance(arg, tuple) and len(arg) == 1
-            torch.testing.assert_allclose(
-                arg[0], x[chunk_idx : chunk_idx + 1, :]
-            )
+            torch.testing.assert_close(arg[0], x[chunk_idx : chunk_idx + 1, :])
 
         assert len(kwargs_split) == NCHUNKS
         for i, kwarg in enumerate(kwargs_split):
@@ -701,7 +699,7 @@ class TestIR(unittest.TestCase):
             )
             input_nt_to_test = kwarg["input_nt"]
             assert isinstance(input_nt_to_test, SpecialInputNamedTuple)
-            torch.testing.assert_allclose(
+            torch.testing.assert_close(
                 input_nt_to_test.my_tensor, input_nt.my_tensor[i : i + 1, :]
             )
             assert input_nt_to_test.my_integer == 42
@@ -719,14 +717,14 @@ class TestIR(unittest.TestCase):
         assert len(args_split_masked) == NCHUNKS
         for chunk_idx, arg in enumerate(args_split_masked):
             assert isinstance(arg, tuple) and len(arg) == 1
-            torch.testing.assert_allclose(
+            torch.testing.assert_close(
                 arg[0][0:chunk_idx, :], torch.zeros(chunk_idx, arg[0].size(1))
             )
-            torch.testing.assert_allclose(
+            torch.testing.assert_close(
                 arg[0][chunk_idx : chunk_idx + 1, :],
                 x[chunk_idx : chunk_idx + 1, :],
             )
-            torch.testing.assert_allclose(
+            torch.testing.assert_close(
                 arg[0][chunk_idx + 1 :, :],
                 torch.zeros(arg[0].size(0) - chunk_idx - 1, arg[0].size(1)),
             )
@@ -744,16 +742,16 @@ class TestIR(unittest.TestCase):
             tuple(v["multiplied"] for v in model_out_chunks)
         )
 
-        torch.testing.assert_allclose(catted_added, ref_out["added"])
-        torch.testing.assert_allclose(catted_multiplied, ref_out["multiplied"])
+        torch.testing.assert_close(catted_added, ref_out["added"])
+        torch.testing.assert_close(catted_multiplied, ref_out["multiplied"])
 
         chunks_merged = merge_chunks(
             model_out_chunks,
             {"added": TensorChunkSpec(0), "multiplied": TensorChunkSpec(0)},
         )
 
-        torch.testing.assert_allclose(chunks_merged["added"], ref_out["added"])
-        torch.testing.assert_allclose(
+        torch.testing.assert_close(chunks_merged["added"], ref_out["added"])
+        torch.testing.assert_close(
             chunks_merged["multiplied"], ref_out["multiplied"]
         )
 
@@ -781,8 +779,8 @@ class TestIR(unittest.TestCase):
             )
         )
 
-        torch.testing.assert_allclose(catted_added, ref_out["added"])
-        torch.testing.assert_allclose(catted_multiplied, ref_out["multiplied"])
+        torch.testing.assert_close(catted_added, ref_out["added"])
+        torch.testing.assert_close(catted_multiplied, ref_out["multiplied"])
 
         chunks_merged_masked = merge_chunks(
             model_out_chunks_mask,
@@ -790,10 +788,10 @@ class TestIR(unittest.TestCase):
             _debug_mask_minibatches=True,
         )
 
-        torch.testing.assert_allclose(
+        torch.testing.assert_close(
             chunks_merged_masked["added"], ref_out["added"]
         )
-        torch.testing.assert_allclose(
+        torch.testing.assert_close(
             chunks_merged_masked["multiplied"], ref_out["multiplied"]
         )
 

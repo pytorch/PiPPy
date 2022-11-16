@@ -1,9 +1,11 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+# Owner(s): ["oncall: distributed"]
+
 import torch
 import torch.nn as nn
 from torch.testing._internal.common_utils import run_tests
-from spmd.testing.common_utils import DistTensorTestBase, with_comms  # type: ignore
-from spmd import (
+from spmd.testing.common_dtensor import DTensorTestBase, with_comms
+from spmd.tensor import (
     distribute_tensor,
     distribute_module,
     DeviceMesh,
@@ -31,7 +33,13 @@ class MyModel(nn.Module):
             m.reset_parameters()
 
 
-class DTensorAPITest(DistTensorTestBase):
+class DTensorAPITest(DTensorTestBase):
+    @property
+    def world_size(self) -> int:
+        # hard code world size to 4 as we need to test
+        # at least with 2d mesh
+        return 4
+
     @with_comms
     def test_distribute_tensor(self):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
@@ -112,7 +120,7 @@ class DTensorAPITest(DistTensorTestBase):
         )
         shard_spec = [Shard(0)]
 
-        def shard_fn(name, module):
+        def shard_fn(name, module, device_mesh):
             if isinstance(module, nn.Linear):
                 for name, param in module.named_parameters():
                     dist_param = torch.nn.Parameter(
@@ -136,7 +144,7 @@ class DTensorAPITest(DistTensorTestBase):
             self.assertEqual(param.placements, replica_spec)
 
         # fully replicate all modules by passing in partition_fn
-        def replicate_fn(name, module):
+        def replicate_fn(name, module, device_mesh):
             if isinstance(module, nn.Linear):
                 for name, param in module.named_parameters():
                     dist_param = torch.nn.Parameter(
@@ -153,7 +161,7 @@ class DTensorAPITest(DistTensorTestBase):
             self.assertEqual(param.placements, replica_spec)
 
         # only shard part of module, and rest of module should be replicate
-        def shard_fn(name, module):
+        def shard_fn(name, module, device_mesh):
             if isinstance(module, nn.Linear) and (
                 name == "seq.0" or name == "seq.8"
             ):
@@ -184,10 +192,10 @@ class DTensorAPITest(DistTensorTestBase):
         module_to_replicate = MyModel(20, 1, device=self.device_type)
 
         # mark input sharding on dim 0
-        def input_fn(inputs):
+        def input_fn(inputs, device_mesh):
             return DTensor.from_local(inputs[0], device_mesh, [Shard(0)])
 
-        def output_fn(outputs):
+        def output_fn(outputs, device_mesh):
             assert isinstance(outputs, DTensor)
             return outputs.to_local()
 
@@ -206,7 +214,7 @@ class DTensorAPITest(DistTensorTestBase):
         # full replicate (even on inputs)
         model = MyModel(10, 10, device=self.device_type)
 
-        def replicate_input_fn(inputs):
+        def replicate_input_fn(inputs, device_mesh):
             return DTensor.from_local(inputs[0], device_mesh, [Replicate()])
 
         replica_model = distribute_module(

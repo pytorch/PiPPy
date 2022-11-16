@@ -29,8 +29,13 @@ from torch.testing._internal.common_distributed import (
     skip_if_lt_x_gpu,
 )
 
-from spmd import DeviceMesh, distribute_tensor, Shard, Replicate
-from spmd.tensor import redistribute
+from spmd.tensor import (
+    DeviceMesh,
+    Shard,
+    Replicate,
+    distribute_tensor,
+    redistribute,
+)
 from spmd.tensor.api import DTensor
 from spmd.tensor.placement_types import Placement
 
@@ -86,13 +91,13 @@ def redistribute_profiler() -> Generator[RedistributeProfile, None, None]:
         redistribute.redistribute_dtensor = orig_redistribute_dtensor
 
 
-class DistTensorTestBase(MultiProcessTestCase):
+class DTensorTestBase(MultiProcessTestCase):
     @property
     def world_size(self) -> int:
         return NUM_DEVICES
 
     def build_device_mesh(self) -> DeviceMesh:
-        return DeviceMesh(DEVICE_TYPE, list(range(NUM_DEVICES)))  # type: ignore
+        return DeviceMesh(DEVICE_TYPE, list(range(NUM_DEVICES)))
 
     def init_pg(self, backend: str = "nccl") -> None:
         if backend == "nccl" and torch.cuda.device_count() < self.world_size:
@@ -151,7 +156,7 @@ def with_comms(
 
     @wraps(func)  # pyre-ignore[6]
     def wrapper(
-        self, *args: Tuple[object], **kwargs: Dict[str, Any]  # type: ignore
+        self, *args: Tuple[object], **kwargs: Dict[str, Any]  # type: ignore[misc]
     ) -> None:
         # if backend not specified, and cuda available, then use nccl, else gloo
         pg_backend = (
@@ -162,7 +167,7 @@ def with_comms(
 
         self.device_type = "cuda" if pg_backend == "nccl" else "cpu"
         self.init_pg(backend=pg_backend)
-        func(self)  # type: ignore
+        func(self)  # type: ignore[misc]
         self.destroy_pg()
 
     return wrapper
@@ -309,9 +314,9 @@ class DTensorConverter(object):
                 else:
                     r = distribute_tensor(t, mesh, placements)
                 if type(t) is torch.nn.Parameter:
-                    r = torch.nn.Parameter(
+                    r = torch.nn.Parameter(  # type: ignore[assignment]
                         r, requires_grad=r.requires_grad
-                    )  # type: ignore
+                    )
                 return r
             else:
                 self.miss += 1

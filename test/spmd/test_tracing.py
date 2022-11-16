@@ -9,9 +9,9 @@ from torch.fx.experimental.proxy_tensor import make_fx
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.testing._internal.common_utils import run_tests
 
-from spmd.api import SPMD, Schema
-from spmd.testing.common_utils import (  # type: ignore
-    DistTensorTestBase,
+from spmd.compiler.api import SPMD, Schema
+from spmd.testing.common_dtensor import (
+    DTensorTestBase,
     with_comms,
 )
 from spmd.tensor import (
@@ -145,7 +145,7 @@ class TraceDeviceMeshTestBase:
                 )
 
 
-class TraceDeviceMesh3DTest(DistTensorTestBase, TraceDeviceMeshTestBase):
+class TraceDeviceMesh3DTest(DTensorTestBase, TraceDeviceMeshTestBase):
     @property
     def world_size(self):
         return 8
@@ -167,7 +167,7 @@ class TraceDeviceMesh3DTest(DistTensorTestBase, TraceDeviceMeshTestBase):
         self._test_all_gather_nd(torch.arange(8).reshape(2, 2, 2))
 
 
-class TraceDeviceMesh2DTest(DistTensorTestBase, TraceDeviceMeshTestBase):
+class TraceDeviceMesh2DTest(DTensorTestBase, TraceDeviceMeshTestBase):
     @property
     def world_size(self):
         return 4
@@ -189,7 +189,7 @@ class TraceDeviceMesh2DTest(DistTensorTestBase, TraceDeviceMeshTestBase):
         self._test_all_gather_nd(torch.arange(4).reshape(2, 2))
 
 
-class TraceModuleTest(DistTensorTestBase):
+class TraceModuleTest(DTensorTestBase):
     @property
     def world_size(self):
         return 2

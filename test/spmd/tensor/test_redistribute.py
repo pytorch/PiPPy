@@ -1,18 +1,20 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+# Owner(s): ["oncall: distributed"]
+
 import itertools
 import torch
 
 from torch.testing._internal.common_utils import run_tests
 
-from spmd.testing.common_utils import (  # type: ignore
-    DistTensorTestBase,
+from spmd.testing.common_dtensor import (
+    DTensorTestBase,
     with_comms,
 )
 from spmd.tensor import distribute_tensor, DeviceMesh, DTensor
 from spmd.tensor.placement_types import _Partial, Replicate, Shard
 
 
-class RedistributeTest(DistTensorTestBase):
+class RedistributeTest(DTensorTestBase):
     @with_comms
     def test_shard_to_replicate_forward_backward(self):
         # 1) test shard -> replicate forward
@@ -138,7 +140,9 @@ class RedistributeTest(DistTensorTestBase):
         )
 
         self.assertEqual(partial_tensor.size(), partial_local.size())
-        self.assertEqual(partial_local * 4, global_partial_tensor.to_local())
+        self.assertEqual(
+            partial_local * self.world_size, global_partial_tensor.to_local()
+        )
 
         # test backward to have replicate grad on partial
         global_partial_tensor.backward(torch.ones_like(global_partial_tensor))
@@ -244,7 +248,7 @@ class RedistributeTest(DistTensorTestBase):
             )
 
 
-class MultiDimRedistributeTest(DistTensorTestBase):
+class MultiDimRedistributeTest(DTensorTestBase):
     @property
     def world_size(self) -> int:
         return 8

@@ -216,7 +216,7 @@ class PiPPyTrainer(Trainer):
         optimizer_cls, optimizer_kwargs = Trainer.get_optimizer_cls_and_kwargs(
             self.args
         )
-        self.optimizer = self.model.instantiate_optimizer(
+        self.optimizer = self.model.instantiate_optimizer(  # type: ignore[operator]
             optimizer_cls, **optimizer_kwargs
         )
         return self.optimizer
@@ -224,16 +224,13 @@ class PiPPyTrainer(Trainer):
     def create_scheduler(
         self, num_training_steps: int, optimizer: torch.optim.Optimizer = None
     ):
-        if self.lr_scheduler is None:
-            self.lr_scheduler = self.model.instantiate_lr_scheduler(
-                transformers.optimization.TYPE_TO_SCHEDULER_FUNCTION[
-                    self.args.lr_scheduler_type
-                ],
-                num_warmup_steps=self.args.get_warmup_steps(
-                    self.args.max_steps
-                ),
-                num_training_steps=self.args.max_steps,
-            )
+        self.lr_scheduler = self.model.instantiate_lr_scheduler(  # type: ignore[operator]
+            transformers.optimization.TYPE_TO_SCHEDULER_FUNCTION[
+                self.args.lr_scheduler_type
+            ],
+            num_warmup_steps=self.args.get_warmup_steps(self.args.max_steps),
+            num_training_steps=self.args.max_steps,
+        )
         return self.lr_scheduler
 
     def compute_loss(self, model, inputs, return_outputs=False):

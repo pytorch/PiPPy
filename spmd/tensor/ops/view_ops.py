@@ -12,20 +12,18 @@ from typing import (
     cast,
 )
 
+import torch
+from torch import Tensor
+
 from spmd.tensor.placement_types import DTensorSpec, Placement, Replicate
-import functools
-import operator
 from spmd.tensor.api import Shard
 from spmd.tensor.dispatch import OpSchema, OutputSharding
 from spmd.tensor.ops.utils import (
-    register_prop_rule,
     normalize_dim,
     normalize_dims,
+    prod,
+    register_prop_rule,
 )
-
-
-def _prod(xs: Iterable[int]) -> int:
-    return functools.reduce(operator.mul, xs, 1)
 
 
 Shape = Tuple[int, ...]
@@ -211,7 +209,7 @@ def normalize_sizes(sizes: Union[Shape, Tuple[Shape]]) -> Shape:
     if isinstance(sizes[0], int):
         return cast(Shape, sizes)
     elif len(sizes) == 1:
-        return cast(Shape, sizes[0])
+        return cast(Shape, sizes[0])  # type: ignore[redundant-cast]
     else:
         raise RuntimeError("Size must be int... or tuple")
 
@@ -271,7 +269,7 @@ def infer_size(total_size: int, sizes: Shape) -> Shape:
     Infer the size of this dimension given the total_size.
     """
     infers = [i for i, s in enumerate(sizes) if s == -1]
-    size = _prod(sizes)
+    size = prod(sizes)
     assert len(infers) <= 1, "can only infer one size"
     if infers:
         size = -size
@@ -311,10 +309,10 @@ def view_groups(from_size: Shape, to_size: Shape) -> DimMap:
     - in the above, input is flattened into a single dimension and then split
       into two separate dimensions with different sizes from the input.
     """
-    from_nelem = _prod(from_size)
+    from_nelem = prod(from_size)
     to_size = infer_size(from_nelem, normalize_sizes(to_size))
 
-    assert from_nelem == _prod(to_size), "Total view shape does not add up"
+    assert from_nelem == prod(to_size), "Total view shape does not add up"
 
     from_idx = 0
     to_idx = 0
@@ -439,9 +437,6 @@ class Op:
     shape_argnum: Optional[int] = None
 
 
-import torch
-from torch import Tensor
-
 ops: Dict[Callable[..., torch.Tensor], Op] = {
     torch.atleast_1d: Op(dim_map=lambda x: dim_pad_left(x.ndim, 1)),
     torch.atleast_2d: Op(dim_map=lambda x: dim_pad_left(x.ndim, 2)),
@@ -544,7 +539,7 @@ def propagate_shape_and_sharding(
                     shardable_dims[dim.input_dim, :] = False
             dim0 = cmd.input_dims[0]
             return (
-                _prod(get_dim_size(a)[0] for a in cmd.input_dims),
+                prod(get_dim_size(a)[0] for a in cmd.input_dims),
                 dim0
                 if isinstance(dim0, InputDim)
                 and dim0.input_dim in sharded_in_dims
@@ -659,11 +654,12 @@ def register_prop_rule_map(
 
             # We only need the local shape to lower he call into the local op
             args = op_schema.args_schema
-            if spec.shape_argnum is not None:
+            shape_argnum = spec.shape_argnum
+            if shape_argnum is not None:
                 op_schema.args_schema = (
-                    args[: spec.shape_argnum]
+                    args[:shape_argnum]
                     + (tuple(local_out_shape),)
-                    + args[cast(int, spec.shape_argnum) + 1 :]
+                    + args[shape_argnum + 1 :]
                 )
 
             return OutputSharding(output_spec=output_dtensor_spec)

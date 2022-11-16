@@ -165,7 +165,7 @@ def run_worker(rank, run_master, args, *extra_args):
         .reshape(args.pp_group_size, args.dp_group_size)
         .tolist()
     )
-    dp_pg_per_pp_rank = [
+    dp_pg_per_pp_rank = [  # type: ignore[name-defined]
         torch.distributed.new_group(ranks) for ranks in dp_ranks_per_pp_rank
     ]
 
@@ -179,7 +179,7 @@ def run_worker(rank, run_master, args, *extra_args):
     )
 
     global exclude_master
-    exclude_master = (
+    exclude_master = (  # type: ignore[name-defined]
         args.exclude_master if hasattr(args, "exclude_master") else 0
     )
 

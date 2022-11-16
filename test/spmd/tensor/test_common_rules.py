@@ -1,4 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+# Owner(s): ["oncall: distributed"]
+
 import torch
 from torch.testing._internal.common_utils import run_tests
 from torchgen.model import FunctionSchema
@@ -10,16 +12,22 @@ from spmd.tensor.ops.common_rules import (
     pointwise_rule,
 )
 from spmd.tensor.placement_types import DTensorSpec
-from spmd.testing.common_utils import (
-    DistTensorTestBase,
+from spmd.testing.common_dtensor import (
+    DTensorTestBase,
     with_comms,
 )
-from spmd import DeviceMesh
+from spmd.tensor import DeviceMesh
 
 
-class CommonRulesTest(DistTensorTestBase):
+class CommonRulesTest(DTensorTestBase):
     def parse_schema(self, schema_str):
         return FunctionSchema.parse(schema_str)
+
+    @property
+    def world_size(self) -> int:
+        # hard code world size to 4 as we need to test
+        # at least with 2d mesh
+        return 4
 
     @with_comms
     def test_einop_basic_propagation(self):

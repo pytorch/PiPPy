@@ -173,7 +173,8 @@ class DeviceMesh(object):
             else:
                 if len(dim_groups) != 0:
                     raise RuntimeError(
-                        f"length of dim_groups ({len(dim_groups)}) expected to be equal to 0 on rank {self.get_rank()} for mesh {self.mesh}"
+                        f"length of dim_groups ({len(dim_groups)}) expected to be equal to 0 on rank {self.get_rank()} "
+                        f"for mesh {self.mesh}"
                     )
 
             self._dim_groups = dim_groups
@@ -210,7 +211,8 @@ class DeviceMesh(object):
                     if self.get_rank() in subgroup_ranks:
                         if len(self._dim_groups) > dim:
                             raise RuntimeError(
-                                f"Each device mesh dimension should get only one process group, but got {self.get_rank} in {subgroup_ranks}!"
+                                f"Each device mesh dimension should get only one process group, but got {self.get_rank} "
+                                f"in {subgroup_ranks}!"
                             )
                         self._dim_groups.append(new_subgroup)
 
@@ -368,7 +370,7 @@ class DeviceMesh(object):
     def all_reduce(
         self,
         tensor: torch.Tensor,
-        op: ReduceOp = ReduceOp.SUM,  # type: ignore
+        op: ReduceOp = ReduceOp.SUM,  # type: ignore[assignment]
         mesh_dim: int = 0,
         async_op: bool = False,
     ) -> Optional[Work]:
@@ -393,7 +395,7 @@ class DeviceMesh(object):
         self,
         output: torch.Tensor,
         input_list: List[torch.Tensor],
-        op: ReduceOp = ReduceOp.SUM,  # type: ignore
+        op: ReduceOp = ReduceOp.SUM,  # type: ignore[assignment]
         mesh_dim: int = 0,
         async_op: bool = False,
     ) -> Optional[Work]:
