@@ -187,4 +187,7 @@ def run_worker(rank, run_master, args, *extra_args):
         args.driver_index = rank
         args.local_driver_index = os.getenv("LOCAL_RANK", rank)
         run_master(pp_ranks_per_dp_group[rank], args, *extra_args)
+    else:
+        run_master([], args, *extra_args)
+
     rpc.shutdown()
