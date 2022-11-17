@@ -68,7 +68,7 @@ def retrieve_stage_mod(stage_name):
     return stage_mod
 
 
-def run_master(_, args):
+def run_gspmd(_, args):
     MULTI_USE_PARAM_CONFIG = (
         MultiUseParameterConfig.REPLICATE
         if args.replicate
@@ -154,7 +154,8 @@ def main(args=None):
     if args.schedule == "Interleaved1F1B":
         args.world_size = 2
 
-    run_pippy(run_master, args)
+    args.gspmd = 1
+    run_pippy(run_gspmd, args)
 
 
 if __name__ == "__main__":
