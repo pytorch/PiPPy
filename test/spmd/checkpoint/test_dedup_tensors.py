@@ -2,8 +2,8 @@
 
 import dataclasses
 import torch
-from torch.distributed._shard.checkpoint.planner import SavePlan, WriteItemType
-from torch.distributed._shard.checkpoint.planner_helpers import (
+from torch.distributed.checkpoint.planner import SavePlan, WriteItemType
+from torch.distributed.checkpoint.planner_helpers import (
     _create_write_item_for_tensor,
 )
 from torch.testing._internal.common_utils import run_tests, TestCase
