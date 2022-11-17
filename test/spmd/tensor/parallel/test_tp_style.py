@@ -12,14 +12,15 @@ from spmd.tensor.parallel.style import (
 
 class TensorParallelStyleTest(DTensorTestBase):
     # Common logic for testing prepare output funcs
-    def _test_prepare_output(self, func, spec, dim=None):
+    def _test_prepare_output(self, func, spec, dim=None, device_mesh_input_none=False):
         device_mesh = DeviceMesh(self.device_type, [0, 1, 2, 3])
         tensor = torch.rand(8, 16, device=self.device_type)
         dtensor = distribute_tensor(tensor, device_mesh, spec)
+        device_mesh_input = None if device_mesh_input_none else device_mesh
         if dim is not None:
-            output = func(dtensor, device_mesh, dim)
+            output = func(dtensor, device_mesh_input, dim)
         else:
-            output = func(dtensor, device_mesh)
+            output = func(dtensor, device_mesh_input)
         return output, dtensor, device_mesh
 
     @with_comms
@@ -34,11 +35,23 @@ class TensorParallelStyleTest(DTensorTestBase):
             make_output_shard_1d, [Replicate()], 0
         )
         self.assertEqual(output, dtensor.redistribute(device_mesh, [Shard(0)]))
+        # test when input device_mesh is None.
+        output, dtensor, device_mesh = self._test_prepare_output(
+            make_output_shard_1d, [Shard(0)], 1, True
+        )
+        self.assertEqual(output, dtensor.redistribute(device_mesh, [Shard(1)]))
 
     @with_comms
     def test_make_output_replicate_1d(self):
         output, dtensor, device_mesh = self._test_prepare_output(
             make_output_replicate_1d, [Shard(0)]
+        )
+        self.assertEqual(
+            output, dtensor.redistribute(device_mesh, [Replicate()])
+        )
+        # test when input device_mesh is None.
+        output, dtensor, device_mesh = self._test_prepare_output(
+            make_output_replicate_1d, [Shard(0)], None, True
         )
         self.assertEqual(
             output, dtensor.redistribute(device_mesh, [Replicate()])
@@ -56,6 +69,13 @@ class TensorParallelStyleTest(DTensorTestBase):
         #  test when output is replicated.
         output, dtensor, device_mesh = self._test_prepare_output(
             make_output_tensor, [Replicate()]
+        )
+        self.assertEqual(
+            output, dtensor.redistribute(device_mesh, [Replicate()]).to_local()
+        )
+        # test when input device_mesh is None.
+        output, dtensor, device_mesh = self._test_prepare_output(
+            make_output_tensor, [Shard(0)], None, True
         )
         self.assertEqual(
             output, dtensor.redistribute(device_mesh, [Replicate()]).to_local()

@@ -38,8 +38,9 @@ def _prepare_output_validate(
         assert isinstance(
             output, DTensor
         ), f"Expect output of Tensor Parallel to be a DTensor, but found {type(output)}."
-        if len(args) < 2:
+        if len(args) < 2 or args[1] is None:
             device_mesh = output.device_mesh
+            args = (*args[:1], device_mesh, *args[2:])
         else:
             device_mesh = args[1]
 
