@@ -243,7 +243,7 @@ jobs:
           # Prune all of the docker images
           docker system prune -af
 
-  dynamo_test:
+  programming_model_tests:
     runs-on: linux.4xlarge
     strategy:
       matrix:
@@ -263,3 +263,5 @@ jobs:
         run: "python setup.py install"
       - name: Test PiPPy + Dynamo example
         run: python examples/TorchDynamo/pippy_dynamo.py
+      - name: Run PiPPy in GSPMD style
+        run: python examples/gspmd/pippy_gspmd.py
