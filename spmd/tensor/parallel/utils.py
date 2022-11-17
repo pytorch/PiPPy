@@ -5,8 +5,7 @@ from spmd.tensor import DeviceMesh, DTensor
 from typing import Callable, Optional, Union
 
 _Prepare_Input_Func_Type = Callable[
-    [Union[torch.Tensor, DTensor], Optional[DeviceMesh], Optional[int]],
-    DTensor,
+    [Union[torch.Tensor, DTensor], Optional[DeviceMesh], Optional[int]], DTensor
 ]
 
 _Prepare_Output_Func_Type = Callable[
@@ -104,3 +103,37 @@ def _prepare_output_validate(
         return _prepare_output_func(*args, **kwargs)
 
     return wrapper
+
+
+def _create_1d_device_mesh(
+    device_mesh: DeviceMesh = None, tp_mesh_dim: int = 0
+) -> DeviceMesh:
+    """
+    This function converts a N-D ``device_mesh`` into a 1D ``device_mesh`` 
+    for 1D Tensor Parallelism.
+
+    Args:
+        device_mesh (DeviceMesh): :class:``DeviceMesh`` object which contains
+            how we distribute tensor across GPUs.
+        tp_mesh_dim (int): the dimension of ``device_mesh`` where we perform
+            Tensor Parallelism on.
+
+    Return:
+        device_mesh (DeviceMesh): :class:``DeviceMesh`` object which contains
+            how we distribute tensor for 1D Tensor Parallelism across GPUs.
+    """
+    assert (
+        tp_mesh_dim < device_mesh.ndim or tp_mesh_dim >= -device_mesh.ndim
+    ), f"Expect tp_mesh_dim within range [{-device_mesh.ndim}, {device_mesh.ndim})"
+    ", but found {tp_mesh_dim}."
+
+    # swap the current dim to the last dim then reshape to flatten out other
+    # dims, so we can just extract the list of ranks which contains cur_rank.
+    cur_rank = device_mesh.get_rank()
+    pg_ranks_by_dim = device_mesh.mesh.swapdims(-1, tp_mesh_dim).reshape(
+        -1, device_mesh.mesh.size(tp_mesh_dim)
+    )
+    dim_mesh_1d = pg_ranks_by_dim[torch.any(pg_ranks_by_dim == cur_rank, 1), :]
+
+    sub_pg = device_mesh.get_dim_groups()[tp_mesh_dim]
+    return DeviceMesh(device_mesh.device_type, dim_mesh_1d.squeeze(), [sub_pg])

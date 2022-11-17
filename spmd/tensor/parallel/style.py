@@ -1,4 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+from abc import abstractmethod
 import torch
 from dataclasses import dataclass
 from abc import ABC
@@ -17,7 +18,6 @@ from spmd.tensor.parallel.utils import (
 )
 
 
-@dataclass
 class ParallelStyle(ABC):
     """
     The parallel style user wants the module or submodule to be parallelized.
@@ -26,6 +26,27 @@ class ParallelStyle(ABC):
 
     _prepare_input: Optional[_Prepare_Input_Func_Type]
     _prepare_output: Optional[_Prepare_Output_Func_Type]
+
+    @abstractmethod
+    def __init__(self, _prepare_input, _prepare_output):
+        self._prepare_input = _prepare_input
+        self._prepare_output = _prepare_output
+
+
+class PairwiseParallel(ParallelStyle):
+    """
+    We concatenate colwise and rowwise styles as a fixed pair like
+    what Megatron-LM(https://arxiv.org/abs/1909.08053) is doing.
+    We assume both input and output to a Replicated DTensor.
+    We now only support Multihead Attention, MLP and transformer 
+    for this style.
+
+    WARNINGS: We also need to assume the input is a 
+    nn.Multihead Attention, nn.Transformer or even-number 
+    layers of nn.Linear for now.
+    """
+    def __init__(self) -> None:
+        super().__init__(make_input_replicate_1d, make_output_tensor)
 
 
 @_prepare_input_validate  # type: ignore[arg-type] # pyre-ignore[56]
