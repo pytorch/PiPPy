@@ -255,8 +255,9 @@ class RankWorker(EventRecorder):
                 f"Rank {self.rank} already has stage {stage_id}"
             )
 
-        if stage_mod_cb is not None:
-            assert mod is None, "PipeStageExecutor does not accept mod and stage_mod_cb at the same time"
+        assert (
+            mod is None or stage_mod_cb is None
+        ), "PipeStageExecutor cannot accept mod and stage_mod_cb at the same time"
 
         self.stage_executors[stage_id] = PipeStageExecutor(
             stage_id=stage_id,
@@ -1469,7 +1470,12 @@ class PipelineDriverBase(torch.nn.Module):
                 stage_id,
                 self.rank_worker_rrefs[rank]
                 .remote()
-                .create_stage_executor(stage_id=stage_id, mod=descr.mod, stage_mod_cb=self.stage_mod_cb, mod_name=descr.name),
+                .create_stage_executor(
+                    stage_id=stage_id,
+                    mod=descr.mod,
+                    stage_mod_cb=self.stage_mod_cb,
+                    mod_name=descr.name,
+                ),
             )
             if self.device is not None or self.stage_mod_cb is not None:
                 logging.debug(
@@ -1482,7 +1488,6 @@ class PipelineDriverBase(torch.nn.Module):
                 logging.debug(
                     f"[root] Deleting stage_id = {stage_id} mod on master"
                 )
-                #descr.mod.to("cpu")
                 descr.mod = None  # type: ignore[assignment]
             self.stage_to_executor[stage_id] = self.remote_stage_executor_rrefs[
                 descr.name
