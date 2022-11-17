@@ -2,14 +2,19 @@
 import torch
 from dataclasses import dataclass
 from abc import ABC
-from typing import Callable, Union, Optional
+from typing import Union, Optional
 from spmd.tensor import (
     DTensor,
     Shard,
     Replicate,
     DeviceMesh,
 )
-from spmd.tensor.parallel.utils import _prepare_output_validate
+from spmd.tensor.parallel.utils import (
+    _Prepare_Input_Func_Type,
+    _Prepare_Output_Func_Type,
+    _prepare_input_validate,
+    _prepare_output_validate,
+)
 
 
 @dataclass
@@ -19,20 +24,11 @@ class ParallelStyle(ABC):
     Users can extend this class to build their own parallel style with customized input/output preparations.
     """
 
-    _prepare_input: Optional[
-        Callable[
-            [Union[torch.Tensor, DTensor], Optional[DeviceMesh], Optional[int]],
-            DTensor,
-        ]
-    ]
-    _prepare_output: Optional[
-        Callable[
-            [DTensor, Optional[DeviceMesh], Optional[int]],
-            Union[torch.Tensor, DTensor],
-        ]
-    ]
+    _prepare_input: Optional[_Prepare_Input_Func_Type]
+    _prepare_output: Optional[_Prepare_Output_Func_Type]
 
 
+@_prepare_input_validate  # type: ignore[arg-type] # pyre-ignore[56]
 def make_input_shard_1d(
     input: Union[torch.Tensor, DTensor],
     device_mesh: Optional[DeviceMesh] = None,
@@ -57,15 +53,6 @@ def make_input_shard_1d(
     Returns:
         A :class:`DTensor` sharded on dimension `dim` over `device_mesh`.
     """
-    if device_mesh is None:
-        if isinstance(input, DTensor):
-            device_mesh = input.device_mesh
-        else:
-            raise RuntimeError("device_mesh is not passed nor can be inferred")
-    if device_mesh.ndim != 1:
-        raise RuntimeError(
-            f"device_mesh dim is {device_mesh.ndim} but expcted to be 1"
-        )
     shard_spec = [Shard(dim)]
     if isinstance(input, DTensor):
         return input.redistribute(device_mesh, shard_spec)
@@ -79,6 +66,7 @@ def make_input_shard_1d(
         )
 
 
+@_prepare_input_validate  # type: ignore[arg-type] # pyre-ignore[56]
 def make_input_replicate_1d(
     input: Union[torch.Tensor, DTensor],
     device_mesh: Optional[DeviceMesh] = None,
@@ -99,16 +87,6 @@ def make_input_replicate_1d(
     Returns:
         A :class:`DTensor` replicated over `device_mesh`.
     """
-    if device_mesh is None:
-        if isinstance(input, DTensor):
-            device_mesh = input.device_mesh
-        else:
-            raise RuntimeError("device_mesh is not passed nor can be inferred")
-    if device_mesh.ndim != 1:
-        raise RuntimeError(
-            f"device_mesh dim is {device_mesh.ndim} but expcted to be 1"
-        )
-
     replicate = [Replicate()]
     if isinstance(input, DTensor):
         return input.redistribute(device_mesh, replicate)

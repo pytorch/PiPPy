@@ -4,9 +4,68 @@ import torch
 from spmd.tensor import DeviceMesh, DTensor
 from typing import Callable, Optional, Union
 
+_Prepare_Input_Func_Type = Callable[
+    [Union[torch.Tensor, DTensor], Optional[DeviceMesh], Optional[int]],
+    DTensor,
+]
+
 _Prepare_Output_Func_Type = Callable[
     [DTensor, Optional[DeviceMesh], Optional[int]], Union[torch.Tensor, DTensor]
 ]
+
+
+def _prepare_input_validate(
+    _prepare_input_func: _Prepare_Input_Func_Type,
+) -> _Prepare_Input_Func_Type:
+    """
+    Inject common validation logics for `_prepare_input` funcs via this
+    decorator, including verifying that input needs to be either
+    a :class:`Tensor` or :class:`DTensor` and only 1D :class:`DeviceMesh`
+    is passed in.
+
+    Args:
+        _prepare_input_func (Callable): The func we want to inject the
+            validation into.
+
+    Returns:
+        func (Callable): Same input function with validation logic added.
+
+    Example::
+        >>> @_prepare_input_validate
+        >>> def make_input_shard_1d(args, kwargs):
+        >>>   ...
+        >>>
+        >>> input = torch.rand(...)
+        >>> dtensor = make_input_shard_1d(input, device_mesh, 1)
+        >>> # This will call '_prepare_input_validate' first
+    """
+
+    @functools.wraps(_prepare_input_func)
+    def wrapper(*args, **kwargs):  # pyre-ignore[2, 3]
+        assert len(args) >= 1, "_prepare_input needs at least one arg."
+        # args is an immutable tuple but we may need to modify it
+        args = list(args)
+        input = args[0]
+        if len(args) < 2:
+            args.append(None)
+        device_mesh = args[1]
+
+        if device_mesh is None:
+            if isinstance(input, DTensor):
+                device_mesh = input.device_mesh
+                args[1] = device_mesh
+            else:
+                raise RuntimeError(
+                    "device_mesh is not passed nor can be inferred"
+                )
+        if device_mesh.ndim != 1:
+            raise RuntimeError(
+                f"device_mesh has dims {device_mesh.ndim} but expcted to be 1 for input."
+            )
+        args = tuple(args)
+        return _prepare_input_func(*args, **kwargs)
+
+    return wrapper
 
 
 def _prepare_output_validate(

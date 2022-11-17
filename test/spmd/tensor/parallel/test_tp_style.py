@@ -33,18 +33,19 @@ class TensorParallelStyleTest(DTensorTestBase):
             dtensor = make_input_replicate_1d(tensor)
         device_mesh = DeviceMesh(self.device_type, [[0, 1], [2, 3]])
         with self.assertRaisesRegex(
-            RuntimeError, "device_mesh dim is [0-9]+ but expcted to be 1"
+            RuntimeError,
+            "device_mesh has dims [0-9]+ but expcted to be 1 for input.",
         ):
             dtensor = make_input_replicate_1d(tensor, device_mesh)
 
         device_mesh = DeviceMesh(self.device_type, list(range(NUM_DEVICES)))
-        # test 1
+        # test 1: replicate local tensor
         dtensor = make_input_replicate_1d(tensor, device_mesh)
         self.assertEqual(tensor, dtensor.to_local())
-        # test 2
+        # test 2: replicate DTensor
         dtensor = make_input_replicate_1d(dtensor)
         self.assertEqual(tensor, dtensor.to_local())
-        # test 3
+        # test 3: replicate DTensor with DeviceMesh passed
         dtensor = make_input_replicate_1d(dtensor, device_mesh)
         self.assertEqual(tensor, dtensor.to_local())
 
@@ -57,18 +58,19 @@ class TensorParallelStyleTest(DTensorTestBase):
             dtensor = make_input_shard_1d(tensor)
         device_mesh = DeviceMesh(self.device_type, [[0, 1], [2, 3]])
         with self.assertRaisesRegex(
-            RuntimeError, "device_mesh dim is [0-9]+ but expcted to be 1"
+            RuntimeError,
+            "device_mesh has dims [0-9]+ but expcted to be 1 for input.",
         ):
             dtensor = make_input_shard_1d(tensor, device_mesh)
 
         device_mesh = DeviceMesh(self.device_type, list(range(NUM_DEVICES)))
-        # test 1
+        # test 1: shard local Tensor on default dim
         dtensor = make_input_shard_1d(tensor, device_mesh)
         self.assertEqual(tensor, dtensor.to_local())
-        # test 2
+        # test 2: reshard DTensor
         dtensor = make_input_shard_1d(dtensor)
         self.assertEqual(tensor, dtensor.to_local())
-        # test 3
+        # test 3: reshard DTensor with DeviceMesh passed
         dtensor = make_input_shard_1d(dtensor, device_mesh)
         self.assertEqual(tensor, dtensor.to_local())
 
