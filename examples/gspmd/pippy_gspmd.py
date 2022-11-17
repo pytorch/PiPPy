@@ -34,7 +34,7 @@ pippy.fx.Tracer.proxy_buffer_attributes = True
 
 
 d_hid = 512
-bs = 503
+bs = 500
 
 class ExampleCode(torch.nn.Module):
     def __init__(self):
@@ -92,10 +92,11 @@ def run_gspmd(_, args):
     args_chunk_spec = (TensorChunkSpec(0),)
     kwargs_chunk_spec: Dict = {}
     output_chunk_spec = {"out": TensorChunkSpec(0)}
+    chunks = 5
 
     pipe_driver: PipelineDriverBase = schedules[args.schedule](
         ec_pipe,
-        1,
+        chunks,
         args_chunk_spec,
         kwargs_chunk_spec,
         output_chunk_spec,
