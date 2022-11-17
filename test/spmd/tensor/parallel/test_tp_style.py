@@ -75,7 +75,9 @@ class TensorParallelStyleTest(DTensorTestBase):
         self.assertEqual(tensor, dtensor.to_local())
 
     # Common logic for testing prepare output funcs
-    def _test_prepare_output(self, func, spec, dim=None, device_mesh_input_none=False):
+    def _test_prepare_output(
+        self, func, spec, dim=None, device_mesh_input_none=False
+    ):
         device_mesh = DeviceMesh(self.device_type, [0, 1, 2, 3])
         tensor = torch.rand(8, 16, device=self.device_type)
         dtensor = distribute_tensor(tensor, device_mesh, spec)
