@@ -43,15 +43,13 @@ def _prepare_input_validate(
     @functools.wraps(_prepare_input_func)
     def wrapper(*args, **kwargs):  # pyre-ignore[2, 3]
         assert len(args) >= 1, "_prepare_input needs at least one arg."
-        device_mesh = None
         input = args[0]
-        if len(args) >= 2:
-            device_mesh = args[1]
+        device_mesh = None if len(args) < 2 else args[1]
 
         if device_mesh is None:
             if isinstance(input, DTensor):
                 device_mesh = input.device_mesh
-                args = (*args[:1], device_mesh, *args[2:])
+                args = (*args[:1], device_mesh, *args[2:])  # pyre-ignore[60]
             else:
                 raise RuntimeError(
                     "device_mesh is not passed nor can be inferred"
@@ -96,7 +94,7 @@ def _prepare_output_validate(
         ), f"Expect output of Tensor Parallel to be a DTensor, but found {type(output)}."
         if len(args) < 2 or args[1] is None:
             device_mesh = output.device_mesh
-            args = (*args[:1], device_mesh, *args[2:])
+            args = (*args[:1], device_mesh, *args[2:])  # pyre-ignore[60]
         else:
             device_mesh = args[1]
 

@@ -131,7 +131,7 @@ def make_output_replicate_1d(
         output (DTensor): output of module to be converted.
         device_mesh (Optional[DeviceMesh]): :class:``DeviceMesh`` object needed to
             replicate the output and it needs to be a 1D ``device_mesh`` and we will
-            throw exceptions if a non-1D ``device_mesh`` is passed in. If no 
+            throw exceptions if a non-1D ``device_mesh`` is passed in. If no
             ``device_mesh`` is passed in, we will reuse the one from output.
             Default: ``None``
     Return:
@@ -151,7 +151,7 @@ def make_output_tensor(
         output (DTensor): output of module to be converted.
         device_mesh (Optional[DeviceMesh]): :class:``DeviceMesh`` object needed to
             replicate the output and it needs to be a 1D ``device_mesh`` and we will
-            throw exceptions if a non-1D ``device_mesh`` is passed in. If no 
+            throw exceptions if a non-1D ``device_mesh`` is passed in. If no
             ``device_mesh`` is passed in, we will reuse the one from output.
             Default: ``None``
     Return:
