@@ -10,7 +10,9 @@ from spmd.tensor import (
     DeviceMesh,
     Placement,
 )
-from spmd.tensor.parallel import TensorParallelMultiheadAttention
+from spmd.tensor.parallel import (
+    TensorParallelMultiheadAttention,
+)
 
 
 def replicate_input(
