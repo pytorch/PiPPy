@@ -43,17 +43,15 @@ def _prepare_input_validate(
     @functools.wraps(_prepare_input_func)
     def wrapper(*args, **kwargs):  # pyre-ignore[2, 3]
         assert len(args) >= 1, "_prepare_input needs at least one arg."
-        # args is an immutable tuple but we may need to modify it
-        args = list(args)
+        device_mesh = None
         input = args[0]
-        if len(args) < 2:
-            args.append(None)
-        device_mesh = args[1]
+        if len(args) >= 2:
+            device_mesh = args[1]
 
         if device_mesh is None:
             if isinstance(input, DTensor):
                 device_mesh = input.device_mesh
-                args[1] = device_mesh
+                args = (*args[:1], device_mesh, *args[2:])
             else:
                 raise RuntimeError(
                     "device_mesh is not passed nor can be inferred"
@@ -62,7 +60,6 @@ def _prepare_input_validate(
             raise RuntimeError(
                 f"device_mesh has dims {device_mesh.ndim} but expcted to be 1 for input."
             )
-        args = tuple(args)
         return _prepare_input_func(*args, **kwargs)
 
     return wrapper
