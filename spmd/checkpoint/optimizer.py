@@ -20,14 +20,14 @@ from torch.distributed._shard.checkpoint.metadata import (
     STATE_DICT_TYPE,
     TensorStorageMetadata,
 )
-from torch.distributed._shard.checkpoint.planner_helpers import (
+from torch.distributed.checkpoint.planner_helpers import (
     _create_sharded_read_items,
     _create_read_items,
 )
 from torch.distributed.remote_device import _remote_device
 
 from spmd.tensor import DTensor as DT
-from torch.distributed._shard.checkpoint.default_planner import (
+from torch.distributed.checkpoint.default_planner import (
     DefaultLoadPlanner,
 )
 from torch.distributed._shard.api import _shard_tensor
