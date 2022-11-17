@@ -10,6 +10,9 @@ from spmd.tensor.parallel.api import (
 )
 
 from spmd.tensor.parallel.style import (
+    ParallelStyle,
+    make_input_shard_1d,
+    make_input_replicate_1d,
     make_output_shard_1d,
     make_output_replicate_1d,
     make_output_tensor,
