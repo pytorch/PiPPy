@@ -48,7 +48,6 @@ class TensorParallelStyleTest(DTensorTestBase):
         dtensor = make_input_replicate_1d(dtensor, device_mesh)
         self.assertEqual(tensor, dtensor.to_local())
 
-
     @with_comms
     def test_make_input_shard_1d(self):
         tensor = torch.rand(8, 16, device=self.device_type)
@@ -72,7 +71,6 @@ class TensorParallelStyleTest(DTensorTestBase):
         # test 3
         dtensor = make_input_shard_1d(dtensor, device_mesh)
         self.assertEqual(tensor, dtensor.to_local())
-
 
     # Common logic for testing prepare output funcs
     def _test_prepare_output(self, func, spec, dim=None):
