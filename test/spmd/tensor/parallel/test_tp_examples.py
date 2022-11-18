@@ -23,6 +23,10 @@ from spmd.tensor.parallel import (
     tp_shard_self_attn,
     replicate_input,
     replicate_output,
+    _parallelize_linear,
+    RowwiseParallel,
+    ColwiseParallel,
+    make_output_tensor,
 )
 
 
@@ -514,23 +518,60 @@ class DistTensorParallelExampleTest(DTensorTestBase):
     @with_comms
     def test_row_wise_parallel(self):
         # test RowwiseParallel
-        rowwise = tp.RowwiseParallel()
+        inp = torch.rand(8, 16, device=self.device_type)
+        rowwise = RowwiseParallel()
+        # set output func to None to simplify result comparison
+        rowwise._prepare_output = None
         torch.manual_seed(5)
-        model = nn.Linear(10, 16, device=self.device_type)
+        model = nn.Linear(16, 10, device=self.device_type)
         torch.manual_seed(5)
-        model_tp = nn.Linear(10, 16, device=self.device_type)
-        inp = torch.rand(8, 10, device=self.device_type)
+        model_tp = nn.Linear(16, 10, device=self.device_type)
 
         # parallelize model_tp
-        LR = 0.25
         device_mesh = DeviceMesh(self.device_type, list(range(NUM_DEVICES)))
-        tp._parallelize_linear(model_tp, rowwise, device_mesh)
-        optim = torch.optim.SGD(model.parameters(), lr=LR)
-        optim_tp = torch.optim.SGD(model_tp.parameters(), lr=LR)
+        _parallelize_linear(model_tp, device_mesh, rowwise)
+
+        self.assertEqual(
+            distribute_tensor(model.weight, device_mesh, [Shard(1)]).to_local(),
+            model_tp.weight.to_local(),
+        )
+        self.assertEqual(
+            distribute_tensor(
+                model.bias, device_mesh, [Replicate()]
+            ).to_local(),
+            model_tp.bias.to_local(),
+        )
 
         output = model(inp)
         output_tp = model_tp(inp)
         self.assertEqual(output, output_tp.to_local())
+
+    @with_comms
+    def test_col_wise_parallel(self):
+        # test ColwiseParallel
+        inp = torch.rand(8, 10, device=self.device_type)
+        colwise = ColwiseParallel()
+        torch.manual_seed(5)
+        model = nn.Linear(10, 16, device=self.device_type)
+        torch.manual_seed(5)
+        model_tp = nn.Linear(10, 16, device=self.device_type)
+
+        # parallelize model_tp
+        device_mesh = DeviceMesh(self.device_type, list(range(NUM_DEVICES)))
+        _parallelize_linear(model_tp, device_mesh, colwise)
+
+        self.assertEqual(
+            distribute_tensor(model.weight, device_mesh, [Shard(0)]).to_local(),
+            model_tp.weight.to_local(),
+        )
+        self.assertEqual(
+            distribute_tensor(model.bias, device_mesh, [Shard(0)]).to_local(),
+            model_tp.bias.to_local(),
+        )
+
+        output = model(inp)
+        output_tp = make_output_tensor(model_tp(inp), device_mesh)
+        self.assertEqual(output, output_tp)
 
 
 if __name__ == "__main__":

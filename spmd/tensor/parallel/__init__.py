@@ -7,6 +7,7 @@ from spmd.tensor.parallel.api import (
     tp_shard_self_attn,
     replicate_input,
     replicate_output,
+    _parallelize_linear,
 )
 
 from spmd.tensor.parallel.style import (

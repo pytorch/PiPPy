@@ -13,6 +13,11 @@ from spmd.tensor import (
 from spmd.tensor.parallel import (
     TensorParallelMultiheadAttention,
 )
+from spmd.tensor.parallel.style import (
+    ParallelStyle,
+    RowwiseParallel,
+    ColwiseParallel,
+)
 
 
 def replicate_input(
@@ -87,20 +92,48 @@ def tp_shard_self_attn(
                 tp_multi_head_attention.copy(m)
                 module.register_module(n, tp_multi_head_attention)
 
+
 def _parallelize_linear(
     module: nn.Module,
+    device_mesh: DeviceMesh,
     parallel_style: ParallelStyle = ColwiseParallel(),
-    device_mesh: DeviceMesh = None,
     tp_mesh_dim: int = 0,
 ) -> None:
+    """
+    This function requires that the input module be an object of :class:``nn.Linear``.
+    The module will be parallelized over the n-d :class:``DeviceMesh``
+    based on the :class:``ParallelStyle``.
+
+    Args:
+        module (nn.Module):
+            The :class:``nn.Module`` object to be parallelized.
+        device_mesh (DeviceMesh):
+            The n-d :class:``DeviceMesh`` over which the `module` will be parallelized.
+            If the mesh is more than 1-dimensional, we convert it to a 1-d :class:``DeviceMesh``
+            by `tp_mesh_dim`.
+        parallel_style (ParallelStyle):
+            :class:``ParallelStyle`` describes how weight and bias should be distributed
+            over :class:``DeviceMesh`` and how the input and output should be prepared for
+            Tensor Parallelism.
+            :class:``RowwiseStyle``: weight is sharded on dim 1 and bias is replicated.
+            :class:``ColwiseStyle``: weight and bias are both sharded on dim 0.
+            Default: :class:``ColwiseParallel``
+        tp_mesh_dim (int):
+            The dimension of :class:``DeviceMesh`` on which we perform
+            Tensor Parallelism.
+            Default: 0
+    Returns:
+        None
+    """
+
     if not isinstance(module, nn.Linear):
         raise RuntimeError(
-            f"{module} is not a torch.nn.Linear module but _parallelize_linear was called!"
+            f"_parallelize_linear expects a torch.nn.Linear module but received {module}!"
         )
 
     if not isinstance(parallel_style, ParallelStyle):
         raise RuntimeError(
-            f"parallel_style passed to _parallelize_linear is not a ParallelStyle object but {parallel_style}!"
+            f"parallel_style passed to _parallelize_linear is not a ParallelStyle object but {type(parallel_style)}!"
         )
 
     col_wise_sharding: Sequence[Placement] = [Replicate()] * device_mesh.ndim
@@ -116,18 +149,16 @@ def _parallelize_linear(
             return row_wise_sharding, replicate
         elif isinstance(parallel_style, ColwiseParallel):
             return col_wise_sharding, col_wise_sharding
-        elif isinstance(parallel_style, PairwiseParallel):
-            raise RuntimeError(f"{parallel_style} is not supported!")
         else:
-            raise RuntimeError(f"{parallel_style} is not supported!")
+            raise RuntimeError(f"{type(parallel_style)} is not supported!")
 
     # placements
-    linear_placements, bias_placements = linear_module_placements(
+    weight_placements, bias_placements = linear_module_placements(
         parallel_style
     )
     # params
     weight = nn.Parameter(
-        distribute_tensor(module.weight, device_mesh, linear_placements)
+        distribute_tensor(module.weight, device_mesh, weight_placements)
     )
     module.register_parameter("weight", weight)
     if module.bias is not None:
