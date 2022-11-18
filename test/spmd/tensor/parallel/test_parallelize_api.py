@@ -143,12 +143,12 @@ class TensorParallelAPITests(DTensorTestBase):
         rowwise = RowwiseParallel()
 
         torch.manual_seed(5)
-        model = nn.Linear(16, 10, device=self.device_type)
+        model = torch.nn.Linear(16, 10, device=self.device_type)
         torch.manual_seed(5)
-        model_tp = nn.Linear(16, 10, device=self.device_type)
+        model_tp = torch.nn.Linear(16, 10, device=self.device_type)
 
         # parallelize model_tp
-        device_mesh = DeviceMesh(self.device_type, list(range(NUM_DEVICES)))
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         _parallelize_linear(model_tp, device_mesh, rowwise)
 
         self.assertEqual(
@@ -224,12 +224,12 @@ class TensorParallelAPITests(DTensorTestBase):
         colwise = ColwiseParallel()
 
         torch.manual_seed(5)
-        model = nn.Linear(10, 16, device=self.device_type)
+        model = torch.nn.Linear(10, 16, device=self.device_type)
         torch.manual_seed(5)
-        model_tp = nn.Linear(10, 16, device=self.device_type)
+        model_tp = torch.nn.Linear(10, 16, device=self.device_type)
 
         # parallelize model_tp
-        device_mesh = DeviceMesh(self.device_type, list(range(NUM_DEVICES)))
+        device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         _parallelize_linear(model_tp, device_mesh, colwise)
 
         self.assertEqual(

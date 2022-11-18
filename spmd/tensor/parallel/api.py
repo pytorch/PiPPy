@@ -1,7 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 import torch.nn as nn
-from typing import Sequence, Tuple, Union, Callable
+from typing import Sequence, Tuple
 from spmd.tensor import (
     distribute_module,
     distribute_tensor,
@@ -94,6 +94,26 @@ def tp_shard_self_attn(
                 module.register_module(n, tp_multi_head_attention)
 
 
+# Define partition functions needed to parallelize Linear modules
+def _rowwise_parallelize_fn(name, module, device_mesh):  # pyre-ignore[2, 3]
+    for name, param in module.named_parameters():
+        dist_spec = (  # type: ignore[list-item]
+            [Shard(1)] if name == "weight" else [Replicate()]
+        )
+        dist_param = torch.nn.Parameter(
+            distribute_tensor(param, device_mesh, dist_spec)
+        )
+        module.register_parameter(name, dist_param)
+
+
+def _colwise_parallelize_fn(name, module, device_mesh):  # pyre-ignore[2, 3]
+    for name, param in module.named_parameters():
+        dist_param = torch.nn.Parameter(
+            distribute_tensor(param, device_mesh, [Shard(0)])
+        )
+        module.register_parameter(name, dist_param)
+
+
 def _parallelize_linear(
     module: nn.Module,
     device_mesh: DeviceMesh,
@@ -137,51 +157,24 @@ def _parallelize_linear(
             f"Tensor parallel module expects a ParallelStyle object but received {type(parallel_style)}!"
         )
 
-    col_wise_sharding: Sequence[Placement] = [Replicate()] * device_mesh.ndim
-    col_wise_sharding[tp_mesh_dim] = Shard(0)  # pyre-ignore [6]
-    row_wise_sharding: Sequence[Placement] = [Replicate()] * device_mesh.ndim
-    row_wise_sharding[tp_mesh_dim] = Shard(1)  # pyre-ignore [6]
-    replicate: Sequence[Placement] = [Replicate()] * device_mesh.ndim
-
-    def linear_module_placements(
-        parallel_style: ParallelStyle,
-    ) -> Tuple[Sequence[Placement], Sequence[Placement]]:
-        if isinstance(parallel_style, RowwiseParallel):
-            return row_wise_sharding, replicate
-        elif isinstance(parallel_style, ColwiseParallel):
-            return col_wise_sharding, col_wise_sharding
-        else:
-            raise RuntimeError(f"{type(parallel_style)} is not supported!")
-
-    # placements
-    weight_placements, bias_placements = linear_module_placements(
-        parallel_style
-    )
-    # params
-    weight = nn.Parameter(
-        distribute_tensor(module.weight, device_mesh, weight_placements)
-    )
-    module.register_parameter("weight", weight)
-    if module.bias is not None:
-        bias = nn.Parameter(
-            distribute_tensor(module.bias, device_mesh, bias_placements)
+    if isinstance(parallel_style, RowwiseParallel):
+        distribute_module(
+            module,
+            device_mesh,
+            _rowwise_parallelize_fn,
+            input_fn=parallel_style._prepare_input,  # pyre-ignore[6]  # type: ignore[arg-type]
+            output_fn=parallel_style._prepare_output,  # pyre-ignore[6]  # type: ignore[arg-type]
         )
-        module.register_parameter("bias", bias)
-    # input
-    if parallel_style._prepare_input is not None:
-        input_fn: Callable[
-            [Sequence[Union[torch.Tensor, DTensor]]], Tuple[DTensor, ...]
-        ] = lambda inputs: tuple(
-            parallel_style._prepare_input(tensor, device_mesh)  # type: ignore
-            for tensor in inputs
+    elif isinstance(parallel_style, ColwiseParallel):
+        distribute_module(
+            module,
+            device_mesh,
+            _colwise_parallelize_fn,
+            input_fn=parallel_style._prepare_input,  # pyre-ignore[6]  # type: ignore[arg-type]
+            output_fn=parallel_style._prepare_output,  # pyre-ignore[6]  # type: ignore[arg-type]
         )
-        module.register_forward_pre_hook(lambda _, inputs: input_fn(inputs))  # type: ignore
-    # output
-    if parallel_style._prepare_output is not None:
-        output_fn = parallel_style._prepare_output
-        module.register_forward_hook(
-            lambda mod, inputs, outputs: output_fn(outputs)  # type: ignore
-        )
+    else:
+        raise RuntimeError(f"{type(parallel_style)} is not supported!")
 
 
 def _has_even_num_linears(module: nn.Module) -> bool:
@@ -237,24 +230,6 @@ def _parallelize_mlp(
     .. warning::
         We only support ``PairwiseParallel`` right now.
     """
-
-    # Define partition functions needed.
-    def _rowwise_parallelize_fn(name, module, device_mesh):  # pyre-ignore[2, 3]
-        for name, param in module.named_parameters():
-            dist_spec = (  # type: ignore[list-item]
-                [Shard(1)] if name == "weight" else [Replicate()]
-            )
-            dist_param = torch.nn.Parameter(
-                distribute_tensor(param, device_mesh, dist_spec)
-            )
-            module.register_parameter(name, dist_param)
-
-    def _colwise_parallelize_fn(name, module, device_mesh):  # pyre-ignore[2, 3]
-        for name, param in module.named_parameters():
-            dist_param = torch.nn.Parameter(
-                distribute_tensor(param, device_mesh, [Shard(0)])
-            )
-            module.register_parameter(name, dist_param)
 
     if not isinstance(parallel_style, PairwiseParallel):
         raise NotImplementedError(
