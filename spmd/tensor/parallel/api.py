@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 from typing import Sequence, Tuple
 from spmd.tensor import (
+    distribute_module,
     distribute_tensor,
     DTensor,
     Shard,
@@ -174,15 +175,25 @@ def _parallelize_mlp(
         None
 
     .. warning::
-        We now only support ``PairwiseParallel`` for now.
+        We only support ``PairwiseParallel`` right now.
     """
 
-    # Define hook functions needed for preparing Input/Output.
-    def _module_forward_pre_hook(*args):  # pyre-ignore[2, 3]
-        return args[0](args[-1][0], *args[1:-2])
+    # Define partition functions needed.
+    def _rowwise_parallelize_fn(name, module, device_mesh):  # pyre-ignore[2, 3]
+        for name, param in module.named_parameters():
+            print(name)
+            dist_spec = [Shard(1)] if name == "weight" else [Replicate()]
+            dist_param = torch.nn.Parameter(
+                distribute_tensor(param, device_mesh, dist_spec)
+            )
+            module.register_parameter(name, dist_param)
 
-    def _module_forward_hook(*args):  # pyre-ignore[2, 3]
-        return args[0](args[-1], *args[1:-3])
+    def _colwise_parallelize_fn(name, module, device_mesh):  # pyre-ignore[2, 3]
+        for name, param in module.named_parameters():
+            dist_param = torch.nn.Parameter(
+                distribute_tensor(param, device_mesh, [Shard(0)])
+            )
+            module.register_parameter(name, dist_param)
 
     if not isinstance(parallel_style, PairwiseParallel):
         raise NotImplementedError(
@@ -195,36 +206,25 @@ def _parallelize_mlp(
     if device_mesh.ndim > 1:
         device_mesh = _create_1d_device_mesh(device_mesh, tp_mesh_dim)
 
-    for i, m in enumerate(
+    linear_submodules = list(
         filter(lambda x: isinstance(x, nn.Linear), module.children())
-    ):
+    )
+    for i, m in enumerate(linear_submodules):
         if i % 2 == 0:
             # Col-wise Parallelize the linear layer
-            _distribute_linear_module(
-                m,  # pyre-ignore[6]  # type: ignore[arg-type]
+            distribute_module(
+                m,
                 device_mesh,
-                [Shard(0)],
-                [Shard(0)],
-            )
-            m.register_forward_pre_hook(
-                functools.partial(
-                    _module_forward_pre_hook,
-                    parallel_style._prepare_input,
-                    device_mesh,
-                )
+                _colwise_parallelize_fn,
+                input_fn=parallel_style._prepare_input if i == 0 else None,
             )
         else:
             # Row-wise Parallelize the linear layer
-            _distribute_linear_module(
-                m,  # pyre-ignore[6]  # type: ignore[arg-type]
+            distribute_module(
+                m,
                 device_mesh,
-                [Shard(1)],
-                [Replicate()],
-            )
-            m.register_forward_hook(
-                functools.partial(
-                    _module_forward_hook,
-                    parallel_style._prepare_output,
-                    device_mesh,
-                )
+                _rowwise_parallelize_fn,
+                output_fn=parallel_style._prepare_output
+                if i == (len(linear_submodules) - 1)
+                else None,
             )

@@ -29,16 +29,14 @@ class ParallelStyle(ABC):
 
 class PairwiseParallel(ParallelStyle):
     """
-    We concatenate colwise and rowwise styles as a fixed pair like
-    what Megatron-LM(https://arxiv.org/abs/1909.08053) is doing.
+    PairwiseParallel concatenate colwise and rowwise styles as a fixed
+    pair like what Megatron-LM(https://arxiv.org/abs/1909.08053) is doing.
     We assume both input and output needs to a replicate DTensor.
-    We now only support this style for Multihead Attention, MLP and
-    transformer model.
 
     .. warning::
-        We need to assume the module to be distributed as a
+        We need to the module to be distributed as a
         ``nn.Multihead Attention``, ``nn.Transformer`` or even-number
-        layers of ``nn.Linear`` for now.
+        layers of ``nn.Linear`` for this parallel style for now.
     """
 
     def __init__(self) -> None:

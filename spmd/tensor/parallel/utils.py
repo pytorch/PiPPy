@@ -43,6 +43,9 @@ def _prepare_input_validate(
     def wrapper(*args, **kwargs):  # pyre-ignore[2, 3]
         assert len(args) >= 1, "_prepare_input needs at least one arg."
         input = args[0]
+        if isinstance(input, list) or isinstance(input, tuple):
+            input = input[0]
+            args = (input, *args[1:])  # pyre-ignore[60]
         device_mesh = None if len(args) < 2 else args[1]
 
         if device_mesh is None:
@@ -88,6 +91,9 @@ def _prepare_output_validate(
     def wrapper(*args, **kwargs):  # pyre-ignore[2, 3]
         assert len(args) >= 1, "_prepare_output needs at least one arg."
         output = args[0]
+        if isinstance(output, list) or isinstance(output, tuple):
+            output = output[0]
+            args = (input, *args[1:])  # pyre-ignore[60]
         assert isinstance(
             output, DTensor
         ), f"Expect output of Tensor Parallel to be a DTensor, but found {type(output)}."
@@ -113,14 +119,16 @@ def _create_1d_device_mesh(
     for 1D Tensor Parallelism.
 
     Args:
-        device_mesh (DeviceMesh): :class:``DeviceMesh`` object which contains
-            how we distribute tensor across GPUs.
-        tp_mesh_dim (int): the dimension of ``device_mesh`` where we perform
+        device_mesh (DeviceMesh): 
+            :class:``DeviceMesh`` object which describes the mesh topology
+            of devices for the DTensor.
+        tp_mesh_dim (int):
+            the dimension of ``device_mesh`` where we perform
             Tensor Parallelism on.
 
     Return:
-        device_mesh (DeviceMesh): :class:``DeviceMesh`` object which contains
-            how we distribute tensor for 1D Tensor Parallelism across GPUs.
+        device_mesh (DeviceMesh): 1-D :class:``DeviceMesh`` object that
+        Tensor Parallelism operates on.
     """
     assert (
         tp_mesh_dim < device_mesh.ndim and tp_mesh_dim >= -device_mesh.ndim
