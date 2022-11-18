@@ -1,14 +1,9 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+from abc import abstractmethod
 import torch
-from dataclasses import dataclass
 from abc import ABC
 from typing import Union, Optional
-from spmd.tensor import (
-    DTensor,
-    Shard,
-    Replicate,
-    DeviceMesh,
-)
+from spmd.tensor import DTensor, Shard, Replicate, DeviceMesh
 from spmd.tensor.parallel.utils import (
     _Prepare_Input_Func_Type,
     _Prepare_Output_Func_Type,
@@ -17,15 +12,34 @@ from spmd.tensor.parallel.utils import (
 )
 
 
-@dataclass
 class ParallelStyle(ABC):
     """
     The parallel style user wants the module or submodule to be parallelized.
     Users can extend this class to build their own parallel style with customized input/output preparations.
     """
 
-    _prepare_input: Optional[_Prepare_Input_Func_Type]
-    _prepare_output: Optional[_Prepare_Output_Func_Type]
+    _prepare_input: _Prepare_Input_Func_Type
+    _prepare_output: _Prepare_Output_Func_Type
+
+    @abstractmethod
+    def __init__(self, _prepare_input, _prepare_output) -> None:
+        self._prepare_input = _prepare_input
+        self._prepare_output = _prepare_output
+
+
+class PairwiseParallel(ParallelStyle):
+    """
+    PairwiseParallel concatenate colwise and rowwise styles as a fixed
+    pair like what Megatron-LM(https://arxiv.org/abs/1909.08053) is doing.
+    We assume both input and output needs to a replicate DTensor.
+
+    .. warning::
+        PairwiseParallel only supports ``nn.Multihead Attention``,
+        ``nn.Transformer`` or even-number-layer MLP for now.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(make_input_replicate_1d, make_output_tensor)
 
 
 class RowwiseParallel(ParallelStyle):

@@ -3,17 +3,8 @@
 
 import torch
 from torch.testing._internal.common_utils import run_tests
-from spmd.testing.common_dtensor import (
-    DTensorTestBase,
-    with_comms,
-    NUM_DEVICES,
-)
-from spmd.tensor import (
-    distribute_tensor,
-    DeviceMesh,
-    Shard,
-    Replicate,
-)
+from spmd.testing.common_dtensor import DTensorTestBase, with_comms, NUM_DEVICES
+from spmd.tensor import distribute_tensor, DeviceMesh, Shard, Replicate
 from spmd.tensor.parallel.style import (
     RowwiseParallel,
     ColwiseParallel,
@@ -33,7 +24,10 @@ class TensorParallelStyleTest(DTensorTestBase):
             RuntimeError, "device_mesh is not passed nor can be inferred"
         ):
             dtensor = func(input_local_tensor)
-        device_mesh = DeviceMesh(self.device_type, [[0, 1], [2, 3]])
+        device_mesh = DeviceMesh(
+            self.device_type,
+            torch.arange(self.world_size).reshape(self.world_size // 2, 2),
+        )
         with self.assertRaisesRegex(
             RuntimeError,
             "device_mesh has dims [0-9]+ but expcted to be 1 for input.",
@@ -65,7 +59,7 @@ class TensorParallelStyleTest(DTensorTestBase):
     def _test_prepare_output(
         self, func, spec, dim=None, device_mesh_input_none=False
     ):
-        device_mesh = DeviceMesh(self.device_type, [0, 1, 2, 3])
+        device_mesh = DeviceMesh(self.device_type, torch.arange(NUM_DEVICES))
         tensor = torch.rand(8, 16, device=self.device_type)
         dtensor = distribute_tensor(tensor, device_mesh, spec)
         device_mesh_input = None if device_mesh_input_none else device_mesh
@@ -136,7 +130,7 @@ class TensorParallelStyleTest(DTensorTestBase):
     # Common logic for testing prepare output funcs errors.
     def _test_prepare_output_error(self, func):
         tensor = torch.rand(8, 16, device=self.device_type)
-        device_mesh = DeviceMesh(self.device_type, [0, 1, 2, 3])
+        device_mesh = DeviceMesh(self.device_type, torch.arange(NUM_DEVICES))
         dtensor = distribute_tensor(tensor, device_mesh, [Shard(0)])
         output = [dtensor]
         with self.assertRaisesRegex(
@@ -144,7 +138,10 @@ class TensorParallelStyleTest(DTensorTestBase):
             f"Expect output of Tensor Parallel to be a DTensor, but found {type(output)}.",
         ):
             func(output, device_mesh)
-        device_mesh = DeviceMesh(self.device_type, [[0, 1], [2, 3]])
+        device_mesh = DeviceMesh(
+            self.device_type,
+            torch.arange(self.world_size).reshape(self.world_size // 2, 2),
+        )
         with self.assertRaisesRegex(
             AssertionError,
             "device_mesh has dims 2 but expcted to be 1 for output.",
