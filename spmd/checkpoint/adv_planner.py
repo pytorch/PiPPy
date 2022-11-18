@@ -13,7 +13,7 @@ from torch.distributed.checkpoint.default_planner import (
     DefaultSavePlanner,
 )
 
-from torch.distributed._shard.checkpoint.metadata import (
+from torch.distributed.checkpoint.metadata import (
     BytesStorageMetadata,
     ChunkStorageMetadata,
     Metadata,
