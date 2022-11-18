@@ -2,9 +2,9 @@
 
 from typing import Dict, List
 import dataclasses
-from torch.distributed._shard.checkpoint.metadata import MetadataIndex
+from torch.distributed.checkpoint.metadata import MetadataIndex
 
-from torch.distributed._shard.checkpoint.planner import SavePlan
+from torch.distributed.checkpoint.planner import SavePlan
 
 
 def dedup_tensors(all_plans: List[SavePlan]) -> List[SavePlan]:

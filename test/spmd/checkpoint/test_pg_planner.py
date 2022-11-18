@@ -4,7 +4,7 @@ from typing import Dict, Union
 
 import torch
 import torch.distributed as dist
-import torch.distributed._shard.checkpoint as cp
+import torch.distributed.checkpoint as cp
 from torch.distributed.fsdp.fully_sharded_data_parallel import (
     FullyShardedDataParallel as FSDP,
 )

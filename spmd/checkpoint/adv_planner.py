@@ -6,14 +6,14 @@ import logging
 from typing import List, Tuple
 
 import torch
-from torch.distributed._shard.checkpoint.planner import ReadItem, SavePlan
+from torch.distributed.checkpoint.planner import ReadItem, SavePlan
 
-from torch.distributed._shard.checkpoint.default_planner import (
+from torch.distributed.checkpoint.default_planner import (
     DefaultLoadPlanner,
     DefaultSavePlanner,
 )
 
-from torch.distributed._shard.checkpoint.metadata import (
+from torch.distributed.checkpoint.metadata import (
     BytesStorageMetadata,
     ChunkStorageMetadata,
     Metadata,
@@ -21,7 +21,7 @@ from torch.distributed._shard.checkpoint.metadata import (
     STATE_DICT_TYPE,
 )
 
-from torch.distributed._shard.checkpoint.utils import find_tensor_shard
+from torch.distributed.checkpoint.utils import find_tensor_shard
 
 from .traverse import set_element, get_element
 from .nested_dict import FLATTEN_MAPPING, flatten_state_dict
