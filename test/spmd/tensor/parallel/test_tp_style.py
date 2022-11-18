@@ -148,7 +148,7 @@ class TensorParallelStyleTest(DTensorTestBase):
         tensor = torch.rand(8, 16, device=self.device_type)
         device_mesh = DeviceMesh(self.device_type, torch.arange(NUM_DEVICES))
         dtensor = distribute_tensor(tensor, device_mesh, [Shard(0)])
-        output = [dtensor]
+        output = "[dtensor]"
         with self.assertRaisesRegex(
             AssertionError,
             f"Expect output of Tensor Parallel to be a DTensor, but found {type(output)}.",
