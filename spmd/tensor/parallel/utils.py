@@ -106,10 +106,10 @@ def _prepare_output_validate(
 
 
 def _create_1d_device_mesh(
-    device_mesh: DeviceMesh = None, tp_mesh_dim: int = 0
+    device_mesh: DeviceMesh, tp_mesh_dim: int = 0
 ) -> DeviceMesh:
     """
-    This function converts a N-D ``device_mesh`` into a 1D ``device_mesh`` 
+    This function converts a N-D ``device_mesh`` into a 1D ``device_mesh``
     for 1D Tensor Parallelism.
 
     Args:

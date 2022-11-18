@@ -1,15 +1,9 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 from abc import abstractmethod
 import torch
-from dataclasses import dataclass
 from abc import ABC
 from typing import Union, Optional
-from spmd.tensor import (
-    DTensor,
-    Shard,
-    Replicate,
-    DeviceMesh,
-)
+from spmd.tensor import DTensor, Shard, Replicate, DeviceMesh
 from spmd.tensor.parallel.utils import (
     _Prepare_Input_Func_Type,
     _Prepare_Output_Func_Type,
@@ -28,7 +22,7 @@ class ParallelStyle(ABC):
     _prepare_output: Optional[_Prepare_Output_Func_Type]
 
     @abstractmethod
-    def __init__(self, _prepare_input, _prepare_output):
+    def __init__(self, _prepare_input, _prepare_output) -> None:
         self._prepare_input = _prepare_input
         self._prepare_output = _prepare_output
 
@@ -37,14 +31,16 @@ class PairwiseParallel(ParallelStyle):
     """
     We concatenate colwise and rowwise styles as a fixed pair like
     what Megatron-LM(https://arxiv.org/abs/1909.08053) is doing.
-    We assume both input and output to a Replicated DTensor.
-    We now only support Multihead Attention, MLP and transformer 
-    for this style.
+    We assume both input and output needs to a replicate DTensor.
+    We now only support this style for Multihead Attention, MLP and
+    transformer model.
 
-    WARNINGS: We also need to assume the input is a 
-    nn.Multihead Attention, nn.Transformer or even-number 
-    layers of nn.Linear for now.
+    .. warning::
+        We need to assume the module to be distributed as a
+        ``nn.Multihead Attention``, ``nn.Transformer`` or even-number
+        layers of ``nn.Linear`` for now.
     """
+
     def __init__(self) -> None:
         super().__init__(make_input_replicate_1d, make_output_tensor)
 

@@ -11,11 +11,8 @@ from spmd.testing.common_dtensor import (
     skip_unless_torch_gpu,
 )
 from spmd.tensor import (
-    distribute_tensor,
     distribute_module,
     DeviceMesh,
-    DTensor,
-    Shard,
     Replicate,
 )
 from spmd.tensor.parallel import (

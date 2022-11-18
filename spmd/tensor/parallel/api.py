@@ -91,7 +91,7 @@ def tp_shard_self_attn(
 
 def _has_even_num_linears(module: nn.Module) -> bool:
     """
-    We traverse through all the children of the given module and count the 
+    We traverse through all the children of the given module and count the
     number of Linear module. If the number is even, we return True.
 
     Args:
@@ -137,16 +137,10 @@ def _distribute_linear_module(
             parallelized based on the given distribute spec.
     """
     weight = nn.Parameter(
-        distribute_tensor(
-            cast(torch.Tensor, module.weight),
-            device_mesh,
-            weight_distribute_spec,
-        )
+        distribute_tensor(module.weight, device_mesh, weight_distribute_spec)
     )
     bias = nn.Parameter(
-        distribute_tensor(
-            cast(torch.Tensor, module.bias), device_mesh, bias_distribute_spec
-        )
+        distribute_tensor(module.bias, device_mesh, bias_distribute_spec)
     )
     module.register_parameter("weight", weight)
     module.register_parameter("bias", bias)
@@ -154,10 +148,10 @@ def _distribute_linear_module(
 
 def _parallelize_mlp(
     module: nn.Module,
+    device_mesh: DeviceMesh,
     parallel_style: ParallelStyle = PairwiseParallel(),
-    device_mesh: DeviceMesh = None,
     tp_mesh_dim: int = 0,
-) -> None:
+) -> None:  # pyre-ignore[7]
     """
     This function assumes the input module is a sequence of nn.Linear
     and we parallelize the module based on the given parallel style.
@@ -167,12 +161,12 @@ def _parallelize_mlp(
     Args:
         module (nn.Module):
             :class:``nn.Module`` object to be parallelized.
-        parallel_style (ParallelStyle):
-            :class:``ParallelStyle`` object which contains how 
-            we prepare input/output for Tensor Parallelism.
         device_mesh (DeviceMesh):
             :class:``DeviceMesh`` object which contains
             how we distribute tensor across GPUs.
+        parallel_style (ParallelStyle):
+            :class:``ParallelStyle`` object which contains how
+            we prepare input/output for Tensor Parallelism.
         tp_mesh_dim (int):
             the dimension of ``device_mesh`` where we perform
             Tensor Parallelism on.
@@ -185,16 +179,17 @@ def _parallelize_mlp(
     """
 
     # Define hook functions needed for preparing Input/Output.
-    def _module_forward_pre_hook(*args):
+    def _module_forward_pre_hook(*args):  # pyre-ignore[2, 3]
         return args[0](args[-1][0], *args[1:-2])
 
-    def _module_forward_hook(*args):
+    def _module_forward_hook(*args):  # pyre-ignore[2, 3]
         return args[0](args[-1], *args[1:-3])
 
     if not isinstance(parallel_style, PairwiseParallel):
         raise NotImplementedError(
             "Only support PairwiseParallel for MLP parallelization."
         )
+
     if not _has_even_num_linears(module):
         raise RuntimeError("We only support even number of Linear for MLP")
 
@@ -206,7 +201,9 @@ def _parallelize_mlp(
     ):
         if i % 2 == 0:
             # Col-wise Parallelize the linear layer
-            _distribute_linear_module(m, device_mesh, [Shard(0)], [Shard(0)])
+            _distribute_linear_module(  # pyre-ignore[6]  # type: ignore[arg-type]
+                m, device_mesh, [Shard(0)], [Shard(0)]
+            )
             m.register_forward_pre_hook(
                 functools.partial(
                     _module_forward_pre_hook,
@@ -216,7 +213,9 @@ def _parallelize_mlp(
             )
         else:
             # Row-wise Parallelize the linear layer
-            _distribute_linear_module(m, device_mesh, [Shard(1)], [Replicate()])
+            _distribute_linear_module(  # pyre-ignore[6]  # type: ignore[arg-type]
+                m, device_mesh, [Shard(1)], [Replicate()]
+            )
             m.register_forward_hook(
                 functools.partial(
                     _module_forward_hook,
