@@ -511,6 +511,27 @@ class DistTensorParallelExampleTest(DTensorTestBase):
         output_tp = model_tp(inp, inp, inp)
         self.assertEqual(output, output_tp)
 
+    @with_comms
+    def test_row_wise_parallel(self):
+        # test RowwiseParallel
+        rowwise = tp.RowwiseParallel()
+        torch.manual_seed(5)
+        model = nn.Linear(10, 16, device=self.device_type)
+        torch.manual_seed(5)
+        model_tp = nn.Linear(10, 16, device=self.device_type)
+        inp = torch.rand(8, 10, device=self.device_type)
+
+        # parallelize model_tp
+        LR = 0.25
+        device_mesh = DeviceMesh(self.device_type, list(range(NUM_DEVICES)))
+        tp._parallelize_linear(model_tp, rowwise, device_mesh)
+        optim = torch.optim.SGD(model.parameters(), lr=LR)
+        optim_tp = torch.optim.SGD(model_tp.parameters(), lr=LR)
+
+        output = model(inp)
+        output_tp = model_tp(inp)
+        self.assertEqual(output, output_tp.to_local())
+
 
 if __name__ == "__main__":
     run_tests()
