@@ -1385,7 +1385,7 @@ class PipelineDriverBase(torch.nn.Module):
 
         class ExecutorDescriptor:
             name: str
-            mod: torch.nn.Module
+            mod: Optional[torch.nn.Module]
             has_backward: bool = False
 
         split_gm = self.pipe.split_gm
@@ -1488,7 +1488,7 @@ class PipelineDriverBase(torch.nn.Module):
                 logging.debug(
                     f"[root] Deleting stage_id = {stage_id} mod on master"
                 )
-                descr.mod = None  # type: ignore[assignment]
+                descr.mod = None
             self.stage_to_executor[stage_id] = self.remote_stage_executor_rrefs[
                 descr.name
             ][1]
