@@ -13,7 +13,7 @@ from typing import (
     Union,
     cast,
 )
-from torch.distributed._shard.checkpoint.metadata import (
+from torch.distributed.checkpoint.metadata import (
     STATE_DICT_TYPE,
 )
 from torch.distributed._shard.sharded_tensor.api import ShardedTensor

@@ -4,7 +4,7 @@ from typing import Dict, Union
 
 import torch
 import torch.distributed as dist
-import torch.distributed._shard.checkpoint as dist_cp
+import torch.distributed.checkpoint as dist_cp
 from spmd.tensor import DeviceMesh, DTensor, Replicate
 from spmd.tensor import Shard as DShard
 from spmd.tensor import distribute_tensor

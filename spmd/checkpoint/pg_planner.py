@@ -5,15 +5,15 @@ from typing import Any, Dict, List
 import torch
 import torch.distributed.distributed_c10d as c10d
 from torch import distributed as dist
-from torch.distributed._shard.checkpoint.default_planner import (
+from torch.distributed.checkpoint.default_planner import (
     DefaultLoadPlanner,
     DefaultSavePlanner,
 )
-from torch.distributed._shard.checkpoint.metadata import (
+from torch.distributed.checkpoint.metadata import (
     STATE_DICT_TYPE,
     Metadata,
 )
-from torch.distributed._shard.checkpoint.planner import ReadItem
+from torch.distributed.checkpoint.planner import ReadItem
 from torch.distributed._shard.sharded_tensor.api import ShardedTensor
 
 
