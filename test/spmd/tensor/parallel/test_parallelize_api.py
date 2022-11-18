@@ -4,9 +4,13 @@ import torch
 from torch.testing._internal.common_utils import run_tests
 from spmd.testing.common_dtensor import DTensorTestBase, with_comms
 from spmd.tensor import distribute_tensor, DeviceMesh, Shard, Replicate
-from spmd.tensor.parallel import PairwiseParallel
+from spmd.tensor.parallel import PairwiseParallel, ParallelStyle
 from spmd.tensor.parallel.api import _parallelize_mlp
 from spmd.tensor.parallel.utils import _create_1d_device_mesh
+from spmd.tensor.parallel.style import (
+    make_input_replicate_1d,
+    make_output_replicate_1d,
+)
 
 
 class MLPModule(torch.nn.Module):
@@ -44,6 +48,15 @@ class TensorParallelAPITests(DTensorTestBase):
         self.assertEqual(new_mesh.device_type, expected_mesh.device_type)
 
     @with_comms
+    def test_creat_1d_device_mesh_error(self):
+        mesh = DeviceMesh(self.device_type, torch.arange(self.world_size))
+        with self.assertRaisesRegex(
+            AssertionError,
+            "Expect tp_mesh_dim within range \[-1, 1\), but found 3.",
+        ):
+            _create_1d_device_mesh(mesh, 3)
+
+    @with_comms
     def test_parallelize_mlp(self):
         model = MLPModule(self.device_type)
         model_tp = MLPModule(self.device_type)
@@ -58,7 +71,7 @@ class TensorParallelAPITests(DTensorTestBase):
         device_mesh = DeviceMesh(
             self.device_type, torch.arange(self.world_size)
         )
-        _parallelize_mlp(model_tp, PairwiseParallel(), device_mesh)
+        _parallelize_mlp(model_tp, device_mesh, PairwiseParallel())
 
         # Ensure the parameter is properly distributed.
         self.assertEqual(
@@ -77,6 +90,31 @@ class TensorParallelAPITests(DTensorTestBase):
             distribute_tensor(model.net2.bias, device_mesh, [Replicate()]),
             model_tp.net2.bias,
         )
+
+    @with_comms
+    def test_parallelize_mlp_error(self):
+        class DummyParallel(ParallelStyle):
+            def __init__(self) -> None:
+                super().__init__(
+                    make_input_replicate_1d, make_output_replicate_1d
+                )
+
+        model_tp = MLPModule(self.device_type)
+        device_mesh = DeviceMesh(
+            self.device_type, torch.arange(self.world_size)
+        )
+        with self.assertRaisesRegex(
+            NotImplementedError,
+            "Only support PairwiseParallel for MLP parallelization.",
+        ):
+            _parallelize_mlp(model_tp, device_mesh, DummyParallel())
+
+        with self.assertRaisesRegex(
+            RuntimeError, "We only support even number of Linear for MLP."
+        ):
+            _parallelize_mlp(
+                torch.nn.Linear(10, 5), device_mesh, PairwiseParallel()
+            )
 
 
 if __name__ == "__main__":

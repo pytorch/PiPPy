@@ -70,7 +70,7 @@ class DistTensorParallelExampleTest(DTensorTestBase):
             self.device_type,
             torch.arange(0, NUM_DEVICES),
         )
-        _parallelize_mlp(model_tp, PairwiseParallel(), device_mesh)
+        _parallelize_mlp(model_tp, device_mesh, PairwiseParallel())
         optim = torch.optim.SGD(model.parameters(), lr=LR)
         optim_tp = torch.optim.SGD(model_tp.parameters(), lr=LR)
 

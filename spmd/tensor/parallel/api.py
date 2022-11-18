@@ -190,7 +190,7 @@ def _parallelize_mlp(
         )
 
     if not _has_even_num_linears(module):
-        raise RuntimeError("We only support even number of Linear for MLP")
+        raise RuntimeError("We only support even number of Linear for MLP.")
 
     if device_mesh.ndim > 1:
         device_mesh = _create_1d_device_mesh(device_mesh, tp_mesh_dim)

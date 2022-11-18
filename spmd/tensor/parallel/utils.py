@@ -123,9 +123,12 @@ def _create_1d_device_mesh(
             how we distribute tensor for 1D Tensor Parallelism across GPUs.
     """
     assert (
-        tp_mesh_dim < device_mesh.ndim or tp_mesh_dim >= -device_mesh.ndim
-    ), f"Expect tp_mesh_dim within range [{-device_mesh.ndim}, {device_mesh.ndim})"
-    ", but found {tp_mesh_dim}."
+        tp_mesh_dim < device_mesh.ndim and tp_mesh_dim >= -device_mesh.ndim
+    ), f"Expect tp_mesh_dim within range [{-device_mesh.ndim}, {device_mesh.ndim})"\
+    f", but found {tp_mesh_dim}."
+
+    if device_mesh.ndim == 1:
+        return device_mesh
 
     # swap the current dim to the last dim then reshape to flatten out other
     # dims, so we can just extract the list of ranks which contains cur_rank.
