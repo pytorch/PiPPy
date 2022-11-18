@@ -157,6 +157,9 @@ def _parallelize_linear(
             f"Tensor parallel module expects a ParallelStyle object but received {type(parallel_style)}!"
         )
 
+    if device_mesh.ndim > 1:
+        device_mesh = _create_1d_device_mesh(device_mesh, tp_mesh_dim)
+
     if isinstance(parallel_style, RowwiseParallel):
         distribute_module(
             module,
