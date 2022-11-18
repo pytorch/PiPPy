@@ -21,6 +21,8 @@ from spmd.tensor.parallel import (
     replicate_input,
     replicate_output,
 )
+from spmd.tensor.parallel import PairwiseParallel
+from spmd.tensor.parallel.api import _parallelize_mlp
 
 
 class MLPModule(torch.nn.Module):

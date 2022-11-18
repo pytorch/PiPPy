@@ -180,7 +180,7 @@ class TensorParallelStyleTest(DTensorTestBase):
         tensor = torch.rand(8, 16, device=self.device_type)
         cs = ColwiseParallel()
         self._1d_input_func_check(tensor, tensor, cs._prepare_input)
-        self.assertEqual(None, cs._prepare_output)
+        self.assertEqual(make_output_replicate_1d, cs._prepare_output)
 
 
 if __name__ == "__main__":
