@@ -3,7 +3,7 @@
 
 from collections import OrderedDict
 import torch
-from torch.distributed._shard.checkpoint.metadata import STATE_DICT_TYPE
+from torch.distributed.checkpoint.metadata import STATE_DICT_TYPE
 from torch.testing._internal.common_utils import run_tests, TestCase
 import spmd.checkpoint.traverse as tv
 

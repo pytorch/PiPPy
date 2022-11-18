@@ -5,7 +5,7 @@ import torch
 
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
-import torch.distributed._shard.checkpoint as dist_cp
+import torch.distributed.checkpoint as dist_cp
 import torch.distributed as dist
 
 
