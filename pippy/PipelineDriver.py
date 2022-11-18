@@ -249,19 +249,19 @@ class RankWorker(EventRecorder):
         )
         self.worker_thread.start()
 
-    def create_stage_executor(self, stage_id, mod, stage_mod_cb, mod_name):
+    def create_stage_executor(self, stage_id, mod, mod_name):
         if stage_id in self.stage_executors:
             raise AssertionError(
                 f"Rank {self.rank} already has stage {stage_id}"
             )
 
         assert (
-            mod is None or stage_mod_cb is None
-        ), "PipeStageExecutor cannot accept mod and stage_mod_cb at the same time"
+            mod is not None or mod_name is not None
+        ), "PipeStageExecutor requires mod or mod_name"
 
         self.stage_executors[stage_id] = PipeStageExecutor(
             stage_id=stage_id,
-            mod=mod or stage_mod_cb(mod_name),
+            mod=mod or pippy.IR.materialize_stage(mod_name),
             rank_worker=self,
             _record_mem_dumps=self._record_mem_dumps,
         )
@@ -1342,7 +1342,6 @@ class PipelineDriverBase(torch.nn.Module):
         checkpoint=False,
         device: Optional[torch.device] = None,
         use_c10d=False,
-        stage_mod_cb=None,
     ):
         super().__init__()
         self.pipe = pipe
@@ -1365,7 +1364,6 @@ class PipelineDriverBase(torch.nn.Module):
         self.checkpoint = checkpoint
         self.device = device
         self.use_c10d = use_c10d
-        self.stage_mod_cb = stage_mod_cb
 
     def _init_remote_executors(self):
         self.rank_worker_rrefs: Dict[int, torch.distributed.rpc.RRef] = {}
@@ -1396,10 +1394,10 @@ class PipelineDriverBase(torch.nn.Module):
             if node.op == "call_module":
                 descr = ExecutorDescriptor()
                 descr.name = node.target
-                if self.stage_mod_cb is None:
-                    descr.mod = split_gm.get_submodule(node.target)
-                else:
+                if Pipe.is_stage_init_enabled():
                     descr.mod = None
+                else:
+                    descr.mod = split_gm.get_submodule(node.target)
                 executor_descriptors.append(descr)
             elif (node.op, node.target) == ("call_function", stage_backward):
                 executor_descriptors[bw_idx].has_backward = True
@@ -1474,11 +1472,10 @@ class PipelineDriverBase(torch.nn.Module):
                 .create_stage_executor(
                     stage_id=stage_id,
                     mod=descr.mod,
-                    stage_mod_cb=self.stage_mod_cb,
                     mod_name=descr.name,
                 ),
             )
-            if self.device is not None or self.stage_mod_cb is not None:
+            if self.device is not None or Pipe.is_stage_init_enabled():
                 logging.debug(
                     f"[root] Waiting stage_id = {stage_id} mod to be confirmed by worker"
                 )
@@ -2034,7 +2031,6 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         checkpoint=False,
         device: Optional[torch.device] = None,
         use_c10d=False,
-        stage_mod_cb=None,
     ):
         super().__init__(
             pipe,
@@ -2051,7 +2047,6 @@ class PipelineDriverFillDrain(PipelineDriverBase):
             checkpoint=checkpoint,
             device=device,
             use_c10d=use_c10d,
-            stage_mod_cb=stage_mod_cb,
         )
         self.single_loss = single_loss
 
@@ -2195,7 +2190,6 @@ class PipelineDriver1F1B(PipelineDriverFillDrain):
         checkpoint=False,
         device: Optional[torch.device] = None,
         use_c10d=False,
-        stage_mod_cb=None,
     ):
         # In 1F1B with backward stages, the maximum number of outstanding
         # micro-batches equals the number of pipeline stages
@@ -2219,7 +2213,6 @@ class PipelineDriver1F1B(PipelineDriverFillDrain):
             checkpoint=checkpoint,
             device=device,
             use_c10d=use_c10d,
-            stage_mod_cb=stage_mod_cb,
         )
 
 
@@ -2239,7 +2232,6 @@ class PipelineDriverInterleaved1F1B(PipelineDriver1F1B):
         checkpoint=False,
         device: Optional[torch.device] = None,
         use_c10d=False,
-        stage_mod_cb=None,
     ):
         super().__init__(
             pipe,
@@ -2256,5 +2248,4 @@ class PipelineDriverInterleaved1F1B(PipelineDriver1F1B):
             checkpoint=checkpoint,
             device=device,
             use_c10d=use_c10d,
-            stage_mod_cb=stage_mod_cb,
         )
