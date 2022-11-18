@@ -42,6 +42,26 @@ class PairwiseParallel(ParallelStyle):
         super().__init__(make_input_replicate_1d, make_output_tensor)
 
 
+class RowwiseParallel(ParallelStyle):
+    """
+    Partitioning the row of a module.
+    We assume the input to be a sharded :class:``DTensor`` and output to be a replicated :class:``DTensor``.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(make_input_shard_1d, make_output_replicate_1d)
+
+
+class ColwiseParallel(ParallelStyle):
+    """
+    Partitioning the column of a tensor or module.
+    We assume the input to be a replicated :class:``DTensor`` and output to be a sharded :class:``DTensor``.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(make_input_replicate_1d, None)
+
+
 @_prepare_input_validate  # type: ignore[arg-type] # pyre-ignore[56]
 def make_input_shard_1d(
     input: Union[torch.Tensor, DTensor],
@@ -49,7 +69,7 @@ def make_input_shard_1d(
     dim: int = 0,
 ) -> DTensor:
     """
-    Shard input tensor on `dim` over an 1-D device mesh. This function will be used in ParallelStyle.
+    Shard input tensor on ``dim`` over an 1-D device mesh. This function will be used in ParallelStyle.
 
     Args:
         input (Union[Tensor, DTensor]):
