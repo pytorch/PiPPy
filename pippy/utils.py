@@ -57,7 +57,7 @@ def tp_transports():
     return ["shm", "uv"] if has_efa() else None
 
 
-def run_pippy(run_master, args, *extra_args):
+def run_pippy(run_func, args, *extra_args):
     if not hasattr(args, "world_size"):
         assert hasattr(args, "pp_group_size")
         args.dp_group_size = (
@@ -93,17 +93,17 @@ def run_pippy(run_master, args, *extra_args):
     if args.rank == -1:
         mp.spawn(
             run_worker,
-            args=(run_master, args, *extra_args),
+            args=(run_func, args, *extra_args),
             nprocs=actual_world_size,
             join=True,
         )
     elif args.rank < actual_world_size:
-        run_worker(args.rank, run_master, args, *extra_args)
+        run_worker(args.rank, run_func, args, *extra_args)
     else:
         print("I'm unused, exiting")
 
 
-def run_worker(rank, run_master, args, *extra_args):
+def run_worker(rank, run_func, args, *extra_args):
     args.rank = rank
 
     os.environ["MASTER_ADDR"] = args.master_addr
@@ -182,9 +182,15 @@ def run_worker(rank, run_master, args, *extra_args):
     exclude_master = (  # type: ignore[name-defined]
         args.exclude_master if hasattr(args, "exclude_master") else 0
     )
+    gspmd = (  # type: ignore[name-defined]
+        args.gspmd if hasattr(args, "gspmd") else 0
+    )
 
     if rank >= 0 and rank // args.dp_group_size == 0:
         args.driver_index = rank
         args.local_driver_index = os.getenv("LOCAL_RANK", rank)
-        run_master(pp_ranks_per_dp_group[rank], args, *extra_args)
+        run_func(pp_ranks_per_dp_group[rank], args, *extra_args)
+    elif gspmd == 1:
+        run_func([], args, *extra_args)
+
     rpc.shutdown()
