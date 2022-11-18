@@ -52,7 +52,7 @@ class TensorParallelAPITests(DTensorTestBase):
         mesh = DeviceMesh(self.device_type, torch.arange(self.world_size))
         with self.assertRaisesRegex(
             AssertionError,
-            "Expect tp_mesh_dim within range \[-1, 1\), but found 3.",
+            "Expect tp_mesh_dim within range \\[-1, 1\\), but found 3.",
         ):
             _create_1d_device_mesh(mesh, 3)
 

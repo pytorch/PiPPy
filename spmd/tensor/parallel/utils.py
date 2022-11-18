@@ -124,8 +124,10 @@ def _create_1d_device_mesh(
     """
     assert (
         tp_mesh_dim < device_mesh.ndim and tp_mesh_dim >= -device_mesh.ndim
-    ), f"Expect tp_mesh_dim within range [{-device_mesh.ndim}, {device_mesh.ndim})"\
-    f", but found {tp_mesh_dim}."
+    ), (
+        f"Expect tp_mesh_dim within range [{-device_mesh.ndim}, {device_mesh.ndim})"
+        f", but found {tp_mesh_dim}."
+    )
 
     if device_mesh.ndim == 1:
         return device_mesh
