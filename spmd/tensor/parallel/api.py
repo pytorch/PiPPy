@@ -1,5 +1,4 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-import functools
 import torch
 import torch.nn as nn
 from typing import Sequence, Tuple
@@ -112,40 +111,6 @@ def _has_even_num_linears(module: nn.Module) -> bool:
     return len(linear_submodules) > 0 and len(linear_submodules) % 2 == 0
 
 
-def _distribute_linear_module(
-    module: nn.Linear,
-    device_mesh: DeviceMesh,
-    weight_distribute_spec: Sequence[Placement],
-    bias_distribute_spec: Sequence[Placement],
-) -> None:
-    """
-    This util function parallelize the weight and bias of a nn.Linear
-    and replace parameter in place.
-
-    Args:
-        module (nn.Linear):
-            :class:``nn.Linear`` object to be parallelized.
-        device_mesh (DeviceMesh):
-            :class:``DeviceMesh`` object which contains
-            how we distribute tensor across GPUs.
-        weight_distribute_spec (Sequence[Placement]):
-            the tensor distribute spec of DTensor for weight.
-        bias_distribute_spec (Sequence[Placement]):
-            the tensor distribute spec of DTensor for bias.
-
-    Return:
-        None
-    """
-    weight = nn.Parameter(
-        distribute_tensor(module.weight, device_mesh, weight_distribute_spec)
-    )
-    bias = nn.Parameter(
-        distribute_tensor(module.bias, device_mesh, bias_distribute_spec)
-    )
-    module.register_parameter("weight", weight)
-    module.register_parameter("bias", bias)
-
-
 def _parallelize_mlp(
     module: nn.Module,
     device_mesh: DeviceMesh,
@@ -162,8 +127,8 @@ def _parallelize_mlp(
         module (nn.Module):
             :class:``nn.Module`` object to be parallelized.
         device_mesh (DeviceMesh):
-            :class:``DeviceMesh`` object which contains
-            how we distribute tensor across GPUs.
+            :class:``DeviceMesh`` object which describes the mesh topology
+            of devices for the DTensor.
         parallel_style (ParallelStyle):
             :class:``ParallelStyle`` object which contains how
             we prepare input/output for Tensor Parallelism.
@@ -181,8 +146,9 @@ def _parallelize_mlp(
     # Define partition functions needed.
     def _rowwise_parallelize_fn(name, module, device_mesh):  # pyre-ignore[2, 3]
         for name, param in module.named_parameters():
-            print(name)
-            dist_spec = [Shard(1)] if name == "weight" else [Replicate()]
+            dist_spec = (  # type: ignore[list-item]
+                [Shard(1)] if name == "weight" else [Replicate()]
+            )
             dist_param = torch.nn.Parameter(
                 distribute_tensor(param, device_mesh, dist_spec)
             )
@@ -216,7 +182,9 @@ def _parallelize_mlp(
                 m,
                 device_mesh,
                 _colwise_parallelize_fn,
-                input_fn=parallel_style._prepare_input if i == 0 else None,
+                input_fn=parallel_style._prepare_input  # pyre-ignore[6]  # type: ignore[arg-type]
+                if i == 0
+                else None,
             )
         else:
             # Row-wise Parallelize the linear layer
@@ -224,7 +192,7 @@ def _parallelize_mlp(
                 m,
                 device_mesh,
                 _rowwise_parallelize_fn,
-                output_fn=parallel_style._prepare_output
+                output_fn=parallel_style._prepare_output  # pyre-ignore[6]  # type: ignore[arg-type]
                 if i == (len(linear_submodules) - 1)
                 else None,
             )
