@@ -34,9 +34,8 @@ class PairwiseParallel(ParallelStyle):
     We assume both input and output needs to a replicate DTensor.
 
     .. warning::
-        We need to the module to be distributed as a
-        ``nn.Multihead Attention``, ``nn.Transformer`` or even-number
-        layers of ``nn.Linear`` for this parallel style for now.
+        PairwiseParallel only supports ``nn.Multihead Attention``,
+        ``nn.Transformer`` or even-number-layer MLP for now.
     """
 
     def __init__(self) -> None:
