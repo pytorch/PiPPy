@@ -91,9 +91,6 @@ def _prepare_output_validate(
     def wrapper(*args, **kwargs):  # pyre-ignore[2, 3]
         assert len(args) >= 1, "_prepare_output needs at least one arg."
         output = args[0]
-        if isinstance(output, list) or isinstance(output, tuple):
-            output = output[0]
-            args = (input, *args[1:])
         assert isinstance(
             output, DTensor
         ), f"Expect output of Tensor Parallel to be a DTensor, but found {type(output)}."
