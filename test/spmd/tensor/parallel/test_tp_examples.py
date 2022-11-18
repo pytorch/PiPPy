@@ -23,10 +23,14 @@ from spmd.tensor.parallel import (
     tp_shard_self_attn,
     replicate_input,
     replicate_output,
-    _parallelize_linear,
     RowwiseParallel,
     ColwiseParallel,
+    make_input_replicate_1d,
     make_output_tensor,
+)
+
+from spmd.tensor.parallel.api import(
+    _parallelize_linear,
 )
 
 
@@ -518,9 +522,11 @@ class DistTensorParallelExampleTest(DTensorTestBase):
     @with_comms
     def test_row_wise_parallel(self):
         # test RowwiseParallel
+        inp_size = [8, 16]
         torch.manual_seed(self.rank)
-        inp = torch.rand(8, 16, device=self.device_type)
+        inp = torch.rand(*inp_size, device=self.device_type)
         rowwise = RowwiseParallel()
+
         torch.manual_seed(5)
         model = nn.Linear(16, 10, device=self.device_type)
         torch.manual_seed(5)
@@ -540,19 +546,68 @@ class DistTensorParallelExampleTest(DTensorTestBase):
             ).to_local(),
             model_tp.bias.to_local(),
         )
-        #inp = distribute_tensor(inp, device_mesh, [Shard(0)])
-        inp = DTensor.from_local(inp, device_mesh, [Shard(0)])
-        print(inp)
-        #print(local_inp)
-        #output = model(local_inp)
-        #output_tp = model_tp(inp)
-        #self.assertEqual(output, output_tp.to_local())
+
+        LR = 0.25
+        optim = torch.optim.SGD(model.parameters(), lr=LR)
+        optim_tp = torch.optim.SGD(model_tp.parameters(), lr=LR)
+
+        local_inp = make_input_replicate_1d(
+            DTensor.from_local(inp, device_mesh, [Shard(0)])
+        ).to_local()
+        output = model(local_inp)
+        output_tp = model_tp(inp)
+        self.assertEqual(output, output_tp.to_local())
+
+        output.sum().backward()
+        output_tp.sum().backward()
+
+        replicate = [Replicate()]
+        # Ensure gradients are same.
+        self.assertEqual(
+            model.weight.grad,
+            model_tp.weight.grad.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.bias.grad,
+            model_tp.bias.grad.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+
+        optim.step()
+        optim_tp.step()
+
+        # Ensure params are same.
+        self.assertEqual(
+            model.weight,
+            model_tp.weight.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.bias,
+            model_tp.bias.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+
+        inp = torch.rand(*inp_size, device=self.device_type)
+        local_inp = make_input_replicate_1d(
+            DTensor.from_local(inp, device_mesh, [Shard(0)])
+        ).to_local()
+        output = model(local_inp)
+        output_tp = model_tp(inp)
+        self.assertEqual(output, output_tp.to_local())
 
     @with_comms
     def test_col_wise_parallel(self):
         # test ColwiseParallel
-        inp = torch.rand(8, 10, device=self.device_type)
+        inp_size = [8, 10]
+        inp = torch.rand(*inp_size, device=self.device_type)
         colwise = ColwiseParallel()
+
         torch.manual_seed(5)
         model = nn.Linear(10, 16, device=self.device_type)
         torch.manual_seed(5)
@@ -571,6 +626,50 @@ class DistTensorParallelExampleTest(DTensorTestBase):
             model_tp.bias.to_local(),
         )
 
+        LR = 0.25
+        optim = torch.optim.SGD(model.parameters(), lr=LR)
+        optim_tp = torch.optim.SGD(model_tp.parameters(), lr=LR)
+
+        output = model(inp)
+        output_tp = make_output_tensor(model_tp(inp), device_mesh)
+        self.assertEqual(output, output_tp)
+
+        output.sum().backward()
+        output_tp.sum().backward()
+
+        replicate = [Replicate()]
+        # Ensure gradients are same.
+        self.assertEqual(
+            model.weight.grad,
+            model_tp.weight.grad.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.bias.grad,
+            model_tp.bias.grad.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+
+        optim.step()
+        optim_tp.step()
+
+        # Ensure params are same.
+        self.assertEqual(
+            model.weight,
+            model_tp.weight.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+        self.assertEqual(
+            model.bias,
+            model_tp.bias.redistribute(
+                device_mesh=device_mesh, placements=replicate
+            ).to_local(),
+        )
+
+        inp = torch.rand(*inp_size, device=self.device_type)
         output = model(inp)
         output_tp = make_output_tensor(model_tp(inp), device_mesh)
         self.assertEqual(output, output_tp)

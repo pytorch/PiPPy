@@ -1,7 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import torch
 import torch.nn as nn
-from typing import Sequence, Tuple
+from typing import Sequence, Tuple, Union, Callable
 from spmd.tensor import (
     distribute_tensor,
     DTensor,
@@ -128,18 +128,18 @@ def _parallelize_linear(
 
     if not isinstance(module, nn.Linear):
         raise RuntimeError(
-            f"_parallelize_linear expects a torch.nn.Linear module but received {module}!"
+            f"Tensor parallel module expects a torch.nn.Linear module but received {type(module)}!"
         )
 
     if not isinstance(parallel_style, ParallelStyle):
         raise RuntimeError(
-            f"parallel_style passed to _parallelize_linear is not a ParallelStyle object but {type(parallel_style)}!"
+            f"Tensor parallel module expects a ParallelStyle object but received {type(parallel_style)}!"
         )
 
     col_wise_sharding: Sequence[Placement] = [Replicate()] * device_mesh.ndim
-    col_wise_sharding[tp_mesh_dim] = Shard(0)
+    col_wise_sharding[tp_mesh_dim] = Shard(0)  # pyre-ignore [6]
     row_wise_sharding: Sequence[Placement] = [Replicate()] * device_mesh.ndim
-    row_wise_sharding[tp_mesh_dim] = Shard(1)
+    row_wise_sharding[tp_mesh_dim] = Shard(1)  # pyre-ignore [6]
     replicate: Sequence[Placement] = [Replicate()] * device_mesh.ndim
 
     def linear_module_placements(
@@ -169,9 +169,9 @@ def _parallelize_linear(
     # input
     if parallel_style._prepare_input is not None:
         input_fn: Callable[
-            [Sequence[Union[torch.Tensor, DTensor]], Tuple[DTensor, ...]]
+            [Sequence[Union[torch.Tensor, DTensor]]], Tuple[DTensor, ...]
         ] = lambda inputs: tuple(
-            parallel_style._prepare_input(tensor, device_mesh)
+            parallel_style._prepare_input(tensor, device_mesh)  # type: ignore
             for tensor in inputs
         )
         module.register_forward_pre_hook(lambda _, inputs: input_fn(inputs))  # type: ignore
