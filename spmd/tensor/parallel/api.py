@@ -2,7 +2,7 @@
 import functools
 import torch
 import torch.nn as nn
-from typing import Sequence, Tuple, cast
+from typing import Sequence, Tuple
 from spmd.tensor import (
     distribute_tensor,
     DTensor,
