@@ -1464,7 +1464,7 @@ class PipelineDriverBase(torch.nn.Module):
                 logging.debug(
                     f"[root] Moving stage_id = {stage_id} mod to {self.device}"
                 )
-                descr.mod.to(self.device)
+                descr.mod.to(self.device)   # type: ignore[union-attr]
             logging.debug(f"[root] Sending stage_id = {stage_id} mod to worker")
             self.remote_stage_executor_rrefs[descr.name] = (
                 stage_id,
