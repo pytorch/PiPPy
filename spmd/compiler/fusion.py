@@ -2,7 +2,7 @@ import logging
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Union
 
 import torch
 import torch.fx as fx
@@ -14,9 +14,13 @@ from .graph_utils import (
     graph_cleanup,
     pretty_print_graph,
 )
-from .log_utils import rank0_debug
+from .log_utils import rank0_debug, rank0_info
+from functools import partial
 
 logger: logging.Logger = logging.getLogger(__name__)
+
+_debug = partial(rank0_debug, logger)
+_info = partial(rank0_info, logger)
 
 # enum for the supported fusion comm types
 class CommType(str, Enum):
@@ -108,7 +112,7 @@ def _scan_graph_for_fusion_elements(
         "clone",
         "_tensor_constant",
         "_tensor_constant",
-        CommType,
+        comm_type,
         "comm_result",
         "getitem",
         "getitem",
@@ -162,22 +166,82 @@ def _scan_graph_for_fusion_elements(
     return element_list
 
 
-def run_comm_fusion(gm: fx.GraphModule) -> bool:
-    """main entry into remapping graph for all_reduce fusion"""
+def _remove_gradient_tensor_clones(
+    gm: fx.GraphModule, comm_type=CommType.allreduce
+) -> int:
+    """
+    Optimizes away any duplicate gradient tensor nodes from DTensor
+    comm insertion in the provided graph.
 
-    result = False
+    Returns - total count of clone tensor nodes removed
+    """
 
-    # get our main graph info
-    graph_info = GraphInfo()
-    graph_info.update_info(gm)
+    count_clones_removed = 0
+    sequence: list[Union[str, CommType]] = [
+        "clone",
+        "_tensor_constant0",
+        "_tensor_constant1",
+        comm_type,
+    ]
 
-    # scan graph for all comm sections (fusion elements)
-    fe_list = _scan_graph_for_fusion_elements(gm, comm_type=CommType.allreduce)
+    len_sequence: int = len(sequence) - 1
+    index: int = 0
+    clone_node: fx.Node = None  # type: ignore
+    comm_node: fx.Node = None  # type: ignore
 
-    # final review print
-    graph_cleanup(gm)
+    for node in gm.graph.nodes:
 
-    pretty_print_graph(gm, "final version, fusion pass")
+        if node.op == OP.PLACEHOLDER:
+            index = 0
+            continue
 
-    result = True  # TODO - make this mean something
-    return result
+        pattern = sequence[index]
+
+        if (
+            index == 0
+            and node.op == OP.CALL_FUNCTION
+            and node.name.startswith(pattern)
+        ):
+            clone_node = node
+            index += 1
+            continue
+
+        elif index < len_sequence and node.name.startswith(pattern):
+            index += 1
+            continue
+
+        elif (
+            index == len_sequence
+            and node.op == OP.CALL_FUNCTION
+            and node.name.startswith(pattern)
+        ):
+            # found matching clone/comm sequence...
+            grad_tensor_node = clone_node.args[0]
+            comm_node = node
+
+            comm_node.update_arg(0, [grad_tensor_node])
+
+            # reset for next series
+            count_clones_removed += 1
+            index = 0
+        else:
+            # failed sequence
+            index = 0
+
+    if count_clones_removed:
+        graph_cleanup(gm)
+
+    return count_clones_removed
+
+
+def run_comm_fusion(gm: fx.GraphModule) -> fx.GraphModule:
+    """main entry into graph optimizations for all_reduce fusion"""
+
+    # optimize out any clone gradient nodes before we start
+    removed_tensor_clones = _remove_gradient_tensor_clones(gm)
+
+    _info(
+        f" removed {removed_tensor_clones} cloned gradient tensors from graph"
+    )
+
+    return gm
