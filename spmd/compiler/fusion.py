@@ -12,7 +12,6 @@ from .graph_utils import (
     get_node_tensor_numel,
     get_output_node,
     graph_cleanup,
-    pretty_print_graph,
 )
 from .log_utils import rank0_debug, rank0_info
 from functools import partial
@@ -24,11 +23,11 @@ _info = partial(rank0_info, logger)
 
 # enum for the supported fusion comm types
 class CommType(str, Enum):
-    allreduce = "allreduce_"
-    allgather = "allgather_"
-    broadcast = "broadcast_"
-    reducescatter = "reduce_scatter_"
-    scatter = "scatter_"
+    allreduce: str = "allreduce_"
+    allgather: str = "allgather_"
+    broadcast: str = "broadcast_"
+    reducescatter: str = "reduce_scatter_"
+    scatter: str = "scatter_"
 
 
 @dataclass
@@ -167,7 +166,7 @@ def _scan_graph_for_fusion_elements(
 
 
 def _remove_gradient_tensor_clones(
-    gm: fx.GraphModule, comm_type=CommType.allreduce
+    gm: fx.GraphModule, comm_type: CommType = CommType.allreduce
 ) -> int:
     """
     Optimizes away any duplicate gradient tensor nodes from DTensor
