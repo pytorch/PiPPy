@@ -116,7 +116,7 @@ def _distribute_linear_module(
     device_mesh: DeviceMesh,
     weight_distribute_spec: Sequence[Placement],
     bias_distribute_spec: Sequence[Placement],
-) -> nn.Module:
+) -> None:
     """
     This util function parallelize the weight and bias of a nn.Linear
     and replace parameter in place.
@@ -133,8 +133,7 @@ def _distribute_linear_module(
             the tensor distribute spec of DTensor for bias.
 
     Return:
-        A :class:``nn.Linear`` object with both weight and bias
-            parallelized based on the given distribute spec.
+        None
     """
     weight = nn.Parameter(
         distribute_tensor(module.weight, device_mesh, weight_distribute_spec)
@@ -151,7 +150,7 @@ def _parallelize_mlp(
     device_mesh: DeviceMesh,
     parallel_style: ParallelStyle = PairwiseParallel(),
     tp_mesh_dim: int = 0,
-) -> None:  # pyre-ignore[7]
+) -> None:
     """
     This function assumes the input module is a sequence of nn.Linear
     and we parallelize the module based on the given parallel style.
@@ -201,8 +200,11 @@ def _parallelize_mlp(
     ):
         if i % 2 == 0:
             # Col-wise Parallelize the linear layer
-            _distribute_linear_module(  # pyre-ignore[6]  # type: ignore[arg-type]
-                m, device_mesh, [Shard(0)], [Shard(0)]
+            _distribute_linear_module(
+                m,  # pyre-ignore[6]  # type: ignore[arg-type]
+                device_mesh,
+                [Shard(0)],
+                [Shard(0)],
             )
             m.register_forward_pre_hook(
                 functools.partial(
@@ -213,8 +215,11 @@ def _parallelize_mlp(
             )
         else:
             # Row-wise Parallelize the linear layer
-            _distribute_linear_module(  # pyre-ignore[6]  # type: ignore[arg-type]
-                m, device_mesh, [Shard(1)], [Replicate()]
+            _distribute_linear_module(
+                m,  # pyre-ignore[6]  # type: ignore[arg-type]
+                device_mesh,
+                [Shard(1)],
+                [Replicate()],
             )
             m.register_forward_hook(
                 functools.partial(
