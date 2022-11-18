@@ -18,8 +18,8 @@ class ParallelStyle(ABC):
     Users can extend this class to build their own parallel style with customized input/output preparations.
     """
 
-    _prepare_input: Optional[_Prepare_Input_Func_Type]
-    _prepare_output: Optional[_Prepare_Output_Func_Type]
+    _prepare_input: _Prepare_Input_Func_Type
+    _prepare_output: _Prepare_Output_Func_Type
 
     @abstractmethod
     def __init__(self, _prepare_input, _prepare_output) -> None:
