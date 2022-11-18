@@ -5,18 +5,18 @@ from typing import Any, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
-from torch.distributed._shard.checkpoint.default_planner import (
+from torch.distributed.checkpoint.default_planner import (
     DefaultLoadPlanner,
     DefaultSavePlanner,
 )
-from torch.distributed._shard.checkpoint.metadata import (
+from torch.distributed.checkpoint.metadata import (
     STORAGE_TYPES,
     ChunkStorageMetadata,
     Metadata,
     MetadataIndex,
     TensorProperties,
 )
-from torch.distributed._shard.checkpoint.planner import (
+from torch.distributed.checkpoint.planner import (
     LoadPlan,
     ReadItem,
     SavePlan,
@@ -24,7 +24,7 @@ from torch.distributed._shard.checkpoint.planner import (
     WriteItem,
     WriteItemType,
 )
-from torch.distributed._shard.checkpoint.planner_helpers import (
+from torch.distributed.checkpoint.planner_helpers import (
     _create_read_items,
     _create_sharded_read_items,
     _create_write_items,
