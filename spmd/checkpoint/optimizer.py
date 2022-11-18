@@ -1,7 +1,7 @@
 import copy
 import dataclasses
 from typing import Dict, List, Optional, Sequence, Tuple, Union, cast
-from torch.distributed._shard.checkpoint.planner import LoadPlan
+from torch.distributed.checkpoint.planner import LoadPlan
 
 import torch
 import torch.distributed as dist
@@ -12,22 +12,22 @@ from torch.distributed._shard.sharding_spec.chunk_sharding_spec import (
     ChunkShardingSpec,
 )
 
-import torch.distributed._shard.checkpoint as dist_cp
-from torch.distributed._shard.checkpoint.metadata import (
+import torch.distributed.checkpoint as dist_cp
+from torch.distributed.checkpoint.metadata import (
     BytesStorageMetadata,
     Metadata,
     MetadataIndex,
     STATE_DICT_TYPE,
     TensorStorageMetadata,
 )
-from torch.distributed._shard.checkpoint.planner_helpers import (
+from torch.distributed.checkpoint.planner_helpers import (
     _create_sharded_read_items,
     _create_read_items,
 )
 from torch.distributed.remote_device import _remote_device
 
 from spmd.tensor import DTensor as DT
-from torch.distributed._shard.checkpoint.default_planner import (
+from torch.distributed.checkpoint.default_planner import (
     DefaultLoadPlanner,
 )
 from torch.distributed._shard.api import _shard_tensor
@@ -195,7 +195,7 @@ def load_sharded_optimizer_state_dict(
 
     This is the current recommended way to checkpoint is FSDP
 
-    >>> import torch.distributed._shard.checkpoint as dist_cp
+    >>> import torch.distributed.checkpoint as dist_cp
     >>> import spmd.checkpoint as sp_cp
     >>> # Save
     >>> model: torch.nn.Model
