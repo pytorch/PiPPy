@@ -18,10 +18,12 @@ from spmd.tensor.dispatch import operator_dispatch, propagate_input_sharding
 from spmd.tensor.placement_types import Placement, Replicate, Shard, _Partial
 from spmd.tensor.redistribute import _redistribute_with_local_tensor
 
-from .graph_utils import OP
-from .log_utils import rank0_info
+from .graph_utils import OP, create_graph_node_map
+from .log_utils import rank0_debug, rank0_info
 
 logger: logging.Logger = logging.getLogger(__name__)
+_debug = partial(rank0_debug, logger)
+_info = partial(rank0_info, logger)
 
 
 class TrainingPhase(Enum):
@@ -171,9 +173,28 @@ def _build_dummy_add_graph(
         call_functions[0], node_to_obj
     )
 
+    # rewrite graph to remove redundant clone
+    traced_dispatch = _remove_clone_tensor(traced_dispatch)
+
     traced_dispatch.graph.lint()
 
+    _info(f"\n\n final subgraph == {traced_dispatch.graph.print_tabular()}")
+
     return traced_dispatch
+
+
+def _remove_clone_tensor(subgm: fx.GraphModule) -> fx.GraphModule:
+    """rewrite dummy add graph to remove clone of grad tensor"""
+    nodemap = create_graph_node_map(subgm)
+
+    clone_node = nodemap["clone"]
+    comm_node = nodemap["allreduce__default"]
+    assert comm_node is not None, f"expected all_reduce comm node not present."
+
+    grad_tensor_node = clone_node.args[0]
+    comm_node.update_arg(0, [grad_tensor_node])
+
+    return subgm
 
 
 def _convert_output(
