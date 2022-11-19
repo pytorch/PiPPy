@@ -629,6 +629,12 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
             ]:
                 self.skipTest("Need to support Segformer models")
 
+            # TODO: support CLIPVision models https://github.com/pytorch/tau/issues/629
+            if model_cls in [
+                CLIPVisionModel,
+            ]:
+                self.skipTest("Need to support CLIPVision models")
+
             model, splitter = generate_hf_model(model_cls)
 
             submodules_cnt = splitter(model)
