@@ -18,8 +18,8 @@ from functools import partial
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-_debug = partial(rank0_debug, logger)
-_info = partial(rank0_info, logger)
+_debug = partial(rank0_debug, logger)  # type: ignore
+_info = partial(rank0_info, logger)  # type: ignore
 
 # enum for the supported fusion comm types
 class CommType(str, Enum):
