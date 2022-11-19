@@ -22,8 +22,8 @@ from .graph_utils import OP, create_graph_node_map
 from .log_utils import rank0_debug, rank0_info
 
 logger: logging.Logger = logging.getLogger(__name__)
-_debug = partial(rank0_debug, logger)
-_info = partial(rank0_info, logger)
+_debug = partial(rank0_debug, logger)  # type: ignore
+_info = partial(rank0_info, logger)  # type: ignore
 
 
 class TrainingPhase(Enum):
