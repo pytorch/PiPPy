@@ -66,8 +66,7 @@ flake8 pippy spmd test/spmd
 # mypy spmd test/spmd
 echo; echo "Running mypy ..."
 mypy spmd pippy
-# Silent error from mypy for now
-# (( RETVAL |= $? ))
+(( RETVAL |= $? ))
 
 echo; echo "Running pylint ..."
 pylint --disable=all --enable=unused-import $(git ls-files '*.py')
