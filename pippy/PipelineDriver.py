@@ -1394,7 +1394,7 @@ class PipelineDriverBase(torch.nn.Module):
             if node.op == "call_module":
                 descr = ExecutorDescriptor()
                 descr.name = node.target
-                if Pipe.is_stage_init_enabled():
+                if Pipe.is_stage_init_deferred():
                     descr.mod = None
                 else:
                     descr.mod = split_gm.get_submodule(node.target)
@@ -1475,7 +1475,7 @@ class PipelineDriverBase(torch.nn.Module):
                     mod_name=descr.name,
                 ),
             )
-            if self.device is not None or Pipe.is_stage_init_enabled():
+            if self.device is not None or Pipe.is_stage_init_deferred():
                 logging.debug(
                     f"[root] Waiting stage_id = {stage_id} mod to be confirmed by worker"
                 )

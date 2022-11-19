@@ -1004,7 +1004,7 @@ class Pipe(torch.nn.Module):
             return self.get_submodule(target).to(device)
 
     @staticmethod
-    def is_stage_init_enabled():
+    def is_stage_init_deferred():
         return "materialize_stage" in globals()
 
 
