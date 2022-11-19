@@ -95,7 +95,18 @@ def tp_shard_self_attn(
 
 
 # Define partition functions needed to parallelize Linear modules
-def _rowwise_parallelize_fn(name, module, device_mesh):  # pyre-ignore[2, 3]
+def _linear_module_parallelize_row_wise(name: str, module: nn.Linear, device_mesh: DeviceMesh) -> None:
+    """
+    This function parallelizes the input :class:``nn.Linear`` module in :class:``RowwiseParallel`` style.
+
+    Args:
+        name (str): name of the input module.
+        module (nn.Module): the :class:``nn.Linear`` object to be parallelized.
+        device_mesh (DeviceMesh): :class:``DeviceMesh`` object which describes the mesh topology
+            of devices for the DTensor.
+    Returns:
+        None
+    """
     for name, param in module.named_parameters():
         dist_spec = (  # type: ignore[list-item]
             [Shard(1)] if name == "weight" else [Replicate()]
@@ -106,7 +117,18 @@ def _rowwise_parallelize_fn(name, module, device_mesh):  # pyre-ignore[2, 3]
         module.register_parameter(name, dist_param)
 
 
-def _colwise_parallelize_fn(name, module, device_mesh):  # pyre-ignore[2, 3]
+def _linear_module_parallelize_col_wise(name: str, module: nn.Linear, device_mesh: DeviceMesh) -> None:
+    """
+    This function parallelizes the input :class:``nn.Linear`` module in :class:``ColwiseParallel`` style.
+
+    Args:
+        name (str): name of the input module.
+        module (nn.Module): the :class:``nn.Linear`` object to be parallelized.
+        device_mesh (DeviceMesh): :class:``DeviceMesh`` object which describes the mesh topology
+            of devices for the DTensor.
+    Returns:
+        None
+    """
     for name, param in module.named_parameters():
         dist_param = torch.nn.Parameter(
             distribute_tensor(param, device_mesh, [Shard(0)])
@@ -126,21 +148,17 @@ def _parallelize_linear(
     based on the :class:``ParallelStyle``.
 
     Args:
-        module (nn.Module):
-            The :class:``nn.Module`` object to be parallelized.
-        device_mesh (DeviceMesh):
-            The n-d :class:``DeviceMesh`` over which the `module` will be parallelized.
-            If the mesh is more than 1-dimensional, we convert it to a 1-d :class:``DeviceMesh``
-            by `tp_mesh_dim`.
-        parallel_style (ParallelStyle):
-            :class:``ParallelStyle`` describes how weight and bias should be distributed
-            over :class:``DeviceMesh`` and how the input and output should be prepared for
-            Tensor Parallelism.
+        module (nn.Module): the :class:``nn.Module`` object to be parallelized.
+        device_mesh (DeviceMesh): the n-d :class:``DeviceMesh`` over which the `module`
+            will be parallelized. If the mesh is more than 1-dimensional, we convert it
+            to a 1-d :class:``DeviceMesh`` by `tp_mesh_dim`.
+        parallel_style (ParallelStyle): :class:``ParallelStyle`` describes how weight
+            and bias should be distributed over :class:``DeviceMesh`` and how the input
+            and output should be prepared for Tensor Parallelism.
             :class:``RowwiseStyle``: weight is sharded on dim 1 and bias is replicated.
             :class:``ColwiseStyle``: weight and bias are both sharded on dim 0.
             Default: :class:``ColwiseParallel``
-        tp_mesh_dim (int):
-            The dimension of :class:``DeviceMesh`` on which we perform
+        tp_mesh_dim (int): the dimension of :class:``DeviceMesh`` on which we perform
             Tensor Parallelism.
             Default: 0
     Returns:
@@ -149,12 +167,12 @@ def _parallelize_linear(
 
     if not isinstance(module, nn.Linear):
         raise RuntimeError(
-            f"Tensor parallel module expects a torch.nn.Linear module but received {type(module)}!"
+            f"Expect a torch.nn.Linear module but received {type(module)}!"
         )
 
     if not isinstance(parallel_style, ParallelStyle):
         raise RuntimeError(
-            f"Tensor parallel module expects a ParallelStyle object but received {type(parallel_style)}!"
+            f"Expect a ParallelStyle object but received {type(parallel_style)}!"
         )
 
     if device_mesh.ndim > 1:
@@ -164,7 +182,7 @@ def _parallelize_linear(
         distribute_module(
             module,
             device_mesh,
-            _rowwise_parallelize_fn,
+            _linear_module_parallelize_row_wise,
             input_fn=parallel_style._prepare_input,  # pyre-ignore[6]  # type: ignore[arg-type]
             output_fn=parallel_style._prepare_output,  # pyre-ignore[6]  # type: ignore[arg-type]
         )
@@ -172,7 +190,7 @@ def _parallelize_linear(
         distribute_module(
             module,
             device_mesh,
-            _colwise_parallelize_fn,
+            _linear_module_parallelize_col_wise,
             input_fn=parallel_style._prepare_input,  # pyre-ignore[6]  # type: ignore[arg-type]
             output_fn=parallel_style._prepare_output,  # pyre-ignore[6]  # type: ignore[arg-type]
         )
@@ -254,7 +272,7 @@ def _parallelize_mlp(
             distribute_module(
                 m,
                 device_mesh,
-                _colwise_parallelize_fn,
+                _linear_module_parallelize_col_wise,
                 input_fn=parallel_style._prepare_input  # pyre-ignore[6]  # type: ignore[arg-type]
                 if i == 0
                 else None,
@@ -264,7 +282,7 @@ def _parallelize_mlp(
             distribute_module(
                 m,
                 device_mesh,
-                _rowwise_parallelize_fn,
+                _linear_module_parallelize_row_wise,
                 output_fn=parallel_style._prepare_output  # pyre-ignore[6]  # type: ignore[arg-type]
                 if i == (len(linear_submodules) - 1)
                 else None,
