@@ -261,7 +261,7 @@ class RankWorker(EventRecorder):
 
         self.stage_executors[stage_id] = PipeStageExecutor(
             stage_id=stage_id,
-            mod=mod or pippy.IR.materialize_stage(mod_name),
+            mod=mod or Pipe.materialize_stage(mod_name),
             rank_worker=self,
             _record_mem_dumps=self._record_mem_dumps,
         )

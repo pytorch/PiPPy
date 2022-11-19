@@ -993,15 +993,15 @@ class Pipe(torch.nn.Module):
         return self.split_gm.__repr__()
 
     def defer_stage_init(self, device):
-        global materialize_stage
-
         def materialize_stage(target: str) -> torch.nn.Module:
             logging.info(f"Materializing {target} on {device}")
             return self.split_gm.get_submodule(target).to(device)
 
+        setattr(Pipe, "materialize_stage", materialize_stage)
+
     @staticmethod
     def is_stage_init_deferred():
-        return "materialize_stage" in globals()
+        return hasattr(Pipe, "materialize_stage")
 
 
 class PipeSplitWrapper(torch.nn.Module):
