@@ -629,6 +629,12 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
             ]:
                 self.skipTest("Need to support Segformer models")
 
+            # TODO: support CLIPVisionModelWithProjection https://github.com/pytorch/tau/issues/629
+            if model_cls in [
+                CLIPVisionModelWithProjection,
+            ]:
+                self.skipTest("Need to support CLIPVisionModelWithProjection")
+
             model, splitter = generate_hf_model(model_cls)
 
             submodules_cnt = splitter(model)
@@ -903,6 +909,13 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
                 SegformerForSemanticSegmentation,
             ]:
                 self.skipTest("Need to support Segformer models")
+
+            # TODO: support CLIPVisionModelWithProjection https://github.com/pytorch/tau/issues/629
+            if model_cls in [
+                CLIPVisionModelWithProjection,
+                CLIPTextModelWithProjection,
+            ]:
+                self.skipTest("Need to support CLIPVisionModelWithProjection")
 
             model, splitter = generate_hf_model(model_cls)
             model.eval()  # Disable nondeterminism for testing
