@@ -913,6 +913,7 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
             # TODO: support CLIPVisionModelWithProjection https://github.com/pytorch/tau/issues/629
             if model_cls in [
                 CLIPVisionModelWithProjection,
+                CLIPTextModelWithProjection,
             ]:
                 self.skipTest("Need to support CLIPVisionModelWithProjection")
 
