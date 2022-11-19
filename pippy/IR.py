@@ -7,7 +7,6 @@ from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.fx as torch_fx
-from torch.nn.modules.module import Module
 import pippy.fx
 from packaging import version
 from pippy.fx.passes.split_module import split_module
@@ -993,15 +992,12 @@ class Pipe(torch.nn.Module):
     def __repr__(self):
         return self.split_gm.__repr__()
 
-    def get_submodule(self, target: str) -> "Module":
-        return self.split_gm.get_submodule(target)
-
     def defer_stage_init(self, device):
         global materialize_stage
 
-        def materialize_stage(target: str) -> "Module":
+        def materialize_stage(target: str) -> torch.nn.Module:
             logging.info(f"Materializing {target} on {device}")
-            return self.get_submodule(target).to(device)
+            return self.split_gm.get_submodule(target).to(device)
 
     @staticmethod
     def is_stage_init_deferred():
