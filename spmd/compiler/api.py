@@ -188,8 +188,8 @@ def _remove_clone_tensor(subgm: fx.GraphModule) -> fx.GraphModule:
     clone_node = nodemap["clone"]
     comm_node = nodemap["allreduce__default"]
 
-    assert comm_node is not None, f"expected all_reduce comm node not present."
-    assert clone_node is not None, f"expected clone node not present."
+    assert comm_node is not None, "expected all_reduce comm node not present."
+    assert clone_node is not None, "expected clone node not present."
 
     grad_tensor_node = clone_node.args[0]
     comm_node.update_arg(0, [grad_tensor_node])
