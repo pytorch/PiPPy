@@ -90,7 +90,7 @@ def parallelize_module(  # type: ignore[return]
             )
             return module
     else:
-        raise RuntimeError(
+        raise RuntimeError(  # pyre-ignore[7]
             f"Expect Union[ParallelStyle, Dict[str, ParallelStyle]] for parallelize_plan, {type(parallelize_plan)} found!"
         )
 
