@@ -27,6 +27,21 @@ class ParallelStyle(ABC):
         self._prepare_output = _prepare_output  # type: ignore[assignment, misc]
 
 
+class PairwiseParallel(ParallelStyle):
+    """
+    PairwiseParallel concatenate colwise and rowwise styles as a fixed
+    pair like what Megatron-LM(https://arxiv.org/abs/1909.08053) is doing.
+    We assume both input and output needs to a replicate DTensor.
+
+    .. warning::
+        PairwiseParallel only supports ``nn.Multihead Attention``,
+        ``nn.Transformer`` or even-number-layer MLP for now.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(make_input_replicate_1d, make_output_tensor)
+
+
 class RowwiseParallel(ParallelStyle):
     """
     Partitioning the row of a module.
@@ -45,21 +60,6 @@ class ColwiseParallel(ParallelStyle):
 
     def __init__(self) -> None:
         super().__init__(make_input_replicate_1d, make_output_replicate_1d)
-
-
-class PairwiseParallel(ParallelStyle):
-    """
-    PairwiseParallel concatenate colwise and rowwise styles as a fixed
-    pair like what Megatron-LM(https://arxiv.org/abs/1909.08053) is doing.
-    We assume both input and output needs to a replicate DTensor.
-
-    .. warning::
-        PairwiseParallel only supports ``nn.Multihead Attention``,
-        ``nn.Transformer`` or even-number-layer MLP for now.
-    """
-
-    def __init__(self) -> None:
-        super().__init__(make_input_replicate_1d, make_output_tensor)
 
 
 @_prepare_input_validate  # type: ignore[arg-type] # pyre-ignore[56]
@@ -96,7 +96,8 @@ def make_input_shard_1d(
         )
     else:
         raise RuntimeError(
-            f"Tensor parallel module expects torch.Tensor or DTensor input but received {type(input)}!"
+            "Tensor parallel module expects torch.Tensor or DTensor input but"
+            f" received {type(input)}!"
         )
 
 
@@ -130,7 +131,8 @@ def make_input_replicate_1d(
         )
     else:
         raise RuntimeError(
-            f"Tensor parallel module expects torch.Tensor or DTensor input but received {type(input)}!"
+            "Tensor parallel module expects torch.Tensor or DTensor input but"
+            f" received {type(input)}!"
         )
 
 

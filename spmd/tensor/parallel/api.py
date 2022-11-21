@@ -13,10 +13,10 @@ from spmd.tensor import (
 )
 from spmd.tensor.parallel import TensorParallelMultiheadAttention
 from spmd.tensor.parallel.style import (
-    ParallelStyle,
-    RowwiseParallel,
     ColwiseParallel,
     PairwiseParallel,
+    ParallelStyle,
+    RowwiseParallel,
 )
 from spmd.tensor.parallel.utils import _create_1d_device_mesh
 
@@ -106,6 +106,7 @@ def _linear_module_parallelize_row_wise(
         module (nn.Module): the :class:``nn.Linear`` object to be parallelized.
         device_mesh (DeviceMesh): :class:``DeviceMesh`` object which describes the mesh topology
             of devices for the DTensor.
+
     Returns:
         None
     """
@@ -130,6 +131,7 @@ def _linear_module_parallelize_col_wise(
         module (nn.Module): the :class:``nn.Linear`` object to be parallelized.
         device_mesh (DeviceMesh): :class:``DeviceMesh`` object which describes the mesh topology
             of devices for the DTensor.
+
     Returns:
         None
     """
@@ -148,15 +150,13 @@ def _parallelize_linear(
 ) -> None:
     """
     This function requires that the input module be an object of :class:``nn.Linear``.
-    The module will be parallelized over the n-d :class:``DeviceMesh``
+    The module will be parallelized over a 1-d :class:``DeviceMesh``
     based on the :class:``ParallelStyle``.
 
     Args:
         module (nn.Module): the :class:``nn.Module`` object to be parallelized.
-        device_mesh (DeviceMesh): :class:``DeviceMesh`` object which describes the mesh topology
-            of devices for the DTensor. If the mesh is more than 1-dimensional, we convert it
-            to a 1-d :class:``DeviceMesh`` by `tp_mesh_dim`.
-        parallel_style (ParallelStyle): :class:``ParallelStyle`` describes how the
+        device_mesh (DeviceMesh): :class:``DeviceMesh`` object which describes the mesh topology of devices for the DTensor. If the mesh is more than 1-dimensional, we will use the mesh dim of `device_mesh` specified by `tp_mesh_dim`.
+        parallel_style (:class:`ParallelStyle`, optional): :class:``ParallelStyle`` describes how the
             :class:``nn.Linear`` module should be distributed over :class:``DeviceMesh``
             and how the input and output should be prepared for Tensor Parallelism.
             :class:``RowwiseStyle``: weight is sharded on dim 1 and bias is replicated.
@@ -165,6 +165,7 @@ def _parallelize_linear(
         tp_mesh_dim (int): the dimension of :class:``DeviceMesh`` on which we perform
             Tensor Parallelism.
             Default: 0
+
     Returns:
         None
     """
@@ -176,7 +177,8 @@ def _parallelize_linear(
 
     if not isinstance(parallel_style, ParallelStyle):
         raise RuntimeError(
-            f"Expect a ParallelStyle object but received {type(parallel_style)}!"
+            "Expect a ParallelStyle object but received"
+            f" {type(parallel_style)}!"
         )
 
     if device_mesh.ndim > 1:

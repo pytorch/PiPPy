@@ -4,11 +4,11 @@ import torch
 from torch.testing._internal.common_utils import run_tests
 from spmd.testing.common_dtensor import DTensorTestBase, with_comms
 from spmd.tensor import distribute_tensor, DeviceMesh, Shard, Replicate, DTensor
-from spmd.tensor.parallel import (
-    ParallelStyle,
-    RowwiseParallel,
+from spmd.tensor.parallel.style import (
     ColwiseParallel,
     PairwiseParallel,
+    ParallelStyle,
+    RowwiseParallel,
 )
 from spmd.tensor.parallel.api import (
     _parallelize_linear,
@@ -83,50 +83,55 @@ class TensorParallelAPITests(DTensorTestBase):
         self,
         local_module,
         dist_module,
-        local_input,
-        dist_input,
+        inp_size,
+        local_input_fn,
         device_mesh,
-        local_optim,
-        dist_optim,
     ):
         replicate = [Replicate()]
+        LR = 0.25  # the learning rate we use for testing
+        local_optim = torch.optim.SGD(local_module.parameters(), lr=LR)
+        dist_optim = torch.optim.SGD(dist_module.parameters(), lr=LR)
 
-        # ensure the parameter is properly distributed.
-        # TODO: see how to make it work on `mlp`: nested modules
-        for name, param in local_module.named_parameters():
-            dist_param = dist_module.get_parameter(name)
-            self.assertEqual(
-                param,
-                dist_param.redistribute(
-                    device_mesh=device_mesh, placements=replicate
-                ).to_local(),
-            )
+        for _ in range(2):
+            inp = torch.rand(*inp_size, device=self.device_type)
+            local_input = local_input_fn(inp)
+            dist_input = inp
+            # ensure the parameter is properly distributed.
+            # TODO: see how to make it work on `mlp`: nested modules
+            for name, param in local_module.named_parameters():
+                dist_param = dist_module.get_parameter(name)
+                self.assertEqual(
+                    param,
+                    dist_param.redistribute(
+                        device_mesh=device_mesh, placements=replicate
+                    ).to_local(),
+                )
 
-        # clear gradients
-        local_optim.zero_grad()
-        dist_optim.zero_grad()
+            # clear gradients
+            local_optim.zero_grad()
+            dist_optim.zero_grad()
 
-        # check forward correctness
-        local_output = local_module(local_input)
-        dist_output = dist_module(dist_input)
-        self.assertEqual(local_output, dist_output.to_local())
+            # check forward correctness
+            local_output = local_module(local_input)
+            dist_output = dist_module(dist_input)
+            self.assertEqual(local_output, dist_output.to_local())
 
-        local_output.sum().backward()
-        dist_output.sum().backward()
+            local_output.sum().backward()
+            dist_output.sum().backward()
 
-        # check backward correctness:
-        #   ensure gradients are same
-        for name, param in local_module.named_parameters():
-            dist_param = dist_module.get_parameter(name)
-            self.assertEqual(
-                param.grad,
-                dist_param.grad.redistribute(
-                    device_mesh=device_mesh, placements=replicate
-                ).to_local(),
-            )
+            # check backward correctness:
+            #   ensure gradients are same
+            for name, param in local_module.named_parameters():
+                dist_param = dist_module.get_parameter(name)
+                self.assertEqual(
+                    param.grad,
+                    dist_param.grad.redistribute(
+                        device_mesh=device_mesh, placements=replicate
+                    ).to_local(),
+                )
 
-        local_optim.step()
-        dist_optim.step()
+            local_optim.step()
+            dist_optim.step()
 
     @with_comms
     def test_parallelize_mlp(self):
@@ -203,21 +208,20 @@ class TensorParallelAPITests(DTensorTestBase):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         _parallelize_linear(model_tp, device_mesh, rowwise)
 
-        LR = 0.25  # the learning rate we use for testing
-        optim = torch.optim.SGD(model.parameters(), lr=LR)
-        optim_tp = torch.optim.SGD(model_tp.parameters(), lr=LR)
-
-        torch.manual_seed(self.rank)
-        for _ in range(2):
-            inp = torch.rand(*inp_size, device=self.device_type)
-            local_inp = make_input_replicate_1d(
-                DTensor.from_local(
-                    inp, device_mesh, [Shard(0)], run_check=False
-                )
-            ).to_local()
-            self._check_module(
-                model, model_tp, local_inp, inp, device_mesh, optim, optim_tp
+        # allgather each rank's local copy to form a large local tensor
+        # of the same shape as DTensor produced in `RowwiseParallel._prepare_input`
+        def _local_input_construct(t: torch.Tensor) -> torch.Tensor:
+            dt = DTensor.from_local(t, device_mesh, [Shard(0)], run_check=False)
+            dt = dt.redistribute(
+                device_mesh=device_mesh, placements=[Replicate()]
             )
+            return dt.to_local()
+
+        # let each rank generate unique local input
+        torch.manual_seed(self.rank)
+        self._check_module(
+            model, model_tp, inp_size, _local_input_construct, device_mesh
+        )
 
     @with_comms
     def test_linear_col_wise_parallel(self):
@@ -234,15 +238,8 @@ class TensorParallelAPITests(DTensorTestBase):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         _parallelize_linear(model_tp, device_mesh, colwise)
 
-        LR = 0.25  # the learning rate we use for testing
-        optim = torch.optim.SGD(model.parameters(), lr=LR)
-        optim_tp = torch.optim.SGD(model_tp.parameters(), lr=LR)
-
-        for _ in range(2):
-            inp = torch.rand(*inp_size, device=self.device_type)
-            self._check_module(
-                model, model_tp, inp, inp, device_mesh, optim, optim_tp
-            )
+        inp = torch.rand(*inp_size, device=self.device_type)
+        self._check_module(model, model_tp, inp_size, lambda x: x, device_mesh)
 
 
 if __name__ == "__main__":
