@@ -26,10 +26,10 @@ def parallelize_module(  # type: ignore[return]
     tp_mesh_dim: int = 0,
 ) -> nn.Module:
     """
-    The major API for tensor parallelism in PyTorch. We parallelize module
+    The API to apply Tensor Parallelism (TP) in PyTorch. We parallelize module
     or sub_modules based on a parallelize_plan which contains the parallel_style
     which indicates how user want the module or sub_module to be parallelized.
-    User can also specify different parallel_style per module fully qualifed name(FQN).
+    User can also specify different parallel_style per module fully qualifed name (FQN).
     The API supports 2D parallelism natively by accepting an n-dimension device_mesh
     and users just need to specify the dimension where we perform tensor parallelism on.
 
@@ -129,7 +129,7 @@ def _is_mlp_for_pairwise_parallel(module: nn.Module) -> bool:
     linear_submodules = list(
         filter(lambda x: isinstance(x, nn.Linear), module.children())
     )
-    return len(linear_submodules) > 0
+    return len(linear_submodules) > 1
 
 
 def _rowwise_parallelize_linear_fn(
