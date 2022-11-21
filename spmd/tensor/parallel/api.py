@@ -99,13 +99,15 @@ def _linear_module_parallelize_row_wise(
     name: str, module: nn.Linear, device_mesh: DeviceMesh
 ) -> None:
     """
-    This function parallelizes the input :class:``nn.Linear`` module in :class:``RowwiseParallel`` style.
+    This function parallelizes the input :class:`nn.Linear` module in
+    :class:`RowwiseParallel` style.
 
     Args:
         name (str): name of the input module.
-        module (nn.Module): the :class:``nn.Linear`` object to be parallelized.
-        device_mesh (DeviceMesh): :class:``DeviceMesh`` object which describes the mesh topology
-            of devices for the DTensor.
+        module (:class:`nn.Module`): the :class:`nn.Linear` object
+            to be parallelized.
+        device_mesh (:class:`DeviceMesh`): :class:`DeviceMesh` object
+            which describes the mesh topology of devices for the DTensor.
 
     Returns:
         None
@@ -124,13 +126,15 @@ def _linear_module_parallelize_col_wise(
     name: str, module: nn.Linear, device_mesh: DeviceMesh
 ) -> None:
     """
-    This function parallelizes the input :class:``nn.Linear`` module in :class:``ColwiseParallel`` style.
+    This function parallelizes the input :class:`nn.Linear` module in
+    :class:`ColwiseParallel` style.
 
     Args:
         name (str): name of the input module.
-        module (nn.Module): the :class:``nn.Linear`` object to be parallelized.
-        device_mesh (DeviceMesh): :class:``DeviceMesh`` object which describes the mesh topology
-            of devices for the DTensor.
+        module (:class:`nn.Module`): the :class:`nn.Linear` object
+            to be parallelized.
+        device_mesh (:class:`DeviceMesh`): :class:`DeviceMesh` object
+            which describes the mesh topology of devices for the DTensor.
 
     Returns:
         None
@@ -149,21 +153,28 @@ def _parallelize_linear(
     tp_mesh_dim: int = 0,
 ) -> None:
     """
-    This function requires that the input module be an object of :class:``nn.Linear``.
-    The module will be parallelized over a 1-d :class:``DeviceMesh``
-    based on the :class:``ParallelStyle``.
+    This function requires that the input module be an object
+    of :class:`nn.Linear`.
+    The module will be parallelized over a 1-d :class:`DeviceMesh`
+    based on the :class:`ParallelStyle`.
 
     Args:
-        module (nn.Module): the :class:``nn.Module`` object to be parallelized.
-        device_mesh (DeviceMesh): :class:``DeviceMesh`` object which describes the mesh topology of devices for the DTensor. If the mesh is more than 1-dimensional, we will use the mesh dim of `device_mesh` specified by `tp_mesh_dim`.
-        parallel_style (:class:`ParallelStyle`, optional): :class:``ParallelStyle`` describes how the
-            :class:``nn.Linear`` module should be distributed over :class:``DeviceMesh``
-            and how the input and output should be prepared for Tensor Parallelism.
-            :class:``RowwiseStyle``: weight is sharded on dim 1 and bias is replicated.
-            :class:``ColwiseStyle``: weight and bias are both sharded on dim 0.
-            Default: :class:``ColwiseParallel``
-        tp_mesh_dim (int): the dimension of :class:``DeviceMesh`` on which we perform
-            Tensor Parallelism.
+        module (:class:`nn.Module`): the :class:`nn.Module` object to be
+            parallelized.
+        device_mesh (:class:`DeviceMesh`): :class:`DeviceMesh` object which
+            describes the mesh topology of devices for the :class:`DTensor`.
+            If the mesh is more than 1-dimensional, we will use the mesh dim of
+            `device_mesh` specified by `tp_mesh_dim`.
+        parallel_style (:class:`ParallelStyle`, optional):
+            :class:`ParallelStyle` describes how the :class:`nn.Linear` module
+            should be distributed over :class:`DeviceMesh` and how the input
+            and output should be prepared for Tensor Parallelism.
+            :class:`RowwiseStyle`: weight is sharded on dim 1 and bias is
+            replicated.
+            :class:`ColwiseStyle`: weight and bias are both sharded on dim 0.
+            Default: :class:`ColwiseParallel`
+        tp_mesh_dim (int): the dimension of :class:`DeviceMesh` on which we
+            perform Tensor Parallelism.
             Default: 0
 
     Returns:

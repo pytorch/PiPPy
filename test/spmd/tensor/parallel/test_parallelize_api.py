@@ -80,12 +80,7 @@ class TensorParallelAPITests(DTensorTestBase):
             _create_1d_device_mesh(mesh, 3)
 
     def _check_module(
-        self,
-        local_module,
-        dist_module,
-        inp_size,
-        local_input_fn,
-        device_mesh,
+        self, local_module, dist_module, inp_size, local_input_fn, device_mesh
     ):
         replicate = [Replicate()]
         LR = 0.25  # the learning rate we use for testing
@@ -98,6 +93,7 @@ class TensorParallelAPITests(DTensorTestBase):
             dist_input = inp
             # ensure the parameter is properly distributed.
             # TODO: see how to make it work on `mlp`: nested modules
+            # TODO: create a util function for parameters iteration within module
             for name, param in local_module.named_parameters():
                 dist_param = dist_module.get_parameter(name)
                 self.assertEqual(
@@ -133,6 +129,7 @@ class TensorParallelAPITests(DTensorTestBase):
             local_optim.step()
             dist_optim.step()
 
+    # TODO: replace repeated test code with _check_module
     @with_comms
     def test_parallelize_mlp(self):
         model = MLPModule(self.device_type)
