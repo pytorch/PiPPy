@@ -1,6 +1,6 @@
 import logging
 from enum import Enum
-from typing import Optional
+from typing import Dict, Optional
 
 import torch.fx as fx
 
@@ -18,6 +18,14 @@ class OP(str, Enum):
     GET_ATTR = "get_attr"
     OUTPUT = "output"
     PLACEHOLDER = "placeholder"
+
+
+def create_graph_node_map(gm: fx.GraphModule) -> Dict[str, fx.Node]:
+    """utility to put graph module into a node map for easier adjustments"""
+    mapping = {}
+    for node in gm.graph.nodes:
+        mapping[node.name] = node
+    return mapping
 
 
 def get_node_tensor_numel(node: fx.Node) -> Optional[int]:
