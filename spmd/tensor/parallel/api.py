@@ -195,8 +195,8 @@ def _parallelize_linear(
             module,
             device_mesh,
             _linear_module_parallelize_col_wise,  # type: ignore[arg-type]  # pyre-ignore[6]
-            input_fn=parallel_style._prepare_input,  # pyre-ignore[6]  # type: ignore[arg-type]
-            output_fn=parallel_style._prepare_output,  # pyre-ignore[6]  # type: ignore[arg-type]
+            input_fn=parallel_style._prepare_input,  # type: ignore[arg-type, misc] # pyre-ignore[6]
+            output_fn=parallel_style._prepare_output,  # type: ignore[arg-type, misc] # pyre-ignore[6]
         )
     else:
         raise RuntimeError(f"{type(parallel_style)} is not supported!")
