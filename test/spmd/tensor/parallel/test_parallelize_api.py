@@ -75,14 +75,18 @@ class TensorParallelAPITests(DTensorTestBase):
             _create_1d_device_mesh(mesh, 3)
 
     def _check_module(
-        self, local_module, dist_module, local_input, dist_input, device_mesh
+        self,
+        local_module,
+        dist_module,
+        local_input,
+        dist_input,
+        device_mesh,
+        local_optim,
+        dist_optim,
     ):
-        LR = 0.25  # the learning rate we use for testing
-        optim = torch.optim.SGD(local_module.parameters(), lr=LR)
-        optim_tp = torch.optim.SGD(dist_module.parameters(), lr=LR)
         replicate = [Replicate()]
 
-        # Ensure the parameter is properly distributed.
+        # ensure the parameter is properly distributed.
         # TODO: see how to make it work on `mlp`: nested modules
         for name, param in local_module.named_parameters():
             dist_param = dist_module.get_parameter(name)
@@ -93,13 +97,20 @@ class TensorParallelAPITests(DTensorTestBase):
                 ).to_local(),
             )
 
-        # Check forward correctness
-        output = local_module(local_input)
-        output_tp = dist_module(dist_input)
-        self.assertEqual(output, output_tp.to_local())
+        # clear gradients
+        local_optim.zero_grad()
+        dist_optim.zero_grad()
 
-        # Check backward correctness:
-        #   Ensure gradients are same
+        # check forward correctness
+        local_output = local_module(local_input)
+        dist_output = dist_module(dist_input)
+        self.assertEqual(local_output, dist_output.to_local())
+
+        local_output.sum().backward()
+        dist_output.sum().backward()
+
+        # check backward correctness:
+        #   ensure gradients are same
         for name, param in local_module.named_parameters():
             dist_param = dist_module.get_parameter(name)
             self.assertEqual(
@@ -109,8 +120,8 @@ class TensorParallelAPITests(DTensorTestBase):
                 ).to_local(),
             )
 
-        optim.step()
-        optim_tp.step()
+        local_optim.step()
+        dist_optim.step()
 
     @with_comms
     def test_parallelize_mlp(self):
@@ -176,8 +187,6 @@ class TensorParallelAPITests(DTensorTestBase):
     def test_linear_row_wise_parallel(self):
         # test RowwiseParallel
         inp_size = [8, 16]
-        torch.manual_seed(self.rank)
-        inp = torch.rand(*inp_size, device=self.device_type)
         rowwise = RowwiseParallel()
 
         torch.manual_seed(5)
@@ -189,76 +198,26 @@ class TensorParallelAPITests(DTensorTestBase):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         _parallelize_linear(model_tp, device_mesh, rowwise)
 
-        self.assertEqual(
-            distribute_tensor(model.weight, device_mesh, [Shard(1)]).to_local(),
-            model_tp.weight.to_local(),
-        )
-        self.assertEqual(
-            distribute_tensor(
-                model.bias, device_mesh, [Replicate()]
-            ).to_local(),
-            model_tp.bias.to_local(),
-        )
-
-        LR = 0.25
+        LR = 0.25  # the learning rate we use for testing
         optim = torch.optim.SGD(model.parameters(), lr=LR)
         optim_tp = torch.optim.SGD(model_tp.parameters(), lr=LR)
 
-        local_inp = make_input_replicate_1d(
-            DTensor.from_local(inp, device_mesh, [Shard(0)])
-        ).to_local()
-        output = model(local_inp)
-        output_tp = model_tp(inp)
-        self.assertEqual(output, output_tp.to_local())
-
-        output.sum().backward()
-        output_tp.sum().backward()
-
-        replicate = [Replicate()]
-        # Ensure gradients are same.
-        self.assertEqual(
-            model.weight.grad,
-            model_tp.weight.grad.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-        self.assertEqual(
-            model.bias.grad,
-            model_tp.bias.grad.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-
-        optim.step()
-        optim_tp.step()
-
-        # Ensure params are same.
-        self.assertEqual(
-            model.weight,
-            model_tp.weight.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-        self.assertEqual(
-            model.bias,
-            model_tp.bias.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-
-        inp = torch.rand(*inp_size, device=self.device_type)
-        local_inp = make_input_replicate_1d(
-            DTensor.from_local(inp, device_mesh, [Shard(0)])
-        ).to_local()
-        output = model(local_inp)
-        output_tp = model_tp(inp)
-        self.assertEqual(output, output_tp.to_local())
+        torch.manual_seed(self.rank)
+        for _ in range(2):
+            inp = torch.rand(*inp_size, device=self.device_type)
+            local_inp = make_input_replicate_1d(
+                DTensor.from_local(
+                    inp, device_mesh, [Shard(0)], run_check=False
+                )
+            ).to_local()
+            self._check_module(
+                model, model_tp, local_inp, inp, device_mesh, optim, optim_tp
+            )
 
     @with_comms
     def test_linear_col_wise_parallel(self):
         # test ColwiseParallel
         inp_size = [8, 10]
-        inp = torch.rand(*inp_size, device=self.device_type)
         colwise = ColwiseParallel()
 
         torch.manual_seed(5)
@@ -270,62 +229,15 @@ class TensorParallelAPITests(DTensorTestBase):
         device_mesh = DeviceMesh(self.device_type, list(range(self.world_size)))
         _parallelize_linear(model_tp, device_mesh, colwise)
 
-        self.assertEqual(
-            distribute_tensor(model.weight, device_mesh, [Shard(0)]).to_local(),
-            model_tp.weight.to_local(),
-        )
-        self.assertEqual(
-            distribute_tensor(model.bias, device_mesh, [Shard(0)]).to_local(),
-            model_tp.bias.to_local(),
-        )
-
-        LR = 0.25
+        LR = 0.25  # the learning rate we use for testing
         optim = torch.optim.SGD(model.parameters(), lr=LR)
         optim_tp = torch.optim.SGD(model_tp.parameters(), lr=LR)
 
-        output = model(inp)
-        output_tp = model_tp(inp)
-        self.assertEqual(output, output_tp.to_local())
-
-        output.sum().backward()
-        output_tp.sum().backward()
-
-        replicate = [Replicate()]
-        # Ensure gradients are same.
-        self.assertEqual(
-            model.weight.grad,
-            model_tp.weight.grad.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-        self.assertEqual(
-            model.bias.grad,
-            model_tp.bias.grad.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-
-        optim.step()
-        optim_tp.step()
-
-        # Ensure params are same.
-        self.assertEqual(
-            model.weight,
-            model_tp.weight.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-        self.assertEqual(
-            model.bias,
-            model_tp.bias.redistribute(
-                device_mesh=device_mesh, placements=replicate
-            ).to_local(),
-        )
-
-        inp = torch.rand(*inp_size, device=self.device_type)
-        output = model(inp)
-        output_tp = model_tp(inp)
-        self.assertEqual(output, output_tp.to_local())
+        for _ in range(2):
+            inp = torch.rand(*inp_size, device=self.device_type)
+            self._check_module(
+                model, model_tp, inp, inp, device_mesh, optim, optim_tp
+            )
 
 
 if __name__ == "__main__":
