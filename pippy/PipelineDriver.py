@@ -259,9 +259,14 @@ class RankWorker(EventRecorder):
             mod is not None or mod_name is not None
         ), "PipeStageExecutor requires mod or mod_name"
 
+        if mod is None:
+            assert (
+                Pipe.is_stage_init_deferred()
+            ), "Pipe stage initialization is not deferred"
+
         self.stage_executors[stage_id] = PipeStageExecutor(
             stage_id=stage_id,
-            mod=mod or Pipe.materialize_stage(mod_name),
+            mod=mod or Pipe.materialize_stage(mod_name),  # type: ignore[attr-defined]
             rank_worker=self,
             _record_mem_dumps=self._record_mem_dumps,
         )
