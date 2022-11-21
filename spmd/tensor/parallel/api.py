@@ -110,8 +110,8 @@ def _linear_module_parallelize_row_wise(
         None
     """
     for name, param in module.named_parameters():
-        dist_spec = (  # type: ignore[list-item]
-            [Shard(1)] if name == "weight" else [Replicate()]
+        dist_spec = (
+            [Shard(1)] if name == "weight" else [Replicate()]  # type: ignore[list-item]
         )
         dist_param = torch.nn.Parameter(
             distribute_tensor(param, device_mesh, dist_spec)
@@ -186,15 +186,15 @@ def _parallelize_linear(
         distribute_module(
             module,
             device_mesh,
-            _linear_module_parallelize_row_wise,  # pyre-ignore[6]  # type: ignore[arg-type]
-            input_fn=parallel_style._prepare_input,  # pyre-ignore[6]  # type: ignore[arg-type]
-            output_fn=parallel_style._prepare_output,  # pyre-ignore[6]  # type: ignore[arg-type]
+            _linear_module_parallelize_row_wise,  # type: ignore[arg-type]  # pyre-ignore[6]
+            input_fn=parallel_style._prepare_input,  # type: ignore[arg-type, misc] # pyre-ignore[6]
+            output_fn=parallel_style._prepare_output,  # type: ignore[arg-type, misc] # pyre-ignore[6]
         )
     elif isinstance(parallel_style, ColwiseParallel):
         distribute_module(
             module,
             device_mesh,
-            _linear_module_parallelize_col_wise,  # pyre-ignore[6]  # type: ignore[arg-type]
+            _linear_module_parallelize_col_wise,  # type: ignore[arg-type]  # pyre-ignore[6]
             input_fn=parallel_style._prepare_input,  # pyre-ignore[6]  # type: ignore[arg-type]
             output_fn=parallel_style._prepare_output,  # pyre-ignore[6]  # type: ignore[arg-type]
         )
@@ -276,8 +276,8 @@ def _parallelize_mlp(
             distribute_module(
                 m,
                 device_mesh,
-                _linear_module_parallelize_col_wise,  # pyre-ignore[6]  # type: ignore[arg-type]
-                input_fn=parallel_style._prepare_input  # pyre-ignore[6]  # type: ignore[arg-type]
+                _linear_module_parallelize_col_wise,  # type: ignore[arg-type] # pyre-ignore[6]
+                input_fn=parallel_style._prepare_input  # type: ignore[arg-type, misc] # pyre-ignore[6]
                 if i == 0
                 else None,
             )
@@ -286,8 +286,8 @@ def _parallelize_mlp(
             distribute_module(
                 m,
                 device_mesh,
-                _linear_module_parallelize_row_wise,  # pyre-ignore[6]  # type: ignore[arg-type]
-                output_fn=parallel_style._prepare_output  # pyre-ignore[6]  # type: ignore[arg-type]
+                _linear_module_parallelize_row_wise,  # type: ignore[arg-type] # pyre-ignore[6]
+                output_fn=parallel_style._prepare_output  # type: ignore[arg-type, misc] # pyre-ignore[6]
                 if i == (len(linear_submodules) - 1)
                 else None,
             )
