@@ -15,11 +15,10 @@ from spmd.tensor import (
     Replicate,
 )
 from spmd.tensor.parallel import (
-    parallelize_module,
     PairwiseParallel,
     TensorParallelMultiheadAttention,
+    parallelize_module,
 )
-from spmd.tensor.parallel import PairwiseParallel
 
 
 class MLPModule(torch.nn.Module):

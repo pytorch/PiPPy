@@ -19,7 +19,7 @@ __all__ = [
 ]
 
 
-def parallelize_module(
+def parallelize_module(  # type: ignore[return]
     module: nn.Module,
     device_mesh: DeviceMesh,
     parallelize_plan: Union[ParallelStyle, Dict[str, ParallelStyle]],
@@ -29,27 +29,27 @@ def parallelize_module(
     The major API for tensor parallelism in PyTorch. We parallelize module
     or sub_modules based on a parallelize_plan which contains the parallel_style
     which indicates how user want the module or sub_module to be parallelized.
-    User can also specify different parallel_style per FQN. The API supports 2D
-    parallelism natively by accepting an n-dimension device_mesh and users just
-    need to specify the dimension where we perform tensor parallelism on.
+    User can also specify different parallel_style per module fully qualifed name(FQN).
+    The API supports 2D parallelism natively by accepting an n-dimension device_mesh
+    and users just need to specify the dimension where we perform tensor parallelism on.
 
     Args:
         module (nn.Module):
-            :class:``nn.Module`` object to be parallelized.
+            :class:`nn.Module` object to be parallelized.
         device_mesh (DeviceMesh):
-            :class:``DeviceMesh`` object which describes the mesh topology
+            :class:`DeviceMesh` object which describes the mesh topology
             of devices for the DTensor.
         parallelize_plan (Union[ParallelStyle, Dict[str, ParallelStyle]]):
             The plan used to parallelize the module. It can be either a
-            :class:``ParallelStyle`` object which contains how
+            :class:`ParallelStyle` object which contains how
             we prepare input/output for Tensor Parallelism or it can be a
-            dict of FQN and its corresponding :class:``ParallelStyle`` object.
+            dict of module FQN and its corresponding :class:`ParallelStyle` object.
         tp_mesh_dim (int):
             the dimension of ``device_mesh`` where we perform
             Tensor Parallelism on.
 
     Return:
-        A :class:``nn.Module`` object parallelized.
+        A :class:`nn.Module` object parallelized.
 
     Example::
         >>> # xdoctest: +SKIP("distributed")
@@ -62,7 +62,7 @@ def parallelize_module(
 
     .. warning::
         ``PairwiseParallel`` comes with constraints for now. If you need finer
-        granularity 
+        granularity, you need to pass in a dict of module FQN and parallel style instead.
     """
 
     if device_mesh.ndim > 1:
@@ -79,16 +79,16 @@ def parallelize_module(
                     n, parallelize_module(m, device_mesh, parallelize_plan)
                 )
             return module
+    # TODO: Add parallelize linear logic when https://github.com/pytorch/tau/pull/624/ merged.
     elif isinstance(parallelize_plan, dict):
         for module_path, parallelize_style in parallelize_plan.items():
             sub_module = module.get_submodule(module_path)
-            module.register_module(
-                parallelize_module(
-                    module_path, sub_module, device_mesh, parallelize_style
+            module.register_module(  # type: ignore[call-arg] # pyre-ignore[20]
+                parallelize_module(  # type: ignore[arg-type]
+                    module_path, sub_module, device_mesh, parallelize_style  # type: ignore[arg-type] # pyre-ignore[6]
                 )
             )
             return module
-    # TODO: Add parallelize linear logic when https://github.com/pytorch/tau/pull/624/ merged.
     else:
         raise RuntimeError(
             f"Expect Union[ParallelStyle, Dict[str, ParallelStyle]] for parallelize_plan, {type(parallelize_plan)} found!"
@@ -106,15 +106,14 @@ def _is_mha_for_pairwise_parallel(module: nn.Module) -> bool:
     Return:
         A boolean object which specifies whether the module is MHA supported by Pairwise parallel or not.
     """
-    if isinstance(module, TensorParallelMultiheadAttention) or isinstance(
+    return isinstance(module, TensorParallelMultiheadAttention) or isinstance(
         module, nn.MultiheadAttention
-    ):
-        return True
+    )
 
 
 def _is_mlp_for_pairwise_parallel(module: nn.Module) -> bool:
     """
-    Traverse through all the children of the given module and count the
+    Traverse through all the immediate children of the given module and count the
     number of Linear module. If the number is more than one, we return True.
 
     Args:
@@ -233,7 +232,7 @@ def _parallelize_multihead_attn(
             add_bias_kv=module.bias_k is not None,
         )
         tp_multi_head_attention.copy(module)
-        return _parallelize_multihead_attn(tp_multi_head_attention, device_mesh)
+        module = tp_multi_head_attention
 
     if isinstance(module, TensorParallelMultiheadAttention):  # shard TPMA
         for n, m in module.named_children():

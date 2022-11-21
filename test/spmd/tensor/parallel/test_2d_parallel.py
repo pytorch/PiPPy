@@ -17,8 +17,8 @@ from spmd.tensor import (
     Replicate,
 )
 from spmd.tensor.parallel import (
-    parallelize_module,
     PairwiseParallel,
+    parallelize_module,
 )
 
 import torch.distributed.distributed_c10d as distributed_c10d
@@ -101,10 +101,9 @@ def shard_module(m, pg):
     m.net2 = _aggregate_local_tensor(m.net2)
 
 
-def _shard_wrap_module(module, module_shard, fsdp_wrap, twod_mesh, fsdp_pg):
+def _shard_wrap_module(module, module_shard, fsdp_wrap, mesh_2d, fsdp_pg):
     if module_shard:
-        # Fetch the module sharding planner.
-        parallelize_module(module, twod_mesh, PairwiseParallel(), tp_mesh_dim=1)
+        parallelize_module(module, mesh_2d, PairwiseParallel(), tp_mesh_dim=1)
 
     if fsdp_wrap and module_shard:
         return FSDP(module, process_group=fsdp_pg)
