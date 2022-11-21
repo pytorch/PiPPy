@@ -49,8 +49,8 @@ jobs:
     runs-on: linux.12xlarge
     strategy:
       matrix:
-        python-version: ["3.7", "3.8", "3.9"]
-        shard: ["0", "1", "2", "3"]
+        python-version: ["3.9"]
+        shard: ["0", "1", "2", "3", "4", "5", "6", "7"]
     container:
       image: python:${{ matrix.python-version }}
 
@@ -68,10 +68,10 @@ jobs:
       # Single thread to avoid OOM
       - name: Test forward only
         run: |
-          pytest --shard-id=${{ matrix.shard }} --num-shards=4 -k 'not HFModelsForwardBackwardTest' -sv --cov=pippy test/hf_test.py
+          pytest --shard-id=${{ matrix.shard }} --num-shards=8 -k 'not HFModelsForwardBackwardTest' -sv --cov=pippy test/hf_test.py
       - name: Test forward and backward
         run: |
-          pytest --shard-id=${{ matrix.shard }} --num-shards=4 -k 'HFModelsForwardBackwardTest' -sv --cov=pippy test/hf_test.py
+          pytest --shard-id=${{ matrix.shard }} --num-shards=8 -k 'HFModelsForwardBackwardTest' -sv --cov=pippy test/hf_test.py
 
   min_gpt_test:
     runs-on: linux.4xlarge
