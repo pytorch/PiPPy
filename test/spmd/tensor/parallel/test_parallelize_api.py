@@ -74,6 +74,44 @@ class TensorParallelAPITests(DTensorTestBase):
         ):
             _create_1d_device_mesh(mesh, 3)
 
+    def _check_module(
+        self, local_module, dist_module, local_input, dist_input, device_mesh
+    ):
+        LR = 0.25  # the learning rate we use for testing
+        optim = torch.optim.SGD(local_module.parameters(), lr=LR)
+        optim_tp = torch.optim.SGD(dist_module.parameters(), lr=LR)
+        replicate = [Replicate()]
+
+        # Ensure the parameter is properly distributed.
+        # TODO: see how to make it work on `mlp`: nested modules
+        for name, param in local_module.named_parameters():
+            dist_param = dist_module.get_parameter(name)
+            self.assertEqual(
+                param,
+                dist_param.redistribute(
+                    device_mesh=device_mesh, placements=replicate
+                ).to_local(),
+            )
+
+        # Check forward correctness
+        output = local_module(local_input)
+        output_tp = dist_module(dist_input)
+        self.assertEqual(output, output_tp.to_local())
+
+        # Check backward correctness:
+        #   Ensure gradients are same
+        for name, param in local_module.named_parameters():
+            dist_param = dist_module.get_parameter(name)
+            self.assertEqual(
+                param.grad,
+                dist_param.grad.redistribute(
+                    device_mesh=device_mesh, placements=replicate
+                ).to_local(),
+            )
+
+        optim.step()
+        optim_tp.step()
+
     @with_comms
     def test_parallelize_mlp(self):
         model = MLPModule(self.device_type)
