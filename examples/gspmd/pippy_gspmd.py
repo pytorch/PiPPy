@@ -61,13 +61,6 @@ class ExampleCode(torch.nn.Module):
         return {"out": x}
 
 
-def retrieve_stage_mod(stage_name):
-    stage_mod = SPLIT_GM.get_submodule(stage_name)
-    print(f"Materializing {stage_name} on {DEVICE}:\n{stage_mod}\n")
-    stage_mod.to(DEVICE)
-    return stage_mod
-
-
 def run_gspmd(_, args):
     MULTI_USE_PARAM_CONFIG = (
         MultiUseParameterConfig.REPLICATE
@@ -80,11 +73,7 @@ def run_gspmd(_, args):
     ec = ExampleCode()
 
     ec_pipe = Pipe.from_tracing(ec, MULTI_USE_PARAM_CONFIG)
-    global SPLIT_GM
-    SPLIT_GM = ec_pipe.split_gm
-
-    global DEVICE
-    DEVICE = args.device
+    ec_pipe.defer_stage_init(args.device)
 
     if args.rank > 0:
         return  # Workers stop here
@@ -104,7 +93,6 @@ def run_gspmd(_, args):
         _debug_mask_minibatches=True,
         _record_mem_dumps=bool(args.record_mem_dumps),
         checkpoint=bool(args.checkpoint),
-        stage_mod_cb=retrieve_stage_mod,
     )
 
     # # Warm up and correctness runs
