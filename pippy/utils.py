@@ -174,10 +174,6 @@ def run_worker(rank, run_func, args, *extra_args):
         for rank in range(args.dp_group_size)
     ]
 
-    args.pp_group = torch.distributed.new_group(
-        pp_ranks_per_dp_group[rank % args.dp_group_size]
-    )
-
     args.driver_group = torch.distributed.new_group(
         list(range(args.dp_group_size))
     )
@@ -189,6 +185,11 @@ def run_worker(rank, run_func, args, *extra_args):
     gspmd = (  # type: ignore[name-defined]
         args.gspmd if hasattr(args, "gspmd") else 0
     )
+
+    if gspmd:
+        args.pp_group = torch.distributed.new_group(
+            pp_ranks_per_dp_group[rank % args.dp_group_size]
+        )
 
     if rank >= 0 and rank // args.dp_group_size == 0:
         args.driver_index = rank
