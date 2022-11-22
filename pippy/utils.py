@@ -188,14 +188,27 @@ def run_worker(rank, run_func, args, *extra_args):
         args.gspmd if hasattr(args, "gspmd") else 0
     )
 
-    args.pp_group = torch.distributed.new_group(my_pp_ranks)
-
     # A barrier util for pipeline dimension
     global pp_group_barrier
 
-    def pp_group_barrier():
-        logging.debug(f"Running pipeline group barrier on ranks {my_pp_ranks}")
-        torch.distributed.barrier(args.pp_group)
+    # ProcessGroupGloo cannot create group with strided ranks, e.g. [0, 2, 4, 6, ...]
+    # Skipping the `pp_group` and `pp_group_barrier` creation here
+    # TODO: unskip
+    if torch.distributed.get_backend() == "gloo" and args.dp_group_size > 1:
+
+        def pp_group_barrier():
+            logging.warning(
+                f"pp_group_barrier() does not support ProcessGroupGloo with strided ranks {my_pp_ranks}. This will be a no-op."
+            )
+
+    else:
+        args.pp_group = torch.distributed.new_group(my_pp_ranks)
+
+        def pp_group_barrier():
+            logging.debug(
+                f"Running pipeline group barrier on ranks {my_pp_ranks}"
+            )
+            torch.distributed.barrier(args.pp_group)
 
     if rank >= 0 and rank // args.dp_group_size == 0:
         args.driver_index = rank
