@@ -35,64 +35,15 @@ class DistributedGraph:
 
         self._dirty = True
 
-    def _map_primal_grad(self) -> None:
+    def _map_param_grad(self) -> None:
         if len(self.primal_to_param) == len(self.fwd_graph_modules):
             # Already connect the mapping.
             return
+        # TODO: add primal->param and grad->primal mapping.
 
-        def to_param(model: nn.Module, primal_name: str) -> nn.Parameter:
-            idx = int(primal_name.split("_")[-1]) - 1
-            # HACK: Dynamo primal order is the reverse of AOTAutograd???
-            params = [
-                p
-                for _, p in reversed(
-                    list(pytree.tree_flatten(model.named_parameters())[0][0])
-                )
-            ]
-            return params[idx] if idx < len(params) else None
-
-        for (fwd_gm, bwd_gm) in zip(
-            self.fwd_graph_modules,
-            self.bwd_graph_modules,
-        ):
-            self.primal_to_param.append({})
-            self.primal_name_to_node.append({})
-            self.grad_to_primal.append({})
-            primal_to_param = self.primal_to_param[-1]
-            primal_name_to_node = self.primal_name_to_node[-1]
-            grad_to_primal = self.grad_to_primal[-1]
-            for node in bwd_gm.graph.nodes:
-                if node.op == "placeholder" and node.target.startswith(
-                    "primal"
-                ):
-                    param = to_param(fwd_gm, node.name)
-                    if param is not None:
-                        assert (
-                            node not in primal_to_param
-                        ), f"inserting {node.target} twice"
-                        primal_to_param[node] = param
-                        primal_name_to_node[node.target] = node
-
-            # HACK: today, there is no good way to map AOTAutograd primals back
-            # to parameters in the original model. The current implementation
-            # relies on the implicit AOTAutograd behavior that primals match the
-            # order of params in pytree(model.named_parameters()), and grad
-            # output in the backward graph matches the same order. So we count
-            # the number of params and use that to access primals and grads in
-            # the fwd/bwd graphs.
-            n_grads = sum([p.requires_grad for p in fwd_gm.parameters()])
-            for node in bwd_gm.graph.nodes:
-                if node.op != "output":
-                    continue
-
-                for i, grad_node in enumerate(node.args[0][:n_grads]):
-                    primal = f"primals_{i+1}"
-                    primal_node = primal_name_to_node[primal]
-                    grad_to_primal[grad_node] = primal_node
-                break
 
     def update(self) -> "DistributedGraph":
-        self._map_primal_grad()
+        self._map_param_grad()
         self._dirty = False
         return self
 
