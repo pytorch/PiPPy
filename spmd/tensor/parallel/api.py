@@ -75,7 +75,9 @@ def parallelize_module(  # type: ignore[return]
 
     if isinstance(parallelize_plan, ParallelStyle):
         # RowwiseParallel or ColwiseParallel
-        if not isinstance(parallelize_plan, PairwiseParallel):
+        if isinstance(parallelize_plan, ColwiseParallel) or isinstance(
+            parallelize_plan, RowwiseParallel
+        ):
             return _parallelize_linear(module, device_mesh, parallelize_plan)
         # PairwiseParallel
         if _is_mha_for_pairwise_parallel(module):
@@ -110,7 +112,7 @@ def _is_mha_for_pairwise_parallel(module: nn.Module) -> bool:
 
     Args:
         module (nn.Module):
-            :class:``nn.Module`` object to be checked.
+            :class:`nn.Module` object to be checked.
 
     Return:
         A boolean object which specifies whether the module is MHA supported by Pairwise parallel or not.
@@ -127,7 +129,7 @@ def _is_mlp_for_pairwise_parallel(module: nn.Module) -> bool:
 
     Args:
         module (nn.Module):
-            :class:``nn.Module`` object to be traversed and counted.
+            :class:`nn.Module` object to be traversed and counted.
 
     Return:
         A boolean object which specifies whether the module is MLP or not.
@@ -254,7 +256,6 @@ def _parallelize_linear(
             _rowwise_parallelize_linear_fn,
             input_fn=parallel_style._prepare_input,  # type: ignore[arg-type, misc] # pyre-ignore[6]
             output_fn=parallel_style._prepare_output,  # type: ignore[arg-type, misc] # pyre-ignore[6]
-            input_shard_dim=-1,
         )
     elif isinstance(parallel_style, ColwiseParallel):
         distribute_module(
@@ -283,19 +284,19 @@ def _parallelize_multihead_attn(
 
     Args:
         module (nn.Module):
-            :class:``nn.Module`` object to be parallelized.
+            :class:`nn.Module` object to be parallelized.
         device_mesh (DeviceMesh):
-            :class:``DeviceMesh`` object which describes the mesh topology
+            :class:`DeviceMesh` object which describes the mesh topology
             of devices for the DTensor.
         parallel_style (ParallelStyle):
-            :class:``ParallelStyle`` object which contains how
+            :class:`ParallelStyle` object which contains how
             we prepare input/output for Tensor Parallelism.
         tp_mesh_dim (int):
-            the dimension of ``device_mesh`` where we perform
+            the dimension of `device_mesh` where we perform
             Tensor Parallelism on.
 
     Return:
-        A :class:``nn.Module`` object parallelized.
+        A :class:`nn.Module` object parallelized.
 
     .. warning::
         We only support ``PairwiseParallel`` right now.
@@ -356,19 +357,19 @@ def _parallelize_mlp(
 
     Args:
         module (nn.Module):
-            :class:``nn.Module`` object to be parallelized.
+            :class:`nn.Module` object to be parallelized.
         device_mesh (DeviceMesh):
-            :class:``DeviceMesh`` object which describes the mesh topology
+            :class:`DeviceMesh` object which describes the mesh topology
             of devices for the DTensor.
         parallel_style (ParallelStyle):
-            :class:``ParallelStyle`` object which contains how
+            :class:`ParallelStyle` object which contains how
             we prepare input/output for Tensor Parallelism.
         tp_mesh_dim (int):
             the dimension of ``device_mesh`` where we perform
             Tensor Parallelism on.
 
     Return:
-        A :class:``nn.Module`` object parallelized.
+        A :class:`nn.Module` object parallelized.
 
     .. warning::
         We only support ``PairwiseParallel`` right now.
