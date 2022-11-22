@@ -22,11 +22,13 @@ pytorch_common_test_dir = (
 )
 
 common_testing_dtensor_folder = [
+    "./spmd/testing/__init__.py",
     "./spmd/testing/common_dtensor.py",
     "./spmd/testing/dtensor_lagging_op_db.py",
     "./spmd/testing/gen_dtensor_lagging_op_db.py",
 ]
 pytorch_common_testing_dtensor_folder = [
+    "../pytorch/torch/testing/_internal/distributed/_tensor/__init__.py",
     "../pytorch/torch/testing/_internal/distributed/_tensor/common_dtensor.py",
     "../pytorch/torch/testing/_internal/distributed/_tensor/dtensor_lagging_op_db.py",
     "../pytorch/torch/testing/_internal/distributed/_tensor/gen_dtensor_lagging_op_db.py",

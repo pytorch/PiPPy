@@ -3,17 +3,32 @@ from spmd.tensor.parallel.multihead_attention_tp import (
     TensorParallelMultiheadAttention,
 )
 
-from spmd.tensor.parallel.api import (
-    tp_shard_self_attn,
-    replicate_input,
-    replicate_output,
-)
-
 from spmd.tensor.parallel.style import (
+    ColwiseParallel,
+    PairwiseParallel,
     ParallelStyle,
-    make_input_shard_1d,
+    RowwiseParallel,
     make_input_replicate_1d,
-    make_output_shard_1d,
+    make_input_shard_1d,
     make_output_replicate_1d,
+    make_output_shard_1d,
     make_output_tensor,
 )
+
+from spmd.tensor.parallel.api import (
+    parallelize_module,
+)
+
+__all__ = [
+    "ColwiseParallel",
+    "PairwiseParallel",
+    "ParallelStyle",
+    "RowwiseParallel",
+    "TensorParallelMultiheadAttention",
+    "make_input_replicate_1d",
+    "make_input_shard_1d",
+    "make_output_replicate_1d",
+    "make_output_tensor",
+    "make_output_shard_1d",
+    "parallelize_module",
+]

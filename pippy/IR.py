@@ -1,5 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import copy
+import logging
 import operator
 from enum import Enum
 from typing import Callable, Dict, List, Optional, Tuple, Union
@@ -990,6 +991,17 @@ class Pipe(torch.nn.Module):
 
     def __repr__(self):
         return self.split_gm.__repr__()
+
+    def defer_stage_init(self, device):
+        def materialize_stage(target: str) -> torch.nn.Module:
+            logging.info(f"Materializing {target} on {device}")
+            return self.split_gm.get_submodule(target).to(device)
+
+        setattr(Pipe, "materialize_stage", materialize_stage)
+
+    @staticmethod
+    def is_stage_init_deferred():
+        return hasattr(Pipe, "materialize_stage")
 
 
 class PipeSplitWrapper(torch.nn.Module):
