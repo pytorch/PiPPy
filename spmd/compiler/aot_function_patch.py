@@ -11,17 +11,41 @@ import torch.utils._pytree as pytree
 
 
 def patched_aot_function(
-    fn: Callable,
-    fw_compiler: Callable,
-    bw_compiler: Optional[Callable] = None,
-    partition_fn: Callable = default_partition,
-    decompositions: Optional[Dict] = None,
+    fn: Callable[..., object],
+    fw_compiler: Callable[..., object],
+    bw_compiler: Optional[Callable[..., object]] = None,
+    partition_fn: Callable[..., object] = default_partition,
+    decompositions: Optional[Dict[object, object]] = None,
     num_params_buffers: int = 0,
-    hasher_type=None,  # deprecated
+    hasher_type: object = None,  # deprecated
     static_argnums: Optional[Tuple[int]] = None,  # deprecated
-    pre_compile_fn: Optional[Callable] = None,
-) -> Callable:
+    pre_compile_fn: Optional[Callable[..., object]] = None,
+) -> Callable[..., object]:
     """
+    NOTE: rationale for patch.
+        We want to do the following
+            trace single device graph  --> parallelize (SPMD) ---> run graph on a shard
+
+        But::
+           - "single device graph" expects fully-sized shapes (e.g. logical shapes)
+           - "parallelized graph" expects sharded shapes (e.g. physical local shapes)
+
+        This means that we need to pass in "logical tensors" as input to the capturing step,
+        but then we need to pass "physical local_shard tensors" as input to the parallelized
+        graph afterwards.
+
+        This patch allows to transform the inputs of the graph before compilation, so that
+        we can capture the graph with logical shapes, and then finally after compilation,
+        call into the compiled (and transformed) graph with the original sharded tensors.
+
+        Beyond that:
+
+            The compilation for the backwards pass doesn't follow the same pattern.
+            For the backwards pass, since the compilation happens at first usage, we won't
+            be able to intercept the compilation call from here. But that's fine, because
+            the graph was already captured before with logical-shapes.
+
+
     Traces the forward and backward graph of :attr:`fn` using torch dispatch
     mechanism, and then compiles the generated forward and backward graphs
     through :attr:`fw_compiler` and :attr:`bw_compiler`.
@@ -78,16 +102,19 @@ def patched_aot_function(
 
     if bw_compiler is None:
         bw_compiler = fw_compiler
+
     aot_config = AOTConfig(
         fw_compiler=fw_compiler,
         bw_compiler=bw_compiler,
         partition_fn=partition_fn,
+        # pyre-fixme
         decompositions=decompositions,
         num_params_buffers=num_params_buffers,
     )
     cached_res = None
 
     @wraps(fn)
+    # pyre-fixme
     def returned_function(*args, **kwargs):
         nonlocal cached_res
         # Now flatten the tensor args
@@ -99,13 +126,15 @@ def patched_aot_function(
             _, tensor_args_spec = pytree.tree_flatten((args, kwargs))
             out_spec = PytreeThunk()
 
+            # pyre-fixme
             def flat_fn(*flat_args):
                 # The input are flattened tensor args. Prepare the args in the
                 # order that original function expects. Add static args as well.
                 # They will appear as tensor constants in the traced graph.
                 nonlocal out_spec
                 args, kwargs = pytree.tree_unflatten(
-                    flat_args, tensor_args_spec
+                    list(flat_args),
+                    tensor_args_spec,
                 )
                 tree_out = fn(*args, **kwargs)
                 flat_out, spec = pytree.tree_flatten(tree_out)
@@ -127,8 +156,11 @@ def patched_aot_function(
                 out_spec.set(spec)
                 return flat_out
 
-            if pre_compile_fn is not None:
-                compile_flat_args = pre_compile_fn(flat_args)
+            compile_flat_args = (
+                pre_compile_fn(flat_args)
+                if pre_compile_fn is not None
+                else flat_args
+            )
 
             compiled_fn = create_aot_dispatcher_function(
                 flat_fn,

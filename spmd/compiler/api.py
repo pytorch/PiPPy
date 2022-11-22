@@ -2,7 +2,7 @@ import logging
 from dataclasses import dataclass
 from enum import Enum, auto
 from functools import partial
-from typing import Dict, List, Optional, Sequence, Tuple, cast
+from typing import Dict, List, Optional, Sequence, Set, Tuple, cast
 
 import torch
 import torch.distributed as dist
@@ -30,6 +30,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 
 # patch aot_function so that we can pass the full (non-sharded) input to capture the graph
+# pyre-fixme
 functorch._src.aot_autograd.aot_function = patched_aot_function
 
 
@@ -392,17 +393,21 @@ class SPMD(nn.Module):
         self, *args: Tuple[object], **kwargs: Dict[str, object]
     ) -> object:
         if self._compiled_m is None:
-            input_set = set(args)
+            # pyre-ignore: I think this is a pyre bug. It thinks that we end up with a Set[Tuple[object]
+            #              but I checked this is not the case.
+            input_set: Set[object] = set(args)
 
-            def gather_inputs_for_compilation(inps):
-                compile_inps = [
+            def gather_inputs_for_compilation(
+                inps: Tuple[object, ...],
+            ) -> Tuple[object, ...]:
+                compile_inps = tuple(
                     x
                     if not isinstance(x, torch.Tensor) or x not in input_set
                     else DTensor.from_local(x, self._schema.mesh, [Shard(0)])
                     .redistribute(self._schema.mesh, [Replicate()])
                     .to_local()
                     for x in inps
-                ]
+                )
                 return compile_inps
 
             self._compiled_m = aot_module(
@@ -411,15 +416,5 @@ class SPMD(nn.Module):
                 partial(self._compile, TrainingPhase.BACKWARD),
                 pre_compile_fn=gather_inputs_for_compilation,
             )
-            global_args = [
-                DTensor.from_local(arg, self._schema.mesh, [Shard(0)])
-                .redistribute(
-                    self._schema.mesh, [Replicate()] * self._schema.mesh.ndim
-                )
-                .to_local()
-                if isinstance(arg, torch.Tensor)
-                else arg
-                for arg in args
-            ]
 
         return cast(nn.Module, self._compiled_m)(*args, **kwargs)
