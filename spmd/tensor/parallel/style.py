@@ -122,7 +122,7 @@ def make_input_shard_1d_dim_last(
     Returns:
         A :class:`DTensor` sharded on dimension ``dim`` over ``device_mesh``.
     """
-    return make_input_shard_1d(input, device_mesh, dim=-1)
+    return make_input_shard_1d(input, device_mesh, dim=-1)  # type: ignore[call-arg]
 
 
 @_prepare_input_validate  # type: ignore[arg-type] # pyre-ignore[56]

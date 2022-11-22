@@ -3,7 +3,7 @@
 import torch
 from torch.testing._internal.common_utils import run_tests
 from spmd.testing.common_dtensor import DTensorTestBase, with_comms
-from spmd.tensor import distribute_tensor, DeviceMesh, Shard, Replicate, DTensor
+from spmd.tensor import DeviceMesh, Replicate, DTensor
 from spmd.tensor.parallel.style import (
     ColwiseParallel,
     PairwiseParallel,
