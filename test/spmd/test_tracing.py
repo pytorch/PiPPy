@@ -216,6 +216,24 @@ class TraceModuleTest(DTensorTestBase):
             self.assertTrue(p1.grad.allclose(p2.grad / self.world_size))
 
     @with_comms
+    def test_baked_in_shape(self):
+        class LCE(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                torch.manual_seed(5)
+                self.w = torch.nn.Parameter(torch.rand((5, 10)))
+                self.b = torch.nn.Parameter(torch.rand((5)))
+
+            def forward(self, x):
+                x_t = x.permute(0, 2, 1)
+                # code below triggers an "expand" with shape baked in.
+                return torch.nn.functional.linear(x_t, self.w, self.b)
+
+        model = LCE().to(self.device_type)
+        x = torch.randn(2, 10, 80).to(self.device_type)
+        self._test_trace_replicate(model, x)
+
+    @with_comms
     def test_sequential(self):
         model = nn.Sequential(*[nn.Linear(10, 10) for _ in range(2)]).to(
             self.device_type
