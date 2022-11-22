@@ -117,10 +117,10 @@ def run_gspmd(_, args):
     if args.gspmd == 1:
         print(f"Deferring stage init on device {device}")
         gpt2_pipe.defer_stage_init(device)
+        # Make sure every rank has deferred its stage init because master creates the driver
+        torch.distributed.barrier(args.pp_group)
     else:
         gpt2_pipe.to(device)
-
-    torch.distributed.barrier(args.pp_group)
 
     if args.rank != 0:
         # Workers return here
