@@ -59,7 +59,7 @@ class ColwiseParallel(ParallelStyle):
     """
 
     def __init__(self) -> None:
-        super().__init__(make_input_replicate_1d, None)
+        super().__init__(make_input_replicate_1d, make_output_replicate_1d)
 
 
 @_prepare_input_validate  # type: ignore[arg-type] # pyre-ignore[56]
@@ -96,7 +96,8 @@ def make_input_shard_1d(
         )
     else:
         raise RuntimeError(
-            f"Tensor parallel module expects torch.Tensor or DTensor input but received {type(input)}!"
+            "Tensor parallel module expects torch.Tensor or DTensor input but"
+            f" received {type(input)}!"
         )
 
 
@@ -130,7 +131,8 @@ def make_input_replicate_1d(
         )
     else:
         raise RuntimeError(
-            f"Tensor parallel module expects torch.Tensor or DTensor input but received {type(input)}!"
+            "Tensor parallel module expects torch.Tensor or DTensor input but"
+            f" received {type(input)}!"
         )
 
 

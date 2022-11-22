@@ -10,7 +10,12 @@ from spmd.tensor import (
     DeviceMesh,
 )
 from spmd.tensor.parallel import TensorParallelMultiheadAttention
-from spmd.tensor.parallel.style import PairwiseParallel, ParallelStyle
+from spmd.tensor.parallel.style import (
+    ColwiseParallel,
+    PairwiseParallel,
+    ParallelStyle,
+    RowwiseParallel,
+)
 from spmd.tensor.parallel.utils import _create_1d_device_mesh
 
 
@@ -91,7 +96,8 @@ def parallelize_module(  # type: ignore[return]
             return module
     else:
         raise RuntimeError(  # pyre-ignore[7]
-            f"Expect Union[ParallelStyle, Dict[str, ParallelStyle]] for parallelize_plan, {type(parallelize_plan)} found!"
+            "Expect Union[ParallelStyle, Dict[str, ParallelStyle]] for"
+            f" parallelize_plan, {type(parallelize_plan)} found!"
         )
 
 
@@ -138,17 +144,20 @@ def _rowwise_parallelize_linear_fn(
     device_mesh: DeviceMesh,
 ) -> None:
     """
-    This function parallelizes the input :class:``nn.Linear`` module in :class:``RowwiseParallel`` style.
+    This function parallelizes the input :class:`nn.Linear` module in
+    :class:`RowwiseParallel` style.
 
     Args:
         name (str): name of the input module.
-        module (nn.Module): the :class:``nn.Linear`` object to be parallelized.
-        device_mesh (DeviceMesh): :class:``DeviceMesh`` object which describes the mesh topology
-            of devices for the DTensor.
+        module (:class:`nn.Module`): the :class:`nn.Linear` object
+            to be parallelized.
+        device_mesh (:class:`DeviceMesh`): :class:`DeviceMesh` object
+            which describes the mesh topology of devices for the DTensor.
 
-    Return:
+    Returns:
         None
     """
+
     for name, param in module.named_parameters():
         dist_spec = (
             [Shard(1)] if name == "weight" else [Replicate()]  # type: ignore[list-item]
@@ -165,22 +174,94 @@ def _colwise_parallelize_linear_fn(
     device_mesh: DeviceMesh,
 ) -> None:
     """
-    This function parallelizes the input :class:``nn.Linear`` module in :class:``ColwiseParallel`` style.
+    This function parallelizes the input :class:`nn.Linear` module in
+    :class:`ColwiseParallel` style.
 
     Args:
         name (str): name of the input module.
-        module (nn.Module): the :class:``nn.Linear`` object to be parallelized.
-        device_mesh (DeviceMesh): :class:``DeviceMesh`` object which describes the mesh topology
-            of devices for the DTensor.
+        module (:class:`nn.Module`): the :class:`nn.Linear` object
+            to be parallelized.
+        device_mesh (:class:`DeviceMesh`): :class:`DeviceMesh` object
+            which describes the mesh topology of devices for the DTensor.
 
-    Return:
+    Returns:
         None
     """
+
     for name, param in module.named_parameters():
         dist_param = torch.nn.Parameter(
             distribute_tensor(param, device_mesh, [Shard(0)])
         )
         module.register_parameter(name, dist_param)
+
+
+def _parallelize_linear(
+    module: nn.Module,
+    device_mesh: DeviceMesh,
+    parallel_style: ParallelStyle = ColwiseParallel(),
+    tp_mesh_dim: int = 0,
+) -> None:
+    """
+    This function requires that the input module be an object
+    of :class:`nn.Linear`.
+    The module will be parallelized over a 1-d :class:`DeviceMesh`
+    based on the :class:`ParallelStyle`.
+
+    Args:
+        module (:class:`nn.Module`): the :class:`nn.Module` object to be
+            parallelized.
+        device_mesh (:class:`DeviceMesh`): :class:`DeviceMesh` object which
+            describes the mesh topology of devices for the :class:`DTensor`.
+            If the mesh is more than 1-dimensional, we will use the mesh dim of
+            `device_mesh` specified by `tp_mesh_dim`.
+        parallel_style (:class:`ParallelStyle`, optional):
+            :class:`ParallelStyle` describes how the :class:`nn.Linear` module
+            should be distributed over :class:`DeviceMesh` and how the input
+            and output should be prepared for Tensor Parallelism.
+            :class:`RowwiseStyle`: weight is sharded on dim 1 and bias is
+            replicated.
+            :class:`ColwiseStyle`: weight and bias are both sharded on dim 0.
+            Default: :class:`ColwiseParallel`
+        tp_mesh_dim (int): the dimension of :class:`DeviceMesh` on which we
+            perform Tensor Parallelism.
+            Default: 0
+
+    Returns:
+        None
+    """
+
+    if not isinstance(module, nn.Linear):
+        raise RuntimeError(
+            f"Expect a torch.nn.Linear module but received {type(module)}!"
+        )
+
+    if not isinstance(parallel_style, ParallelStyle):
+        raise RuntimeError(
+            "Expect a ParallelStyle object but received"
+            f" {type(parallel_style)}!"
+        )
+
+    if device_mesh.ndim > 1:
+        device_mesh = _create_1d_device_mesh(device_mesh, tp_mesh_dim)
+
+    if isinstance(parallel_style, RowwiseParallel):
+        distribute_module(
+            module,
+            device_mesh,
+            _rowwise_parallelize_linear_fn,
+            input_fn=parallel_style._prepare_input,  # type: ignore[arg-type, misc] # pyre-ignore[6]
+            output_fn=parallel_style._prepare_output,  # type: ignore[arg-type, misc] # pyre-ignore[6]
+        )
+    elif isinstance(parallel_style, ColwiseParallel):
+        distribute_module(
+            module,
+            device_mesh,
+            _colwise_parallelize_linear_fn,
+            input_fn=parallel_style._prepare_input,  # type: ignore[arg-type, misc] # pyre-ignore[6]
+            output_fn=parallel_style._prepare_output,  # type: ignore[arg-type, misc] # pyre-ignore[6]
+        )
+    else:
+        raise RuntimeError(f"{type(parallel_style)} is not supported!")
 
 
 def _parallelize_multihead_attn(
@@ -217,7 +298,8 @@ def _parallelize_multihead_attn(
 
     if not isinstance(parallel_style, PairwiseParallel):
         raise NotImplementedError(
-            "Only support PairwiseParallel for Multihead Attention parallelization."
+            "Only support PairwiseParallel for Multihead Attention"
+            " parallelization."
         )
 
     if device_mesh.ndim > 1:

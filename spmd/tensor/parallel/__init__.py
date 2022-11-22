@@ -5,8 +5,8 @@ from spmd.tensor.parallel.multihead_attention_tp import (
 
 from spmd.tensor.parallel.style import (
     ColwiseParallel,
-    ParallelStyle,
     PairwiseParallel,
+    ParallelStyle,
     RowwiseParallel,
     make_input_replicate_1d,
     make_input_shard_1d,
@@ -21,10 +21,10 @@ from spmd.tensor.parallel.api import (
 
 __all__ = [
     "ColwiseParallel",
-    "TensorParallelMultiheadAttention",
-    "ParallelStyle",
     "PairwiseParallel",
+    "ParallelStyle",
     "RowwiseParallel",
+    "TensorParallelMultiheadAttention",
     "make_input_replicate_1d",
     "make_input_shard_1d",
     "make_output_replicate_1d",
