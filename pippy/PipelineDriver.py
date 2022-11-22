@@ -1345,7 +1345,6 @@ class PipelineDriverBase(torch.nn.Module):
         interleave_stages=False,
         _record_mem_dumps=False,
         checkpoint=False,
-        device: Optional[torch.device] = None,
         use_c10d=False,
     ):
         super().__init__()
@@ -1367,7 +1366,6 @@ class PipelineDriverBase(torch.nn.Module):
         self._record_mem_dumps = _record_mem_dumps
         self.optimizer_inited = False
         self.checkpoint = checkpoint
-        self.device = device
         self.use_c10d = use_c10d
 
     def _init_remote_executors(self):
@@ -1463,12 +1461,6 @@ class PipelineDriverBase(torch.nn.Module):
         for stage_id, descr in enumerate(executor_descriptors):
             # Assign stages to rank workers in a round-robin fashion
             rank = self.all_ranks[stage_id % self.world_size]
-            if self.device is not None:
-                logging.debug(
-                    f"[root] Moving stage_id = {stage_id} mod to {self.device}"
-                )
-                if descr.mod:
-                    descr.mod.to(self.device)  # type: ignore[union-attr]
             logging.debug(f"[root] Sending stage_id = {stage_id} mod to worker")
             self.remote_stage_executor_rrefs[descr.name] = (
                 stage_id,
@@ -1480,7 +1472,7 @@ class PipelineDriverBase(torch.nn.Module):
                     mod_name=descr.name,
                 ),
             )
-            if self.device is not None or Pipe.is_stage_init_deferred():
+            if Pipe.is_stage_init_deferred():
                 logging.debug(
                     f"[root] Waiting stage_id = {stage_id} mod to be confirmed by worker"
                 )
@@ -1488,10 +1480,6 @@ class PipelineDriverBase(torch.nn.Module):
                     1
                 ].confirmed_by_owner():
                     pass
-                logging.debug(
-                    f"[root] Deleting stage_id = {stage_id} mod on master"
-                )
-                descr.mod = None
             self.stage_to_executor[stage_id] = self.remote_stage_executor_rrefs[
                 descr.name
             ][1]
@@ -2034,7 +2022,6 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         interleave_stages=False,
         _record_mem_dumps=False,
         checkpoint=False,
-        device: Optional[torch.device] = None,
         use_c10d=False,
     ):
         super().__init__(
@@ -2050,7 +2037,6 @@ class PipelineDriverFillDrain(PipelineDriverBase):
             interleave_stages=interleave_stages,
             _record_mem_dumps=_record_mem_dumps,
             checkpoint=checkpoint,
-            device=device,
             use_c10d=use_c10d,
         )
         self.single_loss = single_loss
@@ -2193,7 +2179,6 @@ class PipelineDriver1F1B(PipelineDriverFillDrain):
         interleave_stages=False,
         _record_mem_dumps=False,
         checkpoint=False,
-        device: Optional[torch.device] = None,
         use_c10d=False,
     ):
         # In 1F1B with backward stages, the maximum number of outstanding
@@ -2216,7 +2201,6 @@ class PipelineDriver1F1B(PipelineDriverFillDrain):
             interleave_stages=interleave_stages,
             _record_mem_dumps=_record_mem_dumps,
             checkpoint=checkpoint,
-            device=device,
             use_c10d=use_c10d,
         )
 
@@ -2235,7 +2219,6 @@ class PipelineDriverInterleaved1F1B(PipelineDriver1F1B):
         _debug_mask_minibatches: bool = False,
         _record_mem_dumps=False,
         checkpoint=False,
-        device: Optional[torch.device] = None,
         use_c10d=False,
     ):
         super().__init__(
@@ -2251,6 +2234,5 @@ class PipelineDriverInterleaved1F1B(PipelineDriver1F1B):
             interleave_stages=True,
             _record_mem_dumps=_record_mem_dumps,
             checkpoint=checkpoint,
-            device=device,
             use_c10d=use_c10d,
         )
