@@ -61,7 +61,7 @@ class ExampleCode(torch.nn.Module):
         return {"out": x}
 
 
-def run_gspmd(_, args):
+def run_gspmd(pp_ranks, args):
     MULTI_USE_PARAM_CONFIG = (
         MultiUseParameterConfig.REPLICATE
         if args.replicate
@@ -74,6 +74,9 @@ def run_gspmd(_, args):
 
     ec_pipe = Pipe.from_tracing(ec, MULTI_USE_PARAM_CONFIG)
     ec_pipe.defer_stage_init(args.device)
+
+    # Make sure every rank has deferred its stage init before master creates the driver
+    pippy.utils.pp_group_barrier()
 
     if args.rank > 0:
         return  # Workers stop here
