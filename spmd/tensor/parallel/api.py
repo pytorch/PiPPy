@@ -74,6 +74,10 @@ def parallelize_module(  # type: ignore[return]
         device_mesh = _create_1d_device_mesh(device_mesh, tp_mesh_dim)
 
     if isinstance(parallelize_plan, ParallelStyle):
+        # RowwiseParallel or ColwiseParallel
+        if not isinstance(parallelize_plan, PairwiseParallel):
+            return _parallelize_linear(module, device_mesh, parallelize_plan)
+        # PairwiseParallel
         if _is_mha_for_pairwise_parallel(module):
             return _parallelize_multihead_attn(module, device_mesh)
         elif _is_mlp_for_pairwise_parallel(module):
@@ -84,7 +88,6 @@ def parallelize_module(  # type: ignore[return]
                     n, parallelize_module(m, device_mesh, parallelize_plan)
                 )
             return module
-    # TODO: Add parallelize linear logic when https://github.com/pytorch/tau/pull/624/ merged.
     elif isinstance(parallelize_plan, dict):
         for module_path, parallelize_style in parallelize_plan.items():
             sub_module = module.get_submodule(module_path)
@@ -200,7 +203,7 @@ def _parallelize_linear(
     device_mesh: DeviceMesh,
     parallel_style: ParallelStyle = ColwiseParallel(),
     tp_mesh_dim: int = 0,
-) -> None:
+) -> nn.Module:
     """
     This function requires that the input module be an object
     of :class:`nn.Linear`.
@@ -226,8 +229,8 @@ def _parallelize_linear(
             perform Tensor Parallelism.
             Default: 0
 
-    Returns:
-        None
+    Return:
+        A :class:`nn.Module` object parallelized.
     """
 
     if not isinstance(module, nn.Linear):
@@ -251,6 +254,7 @@ def _parallelize_linear(
             _rowwise_parallelize_linear_fn,
             input_fn=parallel_style._prepare_input,  # type: ignore[arg-type, misc] # pyre-ignore[6]
             output_fn=parallel_style._prepare_output,  # type: ignore[arg-type, misc] # pyre-ignore[6]
+            input_shard_dim=1,
         )
     elif isinstance(parallel_style, ColwiseParallel):
         distribute_module(
@@ -262,6 +266,7 @@ def _parallelize_linear(
         )
     else:
         raise RuntimeError(f"{type(parallel_style)} is not supported!")
+    return module
 
 
 def _parallelize_multihead_attn(
