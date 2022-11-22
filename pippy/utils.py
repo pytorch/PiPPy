@@ -174,6 +174,10 @@ def run_worker(rank, run_func, args, *extra_args):
         for rank in range(args.dp_group_size)
     ]
 
+    args.pp_group = torch.distributed.new_group(
+        pp_ranks_per_dp_group[rank % args.dp_group_size]
+    )
+
     args.driver_group = torch.distributed.new_group(
         list(range(args.dp_group_size))
     )

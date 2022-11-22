@@ -75,6 +75,8 @@ def run_gspmd(_, args):
     ec_pipe = Pipe.from_tracing(ec, MULTI_USE_PARAM_CONFIG)
     ec_pipe.defer_stage_init(args.device)
 
+    torch.distributed.barrier(args.pp_group)
+
     if args.rank > 0:
         return  # Workers stop here
 

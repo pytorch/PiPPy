@@ -120,6 +120,8 @@ def run_gspmd(_, args):
     else:
         gpt2_pipe.to(device)
 
+    torch.distributed.barrier(args.pp_group)
+
     if args.rank != 0:
         # Workers return here
         return
