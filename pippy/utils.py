@@ -174,6 +174,8 @@ def run_worker(rank, run_func, args, *extra_args):
         for rank in range(args.dp_group_size)
     ]
 
+    my_pp_ranks = pp_ranks_per_dp_group[rank % args.dp_group_size]
+
     args.driver_group = torch.distributed.new_group(
         list(range(args.dp_group_size))
     )
@@ -186,16 +188,20 @@ def run_worker(rank, run_func, args, *extra_args):
         args.gspmd if hasattr(args, "gspmd") else 0
     )
 
-    if gspmd:
-        args.pp_group = torch.distributed.new_group(
-            pp_ranks_per_dp_group[rank % args.dp_group_size]
-        )
+    args.pp_group = torch.distributed.new_group(my_pp_ranks)
+
+    # A barrier util for pipeline dimension
+    global pp_group_barrier
+
+    def pp_group_barrier():
+        logging.debug(f"Running pipeline group barrier on ranks {my_pp_ranks}")
+        torch.distributed.barrier(args.pp_group)
 
     if rank >= 0 and rank // args.dp_group_size == 0:
         args.driver_index = rank
         args.local_driver_index = os.getenv("LOCAL_RANK", rank)
-        run_func(pp_ranks_per_dp_group[rank], args, *extra_args)
+        run_func(my_pp_ranks, args, *extra_args)
     elif gspmd == 1:
-        run_func(pp_ranks_per_dp_group[rank % args.dp_group_size], args, *extra_args)
+        run_func(my_pp_ranks, args, *extra_args)
 
     rpc.shutdown()

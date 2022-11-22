@@ -57,7 +57,7 @@ def calc_flop(args, conf):
     return 96 * B * s * l * h * h * (1 + s/6/h + V/16/l/h)
 
 
-def run_gspmd(_, args):
+def run_gspmd(pp_ranks, args):
     print(args)
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if args.replicate else MultiUseParameterConfig.TRANSMIT
     assert args.world_size >= 4, "This program requires at least 3 workers + 1 master"
@@ -83,7 +83,10 @@ def run_gspmd(_, args):
     number_of_workers = emb_head + gpt2.config.n_layer // decoders_per_rank  # 3 + a divider of gpt2.config.n_layer: [4, 5, 6, 7, 9, 15]
     print(f"number_of_workers = {number_of_workers}")
 
-    all_worker_ranks = list(range(args.exclude_master, args.exclude_master + number_of_workers))
+    all_worker_ranks = pp_ranks[
+        pippy.utils.exclude_master : pippy.utils.exclude_master
+        + number_of_workers
+    ]
     chunks = len(all_worker_ranks)
     seq_length = args.seq_length
     batch_size = args.batch_size * chunks
@@ -117,8 +120,8 @@ def run_gspmd(_, args):
     if args.gspmd == 1:
         print(f"Deferring stage init on device {device}")
         gpt2_pipe.defer_stage_init(device)
-        # Make sure every rank has deferred its stage init because master creates the driver
-        torch.distributed.barrier(args.pp_group)
+        # Make sure every rank has deferred its stage init before master creates the driver
+        pippy.utils.pp_group_barrier()
     else:
         gpt2_pipe.to(device)
 
