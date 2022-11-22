@@ -254,7 +254,7 @@ def _parallelize_linear(
             _rowwise_parallelize_linear_fn,
             input_fn=parallel_style._prepare_input,  # type: ignore[arg-type, misc] # pyre-ignore[6]
             output_fn=parallel_style._prepare_output,  # type: ignore[arg-type, misc] # pyre-ignore[6]
-            input_shard_dim=1,
+            input_shard_dim=-1,
         )
     elif isinstance(parallel_style, ColwiseParallel):
         distribute_module(
