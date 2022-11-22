@@ -196,6 +196,6 @@ def run_worker(rank, run_func, args, *extra_args):
         args.local_driver_index = os.getenv("LOCAL_RANK", rank)
         run_func(pp_ranks_per_dp_group[rank], args, *extra_args)
     elif gspmd == 1:
-        run_func([], args, *extra_args)
+        run_func(pp_ranks_per_dp_group[rank % args.dp_group_size], args, *extra_args)
 
     rpc.shutdown()
