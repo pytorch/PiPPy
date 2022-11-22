@@ -229,7 +229,7 @@ class TraceModuleTest(DTensorTestBase):
                 # code below triggers an "expand" with shape baked in.
                 return torch.nn.functional.linear(x_t, self.w, self.b)
 
-        model = LCE()
+        model = LCE().to(self.device_type)
         x = torch.randn(2, 10, 80).to(self.device_type)
         self._test_trace_replicate(model, x)
 
