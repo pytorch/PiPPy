@@ -8,20 +8,29 @@ import torch
 import torch.distributed as dist
 import torch.fx as fx
 import torch.nn as nn
+
+import functorch.compile
 from functorch.compile import aot_module, make_boxed_func
+
 from torch.distributed._spmd.comm_tensor import _get_tracer
 from torch.fx.experimental.proxy_tensor import make_fx, proxy_slot
-from torch.utils._pytree import tree_flatten, tree_map
+from torch.utils._pytree import tree_flatten, tree_map, tree_unflatten
 
-from spmd.tensor import DeviceMesh, DTensor
+from spmd.tensor import DeviceMesh, DTensor, distribute_tensor
 from spmd.tensor.dispatch import operator_dispatch, propagate_input_sharding
 from spmd.tensor.placement_types import Placement, Replicate, Shard, _Partial
 from spmd.tensor.redistribute import _redistribute_with_local_tensor
 
 from .graph_utils import OP
 from .log_utils import rank0_info
+from .aot_function_patch import patched_aot_function
+
 
 logger: logging.Logger = logging.getLogger(__name__)
+
+
+# patch aot_function so that we can pass the full (non-sharded) input to capture the graph
+functorch._src.aot_autograd.aot_function = patched_aot_function
 
 
 class TrainingPhase(Enum):
@@ -65,6 +74,7 @@ def _dispatch_with_local_tensors(
             else arg
         )
 
+    # FIXME: this is broken because it won't redistributed potential tensors on the kwargs
     return op(*tree_map(redistribute, local_args), **kwargs)
 
 
@@ -107,6 +117,7 @@ def _get_dtensor_dispatch_graph(
         DTensor._op_to_rules,
     )
 
+    # ===== Begin code taken from pack_args_kwargs_with_local_tensor =====
     flatten_args, args_tree_spec = tree_flatten(args)
     flatten_args_schema, _ = tree_flatten(target_schema.args_schema)
 
@@ -120,14 +131,22 @@ def _get_dtensor_dispatch_graph(
         ],
     ] = {}
     for i, arg in enumerate(flatten_args):
-        if isinstance(arg, DTensor) and redistribute:
-            specs[arg._local_tensor] = (
-                arg.size(),
-                flatten_args_schema[i].mesh,
-                arg.placements,
-                flatten_args_schema[i].placements,
-            )
+        if isinstance(arg, DTensor):
+            if redistribute:
+                specs[arg._local_tensor] = (
+                    arg.size(),
+                    flatten_args_schema[i].mesh,
+                    arg.placements,
+                    flatten_args_schema[i].placements,
+                )
+            flatten_args_schema[i] = arg._local_tensor
 
+    local_target_args = tree_unflatten(flatten_args_schema, args_tree_spec)
+    # ===== End code taken from pack_args_kwargs_with_local_tensor =====
+
+    # FIXME: this is broken when kwargs contains tensors
+    #        or if a non-tensor kwarg was modified by the sharding propagation
+    #        (in order to fix, need to port over pack_args_kwargs_with_local_tensor for kwargs as well)
     dispatch = partial(
         _dispatch_with_local_tensors,
         op_overload,
@@ -138,7 +157,7 @@ def _get_dtensor_dispatch_graph(
     def unwrap_local(e: object) -> object:
         return e._local_tensor if isinstance(e, DTensor) else e
 
-    return make_fx(dispatch)(tree_map(unwrap_local, args))
+    return make_fx(dispatch)(local_target_args)
 
 
 def _build_dummy_add_graph(
@@ -298,9 +317,24 @@ def _convert_to_distributed(
             assert i < len(
                 inps
             ), f"got more placeholer nodes ({i + 1}) than inputs ({len(inps)})"
-            node_to_obj[node] = DTensor.from_local(
-                inps[i], schemas[i].mesh, schemas[i].placements
-            )
+            if training_phase == TrainingPhase.FORWARD:
+                # in the forward phase we start with the full "global" ensors.
+                # we needed this because we needed to capture the original graph.
+                node_to_obj[node] = distribute_tensor(  # DTensor.from_local(
+                    inps[i],
+                    schemas[i].mesh,
+                    schemas[i].placements,
+                )
+            else:
+                # But in the backward pass we got "real" sharded inputs
+                # so we have to actually make DTensors out of them
+                assert training_phase == TrainingPhase.BACKWARD
+                node_to_obj[node] = DTensor.from_local(
+                    inps[i],
+                    schemas[i].mesh,
+                    schemas[i].placements,
+                )
+
         elif isinstance(node.target, torch._ops.OpOverload):
             node_replacements[node] = _get_dtensor_dispatch_graph(
                 node, node_to_obj
@@ -358,10 +392,34 @@ class SPMD(nn.Module):
         self, *args: Tuple[object], **kwargs: Dict[str, object]
     ) -> object:
         if self._compiled_m is None:
+            input_set = set(args)
+
+            def gather_inputs_for_compilation(inps):
+                compile_inps = [
+                    x
+                    if not isinstance(x, torch.Tensor) or x not in input_set
+                    else DTensor.from_local(x, self._schema.mesh, [Shard(0)])
+                    .redistribute(self._schema.mesh, [Replicate()])
+                    .to_local()
+                    for x in inps
+                ]
+                return compile_inps
+
             self._compiled_m = aot_module(
                 self._local_module,
                 partial(self._compile, TrainingPhase.FORWARD),
                 partial(self._compile, TrainingPhase.BACKWARD),
+                pre_compile_fn=gather_inputs_for_compilation,
             )
+            global_args = [
+                DTensor.from_local(arg, self._schema.mesh, [Shard(0)])
+                .redistribute(
+                    self._schema.mesh, [Replicate()] * self._schema.mesh.ndim
+                )
+                .to_local()
+                if isinstance(arg, torch.Tensor)
+                else arg
+                for arg in args
+            ]
 
         return cast(nn.Module, self._compiled_m)(*args, **kwargs)
