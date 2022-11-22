@@ -1,6 +1,4 @@
-from dataclasses import dataclass
-from enum import auto, Enum
-from typing import Callable, List, Optional
+from typing import Dict, List, Optional
 
 import torch
 import torch.nn as nn
@@ -57,9 +55,9 @@ class DistributedGraph:
             self.fwd_graph_modules,
             self.bwd_graph_modules,
         ):
-            self.primal_to_param.append([])
-            self.primal_name_to_node.append([])
-            self.grad_to_primal.append([])
+            self.primal_to_param.append({})
+            self.primal_name_to_node.append({})
+            self.grad_to_primal.append({})
             primal_to_param = self.primal_to_param[-1]
             primal_name_to_node = self.primal_name_to_node[-1]
             grad_to_primal = self.grad_to_primal[-1]
@@ -70,10 +68,8 @@ class DistributedGraph:
                     param = to_param(fwd_gm, node.name)
                     if param is not None:
                         assert (
-                            node not in self.primal_to_param
+                            node not in primal_to_param
                         ), f"inserting {node.target} twice"
-                        # HACK: use sub-graph gid to distinguish primals with
-                        # the same name
                         primal_to_param[node] = param
                         primal_name_to_node[node.target] = node
 

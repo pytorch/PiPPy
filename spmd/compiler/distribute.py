@@ -1,17 +1,14 @@
 import logging
 from dataclasses import dataclass
-from enum import auto, Enum
 from functools import partial
-from typing import cast, Dict, List, Optional, Sequence, Tuple
+from typing import cast, Dict, List, Sequence, Tuple
 
 import torch
-import torch.distributed as dist
 import torch.fx as fx
 import torch.nn as nn
-from functorch.compile import aot_module, make_boxed_func
 from spmd.tensor import DeviceMesh, DTensor
 from spmd.tensor.dispatch import operator_dispatch, propagate_input_sharding
-from spmd.tensor.placement_types import _Partial, Placement, Replicate, Shard
+from spmd.tensor.placement_types import _Partial, Placement, Shard
 from spmd.tensor.redistribute import _redistribute_with_local_tensor
 from torch.distributed._spmd.comm_tensor import _get_tracer
 from torch.fx.experimental.proxy_tensor import make_fx, proxy_slot
@@ -281,7 +278,7 @@ def _convert_to_distributed_graph(
     orig_module: nn.Module,
     param_schema: Schema,
     _allow_partial: bool = False,
-) -> fx.GraphModule:
+) -> None:
     def is_param(t: torch.Tensor) -> bool:
         # N.B.: id(t) and id(param) does not match
         return t.storage().data_ptr() in [
@@ -318,8 +315,6 @@ def _convert_to_distributed_graph(
             raise ValueError(f"Unrecognized node {node}")
 
     _rebuild_graph(gm, node_replacements)
-
-    return make_boxed_func(gm)
 
 
 def distribute(
