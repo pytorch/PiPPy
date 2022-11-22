@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Callable, DefaultDict, List, Set, Tuple
+from typing import Callable, DefaultDict, Set, Iterable
 
 from .bucketing_strategies import BucketingStrategy
 from .distribute import distribute, Schema
@@ -12,7 +12,7 @@ from .scheduling_policies import SchedulingPolicy
 _run_before_sets: DefaultDict[str, Set[str]] = defaultdict(set)
 
 
-def graph_optimization_pass(run_after: Tuple[str] = ()) -> Callable:
+def graph_optimization_pass(run_after: Iterable[str] = tuple()) -> Callable:
     """
     The contract of graph optimization pass. All the passes should be wrapped with
     this decorator. The first argument of a pass is the target DistGraphOptimization,
