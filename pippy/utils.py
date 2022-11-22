@@ -202,13 +202,13 @@ def run_worker(rank, run_func, args, *extra_args):
             )
 
     else:
-        args.pp_group = torch.distributed.new_group(my_pp_ranks)
+        pp_group = torch.distributed.new_group(my_pp_ranks)
 
         def pp_group_barrier():
             logging.debug(
                 f"Running pipeline group barrier on ranks {my_pp_ranks}"
             )
-            torch.distributed.barrier(args.pp_group)
+            torch.distributed.barrier(pp_group)
 
     if rank >= 0 and rank // args.dp_group_size == 0:
         args.driver_index = rank
