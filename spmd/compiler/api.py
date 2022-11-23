@@ -393,9 +393,9 @@ class SPMD(nn.Module):
         self, *args: Tuple[object], **kwargs: Dict[str, object]
     ) -> object:
         if self._compiled_m is None:
-            # pyre-ignore: I think this is a pyre bug. It thinks that we end up with a Set[Tuple[object]
-            #              but I checked this is not the case.
-            input_set: Set[object] = set(args)
+            flat_args, _ = tree_flatten(args)
+            flat_kwargs, _ = tree_flatten(kwargs)
+            input_set: Set[object] = set(flat_args + flat_kwargs)
 
             def gather_inputs_for_compilation(
                 inps: Tuple[object, ...],
