@@ -20,12 +20,8 @@ from pippy.hf import PiPPyHFTracer
 from pippy.microbatch import CustomReducer, TensorChunkSpec
 from pippy.visualizer import events_to_json
 from pippy import split_on_size_threshold, split_into_equal_size
-from benchmark_utils.benchmark import get_enc_dec_batch, benchmark_cuda_event, benchmark_time_perfcounter, setup_logger
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-
-# for generation
 from transformers import T5Tokenizer, T5ForConditionalGeneration, T5Config
-# from profiling.memory_stats import MemoryStats, format_to_gb
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
@@ -139,9 +135,6 @@ def run_master(pp_ranks, args):
     logger = setup_logger()
 
     torch.manual_seed(42)
-    #start tracking memory
-    # memory_stats = MemoryStats()
-    # memory_stats.start()
 
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if args.replicate else MultiUseParameterConfig.TRANSMIT
     print(f'REPLICATE config: {args.replicate} -> {MULTI_USE_PARAM_CONFIG}')
@@ -157,7 +150,6 @@ def run_master(pp_ranks, args):
     t5_config.num_decoder_layers = args.num_decoder_layers or t5_config.num_decoder_layers
     t5_config.use_cache = False  # don't output `past_key_values`
     t5 = T5ForConditionalGeneration(t5_config)
-    # t5.to(device)  # TODO: Delete this after https://github.com/pytorch/PiPPy/issues/142
     t5.eval()
     memory_reserved = format_to_gb(torch.cuda.memory_reserved())
     memory_allocated = format_to_gb(torch.cuda.memory_allocated())
@@ -179,7 +171,6 @@ def run_master(pp_ranks, args):
 
     all_worker_ranks = pp_ranks[pippy.utils.exclude_master:pippy.utils.exclude_master + number_of_workers]
     chunks = args.chunks or len(all_worker_ranks)
-    # chunks = len(all_worker_ranks)
     bs = args.batch_size * chunks
     seq_length = args.seq_length
 
@@ -209,11 +200,6 @@ def run_master(pp_ranks, args):
         return 
     
     split_gm_children = list(t5_pipe.split_gm.children())
-    # assert number_of_workers == len(
-    #     split_gm_children), f"number_of_workers = {number_of_workers} len(split_gm_children) = {len(split_gm_children)}"
-    # t5_pipe.to(device) TODO: Uncomment this after https://github.com/pytorch/PiPPy/issues/142
-
-    # t5_pipe(**t5_input_dict)
 
     total_params = 0
     for i, sm in enumerate(t5_pipe.split_gm.children()):
@@ -239,43 +225,14 @@ def run_master(pp_ranks, args):
                                                                 )
     model_init_end = time.time()
 
-    print("*********** init time {}***************".format(model_init_end - model_init_start))
- 
-    memory_reserved = format_to_gb(torch.cuda.memory_reserved())
-    memory_allocated = format_to_gb(torch.cuda.memory_allocated())
-    print("***********************************************")
-    print("memory_reserved after model intializaed with pipelines", memory_reserved)
-    print("memory_allocated after model intializaed with pipelines", memory_allocated)
-    print("***********************************************")
-
-    print("***********************************************")
-    # for device in range(torch.cuda.device_count()):
-    print(torch.cuda.list_gpu_processes(0))
-    print(torch.cuda.list_gpu_processes(1))
-    print(torch.cuda.list_gpu_processes(2))
-    print(torch.cuda.list_gpu_processes(3))
-    print(torch.cuda.list_gpu_processes(4))
-    print(torch.cuda.list_gpu_processes(5))
-    print(torch.cuda.list_gpu_processes(6))
-    print(torch.cuda.list_gpu_processes(7))
-    print("***********************************************")
-
     this_file_name = os.path.splitext(os.path.basename(__file__))[0]
 
     print('Running T5 pipeline.')
-    print("####",t5_input_dict["input_ids"].size())
     for i in range(args.num_batches):
         pipe_driver(**t5_input_dict)
 
-    # pipe_visualized_filename = f"{this_file_name}_visualized_{args.rank}.json"
-    # batches_events_contexts = []
-    # batches = [get_enc_dec_batch(args.batch_size, args.avg_seqlen, args.max_seqlen, args.seqlen_stdev, t5.config.vocab_size, device) for _ in range(args.num_batches)]
-    # print("*************** batch size **************", batches[0]["input_ids"].size())
-    # t5_time = benchmark_cuda_event(pipe_driver, batches, args.num_batches)
-    # benchmark_time_perfcounter(pipe_driver, batches, args.num_batches)
-    # logger.info(f"T5 inference time per batch {t5_time}")
-    # memory_stats.stop()
-    print('Benchmark is finished')
+    
+    print('Inference is finished')
 
 
 if __name__ == "__main__":
@@ -316,5 +273,3 @@ if __name__ == "__main__":
     args.gspmd = 1
 
     run_pippy(run_master, args)
-# kill $(ps aux | grep YOUR_TRAINING_SCRIPT.py | grep -v grep | awk '{print $2}')
-#ps aux | grep t5_pretrained_inference.py | grep -v grep | awk '{print $2}'
