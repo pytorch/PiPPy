@@ -1,5 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 from typing import List
+import numpy as np
 
 import torch
 import torch.nn as nn
@@ -145,48 +146,48 @@ class TraceDeviceMeshTestBase:
                 )
 
 
-class TraceDeviceMesh3DTest(DTensorTestBase, TraceDeviceMeshTestBase):
-    @property
-    def world_size(self):
-        return 8
+# class TraceDeviceMesh3DTest(DTensorTestBase, TraceDeviceMeshTestBase):
+#     @property
+#     def world_size(self):
+#         return 8
 
-    @with_comms
-    def test_tracing_all_reduce_nd(self):
-        self._test_tracing_all_reduce_nd(torch.arange(8).reshape(2, 2, 2))
+#     @with_comms
+#     def test_tracing_all_reduce_nd(self):
+#         self._test_tracing_all_reduce_nd(torch.arange(8).reshape(2, 2, 2))
 
-    @with_comms
-    def test_broadcast_nd(self):
-        self._test_broadcast_nd(torch.arange(8).reshape(2, 2, 2))
+#     @with_comms
+#     def test_broadcast_nd(self):
+#         self._test_broadcast_nd(torch.arange(8).reshape(2, 2, 2))
 
-    @with_comms
-    def test_scatter_nd(self):
-        self._test_scatter_nd(torch.arange(8).reshape(2, 2, 2))
+#     @with_comms
+#     def test_scatter_nd(self):
+#         self._test_scatter_nd(torch.arange(8).reshape(2, 2, 2))
 
-    @with_comms
-    def test_all_gather_nd(self):
-        self._test_all_gather_nd(torch.arange(8).reshape(2, 2, 2))
+#     @with_comms
+#     def test_all_gather_nd(self):
+#         self._test_all_gather_nd(torch.arange(8).reshape(2, 2, 2))
 
 
-class TraceDeviceMesh2DTest(DTensorTestBase, TraceDeviceMeshTestBase):
-    @property
-    def world_size(self):
-        return 4
+# class TraceDeviceMesh2DTest(DTensorTestBase, TraceDeviceMeshTestBase):
+#     @property
+#     def world_size(self):
+#         return 4
 
-    @with_comms
-    def test_tracing_all_reduce_nd(self):
-        self._test_tracing_all_reduce_nd(torch.arange(4).reshape(2, 2))
+#     @with_comms
+#     def test_tracing_all_reduce_nd(self):
+#         self._test_tracing_all_reduce_nd(torch.arange(4).reshape(2, 2))
 
-    @with_comms
-    def test_broadcast_nd(self):
-        self._test_broadcast_nd(torch.arange(4).reshape(2, 2))
+#     @with_comms
+#     def test_broadcast_nd(self):
+#         self._test_broadcast_nd(torch.arange(4).reshape(2, 2))
 
-    @with_comms
-    def test_scatter_nd(self):
-        self._test_scatter_nd(torch.arange(4).reshape(2, 2))
+#     @with_comms
+#     def test_scatter_nd(self):
+#         self._test_scatter_nd(torch.arange(4).reshape(2, 2))
 
-    @with_comms
-    def test_all_gather_nd(self):
-        self._test_all_gather_nd(torch.arange(4).reshape(2, 2))
+#     @with_comms
+#     def test_all_gather_nd(self):
+#         self._test_all_gather_nd(torch.arange(4).reshape(2, 2))
 
 
 class TraceModuleTest(DTensorTestBase):
@@ -194,7 +195,7 @@ class TraceModuleTest(DTensorTestBase):
     def world_size(self):
         return 2
 
-    def _test_trace_replicate(self, model, x):
+    def _test_trace_replicate(self, model, x, only_fw=False):
         # if x.device.type == "cuda":
         ddp = DDP(deepcopy(model))
         spmd = SPMD(
@@ -207,6 +208,9 @@ class TraceModuleTest(DTensorTestBase):
             ),
         )
 
+        if only_fw:
+            self.assertEqual(ddp(x), spmd(x))
+            return
         ddp(x).sum().backward()
         spmd(x).sum().backward()
         for p1, p2 in zip(ddp.parameters(), spmd.parameters()):
@@ -216,28 +220,41 @@ class TraceModuleTest(DTensorTestBase):
             self.assertTrue(p1.grad.allclose(p2.grad / self.world_size))
 
     @with_comms
-    def test_sequential(self):
-        model = nn.Sequential(*[nn.Linear(10, 10) for _ in range(2)]).to(
+    def test_layer_norm_fw(self):
+        input_dims = []
+
+        input = np.random.randn(10, 5).astype(np.float32)
+        model = nn.Sequential(nn.LayerNorm(input.shape)).to(
             self.device_type
         )
-        x = torch.randn(2, 10).to(self.device_type)
-        self._test_trace_replicate(model, x)
+        pt_input = torch.tensor(input, dtype=torch.float).to(self.device_type)
+        self._test_trace_replicate(model, pt_input, only_fw=True)
 
-    @with_comms
-    def test_parallel(self):
-        class Model(nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.module_list = nn.ModuleList(
-                    [nn.Linear(10, 10) for _ in range(2)]
-                )
 
-            def forward(self, x):
-                return sum([m(x) for m in self.module_list])
 
-        model = Model().to(self.device_type)
-        x = torch.randn(2, 10).to(self.device_type)
-        self._test_trace_replicate(model, x)
+    # @with_comms
+    # def test_sequential(self):
+    #     model = nn.Sequential(*[nn.Linear(10, 10) for _ in range(2)]).to(
+    #         self.device_type
+    #     )
+    #     x = torch.randn(2, 10).to(self.device_type)
+    #     self._test_trace_replicate(model, x)
+
+    # @with_comms
+    # def test_parallel(self):
+    #     class Model(nn.Module):
+    #         def __init__(self):
+    #             super().__init__()
+    #             self.module_list = nn.ModuleList(
+    #                 [nn.Linear(10, 10) for _ in range(2)]
+    #             )
+
+    #         def forward(self, x):
+    #             return sum([m(x) for m in self.module_list])
+
+    #     model = Model().to(self.device_type)
+    #     x = torch.randn(2, 10).to(self.device_type)
+    #     self._test_trace_replicate(model, x)
 
 
 if __name__ == "__main__":

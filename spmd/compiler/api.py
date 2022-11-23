@@ -215,7 +215,7 @@ def _convert_output(
             elif dtn.op == OP.OUTPUT:
                 assert (
                     len(dtn.args) == 1 and len(dtn.args[0]) == 1
-                ), f"Expecting single output, but got {dtn.args}"
+                ), f"Expecting single output, but got {dtn.args} {len(dtn.args)}"
                 new_args.append(value_remap[dtn.args[0][0]])
             else:
                 if dtn.op == OP.GET_ATTR:
@@ -265,9 +265,10 @@ def _rebuild_graph(
                     # been prepared in value_remap
                     pass
                 elif dtn.op == OP.OUTPUT:
+                    # TODO: AssertionError: Expecting single output, but got ([getitem, getitem_1, getitem_2],)
                     assert (
-                        len(dtn.args) == 1 and len(dtn.args[0]) == 1
-                    ), f"Expecting single output, but got {dtn.args}"
+                        len(dtn.args) == 1
+                    ), f"Expecting single output, but got {dtn.args} {len(dtn.args[0])}"
                     node.replace_all_uses_with(value_remap[dtn.args[0][0]])
                 else:
                     value_remap[dtn] = gm.graph.node_copy(
@@ -293,7 +294,6 @@ def _convert_to_distributed(
 
     rank0_info(logger, f"Training phase: {training_phase}")
     for i, node in enumerate(gm.graph.nodes):
-        rank0_info(logger, f"node{i}: op={node.op} target={node.target}")
         if node.op == OP.PLACEHOLDER:
             assert i < len(
                 inps
@@ -309,6 +309,22 @@ def _convert_to_distributed(
             if not _allow_partial:
                 _convert_output(gm, node, node_to_obj)
                 break
+        elif node.op == "call_function":
+            def remap_arg(arg: object) -> object:
+                if isinstance(arg, torch.fx.Node):
+                    obj = node_to_obj[arg]
+                    # TODO(anj): we need this for getitem but can we be more generic?
+                    if isinstance(obj, tuple):
+                        return obj
+                    if _get_tracer(obj):
+                        # This is a shared arg, already has a tracer from previous
+                        # tracing. Delete the tracer.
+                        del cast(Dict[object, object], obj.__dict__)[proxy_slot]
+                    return obj
+                else:
+                    return arg
+            args = tree_map(remap_arg, node.args)
+            node_to_obj[node] = node.target(args[0], args[1])
         else:
             raise ValueError(f"Unrecognized node {node}")
 

@@ -22,7 +22,7 @@ from spmd.tensor.utils import (
 If _ENABLE_FALLBACK set to False, dispatch will fail when an op doesn't
 have a sharding rule registered.
 """
-_ENABLE_FALLBACK = False
+_ENABLE_FALLBACK = True
 
 
 """
