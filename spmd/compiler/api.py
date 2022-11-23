@@ -294,6 +294,7 @@ def _convert_to_distributed(
 
     rank0_info(logger, f"Training phase: {training_phase}")
     for i, node in enumerate(gm.graph.nodes):
+        rank0_info(logger, f"node{i}: op={node.op} target={node.target}")
         if node.op == OP.PLACEHOLDER:
             assert i < len(
                 inps
