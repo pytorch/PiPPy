@@ -4,11 +4,13 @@ PiPPY helps to run very large models for inference by splitting the model into m
 PiPPY make this easier by providing a auto split API that automates this process for user. 
 
 ### How it works
+
 PiPPY splits your model into multiple stages, each stage loaded on one gpu then the input batch will be furhter divided into micro-batches and run through the splits from 
 rank0 to the last rank. Results are being returned to rank0 as its runing the PipelineDriver.
 Please read more here [Link to the main readme]
 
 ### PiPPY support arbitary checkpoint splitting 
+
 Unlike most of the available solutions that they need to know the model architecture beforehand, PiPPY supports arbitary PyTorch checkpoints.
 * PiPPY supports both manual splitting and auto split.
 * Auto split support both equal_size and threshod policies.
@@ -33,17 +35,18 @@ example:
 *  Setup the model split policy
 
 ```
+from pippy import split_on_size_threshold, split_into_equal_size
+
 if args.auto_split == "threshold":
         split_policy = split_on_size_threshold(490 * 1e6)
 elif args.auto_split == "equal_size":
         split_policy = split_into_equal_size(number_of_workers)
 ```
 * make the concerete args
-```
 
+```
 sig = inspect.signature(t5.forward)
 concrete_args = {p.name: p.default for p in sig.parameters.values() if p.name not in input_names}
-
 ```
 
 * Split the model into a pipline, `Pipe.from_tracing` uses `torch.fx` symbolic tracing to turn our model into a directed acyclic graph (DAG) representation. Then, it groups together the operations and parameters into _pipeline stages_. Stages are represented as `submod_N` submodules, where `N` is a natural number.
