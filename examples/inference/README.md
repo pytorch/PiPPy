@@ -6,8 +6,7 @@ PiPPY make this easier by providing a auto split API that automates this process
 ### How it works
 
 PiPPY splits your model into multiple stages, each stage loaded on one gpu then the input batch will be furhter divided into micro-batches and run through the splits from 
-rank0 to the last rank. Results are being returned to rank0 as its runing the PipelineDriver.
-Please read more here [Link to the main readme]
+rank0..N. Results are being returned to rank0 as its runing the PipelineDriver. Please read more on pipleines [here](https://github.com/pytorch/tau/blob/main/README.md)
 
 ### PiPPY support arbitary checkpoint splitting 
 
@@ -87,12 +86,11 @@ kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'decoder_input_ids': Tenso
 output_chunk_spec = {"logits": TensorChunkSpec(0),"encoder_last_hidden_state": TensorChunkSpec(0)}
 
 ```
-* Choose an schedule for the pipline, we use "PipelineDriverFillDrain" here, please learn more about it here.[link to pipeline scheduling]
+* Choose an schedule for the pipline, we use "PipelineDriverFillDrain" here, please learn more about it [here](https://github.com/pytorch/tau/blob/main/README.md#advanced-pipeline-schedules). For inference we would need only "PipelineDriverFillDrain".
+
 ```
 schedules = {
     'FillDrain': PipelineDriverFillDrain,
-    '1F1B': PipelineDriver1F1B,
-    'Interleaved1F1B': PipelineDriverInterleaved1F1B,
 }
 ```
 * Now we have all the settings lets define the PipelineDriver that runs the pipeline. To learn more about different schedules for piplelines please use this link[]
