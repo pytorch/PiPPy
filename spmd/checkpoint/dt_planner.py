@@ -1,10 +1,10 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-import dataclasses
 import logging
 from typing import Any, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
+from torch.distributed.checkpoint.dedup_tensors import dedup_tensors
 from torch.distributed.checkpoint.default_planner import (
     DefaultLoadPlanner,
     DefaultSavePlanner,
@@ -143,33 +143,6 @@ def _create_write_items_for_dtensor(fqn: str, tensor: DTensor) -> WriteItem:
             size=tensor.size(),
         ),
     )
-
-
-def dedup_tensors(all_plans: List[SavePlan]) -> List[SavePlan]:
-    all_plans = list(all_plans)
-    key_to_plan = {}  # type: ignore
-    for plan_idx, plan in enumerate(all_plans):
-        for wi in plan.items:
-            key_to_plan.setdefault(wi.index, []).append(plan_idx)
-
-    replicated_items = {k: v for k, v in key_to_plan.items() if len(v) > 1}
-
-    plan_to_keys = {}  # type: ignore
-    for key, plans in replicated_items.items():
-        for plan_idx in plans[1:]:
-            plan_to_keys.setdefault(plan_idx, []).append(key)
-    dLogger.debug(f"Keys to remove: {plan_to_keys}")
-
-    for plan_idx, keys in plan_to_keys.items():
-        key_set = set(keys)
-        new_items = [
-            wi for wi in all_plans[plan_idx].items if wi.index not in key_set
-        ]
-        all_plans[plan_idx] = dataclasses.replace(
-            all_plans[plan_idx], items=new_items
-        )
-
-    return all_plans
 
 
 def _create_shard_from_dtensor(tensor: DTensor) -> Shard:
