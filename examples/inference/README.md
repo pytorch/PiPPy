@@ -13,7 +13,7 @@ Please read more here [Link to the main readme]
 
 Unlike most of the available solutions that they need to know the model architecture beforehand, PiPPY supports arbitary PyTorch checkpoints.
 * PiPPY supports both manual splitting and auto split.
-* Auto split support both equal_size and threshod policies.
+* Auto split uses split_policy and support both equal_size and threshod policies.
 * PiPPY use FX to trace and split the model.
 
 ### How to Use PiPPY for inference
@@ -28,7 +28,7 @@ example:
 
 ` t5 = AutoModelForSeq2SeqLM.from_pretrained('t5-11b', use_cache=False) `
 
-* Setup configs
+* The "MULTI_USE_PARAM_CONFIG" addresses corner cases where if an Operation would need a parameter that has been placed on a different GPU. In this case with setting we can either REPLICATE or TRANSMIT that paramter to the GPU/rank that needs it. 
 
  `MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if args.replicate else MultiUseParameterConfig.TRANSMIT`
 
@@ -42,14 +42,16 @@ if args.auto_split == "threshold":
 elif args.auto_split == "equal_size":
         split_policy = split_into_equal_size(number_of_workers)
 ```
-* make the concerete args
+* Make the concerete args, this would FX for tracing by giving it concerete inputs.
 
 ```
+t5_input_dict = {'input_ids': inp, 'decoder_input_ids': inp}
+input_names = t5_input_dict.keys()
 sig = inspect.signature(t5.forward)
 concrete_args = {p.name: p.default for p in sig.parameters.values() if p.name not in input_names}
 ```
 
-* Split the model into a pipline, `Pipe.from_tracing` uses `torch.fx` symbolic tracing to turn our model into a directed acyclic graph (DAG) representation. Then, it groups together the operations and parameters into _pipeline stages_. Stages are represented as `submod_N` submodules, where `N` is a natural number.
+* Split the model into a pipline, `Pipe.from_tracing` uses `torch.fx` symbolic tracing to turn our model into a directed acyclic graph (DAG) representation. Then, it groups together the operations and parameters into _pipeline stages_. Stages are represented as `submod_N` submodules, where `N` is a natural number. Note:here we use HF FX_tracer for tracing.
 
 ```
 from PiPPY.IR import Pipe
@@ -64,8 +66,10 @@ t5_pipe = Pipe.from_tracing(t5, MULTI_USE_PARAM_CONFIG, tracer=PiPPYHFTracer(), 
 ```
 all_worker_ranks = pp_ranks[PiPPY.utils.exclude_master:PiPPY.utils.exclude_master + number_of_workers]
 chunks = args.chunks or len(all_worker_ranks)
+batch_size = args.batch_size * chunks
+
 ```
-* Stream load to device using defer_stage_init, which basically let each rank trace the model and split the model and only materialize its own shard
+* Load to device directly using "defer_stage_init", which basically let each rank trace the model and split the model and only materialize its own shard
 The barrier would make sure all the rank have loaded their shards and finally we make sure that only rank0 run the pipe.
 
 ```
@@ -91,7 +95,8 @@ schedules = {
     'Interleaved1F1B': PipelineDriverInterleaved1F1B,
 }
 ```
-* Now we have all the settings lets define the PipelineDriver that runs the pipeline. To learn more about different schedules for piplelines please 
+* Now we have all the settings lets define the PipelineDriver that runs the pipeline. To learn more about different schedules for piplelines please use this link[]
+
 ```
 pipe_driver: PipelineDriverBase = schedules[args.schedule](t5_pipe, chunks, args_chunk_spec, kwargs_chunk_spec,
                                                             output_chunk_spec,
