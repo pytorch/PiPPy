@@ -11,6 +11,8 @@ from typing import Optional, Sequence, Callable, cast
 
 import torch
 import torch.nn as nn
-from torch.distributed._tensor.api import DTensor
+
+# DTensor imports from core distributed
+from torch.distributed._tensor import *
 from torch.distributed._tensor.device_mesh import DeviceMesh, get_global_device_mesh
-from torch.distributed._tensor.placement_types import Placement, Shard, Replicate
+from torch.distributed._tensor.ops.utils import register_prop_rule
