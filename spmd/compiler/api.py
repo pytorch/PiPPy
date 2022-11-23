@@ -310,7 +310,7 @@ def _convert_to_distributed(
             if not _allow_partial:
                 _convert_output(gm, node, node_to_obj)
                 break
-        elif node.op == "call_function":
+        elif node.op == OP.CALL_FUNCTION:
             def remap_arg(arg: object) -> object:
                 if isinstance(arg, torch.fx.Node):
                     obj = node_to_obj[arg]
@@ -380,5 +380,5 @@ class SPMD(nn.Module):
                 partial(self._compile, TrainingPhase.FORWARD),
                 partial(self._compile, TrainingPhase.BACKWARD),
             )
-
+        print(f"args {args}")
         return cast(nn.Module, self._compiled_m)(*args, **kwargs)

@@ -224,7 +224,7 @@ class TraceModuleTest(DTensorTestBase):
         input_dims = []
 
         input = np.random.randn(10, 5).astype(np.float32)
-        model = nn.Sequential(nn.LayerNorm(input.shape[1:])).to(
+        model = nn.LayerNorm(input.shape[1:]).to(
             self.device_type
         )
         pt_input = torch.tensor(input, dtype=torch.float).to(self.device_type)
