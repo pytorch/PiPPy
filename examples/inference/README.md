@@ -1,4 +1,4 @@
-## PiPPY Inference For Large Models
+## PiPPY inference for large models
 
 PiPPY helps to run very large models for inference by splitting the model into mutliple stages running in multiple GPUs.
 PiPPY make this easier by providing a auto split API that automates this process for user. 
