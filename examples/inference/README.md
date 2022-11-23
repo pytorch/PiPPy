@@ -1,22 +1,20 @@
-## PIPPY Inference For Large Models
+## PiPPY Inference For Large Models
 
-pippy helps to run very large models for inference by splitting the model into mutliple stages running on multiple GPUs.
-pippy make this easier by providing a Auto split API that automate this process for user. 
+PiPPY helps to run very large models for inference by splitting the model into mutliple stages running in multiple GPUs.
+PiPPY make this easier by providing a auto split API that automates this process for user. 
 
 ### How it works
-
-pippy split your model into multiple stages, each stage gets loaded on one gpu then the input batch will be furhter divided into micro-batches and run through the splits from rank0 to the last rank. Results are being returned to rank0 as its runing the pipedriver.
+PiPPY splits your model into multiple stages, each stage loaded on one gpu then the input batch will be furhter divided into micro-batches and run through the splits from 
+rank0 to the last rank. Results are being returned to rank0 as its runing the PipelineDriver.
 Please read more here [Link to the main readme]
 
-### pippy support arbitary checkpoint splitting 
+### PiPPY support arbitary checkpoint splitting 
+Unlike most of the available solutions that they need to know the model architecture beforehand, PiPPY supports arbitary PyTorch checkpoints.
+* PiPPY supports both manual splitting and auto split.
+* Auto split support both equal_size and threshod policies.
+* PiPPY use FX to trace and split the model.
 
-Unlike most of the available sollutions that they need to know the model architecture beforehand, pippy supports any arbitary PyTorch model checkpoints.
-
-* Pippy supports both manual splitting and auto_split.
-* auto_split support both equal_size and threshod policies.
-* Pippy use FX to trace and split the model.
-
-#### How to Use pippy for inference
+### How to Use PiPPY for inference
 
 **Define a function such as run_master() and add the followings to it.**
 
@@ -51,9 +49,9 @@ concrete_args = {p.name: p.default for p in sig.parameters.values() if p.name no
 * Split the model into a pipline, `Pipe.from_tracing` uses `torch.fx` symbolic tracing to turn our model into a directed acyclic graph (DAG) representation. Then, it groups together the operations and parameters into _pipeline stages_. Stages are represented as `submod_N` submodules, where `N` is a natural number.
 
 ```
-from pippy.IR import Pipe
+from PiPPY.IR import Pipe
 
-t5_pipe = Pipe.from_tracing(t5, MULTI_USE_PARAM_CONFIG, tracer=PiPPyHFTracer(), concrete_args=concrete_args,
+t5_pipe = Pipe.from_tracing(t5, MULTI_USE_PARAM_CONFIG, tracer=PiPPYHFTracer(), concrete_args=concrete_args,
                                 output_loss_value_spec=None, split_policy=split_policy
                                 )
 ```
@@ -61,7 +59,7 @@ t5_pipe = Pipe.from_tracing(t5, MULTI_USE_PARAM_CONFIG, tracer=PiPPyHFTracer(), 
 * Set the number of chunks that decide the microbatch sizes
 
 ```
-all_worker_ranks = pp_ranks[pippy.utils.exclude_master:pippy.utils.exclude_master + number_of_workers]
+all_worker_ranks = pp_ranks[PiPPY.utils.exclude_master:PiPPY.utils.exclude_master + number_of_workers]
 chunks = args.chunks or len(all_worker_ranks)
 ```
 * Stream load to device using defer_stage_init, which basically let each rank trace the model and split the model and only materialize its own shard
@@ -69,7 +67,7 @@ The barrier would make sure all the rank have loaded their shards and finally we
 
 ```
  t5_pipe.defer_stage_init(args.device)
- pippy.utils.pp_group_barrier()
+ PiPPY.utils.pp_group_barrier()
  if args.rank!=0:
         return 
  ```
@@ -107,9 +105,9 @@ pipe_driver: PipelineDriverBase = schedules[args.schedule](t5_pipe, chunks, args
 `pipe_driver(**t5_input_dict)`
 
 
-**we need to pass the run_master() function to the run_pippy() along with args to run the pipeline**
+**we need to pass the run_master() function to the run_PiPPY() along with args to run the pipeline**
 
-* Here we need to make sure args.gspmd is set that will let run_pippy() to let each rank do the trace and sharding.
+* Here we need to make sure args.gspmd is set that will let run_PiPPY() to let each rank do the trace and sharding.
 
 ```
 
@@ -123,3 +121,6 @@ if __name__ == "__main__":
     run_pippy(run_master, args)
 
 ```
+Then simply run your python inference script
+
+` python t5_inference.py`
