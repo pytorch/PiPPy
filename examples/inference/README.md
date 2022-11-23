@@ -1,15 +1,17 @@
 ## PIPPY Inference For Large Models
 
-pippy helps to run very large models for inference by splitting the model into mutliple stages running in multiple GPUs.p
-Pippy make this easier by providing a auto_split API that automate this process for user. 
+pippy helps to run very large models for inference by splitting the model into mutliple stages running on multiple GPUs.
+pippy make this easier by providing a Auto split API that automate this process for user. 
 
 ### How it works
-pippy split your model into multiple stages, each stage loaded on one gpu then the input batch will be furhter divided into micro-batches and run through the splits from 
-rank0 to the last rank. Results are being returned to rank0 as its runing the pipedriver.
+
+pippy split your model into multiple stages, each stage gets loaded on one gpu then the input batch will be furhter divided into micro-batches and run through the splits from rank0 to the last rank. Results are being returned to rank0 as its runing the pipedriver.
 Please read more here [Link to the main readme]
 
 ### pippy support arbitary checkpoint splitting 
+
 Unlike most of the available sollutions that they need to know the model architecture beforehand, pippy supports any arbitary PyTorch model checkpoints.
+
 * Pippy supports both manual splitting and auto_split.
 * auto_split support both equal_size and threshod policies.
 * Pippy use FX to trace and split the model.
