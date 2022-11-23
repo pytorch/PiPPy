@@ -12,7 +12,7 @@ rank0..N. Results are being returned to rank0 as its runing the PipelineDriver. 
 
 Unlike most of the available solutions that they need to know the model architecture beforehand, PiPPY supports arbitary PyTorch checkpoints.
 * PiPPY supports both manual splitting and auto split.
-* Auto split uses split_policy and support both equal_size and threshod policies.
+* Auto split uses `split_policy` and support both `equal_size` and `threshod` policies, the name are self-explanatory.
 * PiPPY use FX to trace and split the model.
 
 ### How to Use PiPPY for inference
