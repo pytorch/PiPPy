@@ -17,7 +17,11 @@ from torch.fx.experimental.proxy_tensor import make_fx, proxy_slot
 from torch.utils._pytree import tree_flatten, tree_map, tree_unflatten
 
 from spmd.tensor import DeviceMesh, DTensor, distribute_tensor
-from spmd.tensor.dispatch import operator_dispatch, propagate_input_sharding, _CURRENT_DECOMPOSITION_TABLE
+from spmd.tensor.dispatch import (
+    operator_dispatch,
+    propagate_input_sharding,
+    _CURRENT_DECOMPOSITION_TABLE,
+)
 from spmd.tensor.placement_types import Placement, Replicate, Shard, _Partial
 from spmd.tensor.redistribute import _redistribute_with_local_tensor
 
@@ -117,7 +121,6 @@ def _get_dtensor_dispatch_graph(
         kwargs,
         DTensor._op_to_rules,
     )
-    print(f"node.name {node.name} target_schema {target_schema}")
     # ===== Begin code taken from pack_args_kwargs_with_local_tensor =====
     flatten_args, args_tree_spec = tree_flatten(args)
     flatten_args_schema, _ = tree_flatten(target_schema.args_schema)
@@ -306,7 +309,7 @@ def _convert_to_distributed(
     gm: fx.GraphModule,
     inps: List[torch.Tensor],
     schemas: List[Schema],
-    _allow_partial: bool = True,
+    _allow_partial: bool = False,
 ) -> fx.GraphModule:
     node_to_obj: Dict[fx.Node, object] = {}
     # map local op node in traced_f to its corresponding subgraph of
@@ -347,6 +350,7 @@ def _convert_to_distributed(
                 _convert_output(gm, node, node_to_obj)
                 break
         elif node.op == OP.CALL_FUNCTION:
+
             def remap_arg(arg: object) -> object:
                 if isinstance(arg, torch.fx.Node):
                     obj = node_to_obj[arg]
@@ -360,6 +364,7 @@ def _convert_to_distributed(
                     return obj
                 else:
                     return arg
+
             args = tree_map(remap_arg, node.args)
             node_to_obj[node] = node.target(args[0], args[1])
         else:
@@ -435,5 +440,4 @@ class SPMD(nn.Module):
                 pre_compile_fn=gather_inputs_for_compilation,
                 decompositions=_CURRENT_DECOMPOSITION_TABLE,
             )
-        print(f"args {args}")
         return cast(nn.Module, self._compiled_m)(*args, **kwargs)

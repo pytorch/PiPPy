@@ -146,48 +146,48 @@ class TraceDeviceMeshTestBase:
                 )
 
 
-# class TraceDeviceMesh3DTest(DTensorTestBase, TraceDeviceMeshTestBase):
-#     @property
-#     def world_size(self):
-#         return 8
+class TraceDeviceMesh3DTest(DTensorTestBase, TraceDeviceMeshTestBase):
+    @property
+    def world_size(self):
+        return 8
 
-#     @with_comms
-#     def test_tracing_all_reduce_nd(self):
-#         self._test_tracing_all_reduce_nd(torch.arange(8).reshape(2, 2, 2))
+    @with_comms
+    def test_tracing_all_reduce_nd(self):
+        self._test_tracing_all_reduce_nd(torch.arange(8).reshape(2, 2, 2))
 
-#     @with_comms
-#     def test_broadcast_nd(self):
-#         self._test_broadcast_nd(torch.arange(8).reshape(2, 2, 2))
+    @with_comms
+    def test_broadcast_nd(self):
+        self._test_broadcast_nd(torch.arange(8).reshape(2, 2, 2))
 
-#     @with_comms
-#     def test_scatter_nd(self):
-#         self._test_scatter_nd(torch.arange(8).reshape(2, 2, 2))
+    @with_comms
+    def test_scatter_nd(self):
+        self._test_scatter_nd(torch.arange(8).reshape(2, 2, 2))
 
-#     @with_comms
-#     def test_all_gather_nd(self):
-#         self._test_all_gather_nd(torch.arange(8).reshape(2, 2, 2))
+    @with_comms
+    def test_all_gather_nd(self):
+        self._test_all_gather_nd(torch.arange(8).reshape(2, 2, 2))
 
 
-# class TraceDeviceMesh2DTest(DTensorTestBase, TraceDeviceMeshTestBase):
-#     @property
-#     def world_size(self):
-#         return 4
+class TraceDeviceMesh2DTest(DTensorTestBase, TraceDeviceMeshTestBase):
+    @property
+    def world_size(self):
+        return 4
 
-#     @with_comms
-#     def test_tracing_all_reduce_nd(self):
-#         self._test_tracing_all_reduce_nd(torch.arange(4).reshape(2, 2))
+    @with_comms
+    def test_tracing_all_reduce_nd(self):
+        self._test_tracing_all_reduce_nd(torch.arange(4).reshape(2, 2))
 
-#     @with_comms
-#     def test_broadcast_nd(self):
-#         self._test_broadcast_nd(torch.arange(4).reshape(2, 2))
+    @with_comms
+    def test_broadcast_nd(self):
+        self._test_broadcast_nd(torch.arange(4).reshape(2, 2))
 
-#     @with_comms
-#     def test_scatter_nd(self):
-#         self._test_scatter_nd(torch.arange(4).reshape(2, 2))
+    @with_comms
+    def test_scatter_nd(self):
+        self._test_scatter_nd(torch.arange(4).reshape(2, 2))
 
-#     @with_comms
-#     def test_all_gather_nd(self):
-#         self._test_all_gather_nd(torch.arange(4).reshape(2, 2))
+    @with_comms
+    def test_all_gather_nd(self):
+        self._test_all_gather_nd(torch.arange(4).reshape(2, 2))
 
 
 class TraceModuleTest(DTensorTestBase):
@@ -227,12 +227,12 @@ class TraceModuleTest(DTensorTestBase):
 
     @with_comms
     def test_layer_norm_fw(self):
+        # This test is for get_item support. layer_norm contains
+        # tuples in its output which means we need to support get_item.
         input_dims = []
 
         input = np.random.randn(4, 5).astype(np.float32)
-        model = nn.LayerNorm(input.shape[1:]).to(
-            self.device_type
-        )
+        model = nn.LayerNorm(input.shape[1:]).to(self.device_type)
         pt_input = torch.tensor(input, dtype=torch.float).to(self.device_type)
         self._test_trace_replicate(model, pt_input, only_fw=True)
 
