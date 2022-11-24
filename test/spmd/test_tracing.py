@@ -146,48 +146,48 @@ class TraceDeviceMeshTestBase:
                 )
 
 
-class TraceDeviceMesh3DTest(DTensorTestBase, TraceDeviceMeshTestBase):
-    @property
-    def world_size(self):
-        return 8
+# class TraceDeviceMesh3DTest(DTensorTestBase, TraceDeviceMeshTestBase):
+#     @property
+#     def world_size(self):
+#         return 8
 
-    @with_comms
-    def test_tracing_all_reduce_nd(self):
-        self._test_tracing_all_reduce_nd(torch.arange(8).reshape(2, 2, 2))
+#     @with_comms
+#     def test_tracing_all_reduce_nd(self):
+#         self._test_tracing_all_reduce_nd(torch.arange(8).reshape(2, 2, 2))
 
-    @with_comms
-    def test_broadcast_nd(self):
-        self._test_broadcast_nd(torch.arange(8).reshape(2, 2, 2))
+#     @with_comms
+#     def test_broadcast_nd(self):
+#         self._test_broadcast_nd(torch.arange(8).reshape(2, 2, 2))
 
-    @with_comms
-    def test_scatter_nd(self):
-        self._test_scatter_nd(torch.arange(8).reshape(2, 2, 2))
+#     @with_comms
+#     def test_scatter_nd(self):
+#         self._test_scatter_nd(torch.arange(8).reshape(2, 2, 2))
 
-    @with_comms
-    def test_all_gather_nd(self):
-        self._test_all_gather_nd(torch.arange(8).reshape(2, 2, 2))
+#     @with_comms
+#     def test_all_gather_nd(self):
+#         self._test_all_gather_nd(torch.arange(8).reshape(2, 2, 2))
 
 
-class TraceDeviceMesh2DTest(DTensorTestBase, TraceDeviceMeshTestBase):
-    @property
-    def world_size(self):
-        return 4
+# class TraceDeviceMesh2DTest(DTensorTestBase, TraceDeviceMeshTestBase):
+#     @property
+#     def world_size(self):
+#         return 4
 
-    @with_comms
-    def test_tracing_all_reduce_nd(self):
-        self._test_tracing_all_reduce_nd(torch.arange(4).reshape(2, 2))
+#     @with_comms
+#     def test_tracing_all_reduce_nd(self):
+#         self._test_tracing_all_reduce_nd(torch.arange(4).reshape(2, 2))
 
-    @with_comms
-    def test_broadcast_nd(self):
-        self._test_broadcast_nd(torch.arange(4).reshape(2, 2))
+#     @with_comms
+#     def test_broadcast_nd(self):
+#         self._test_broadcast_nd(torch.arange(4).reshape(2, 2))
 
-    @with_comms
-    def test_scatter_nd(self):
-        self._test_scatter_nd(torch.arange(4).reshape(2, 2))
+#     @with_comms
+#     def test_scatter_nd(self):
+#         self._test_scatter_nd(torch.arange(4).reshape(2, 2))
 
-    @with_comms
-    def test_all_gather_nd(self):
-        self._test_all_gather_nd(torch.arange(4).reshape(2, 2))
+#     @with_comms
+#     def test_all_gather_nd(self):
+#         self._test_all_gather_nd(torch.arange(4).reshape(2, 2))
 
 
 class TraceModuleTest(DTensorTestBase):
@@ -212,7 +212,9 @@ class TraceModuleTest(DTensorTestBase):
             only_fw = kwargs["only_fw"]
             del kwargs["only_fw"]
         if only_fw:
+            output_ddp = ddp(x, *args, **kwargs)
             output_spmd = spmd(x, *args, **kwargs)
+            self.assertTrue(output_ddp.size(), output_spmd.size())
             return
 
         ddp(x, *args, **kwargs).sum().backward()

@@ -150,19 +150,19 @@ def _prop_native_layer_norm(op_schema: OpSchema) -> OutputSharding:
     out, mean, rstd = input, weight, weight
     dims_list = op_schema.args_schema[1]
     assert isinstance(input, DTensorSpec)
-    return OutputSharding(output_spec=(DTensorSpec(
-            mesh=input.mesh,
-            placements=tuple(input.placements),
-            ndim=input.ndim,
-            shape=torch.Size((s for i, s in enumerate(input.shape)))
+    return OutputSharding(
+        output_spec=(DTensorSpec(mesh=input.mesh,
+        placements=tuple(input.placements),
+        ndim=input.ndim,
+        shape=torch.Size((s for i, s in enumerate(input.shape)))
         ), DTensorSpec(
-            mesh=input.mesh,
-            placements=tuple(input.placements),
-            ndim=input.ndim,
-            shape=torch.Size((s for i, s in enumerate(input.shape)))
+        mesh=input.mesh,
+        placements=tuple(input.placements),
+        ndim=input.ndim,
+        shape=torch.Size((s for i, s in enumerate(input.shape)))
         ), DTensorSpec(
-            mesh=input.mesh,
-            placements=tuple(input.placements),
-            ndim=input.ndim,
-            shape=torch.Size((s for i, s in enumerate(input.shape)))
+        mesh=input.mesh,
+        placements=tuple(input.placements),
+        ndim=input.ndim,
+        shape=torch.Size((s for i, s in enumerate(input.shape)))
         )))

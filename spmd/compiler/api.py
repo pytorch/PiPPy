@@ -148,7 +148,7 @@ def _get_dtensor_dispatch_graph(
     # FIXME: this is broken when kwargs contains tensors
     #        or if a non-tensor kwarg was modified by the sharding propagation
     #        (in order to fix, need to port over pack_args_kwargs_with_local_tensor for kwargs as well)
- 
+
     dispatch = partial(
         _dispatch_with_local_tensors,
         op_overload,
