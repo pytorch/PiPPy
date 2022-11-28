@@ -3,7 +3,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import partial
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Union
 
 import torch
 import torch.distributed as dist
@@ -106,7 +106,7 @@ class GraphInfo:
 
 def _insert_fusion_buffer_node(
     gm: fx.GraphModule,
-    buffer_size: Iterable[int],
+    buffer_size: int,
     gi: Optional[GraphInfo] = None,
 ) -> fx.Node:
     """insert a torch.empty node for the global buffer.
@@ -201,7 +201,7 @@ def _scan_graph_for_fusion_elements(
                 fe.wait_node = node
                 fe.comm_node = curr_node_list[2]
 
-                fe.grad_tensor_node = fe.comm_node.args[0][0]
+                fe.grad_tensor_node = fe.comm_node.args[0][0]  # type: ignore
 
                 size, shape = get_node_tensor_numel_shape(fe.grad_tensor_node)  # type: ignore
                 fe.size = size
@@ -245,7 +245,7 @@ def _copy_fe_to_buffer(
 
     tlist = []
     for item in copy_list:
-        a = torch.zeros((item.shape[0], item.shape[1]))
+        a = torch.zeros((item.shape[0], item.shape[1]))  # type: ignore
         tlist.append(a)
 
     load_gm = make_fx(copy_to_buffer)(buffer, tlist)
@@ -273,7 +273,7 @@ def _copy_fe_to_buffer(
     def remap_copy_args(in_node: fx.Node) -> fx.Node:
         out_node = in_node
         if in_node in pl_map:
-            out_node = pl_map[in_node]
+            out_node = pl_map[in_node]  # type: ignore
         elif in_node in value_remap:
             out_node = value_remap[in_node]
         return out_node
@@ -295,7 +295,7 @@ def _copy_fe_to_buffer(
     # _build_buffer_comm_graph(gm, gi)
 
     buffer_comm_node = in_fe_list[-1].comm_node
-    buffer_comm_node.update_arg(0, [buffer_node])
+    buffer_comm_node.update_arg(0, [buffer_node])  # type: ignore
 
 
 def _build_buffer_comm_graph(gm, gi) -> fx.GraphModule:
@@ -362,7 +362,7 @@ def _scatter_results_from_buffer(
     for item in scatter_list:
         shape = item.shape
 
-        a = torch.zeros(item.shape[0], item.shape[1])
+        a = torch.zeros(item.shape[0], item.shape[1])  # type: ignore
 
         tlist.append(a)  # clone().detach())
 
@@ -383,13 +383,13 @@ def _scatter_results_from_buffer(
     for i in range(num_fe_items):
         pl_map[pl_list[i + 1]] = fe_list[i].grad_tensor_node
 
-    update_node_user_count: Dict[str, None] = {}
-    value_remap = {}
+    update_node_user_count: Dict[fx.Node, str] = {}
+    value_remap: Dict[fx.Node, fx.Node] = {}
 
     def remap_scatter_args(in_node: fx.Node) -> fx.Node:
         out_node = in_node
         if in_node in pl_map:
-            out_node = pl_map[in_node]
+            out_node = pl_map[in_node]  # type: ignore
         elif in_node in value_remap:
             out_node = value_remap[in_node]
 
@@ -415,22 +415,24 @@ def _scatter_results_from_buffer(
 
     # also must update wait for the scatter section
     section_wait_node = scatter_list[-1].wait_node
-    user = section_wait_node.args[0]
-    section_wait_node.users[user] = ""
+    user = section_wait_node.args[0]  # type: ignore
+    section_wait_node.users[user] = ""  # type: ignore
+    wait_node_user_count = len(section_wait_node.users)  # type: ignore
+
     assert (
-        len(section_wait_node.users) > 0
+        wait_node_user_count > 0
     ), f"failed to update users for node {node.name}"
 
     # finally, need to update the graph TensorMetadata info (not a must, but ensures well formed graph)
 
-    last_get_item_node = scatter_list[-1].wait_node.args[0]
-    tensor_meta = last_get_item_node.meta.get("tensor_meta", None)
+    last_get_item_node = scatter_list[-1].wait_node.args[0]  # type: ignore
+    tensor_meta = last_get_item_node.meta.get("tensor_meta", None)  # type: ignore
     assert (
         tensor_meta is not None
     ), f"failed to get tensor metadata for last getitem node {last_get_item_node=}"
 
     # replace with buffer metadata
-    buffer_meta = gi.global_buffer_node.meta.get("tensor_meta", None)
+    buffer_meta = gi.global_buffer_node.meta.get("tensor_meta", None)  # type: ignore
 
     new_tensor_meta = _update_node_tensor_metadata(
         last_get_item_node, new_shape=buffer_shape
@@ -458,7 +460,7 @@ def _update_new_copy_nodes_users(value_remap):
 
 
 def _update_node_tensor_metadata(
-    node, new_shape: tuple, dtype=None, memory_format=None
+    node, new_shape: torch.Size, dtype=None, memory_format=None
 ):
     """update a node's metadata to the the new shape, dtype and/or memory format"""
     curr = node.meta.get("tensor_meta")
@@ -539,7 +541,7 @@ def _determine_peak_memory(gi: GraphInfo, fusion_policy: int) -> int:
     peak_memory = 0  # currently measured in numel
     curr_memory = 0
     fast_index = 0
-    for i, item in enumerate(gi.fe_list):
+    for i, item in enumerate(gi.fe_list):  # type: ignore
         fast_index += 1
         curr_memory += item.size
 
@@ -572,7 +574,7 @@ def run_comm_fusion(gm: fx.GraphModule) -> fx.GraphModule:
     # scan graph for all comm sections (fusion elements)
     fe_list = _scan_graph_for_fusion_elements(gm, comm_type=CommType.allreduce)
 
-    gi.num_starting_fe = len(fe_list)
+    gi.num_starting_fe = len(fe_list)  # type: ignore
     gi.fe_list = fe_list
 
     # simple fusion policy where int = num buckets to fuse...start with 2,
@@ -589,18 +591,18 @@ def run_comm_fusion(gm: fx.GraphModule) -> fx.GraphModule:
     offset = 0
     count = 0
     # new_output_args=[]
-    start_output_args = gi.output.args[0]
-    new_output_args = list(start_output_args)
+    start_output_args: List[fx.Node] = gi.output.args[0]  # type: ignore
+    new_output_args: List[fx.Node] = list(start_output_args)  # type: ignore
 
     # ----------- main fusion loop ------------------------
 
-    for index, item in enumerate(gi.fe_list):
+    for index, item in enumerate(gi.fe_list):  # type: ignore
         count += 1
         if count == fusion_policy:
             start_index = offset
             stop_index = offset + count
 
-            curr_fe_list = gi.fe_list[start_index:stop_index]
+            curr_fe_list = gi.fe_list[start_index:stop_index]  # type: ignore
 
             _copy_fe_to_buffer(gi, gm, curr_fe_list)
 
