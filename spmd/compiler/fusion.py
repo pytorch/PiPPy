@@ -3,22 +3,20 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import partial
-from typing import Dict, Iterable, List, Optional, Union
+from typing import Dict, Iterable, List, Optional
 
 import torch
 import torch.distributed as dist
 import torch.fx as fx
-from torch.fx.experimental.proxy_tensor import make_fx, proxy_slot
+from torch.fx.experimental.proxy_tensor import make_fx
 from torch.fx.passes.shape_prop import TensorMetadata
 
 from .graph_utils import (
-    OP,
+    OP,  # get_all_nodes_of_type,; pretty_print_graph,
     create_graph_node_map,
-    get_all_nodes_of_type,
     get_node_tensor_numel_shape,
     get_output_node,
     graph_cleanup,
-    pretty_print_graph,
 )
 from .log_utils import rank0_debug
 
@@ -54,11 +52,11 @@ class FusionElement:
         self,
     ):
         """get the next node after this FE section"""
-        next_node = self.node_list[-1].next
+        next_node = self.node_list[-1].next  # type: ignore
         # _debug(f"57, next node name is {next_node.name}")
         assert (
             next_node is not None
-        ), f"failed to get valid next node after {self.node_list[-1].name}"
+        ), f"failed to get valid next node after {self.node_list[-1].name}"  # type: ignore
         return next_node
 
 
@@ -300,13 +298,10 @@ def _copy_fe_to_buffer(
 
 def _build_buffer_comm_graph(gm, gi) -> fx.GraphModule:
     """have to make our own all_reduce and wait subgraph for buffer"""
-    from torch.distributed._spmd.comm_tensor import CommTensor
-    from torch.distributed.distributed_c10d import (
-        ProcessGroup,
+    # from torch.distributed._spmd.comm_tensor import CommTensor
+    from torch.distributed.distributed_c10d import (  # ProcessGroup,; Work,; all_reduce,
         ReduceOp,
-        Work,
         _get_default_group,
-        all_reduce,
     )
 
     buffer_size = gi.global_buffer_size
@@ -492,11 +487,7 @@ def _update_node_tensor_metadata(
 
     # update meta with new TensorMetadata
     saved_meta = node.meta.get("tensor_meta")
-
-    try:
-        node.meta["tensor_meta"] = new_metadata
-    except:
-        print(f"FAILED to update meta")
+    node.meta["tensor_meta"] = new_metadata
 
     return new_metadata
 
