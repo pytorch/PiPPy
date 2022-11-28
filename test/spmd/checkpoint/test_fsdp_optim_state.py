@@ -13,7 +13,7 @@ import spmd.checkpoint.adv_planner as ap
 import spmd.checkpoint.optimizer as opt
 
 from spmd.testing.checkpoint_utils import with_temp_dir
-from spmd.testing.common_dtensor import (
+from torch.testing._internal.distributed._tensor.common_dtensor import (
     DTensorTestBase,
     with_comms,
 )

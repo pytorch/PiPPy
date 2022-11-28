@@ -2,26 +2,40 @@ import logging
 from dataclasses import dataclass
 from enum import Enum, auto
 from functools import partial
-from typing import Dict, List, Optional, Sequence, Tuple, cast
+from typing import Dict, List, Optional, Sequence, Set, Tuple, cast
 
 import torch
 import torch.distributed as dist
 import torch.fx as fx
 import torch.nn as nn
+
+import functorch.compile
 from functorch.compile import aot_module, make_boxed_func
+
 from torch.distributed._spmd.comm_tensor import _get_tracer
 from torch.fx.experimental.proxy_tensor import make_fx, proxy_slot
-from torch.utils._pytree import tree_flatten, tree_map
+from torch.utils._pytree import tree_flatten, tree_map, tree_unflatten
 
-from spmd.tensor import DeviceMesh, DTensor
-from spmd.tensor.dispatch import operator_dispatch, propagate_input_sharding
-from spmd.tensor.placement_types import Placement, Replicate, Shard, _Partial
-from spmd.tensor.redistribute import _redistribute_with_local_tensor
+from spmd.tensor import DeviceMesh, DTensor, distribute_tensor
+from spmd.tensor import (
+    operator_dispatch,
+    propagate_input_sharding,
+    _CURRENT_DECOMPOSITION_TABLE,
+)
+from spmd.tensor import Placement, Replicate, Shard, _Partial
+from spmd.tensor import _redistribute_with_local_tensor
 
 from .graph_utils import OP
 from .log_utils import rank0_info
+from .aot_function_patch import patched_aot_function
+
 
 logger: logging.Logger = logging.getLogger(__name__)
+
+
+# patch aot_function so that we can pass the full (non-sharded) input to capture the graph
+# pyre-fixme
+functorch._src.aot_autograd.aot_function = patched_aot_function
 
 
 class TrainingPhase(Enum):
@@ -65,6 +79,7 @@ def _dispatch_with_local_tensors(
             else arg
         )
 
+    # FIXME: this is broken because it won't redistributed potential tensors on the kwargs
     return op(*tree_map(redistribute, local_args), **kwargs)
 
 
@@ -106,7 +121,7 @@ def _get_dtensor_dispatch_graph(
         kwargs,
         DTensor._op_to_rules,
     )
-
+    # ===== Begin code taken from pack_args_kwargs_with_local_tensor =====
     flatten_args, args_tree_spec = tree_flatten(args)
     flatten_args_schema, _ = tree_flatten(target_schema.args_schema)
 
@@ -120,13 +135,22 @@ def _get_dtensor_dispatch_graph(
         ],
     ] = {}
     for i, arg in enumerate(flatten_args):
-        if isinstance(arg, DTensor) and redistribute:
-            specs[arg._local_tensor] = (
-                arg.size(),
-                flatten_args_schema[i].mesh,
-                arg.placements,
-                flatten_args_schema[i].placements,
-            )
+        if isinstance(arg, DTensor):
+            if redistribute:
+                specs[arg._local_tensor] = (
+                    arg.size(),
+                    flatten_args_schema[i].mesh,
+                    arg.placements,
+                    flatten_args_schema[i].placements,
+                )
+            flatten_args_schema[i] = arg._local_tensor
+
+    local_target_args = tree_unflatten(flatten_args_schema, args_tree_spec)
+    # ===== End code taken from pack_args_kwargs_with_local_tensor =====
+
+    # FIXME: this is broken when kwargs contains tensors
+    #        or if a non-tensor kwarg was modified by the sharding propagation
+    #        (in order to fix, need to port over pack_args_kwargs_with_local_tensor for kwargs as well)
 
     dispatch = partial(
         _dispatch_with_local_tensors,
@@ -138,7 +162,7 @@ def _get_dtensor_dispatch_graph(
     def unwrap_local(e: object) -> object:
         return e._local_tensor if isinstance(e, DTensor) else e
 
-    return make_fx(dispatch)(tree_map(unwrap_local, args))
+    return make_fx(dispatch)(local_target_args)
 
 
 def _build_dummy_add_graph(
@@ -215,7 +239,7 @@ def _convert_output(
             elif dtn.op == OP.OUTPUT:
                 assert (
                     len(dtn.args) == 1 and len(dtn.args[0]) == 1
-                ), f"Expecting single output, but got {dtn.args}"
+                ), f"Expecting single output, but got {dtn.args} {len(dtn.args)}"
                 new_args.append(value_remap[dtn.args[0][0]])
             else:
                 if dtn.op == OP.GET_ATTR:
@@ -265,9 +289,10 @@ def _rebuild_graph(
                     # been prepared in value_remap
                     pass
                 elif dtn.op == OP.OUTPUT:
+                    # TODO: AssertionError: Expecting single output, but got ([getitem, getitem_1, getitem_2],)
                     assert (
-                        len(dtn.args) == 1 and len(dtn.args[0]) == 1
-                    ), f"Expecting single output, but got {dtn.args}"
+                        len(dtn.args) == 1
+                    ), f"Expecting single output, but got {dtn.args} {len(dtn.args[0])}"
                     node.replace_all_uses_with(value_remap[dtn.args[0][0]])
                 else:
                     value_remap[dtn] = gm.graph.node_copy(
@@ -298,9 +323,24 @@ def _convert_to_distributed(
             assert i < len(
                 inps
             ), f"got more placeholer nodes ({i + 1}) than inputs ({len(inps)})"
-            node_to_obj[node] = DTensor.from_local(
-                inps[i], schemas[i].mesh, schemas[i].placements
-            )
+            if training_phase == TrainingPhase.FORWARD:
+                # in the forward phase we start with the full "global" ensors.
+                # we needed this because we needed to capture the original graph.
+                node_to_obj[node] = distribute_tensor(  # DTensor.from_local(
+                    inps[i],
+                    schemas[i].mesh,
+                    schemas[i].placements,
+                )
+            else:
+                # But in the backward pass we got "real" sharded inputs
+                # so we have to actually make DTensors out of them
+                assert training_phase == TrainingPhase.BACKWARD
+                node_to_obj[node] = DTensor.from_local(
+                    inps[i],
+                    schemas[i].mesh,
+                    schemas[i].placements,
+                )
+
         elif isinstance(node.target, torch._ops.OpOverload):
             node_replacements[node] = _get_dtensor_dispatch_graph(
                 node, node_to_obj
@@ -309,6 +349,24 @@ def _convert_to_distributed(
             if not _allow_partial:
                 _convert_output(gm, node, node_to_obj)
                 break
+        elif node.op == OP.CALL_FUNCTION:
+
+            def remap_arg(arg: object) -> object:
+                if isinstance(arg, torch.fx.Node):
+                    obj = node_to_obj[arg]
+                    # TODO(anj): we need this for getitem but can we be more generic?
+                    if isinstance(obj, tuple):
+                        return obj
+                    if _get_tracer(obj):
+                        # This is a shared arg, already has a tracer from previous
+                        # tracing. Delete the tracer.
+                        del cast(Dict[object, object], obj.__dict__)[proxy_slot]
+                    return obj
+                else:
+                    return arg
+
+            args = tree_map(remap_arg, node.args)
+            node_to_obj[node] = node.target(args[0], args[1])
         else:
             raise ValueError(f"Unrecognized node {node}")
 
@@ -358,10 +416,28 @@ class SPMD(nn.Module):
         self, *args: Tuple[object], **kwargs: Dict[str, object]
     ) -> object:
         if self._compiled_m is None:
+            flat_args, _ = tree_flatten(args)
+            flat_kwargs, _ = tree_flatten(kwargs)
+            input_set: Set[object] = set(flat_args + flat_kwargs)
+
+            def gather_inputs_for_compilation(
+                inps: Tuple[object, ...],
+            ) -> Tuple[object, ...]:
+                compile_inps = tuple(
+                    x
+                    if not isinstance(x, torch.Tensor) or x not in input_set
+                    else DTensor.from_local(x, self._schema.mesh, [Shard(0)])
+                    .redistribute(self._schema.mesh, [Replicate()])
+                    .to_local()
+                    for x in inps
+                )
+                return compile_inps
+
             self._compiled_m = aot_module(
                 self._local_module,
                 partial(self._compile, TrainingPhase.FORWARD),
                 partial(self._compile, TrainingPhase.BACKWARD),
+                pre_compile_fn=gather_inputs_for_compilation,
+                decompositions=_CURRENT_DECOMPOSITION_TABLE,
             )
-
         return cast(nn.Module, self._compiled_m)(*args, **kwargs)
