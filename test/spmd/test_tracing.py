@@ -6,15 +6,15 @@ import torch
 import torch.nn as nn
 from torch.distributed.distributed_c10d import get_global_rank, get_world_size
 from torch.distributed._spmd.comm_tensor import CommTensor
+from torch.testing._internal.distributed._tensor.common_dtensor import (
+    DTensorTestBase,
+    with_comms,
+)
 from torch.fx.experimental.proxy_tensor import make_fx
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.testing._internal.common_utils import run_tests
 
 from spmd.compiler.api import SPMD, Schema
-from spmd.testing.common_dtensor import (
-    DTensorTestBase,
-    with_comms,
-)
 from spmd.tensor import (
     DeviceMesh,
     Replicate,

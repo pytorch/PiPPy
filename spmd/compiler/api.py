@@ -17,13 +17,13 @@ from torch.fx.experimental.proxy_tensor import make_fx, proxy_slot
 from torch.utils._pytree import tree_flatten, tree_map, tree_unflatten
 
 from spmd.tensor import DeviceMesh, DTensor, distribute_tensor
-from spmd.tensor.dispatch import (
+from spmd.tensor import (
     operator_dispatch,
     propagate_input_sharding,
     _CURRENT_DECOMPOSITION_TABLE,
 )
-from spmd.tensor.placement_types import Placement, Replicate, Shard, _Partial
-from spmd.tensor.redistribute import _redistribute_with_local_tensor
+from spmd.tensor import Placement, Replicate, Shard, _Partial
+from spmd.tensor import _redistribute_with_local_tensor
 
 from .graph_utils import OP
 from .log_utils import rank0_info
