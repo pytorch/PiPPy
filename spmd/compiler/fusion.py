@@ -38,8 +38,8 @@ class FusionElement:
 
     in_graph: bool = False
     processed: bool = False
-    size: int = 0
-    shape: Optional[List[int]] = field(default_factory=lambda: [])  # type: ignore
+    size: Optional[int] = 0
+    shape: Optional[Iterable[[int], [int]]] = field(default_factory=lambda: [])  # type: ignore
     comm_type: Optional[CommType] = None
     node_list: Optional[List[fx.Node]] = field(default_factory=lambda: [])  # type: ignore
     prev_node: Optional[fx.Node] = None  # node that was before start of section
@@ -263,7 +263,7 @@ def _copy_fe_to_buffer(
 
     # create placeholder remapping
     pl_map: Dict[fx.Node, fx.Node] = {}
-    pl_map[pl_list[0]] = gi.global_buffer_node
+    pl_map[pl_list[0]] = gi.global_buffer_node  # type: ignore
 
     for i in range(num_fusion_elements):
         pl_map[pl_list[i + 1]] = in_fe_list[i].grad_tensor_node
@@ -455,7 +455,7 @@ def _update_new_copy_nodes_users(value_remap: Dict[fx.Node, fx.Node]) -> None:
             )
             # if len(node.users) == 0:
             user = node.args[0]
-            node.users[user] = ""
+            node.users[user] = ""  # type: ignore
             node_user_len = len(node.users)
             assert node_user_len, f"failed to update users for node {node.name}"
 
@@ -463,8 +463,8 @@ def _update_new_copy_nodes_users(value_remap: Dict[fx.Node, fx.Node]) -> None:
 def _update_node_tensor_metadata(
     node: fx.Node,
     new_shape: torch.Size,
-    dtype: Optional[torch.dtype] = None,
-    memory_format: Optional[torch.memory_format] = None,
+    in_dtype: Optional[torch.dtype] = None,
+    in_memory_format: Optional[torch.memory_format] = None,
 ) -> TensorMetadata:
     """update a node's metadata to the the new shape, dtype and/or memory format"""
     curr = node.meta.get("tensor_meta")
@@ -473,23 +473,28 @@ def _update_node_tensor_metadata(
     ), f"failed to obtain tensor meta data on node {node.name}"
 
     shape = curr.shape
-    dtype = curr.dtype
+    curr_dtype = curr.dtype
     requires_grad = curr.requires_grad
     stride = curr.stride
 
-    memory_format = curr.memory_format
+    curr_memory_format = curr.memory_format
     is_quantized = curr.is_quantized
     qparams = curr.qparams
+
+    updated_dtype = in_dtype if in_dtype is not None else curr_dtype
+    updated_memory_format = (
+        in_memory_format if in_memory_format is not None else curr_memory_format
+    )
 
     # tempt = torch.empty(new_shape)
     # new_shape = tempt.shape
 
     new_metadata = TensorMetadata(
         new_shape,
-        dtype,
+        updated_dtype,
         requires_grad,
         stride,
-        memory_format,
+        updated_memory_format,
         is_quantized,
         qparams,
     )
@@ -522,7 +527,7 @@ def _finalize_output_node(
     for item in fe_list:
         grad_node = item.grad_tensor_node
         wait_node = item.wait_node
-        replacement_mapping[wait_node] = grad_node
+        replacement_mapping[wait_node] = grad_node  # type: ignore
 
     # we have fused a subset, only update that subset within the larger output node args
     # TODO - this assumes that all gradient tensors are comm handled.

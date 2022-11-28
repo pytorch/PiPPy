@@ -1,6 +1,6 @@
 import logging
 from enum import Enum
-from typing import Dict, Optional, Tuple, Any
+from typing import Dict, Optional, Tuple
 
 import torch.fx as fx
 
