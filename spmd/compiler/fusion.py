@@ -21,7 +21,7 @@ from .graph_utils import (
 from .log_utils import rank0_debug
 
 logger: logging.Logger = logging.getLogger(__name__)
-_debug = partial(rank0_debug, logger)
+_debug = partial(rank0_debug, logger)  # type: ignore
 
 # enum for the supported fusion comm types
 class CommType(str, Enum):
@@ -50,7 +50,7 @@ class FusionElement:
 
     def _get_next_node(
         self,
-    ):
+    ) -> fx.Node:
         """get the next node after this FE section"""
         next_node = self.node_list[-1].next  # type: ignore
         # _debug(f"57, next node name is {next_node.name}")
@@ -225,7 +225,9 @@ def _copy_fe_to_buffer(
 
     num_fusion_elements = len(copy_list)
 
-    def copy_to_buffer(buffer, tensor_list):
+    def copy_to_buffer(
+        buffer: torch.Tensor, tensor_list: List[torch.Tensor]
+    ) -> torch.Tensor:
         offset = 0
         for t in tensor_list:
             size = t.numel()
@@ -296,7 +298,9 @@ def _copy_fe_to_buffer(
     buffer_comm_node.update_arg(0, [buffer_node])  # type: ignore
 
 
-def _build_buffer_comm_graph(gm, gi) -> fx.GraphModule:
+def _build_buffer_comm_graph(
+    gi: GraphInfo, gm: fx.GraphModule
+) -> fx.GraphModule:
     """have to make our own all_reduce and wait subgraph for buffer"""
     # from torch.distributed._spmd.comm_tensor import CommTensor
     from torch.distributed.distributed_c10d import (  # ProcessGroup,; Work,; all_reduce,
@@ -337,7 +341,9 @@ def _scatter_results_from_buffer(
     scatter_list = fe_list
     num_fe_items = len(scatter_list)
 
-    def scatter_from_buffer(buffer, scatter_list):
+    def scatter_from_buffer(
+        buffer: torch.Tensor, scatter_list: List[torch.Tensor]
+    ) -> torch.Tensor:
         offset = 0
         for t in scatter_list:
             numel = t.numel()
@@ -350,7 +356,8 @@ def _scatter_results_from_buffer(
     # it is just a proxy for the global buffer node.
     # consider simply saving and reusing a single dummy buffer
 
-    buffer = torch.empty(buffer_size)
+    buffer = gi.tracing_buffer
+    assert buffer is not None, f" missing global tracing buffer in {gi}"
     buffer_shape = buffer.shape
 
     tlist = []
