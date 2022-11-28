@@ -13,8 +13,8 @@ from torch.fx.passes.shape_prop import TensorMetadata
 
 from .graph_utils import (
     OP,
-    get_all_nodes_of_type,
     create_graph_node_map,
+    get_all_nodes_of_type,
     get_node_tensor_numel_shape,
     get_output_node,
     graph_cleanup,
@@ -193,7 +193,6 @@ def _scan_graph_for_fusion_elements(
                 # need to fully populate this fe...
                 # we will be removing/rewriting the node list so we save prev and next
                 fe.prev_node = curr_node_list[0].prev
-                _debug(f"prev node = {fe.prev_node}")
                 fe.next_node = node.next
 
                 fe.output_name = node.name
@@ -205,7 +204,6 @@ def _scan_graph_for_fusion_elements(
                 size, shape = get_node_tensor_numel_shape(fe.grad_tensor_node)  # type: ignore
                 fe.size = size
                 fe.shape = shape
-                _debug(f"\nfe list size shape {size=}, {shape=}\n")
 
                 element_list.append(fe)
 
@@ -270,30 +268,16 @@ def _copy_fe_to_buffer(
 
     insert_node = in_fe_list[-1].comm_node
 
-    _debug(f" f229 insert before comm node = {insert_node.name}\n")
-
-    # TODO - this is debug only...remove
-    #  verify first node
-    for node in gm.graph.nodes:
-        if node.name == insert_node.name:
-            true_insert_node = node
-
-    _debug(
-        f" compare insert nodes for {insert_node.name}, true {id(true_insert_node)} vs fe list {id(insert_node)}"
-    )
-
     def remap_copy_args(in_node: fx.Node) -> fx.Node:
         out_node = in_node
         if in_node in pl_map:
             out_node = pl_map[in_node]
-            _debug(f"f249 remapped {in_node.name} to {out_node.name}")
         elif in_node in value_remap:
             out_node = value_remap[in_node]
-            _debug(f"f252 remapped {in_node.name} to {out_node.name}")
         return out_node
 
     value_remap = {}
-    with gm.graph.inserting_before(true_insert_node):
+    with gm.graph.inserting_before(insert_node):
         for innernode in load_gm.graph.nodes:
             if innernode.op in [OP.PLACEHOLDER, OP.OUTPUT]:
                 continue
@@ -310,10 +294,6 @@ def _copy_fe_to_buffer(
 
     buffer_comm_node = in_fe_list[-1].comm_node
     buffer_comm_node.update_arg(0, [buffer_node])
-
-    _debug(f"f272 new comm node = {buffer_comm_node.args=}")
-
-    _debug(f"f261 remapping\n {gm.graph.print_tabular()}")
 
 
 def _build_buffer_comm_graph(gm, gi) -> fx.GraphModule:
@@ -341,14 +321,11 @@ def _build_buffer_comm_graph(gm, gi) -> fx.GraphModule:
 
     # TODO - needs to match to DTensor PG
     pg = _get_default_group()
-    _debug(f"\n315  process group = {pg}")
     tensor: torch.Tensor
     op: ReduceOp = ReduceOp.SUM  # type: ignore[assignment]
     async_op: bool = False
 
     # work_handle = all_reduce(grad_buffer, op=op, group=pg, async_op=async_op)
-
-    _debug(f"303 \n{traced_add.graph.print_tabular()}\n")
 
 
 def _scatter_results_from_buffer(
@@ -377,8 +354,7 @@ def _scatter_results_from_buffer(
 
     buffer = torch.empty(buffer_size)
     buffer_shape = buffer.shape
-    _debug(f"363, {buffer_shape=}\n")
-    # _debug(f"buffer shape {buffer.shape}")
+
     tlist = []
     for item in scatter_list:
         shape = item.shape
@@ -388,7 +364,6 @@ def _scatter_results_from_buffer(
         tlist.append(a)  # clone().detach())
 
     scatter_sg = make_fx(scatter_from_buffer)(buffer, tlist)
-    # _debug(f"f296 ==== {scatter_sg.graph.print_tabular()}\n")
 
     pl_list = []
 
@@ -398,17 +373,6 @@ def _scatter_results_from_buffer(
 
     #
     insert_node = fe_list[-1]._get_next_node()  # before last node of FE section
-    # _debug(f" f308 scatter to insert node after = {insert_node.name}\n")
-    _debug(f"385 {insert_node=}\n")
-    # verify first node
-    # TODO - this is purely debug checking below..remove
-    for node in gm.graph.nodes:
-        if node.name == insert_node.name:
-            true_insert_node = node
-
-    _debug(
-        f" compare insert nodes, true {id(true_insert_node)} vs fe list {id(insert_node)}"
-    )
 
     # create placeholder remapping
     pl_map = {}
@@ -423,15 +387,13 @@ def _scatter_results_from_buffer(
         out_node = in_node
         if in_node in pl_map:
             out_node = pl_map[in_node]
-            _debug(f"f328 remapped {in_node.name} to {out_node.name}")
         elif in_node in value_remap:
             out_node = value_remap[in_node]
-            _debug(f"f331 remapped {in_node.name} to {out_node.name}")
 
         update_node_user_count[out_node] = ""
         return out_node
 
-    with gm.graph.inserting_before(true_insert_node):
+    with gm.graph.inserting_before(insert_node):
         for innernode in scatter_sg.graph.nodes:
             if innernode.op in [OP.PLACEHOLDER, OP.OUTPUT]:
                 continue
@@ -440,16 +402,11 @@ def _scatter_results_from_buffer(
             )
 
     # insert into main graph, just above last fe
-    _debug(f"f341 = {value_remap=}\n")
-    _debug(f"f341  ^^$$\n {gm.graph.print_tabular()}")
-
-    _debug(f"421 - nodes we need to update users for {update_node_user_count=}")
 
     # force copies and waits to have a user
     # copies and waits do not have users by default, and will be
     # removed at recompile (can lead to lots of surprise/frustration)
     # # TODO this does not account for nodes beyond our own...remove/fix this
-    # TODO - this is scanning entire graph every fusion...optimize
 
     _update_new_copy_nodes_users(value_remap)
 
@@ -457,7 +414,6 @@ def _scatter_results_from_buffer(
     section_wait_node = scatter_list[-1].wait_node
     user = section_wait_node.args[0]
     section_wait_node.users[user] = ""
-    _debug(f"445, section wait node user updated to {section_wait_node.users=}")
     assert (
         len(section_wait_node.users) > 0,
     ), f"failed to update users for node {node.name}"
@@ -465,42 +421,19 @@ def _scatter_results_from_buffer(
     # finally, need to update the graph TensorMetadata info (not a must, but ensures well formed graph)
 
     last_get_item_node = scatter_list[-1].wait_node.args[0]
-    _debug(f"447, {last_get_item_node.name=}")
     tensor_meta = last_get_item_node.meta.get("tensor_meta", None)
     assert (
         tensor_meta is not None
     ), f"failed to get tensor metadata for last getitem node {last_get_item_node=}"
 
-    _debug(f"453, {tensor_meta=}\n")
-
     # replace with buffer metadata
     buffer_meta = gi.global_buffer_node.meta.get("tensor_meta", None)
-    _debug(f"459, {buffer_meta=}")
 
     new_tensor_meta = _update_node_tensor_metadata(
         last_get_item_node, new_shape=buffer_shape
     )
-    _debug(f"466, new get item meta = {new_tensor_meta=}")
 
     gm.recompile()
-
-    # TODO - another patch to update meta data..hardcoded for first test.
-    # update to direct
-    for node in gm.graph.nodes:
-        if node.name.startswith("getitem_3"):
-            _debug(
-                f"377 get item node {node.name=}, {node.users=}, {node.args=}"
-            )
-            tdata = node.meta.get("tensor_meta")
-
-            _debug(f"379 meta type = {type(tdata)}, data = {tdata}")
-            # tdata["shape"] = (200,)
-
-            # node.users[user] = ""
-            # _debug(f"369 copy node {node.name=}, {node.users=}, {node.args=}")
-    gm.recompile()
-
-    _debug(f"446 {print(gm.graph)}")
 
 
 def _update_new_copy_nodes_users(value_remap):
@@ -530,8 +463,6 @@ def _update_node_tensor_metadata(
         curr is not None
     ), f"failed to obtain tensor meta data on node {node.name}"
 
-    _debug(f"f551, starting meta = {curr=}")
-
     shape = curr.shape
     dtype = curr.dtype
     requires_grad = curr.requires_grad
@@ -552,10 +483,6 @@ def _update_node_tensor_metadata(
         memory_format,
         is_quantized,
         qparams,
-    )
-
-    _debug(
-        f"541, new metadata = {new_metadata} and shape type = {type(new_metadata.shape)}"
     )
 
     # update meta with new TensorMetadata
@@ -584,35 +511,20 @@ def _finalize_output_node(gi, gm, fe_list, start, stop, new_output_args):
         grad_node = item.grad_tensor_node
         wait_node = item.wait_node
         replacement_mapping[wait_node] = grad_node
-        # new_output_args.append(grad_node)
-    # new_output_args.append(None)
-    _debug(
-        f"583, ready to update main output with these replacements: {replacement_mapping}\n"
-    )
-
-    _debug(f"\n 570 - new output args = {new_output_args}\n ")
-    for item in new_output_args:
-        if item is not None:
-            _debug(f"572 - node {item.name}, type {type(item)}\n")
-        else:
-            _debug("572, None,  ending node found")
 
     # we have fused a subset, only update that subset within the larger output node args
     # TODO - this assumes that all gradient tensors are comm handled.
     for i in range(len(fe_list)):
         index = start + i
         curr_node = new_output_args[index]
-        _debug(f"582 - node is {curr_node}")
+
         if curr_node is not None:
             assert curr_node.name.startswith(
                 "wait"
             ), f"Non comm gradient output tensor incorrectly handled...needs fix. {new_output_args[start+i]}"
             new_output_args[start + i] = replacement_mapping[curr_node]
-            _debug(
-                f"605, replacing {curr_node} with {replacement_mapping[curr_node]}"
-            )
 
-    _debug(f"577 - updated output args = {new_output_args}\n")
+    # _debug(f"537 - updated output args = {new_output_args}\n")
 
 
 def _determine_peak_memory(gi: GraphInfo, fusion_policy: int) -> int:
@@ -633,7 +545,7 @@ def _determine_peak_memory(gi: GraphInfo, fusion_policy: int) -> int:
             fast_index = 0
             curr_memory = 0
 
-    _debug(f"574, peak memory determined to be {peak_memory}")
+    # _debug(f"574, peak memory determined to be {peak_memory}")
     gi.peak_memory_required = peak_memory
 
     return peak_memory
@@ -651,7 +563,7 @@ def run_comm_fusion(gm: fx.GraphModule) -> bool:
     gi = GraphInfo()
     gi.update_info(gm)
 
-    _debug(f"\n Start of fusion pass graph {gm.graph.print_tabular()}\n")
+    # _debug(f"\n Start of fusion pass graph {gm.graph.print_tabular()}\n")
 
     # scan graph for all comm sections (fusion elements)
     fe_list = _scan_graph_for_fusion_elements(gm, comm_type=CommType.allreduce)
@@ -662,11 +574,6 @@ def run_comm_fusion(gm: fx.GraphModule) -> bool:
     # simple fusion policy where int = num buckets to fuse...start with 2,
     # meaning every 2 comms are fused into 1
     fusion_policy: int = 2
-
-    # compute optimal buffer size here....
-    # this will be based on either max bucket or bucket schedule from external optimizer
-    # or we can scan the graph and auto-compute max size for any single fusion
-    # TODO
 
     # determine peak memory using fusion policy
     peak_memory_required = _determine_peak_memory(gi, fusion_policy)
@@ -680,7 +587,6 @@ def run_comm_fusion(gm: fx.GraphModule) -> bool:
     # new_output_args=[]
     start_output_args = gi.output.args[0]
     new_output_args = list(start_output_args)
-    _debug(f"671, starting output args {start_output_args}\n")
 
     # ----------- main fusion loop ------------------------
 
@@ -712,30 +618,24 @@ def run_comm_fusion(gm: fx.GraphModule) -> bool:
     _debug(f"631, processed {index+1} fe items")
 
     # final verification of output node - # TODO remove as this is debugging util
-    for node in reversed(gm.graph.nodes):
-        if node.op == OP.OUTPUT:
-            new_output = node
-            break
-    _debug(f"703, updated output node args {new_output.args=}\n")
-
-    _debug(f"&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&")
+    # for node in reversed(gm.graph.nodes):
+    #    if node.op == OP.OUTPUT:
+    #       new_output = node
+    #       break
+    # _debug(f"703, updated output node args {new_output.args=}\n")
 
     # final review print
     graph_cleanup(gm)
 
-    _debug(f"\n Start of meta pass graph {gm.graph.print_tabular()}\n")
-
     # TODO - remove this.  This is purely a final check to verify all meta data
     # related to fusion has been updated to use the buffer size rather than original.
 
-    get_nodes = get_all_nodes_of_type(
-        gm, OP.CALL_FUNCTION, starts_with="get", require_meta=True
-    )
+    # get_nodes = get_all_nodes_of_type(
+    #    gm, OP.CALL_FUNCTION, starts_with="get", require_meta=True
+    # )
 
-    _debug(f"\672 ++++++++++++++++ \n{get_nodes=}\n")
+    # _debug(f"\672 ++++++++++++++++ \n{get_nodes=}\n")
     # ---- end final meta tensors debug review -----------
-
-    _debug(f"577, global buffer size = {gi.global_buffer_size}")
 
     result = True  # TODO - make this mean something
 
