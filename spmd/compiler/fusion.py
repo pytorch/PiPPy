@@ -46,9 +46,9 @@ class FusionElement:
     node_list: Optional[List[fx.Node]] = field(default_factory=lambda: [])  # type: ignore
     prev_node: Optional[fx.Node] = None  # node that was before start of section
     output_name: str = ""
-    comm_node: Optional[fx.Node] = None
-    wait_node: Optional[fx.Node] = None
-    grad_tensor_node: Optional[fx.Node] = None
+    comm_node: Optional[fx.Node] = None  # type: ignore
+    wait_node: Optional[fx.Node] = None  # type: ignore
+    grad_tensor_node: Optional[fx.Node] = None  # type: ignore
 
     def _get_next_node(
         self,
@@ -71,11 +71,11 @@ class GraphInfo:
 
     len: int = 0
     num_starting_fe: int = 0
-    fe_list: list = None
+    fe_list: Optional[Iterable[FusionElement]] = None  # type: ignore
     peak_memory_required: int = 0
-    global_buffer_node: Optional[fx.Node] = None
+    global_buffer_node: Optional[fx.Node] = None  # type: ignore
     global_buffer_size: int = 0
-    tracing_buffer: Optional[torch.Tensor] = None
+    tracing_buffer: Optional[torch.Tensor] = None  # type: ignore
     first: Optional[fx.Node] = None
     output: Optional[fx.Node] = None
 
@@ -105,7 +105,9 @@ class GraphInfo:
 
 
 def _insert_fusion_buffer_node(
-    gm: fx.GraphModule, buffer_size: Iterable[int], gi: GraphInfo = None
+    gm: fx.GraphModule,
+    buffer_size: Iterable[int],
+    gi: Optional[GraphInfo] = None,
 ) -> fx.Node:
     """insert a torch.empty node for the global buffer.
     defaults to first node after placeholder nodes.
@@ -193,7 +195,7 @@ def _scan_graph_for_fusion_elements(
                 # need to fully populate this fe...
                 # we will be removing/rewriting the node list so we save prev and next
                 fe.prev_node = curr_node_list[0].prev
-                fe.next_node = node.next
+                # fe.next_node = node.next
 
                 fe.output_name = node.name
                 fe.wait_node = node
@@ -326,6 +328,7 @@ def _build_buffer_comm_graph(gm, gi) -> fx.GraphModule:
     async_op: bool = False
 
     # work_handle = all_reduce(grad_buffer, op=op, group=pg, async_op=async_op)
+    return traced_add
 
 
 def _scatter_results_from_buffer(
@@ -415,7 +418,7 @@ def _scatter_results_from_buffer(
     user = section_wait_node.args[0]
     section_wait_node.users[user] = ""
     assert (
-        len(section_wait_node.users) > 0,
+        len(section_wait_node.users) > 0
     ), f"failed to update users for node {node.name}"
 
     # finally, need to update the graph TensorMetadata info (not a must, but ensures well formed graph)
@@ -551,10 +554,11 @@ def _determine_peak_memory(gi: GraphInfo, fusion_policy: int) -> int:
     return peak_memory
 
 
-def run_comm_fusion(gm: fx.GraphModule) -> bool:
+def run_comm_fusion(gm: fx.GraphModule) -> fx.GraphModule:
     """main entry into remapping graph for all_reduce fusion"""
 
-    result = False
+    # result = False  TODO - do we return a success code or the graph,
+    # since graph is modified directly in place?
 
     # first recompile to make sure we have coherent graph
     gm.recompile()
@@ -637,7 +641,7 @@ def run_comm_fusion(gm: fx.GraphModule) -> bool:
     # _debug(f"\672 ++++++++++++++++ \n{get_nodes=}\n")
     # ---- end final meta tensors debug review -----------
 
-    result = True  # TODO - make this mean something
+    # result = True  # TODO - make this mean something
 
     gm.recompile()
     return gm
