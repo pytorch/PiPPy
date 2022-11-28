@@ -266,7 +266,7 @@ def _copy_fe_to_buffer(
     pl_map[pl_list[0]] = gi.global_buffer_node  # type: ignore
 
     for i in range(num_fusion_elements):
-        pl_map[pl_list[i + 1]] = in_fe_list[i].grad_tensor_node
+        pl_map[pl_list[i + 1]] = in_fe_list[i].grad_tensor_node  # type: ignore
 
     insert_node = in_fe_list[-1].comm_node
 
@@ -381,9 +381,9 @@ def _scatter_results_from_buffer(
 
     # create placeholder remapping
     pl_map: Dict[fx.Node, fx.Node] = {}
-    pl_map[pl_list[0]] = gi.global_buffer_node
+    pl_map[pl_list[0]] = gi.global_buffer_node  # type: ignore
     for i in range(num_fe_items):
-        pl_map[pl_list[i + 1]] = fe_list[i].grad_tensor_node
+        pl_map[pl_list[i + 1]] = fe_list[i].grad_tensor_node  # type: ignore
 
     update_node_user_count: Dict[fx.Node, str] = {}
     value_remap: Dict[fx.Node, fx.Node] = {}
@@ -437,7 +437,7 @@ def _scatter_results_from_buffer(
     buffer_meta = gi.global_buffer_node.meta.get("tensor_meta", None)  # type: ignore
 
     new_tensor_meta = _update_node_tensor_metadata(
-        last_get_item_node, new_shape=buffer_shape
+        last_get_item_node, new_shape=buffer_shape  # type: ignore
     )
 
     gm.recompile()
@@ -555,7 +555,7 @@ def _determine_peak_memory(gi: GraphInfo, fusion_policy: int) -> int:
     fast_index = 0
     for i, item in enumerate(gi.fe_list):  # type: ignore
         fast_index += 1
-        curr_memory += item.size
+        curr_memory += item.size  # type: ignore
 
         if fast_index == fusion_policy:
             peak_memory = max(peak_memory, curr_memory)

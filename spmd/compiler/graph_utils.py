@@ -45,14 +45,14 @@ def get_node_tensor_numel_shape(
     else:
         m, n = tdata.shape
         size = m * n
-        shape = (m, n)
+        shape = (m, n)  # type: ignore
 
     rank0_debug(
         logger,
         f"--> tensor of size {size} and shape {shape} found for {node=}\n",
     )
 
-    return size, shape
+    return size, shape  # type: ignore
 
 
 def get_output_node(gm: fx.GraphModule) -> Optional[fx.Node]:
