@@ -101,18 +101,18 @@ def shard_module(m, pg):
     m.net2 = _aggregate_local_tensor(m.net2)
 
 
-def _shard_wrap_module(module, module_shard, fsdp_wrap, mesh_2d, fsdp_pg):
+def _shard_wrap_module(module, module_shard, fsdp_wrap, mesh_2d, fsdp_pg, use_orig_params):
     if module_shard:
         parallelize_module(module, mesh_2d, PairwiseParallel(), tp_mesh_dim=1)
 
     if fsdp_wrap and module_shard:
-        return FSDP(module, process_group=fsdp_pg)
+        return FSDP(module, process_group=fsdp_pg, use_orig_params=use_orig_params)
     if fsdp_wrap:
-        return FSDP(module, process_group=distributed_c10d._get_default_group())
+        return FSDP(module, process_group=distributed_c10d._get_default_group(), use_orig_params=use_orig_params)
     return module
 
 
-def init_model(model_parallel_size=TP_DEGREE):
+def init_model(model_parallel_size=TP_DEGREE, use_orig_params=False):
     rank = dist.get_rank()
     torch.cuda.set_device(rank)
     world_size = dist.get_world_size()
@@ -128,7 +128,7 @@ def init_model(model_parallel_size=TP_DEGREE):
     fsdp_pg = twod_mesh.get_dim_groups()[0]
 
     # Create Input
-    model = _shard_wrap_module(model, True, True, twod_mesh, fsdp_pg)
+    model = _shard_wrap_module(model, True, True, twod_mesh, fsdp_pg, use_orig_params)
     return model, fsdp_pg
 
 
@@ -189,9 +189,9 @@ class Test2dParallelIntegration(DTensorTestBase):
             self.skipTest("FSDP 2d parallel integration not available")
         torch.manual_seed(0)
         model = SimpleModel().cuda(self.rank)
-        model = FSDP(model)
+        model = FSDP(model, use_orig_params=True)
         torch.manual_seed(0)
-        model_2d, dp_pg = init_model()
+        model_2d, dp_pg = init_model(use_orig_params=True)
 
         optim = torch.optim.Adam(model.parameters(), lr=0.0001)
         optim_2d = torch.optim.Adam(model_2d.parameters(), lr=0.0001)
@@ -208,6 +208,20 @@ class Test2dParallelIntegration(DTensorTestBase):
             optim.step()
             optim_2d.step()
             self.assertEqual(model(input), model_2d(input))
+
+    @with_comms
+    @skip_if_lt_x_gpu(4)
+    def test_2d_fsdp_integration_param_names(self) -> None:
+        if not is_available():
+            self.skipTest("FSDP 2d parallel integration not available")
+        torch.manual_seed(0)
+        model = SimpleModel().cuda(self.rank)
+        model = FSDP(model, use_orig_params=True)
+        torch.manual_seed(0)
+        model_2d, _ = init_model(use_orig_params=True)
+        param_names_2d = [name for name, _ in model_2d.named_parameters()]
+        for name, _ in model.named_parameters():
+            self.assertTrue(name in param_names_2d)
 
 
 if __name__ == "__main__":
