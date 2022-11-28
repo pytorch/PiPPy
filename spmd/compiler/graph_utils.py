@@ -28,7 +28,9 @@ def create_graph_node_map(gm: fx.GraphModule) -> Dict[str, fx.Node]:
     return mapping
 
 
-def get_node_tensor_numel_shape(node: fx.Node) -> Tuple[Any, Any]:
+def get_node_tensor_numel_shape(
+    node: fx.Node,
+) -> Tuple[Optional[int], Optional[Tuple[int, int]]]:
     """takes an fx node, and if tensor data available, optionally displays and returns numel"""
     size = None
     shape = None

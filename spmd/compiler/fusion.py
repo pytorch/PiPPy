@@ -262,7 +262,7 @@ def _copy_fe_to_buffer(
             fn_list.append(node)
 
     # create placeholder remapping
-    pl_map = {}
+    pl_map: Dict[fx.Node, fx.Node] = {}
     pl_map[pl_list[0]] = gi.global_buffer_node
 
     for i in range(num_fusion_elements):
@@ -380,7 +380,7 @@ def _scatter_results_from_buffer(
     insert_node = fe_list[-1]._get_next_node()  # before last node of FE section
 
     # create placeholder remapping
-    pl_map = {}
+    pl_map: Dict[fx.Node, fx.Node] = {}
     pl_map[pl_list[0]] = gi.global_buffer_node
     for i in range(num_fe_items):
         pl_map[pl_list[i + 1]] = fe_list[i].grad_tensor_node
@@ -443,7 +443,7 @@ def _scatter_results_from_buffer(
     gm.recompile()
 
 
-def _update_new_copy_nodes_users(value_remap):
+def _update_new_copy_nodes_users(value_remap: Dict[fx.Node, fx.Node]) -> None:
     """
     we have to manually update users for new copy nodes to ensure count > 0.
     This seems to be an fx bug, but for now we update or else fusion will get removed during graph linting
@@ -456,14 +456,16 @@ def _update_new_copy_nodes_users(value_remap):
             # if len(node.users) == 0:
             user = node.args[0]
             node.users[user] = ""
-            assert (
-                len(node.users) > 0,
-            ), f"failed to update users for node {node.name}"
+            node_user_len = len(node.users)
+            assert node_user_len, f"failed to update users for node {node.name}"
 
 
 def _update_node_tensor_metadata(
-    node, new_shape: torch.Size, dtype=None, memory_format=None
-):
+    node: fx.Node,
+    new_shape: torch.Size,
+    dtype: Optional[torch.dtype] = None,
+    memory_format: Optional[torch.memory_format] = None,
+) -> TensorMetadata:
     """update a node's metadata to the the new shape, dtype and/or memory format"""
     curr = node.meta.get("tensor_meta")
     assert (
@@ -499,7 +501,14 @@ def _update_node_tensor_metadata(
     return new_metadata
 
 
-def _finalize_output_node(gi, gm, fe_list, start, stop, new_output_args):
+def _finalize_output_node(
+    gi: GraphInfo,
+    gm: fx.GraphModule,
+    fe_list: List[FusionElement],
+    start: int,
+    stop: int,
+    new_output_args: List[fx.Node],
+) -> None:
     """reworks output node args to original grad tensors, replacing the wait_comms
     we update a copy of the output args, then finalized after all fusion is done."""
 
