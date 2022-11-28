@@ -1,6 +1,7 @@
 from functorch._src.aot_autograd import (
     default_partition,
     AOTConfig,
+    AOT_COUNTER,
     PytreeThunk,
     create_aot_dispatcher_function,
     KNOWN_TYPES,
@@ -110,6 +111,7 @@ def patched_aot_function(
         # pyre-fixme
         decompositions=decompositions,
         num_params_buffers=num_params_buffers,
+        aot_id=next(AOT_COUNTER),
     )
     cached_res = None
 
