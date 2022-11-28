@@ -10,7 +10,7 @@ import torch.fx as fx
 import torch.nn as nn
 
 import functorch.compile
-from functorch.compile import aot_module, make_boxed_func
+from functorch.compile import aot_module_simplified, make_boxed_func
 
 from torch.distributed._spmd.comm_tensor import _get_tracer
 from torch.fx.experimental.proxy_tensor import make_fx, proxy_slot
@@ -27,7 +27,7 @@ from spmd.tensor.redistribute import _redistribute_with_local_tensor
 
 from .graph_utils import OP
 from .log_utils import rank0_info
-from .aot_function_patch import patched_aot_function
+# from .aot_function_patch import patched_aot_function
 
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 # patch aot_function so that we can pass the full (non-sharded) input to capture the graph
 # pyre-fixme
-functorch._src.aot_autograd.aot_function = patched_aot_function
+# functorch._src.aot_autograd.aot_function = patched_aot_function
 
 
 class TrainingPhase(Enum):
@@ -433,11 +433,14 @@ class SPMD(nn.Module):
                 )
                 return compile_inps
 
-            self._compiled_m = aot_module(
+            self._compiled_m = aot_module_simplified(
                 self._local_module,
                 partial(self._compile, TrainingPhase.FORWARD),
                 partial(self._compile, TrainingPhase.BACKWARD),
-                pre_compile_fn=gather_inputs_for_compilation,
+                # pre_compile_fn=gather_inputs_for_compilation,
                 decompositions=_CURRENT_DECOMPOSITION_TABLE,
             )
-        return cast(nn.Module, self._compiled_m)(*args, **kwargs)
+            gathered_args = gather_inputs_for_compilation(args)
+            self._compiled_m(*gathered_args, **kwargs)
+        else:
+            return cast(nn.Module, self._compiled_m)(*args, **kwargs)
