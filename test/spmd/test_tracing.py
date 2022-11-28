@@ -196,6 +196,10 @@ class TraceModuleTest(DTensorTestBase):
         return 2
 
     def _test_trace_replicate(self, model, x, *args, **kwargs):
+        only_fw = False
+        if "only_fw" in kwargs:
+            only_fw = kwargs["only_fw"]
+            del kwargs["only_fw"]
         # if x.device.type == "cuda":
         ddp = DDP(deepcopy(model))
         spmd = SPMD(
@@ -206,11 +210,8 @@ class TraceModuleTest(DTensorTestBase):
                 ),
                 placements=[Replicate()],
             ),
+            fw_only=only_fw,
         )
-        only_fw = False
-        if "only_fw" in kwargs:
-            only_fw = kwargs["only_fw"]
-            del kwargs["only_fw"]
         if only_fw:
             output_ddp = ddp(x, *args, **kwargs)
             output_spmd = spmd(x, *args, **kwargs)
