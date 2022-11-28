@@ -1,4 +1,4 @@
-# [experimental] PiPPy: Pipeline Parallelism for PyTorch
+# PiPPy: Pipeline Parallelism for PyTorch
 
 [**Why PiPPy?**](#why-pippy)
 | [**Install guide**](#install)
@@ -31,10 +31,16 @@ For in-depth technical architecture, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 # Install
 
-PiPPy currently requires the PyTorch nightly release to work. To quickly install PyTorch nightly, run the following command from the same directory as this README:
+PiPPy requires PyTorch version newer than 1.12 to work. To quickly install, for example, PyTorch nightly, run the following command from the same directory as this README:
 
 ```
 pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html
+```
+
+You can also select the CUDA build of PyTorch if your system has NVIDIA GPUs, for example:
+
+```
+pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cu116/torch_nightly.html
 ```
 
 To install PiPPy from source, run the following command in the same directory as this README:
@@ -492,7 +498,7 @@ We see the model train, memorizing the 512 examples in our input batch:
 
 ## PiPPy on CUDA
 
-When using PiPPy on CUDA devices, the model must be on a CUDA device before being passed to PiPPy, for example:
+When using PiPPy on CUDA devices, the model can be on a CUDA device before being passed to PiPPy, for example:
 
 ```python
 model = MyNetwork()
@@ -501,8 +507,9 @@ model.to(f'cuda:{dev_id}')
 pipe = Pipe.from_tracing(model)
 ```
 
-Note: we are working on supporting meta initialization for cases in which a model's parameters do not fit into the
-memory of a single GPU.
+Note: in cases where a model's parameters do not fit into the memory of a single GPU, PiPPy also supports deferred
+distributed initialization which only materializes a pipeline stage on its corresponding GPU worker. For details,
+please see PiPPy's `Pipe.defer_stage_init` API.
 
 In adition, some backend options need to be passed to RPC initialization. RPC by default uses the TensorPipe backend
 that supports point-to-point communication in an asynchronous manner. Configurations for TensorPipe can be specified

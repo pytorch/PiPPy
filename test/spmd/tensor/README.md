@@ -1,11 +1,9 @@
-## Run distributed tensor tests:
+## Run distributed tensor op db tests:
 
 from root, run (either CPU or GPU)
 
-`pytest test/spmd/tensor/test_tensor.py`
-
-`pytest test/spmd/tensor/test_ddp.py`
+`pytest test/spmd/tensor/test_dtensor_ops.py`
 
 run specific test case and print stdout/stderr:
 
-`pytest test/spmd/tensor/test_tensor.py -s -k test_tensor_from_local`
+`pytest test/spmd/tensor/test_dtensor_ops.py -s -k addmm`

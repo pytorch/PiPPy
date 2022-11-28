@@ -21,7 +21,7 @@ from torch.testing._internal.common_device_type import (
 import torch.testing._internal.common_methods_invocations as common_ops
 from torch.testing._internal.common_methods_invocations import DecorateInfo
 
-from spmd.tensor import DTensor, DeviceMesh, Replicate
+from torch.distributed._tensor import DTensor, DeviceMesh, Replicate
 from torch.testing._internal.distributed._tensor.dtensor_lagging_op_db import dtensor_lagging_op_db
 from torch.testing._internal.distributed._tensor.common_dtensor import (
     DTensorTestBase,

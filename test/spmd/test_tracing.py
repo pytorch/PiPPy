@@ -1,5 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 from typing import List
+import numpy as np
 
 import torch
 import torch.nn as nn
@@ -206,6 +207,15 @@ class TraceModuleTest(DTensorTestBase):
                 placements=[Replicate()],
             ),
         )
+        only_fw = False
+        if "only_fw" in kwargs:
+            only_fw = kwargs["only_fw"]
+            del kwargs["only_fw"]
+        if only_fw:
+            output_ddp = ddp(x, *args, **kwargs)
+            output_spmd = spmd(x, *args, **kwargs)
+            self.assertTrue(output_ddp.size(), output_spmd.size())
+            return
 
         ddp(x, *args, **kwargs).sum().backward()
         spmd(x, *args, **kwargs).sum().backward()
@@ -214,6 +224,17 @@ class TraceModuleTest(DTensorTestBase):
             # _Partial tensor shouldn't do that automatically. Hence explicitly
             # do division here.
             self.assertTrue(p1.grad.allclose(p2.grad / self.world_size))
+
+    @with_comms
+    def test_layer_norm_fw(self):
+        # This test is for get_item support. layer_norm contains
+        # tuples in its output which means we need to support get_item.
+        input_dims = []
+
+        input = np.random.randn(4, 5).astype(np.float32)
+        model = nn.LayerNorm(input.shape[1:]).to(self.device_type)
+        pt_input = torch.tensor(input, dtype=torch.float).to(self.device_type)
+        self._test_trace_replicate(model, pt_input, only_fw=True)
 
     @with_comms
     def test_baked_in_shape(self):
