@@ -20,7 +20,7 @@ class OP(str, Enum):
     PLACEHOLDER = "placeholder"
 
 
-def create_graph_node_map(gm: fx.GraphModule) -> Dict[str, fx.Node]:
+def create_name_to_node_map(gm: fx.GraphModule) -> Dict[str, fx.Node]:
     """utility to put graph module into a node map for easier adjustments"""
     mapping = {}
     for node in gm.graph.nodes:

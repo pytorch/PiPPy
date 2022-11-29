@@ -13,7 +13,7 @@ from torch.fx.passes.shape_prop import TensorMetadata
 
 from .graph_utils import (
     OP,
-    create_graph_node_map,
+    create_name_to_node_map,
     get_node_tensor_numel_shape,
     get_output_node,
     graph_cleanup,
@@ -259,7 +259,7 @@ def _copy_fe_to_buffer(
 
     load_gm = make_fx(copy_to_buffer)(buffer, tlist)
 
-    subnodemap = create_graph_node_map(load_gm)
+    subnodemap = create_name_to_node_map(load_gm)
 
     # update load loop to use main graph items
     fn_list = []
@@ -275,9 +275,11 @@ def _copy_fe_to_buffer(
     pl_map[pl_list[0]] = gi.global_buffer_node  # type: ignore
 
     for i in range(num_fusion_elements):
-        pl_map[pl_list[i + 1]] = in_fe_list[i].grad_tensor_node  # type: ignore
+        # pl map remaps traced placeholders used in copy graph to main graph grad tensors
+        pl_map[pl_list[i + 1]] = copy_list[i].grad_tensor_node  # type: ignore
 
     insert_node = copy_list[-1].comm_node
+    value_remap: Dict[fx.Node, fx.Node] = {}
 
     def remap_copy_args(in_node: fx.Node) -> fx.Node:
         out_node = in_node
@@ -287,7 +289,6 @@ def _copy_fe_to_buffer(
             out_node = value_remap[in_node]
         return out_node
 
-    value_remap = {}
     with gm.graph.inserting_before(insert_node):
         for innernode in load_gm.graph.nodes:
             if innernode.op in [OP.PLACEHOLDER, OP.OUTPUT]:
@@ -360,10 +361,6 @@ def _scatter_results_from_buffer(
             t.copy_(shaper)  # buffer[offset : offset + numel].view(t.shape() ))
             offset += numel
         return buffer
-
-    # TODO - this is a dummy buffer that is never used,
-    # it is just a proxy for the global buffer node.
-    # consider simply saving and reusing a single dummy buffer
 
     buffer = gi.tracing_buffer
     assert buffer is not None, f" missing global tracing buffer in {gi}"
@@ -561,14 +558,14 @@ def _determine_peak_memory(gi: GraphInfo, fusion_policy: int) -> int:
     """
     peak_memory = 0  # currently measured in numel
     curr_memory = 0
-    fast_index = 0
+    curr_fe_index = 0
     for i, item in enumerate(gi.fe_list):  # type: ignore
-        fast_index += 1
+        curr_fe_index += 1
         curr_memory += item.size  # type: ignore
 
-        if fast_index == fusion_policy:
+        if curr_fe_index == fusion_policy:
             peak_memory = max(peak_memory, curr_memory)
-            fast_index = 0
+            curr_fe_index = 0
             curr_memory = 0
 
     _debug(f"574, peak memory determined to be {peak_memory}")
@@ -586,59 +583,66 @@ def run_comm_fusion(gm: fx.GraphModule) -> None:
     gm.recompile()
 
     # get our main graph info
-    gi = GraphInfo()
-    gi.update_info(gm)
+    graph_info = GraphInfo()
+    graph_info.update_info(gm)
 
     _debug(f"\n Start of fusion pass graph {gm.graph.print_tabular()}\n")
 
     # scan graph for all comm sections (fusion elements)
     fe_list = _scan_graph_for_fusion_elements(gm, comm_type=CommType.allreduce)
 
-    gi.num_starting_fe = len(fe_list)  # type: ignore
-    gi.fe_list = fe_list
+    graph_info.num_starting_fe = len(fe_list)  # type: ignore
+    graph_info.fe_list = fe_list
 
     # simple fusion policy where int = num buckets to fuse...start with 2,
     # meaning every 2 comms are fused into 1
     fusion_policy: int = 2
 
     # determine peak memory using fusion policy
-    peak_memory_required = _determine_peak_memory(gi, fusion_policy)
+    peak_memory_required = _determine_peak_memory(graph_info, fusion_policy)
 
-    buffer_node = _insert_fusion_buffer_node(gm, peak_memory_required, gi)
+    buffer_node = _insert_fusion_buffer_node(
+        gm, peak_memory_required, graph_info
+    )
 
     # Main process loop - iterate all fusion elements, apply fusion to subsets
 
     offset = 0
     count = 0
 
-    start_output_args: List[fx.Node] = gi.output.args[0]  # type: ignore
+    start_output_args: List[fx.Node] = graph_info.output.args[0]  # type: ignore
     new_output_args: List[fx.Node] = list(start_output_args)  # type: ignore
 
     # ----------- main fusion loop ------------------------
 
-    for index, item in enumerate(gi.fe_list):  # type: ignore
+    for index, item in enumerate(graph_info.fe_list):  # type: ignore
         count += 1
         if count == fusion_policy:
             start_index = offset
             stop_index = offset + count
 
-            curr_fe_list = gi.fe_list[start_index:stop_index]  # type: ignore
+            curr_fe_list = graph_info.fe_list[start_index:stop_index]  # type: ignore
 
-            _copy_fe_to_buffer(gi, gm, curr_fe_list)
+            _copy_fe_to_buffer(graph_info, gm, curr_fe_list)
 
-            _scatter_results_from_buffer(gi, gm, curr_fe_list)
+            _scatter_results_from_buffer(graph_info, gm, curr_fe_list)
 
             # switch wait_comms to output gradient nodes in output directly
             # fusion will have removed and reworked existing wait_comms
 
             _finalize_output_node(
-                gi, gm, curr_fe_list, start_index, stop_index, new_output_args
+                graph_info,
+                gm,
+                curr_fe_list,
+                start_index,
+                stop_index,
+                new_output_args,
             )
 
             offset += count
             count = 0
     # update output with the updated args
-    gm.graph.erase_node(gi.output)
+    gm.graph.erase_node(graph_info.output)
     gm.graph.output(new_output_args)
 
     _debug(f"631, processed {index+1} fe items")
