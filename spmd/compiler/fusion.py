@@ -226,13 +226,11 @@ def _scan_graph_for_fusion_elements(
 
 
 def _copy_fe_to_buffer(
-    gi: GraphInfo, gm: fx.GraphModule, in_fe_list: list[FusionElement]
+    gi: GraphInfo, gm: fx.GraphModule, copy_list: list[FusionElement]
 ) -> None:
     """First half of fusion - move desired items to buffer and create graph"""
     buffer_node = gi.global_buffer_node
     buffer_size = gi.global_buffer_size
-
-    copy_list = in_fe_list
 
     num_fusion_elements = len(copy_list)
 
@@ -252,11 +250,11 @@ def _copy_fe_to_buffer(
         buffer = torch.empty(buffer_size)
         gi.tracing_buffer = buffer
     elif gi.tracing_buffer:
-        buffer = buffer = torch.empty(buffer_size)
+        buffer = gi.tracing_buffer
 
     tlist = []
     for item in copy_list:
-        a = torch.zeros((item.shape[0], item.shape[1]))  # type: ignore
+        a = torch.zeros_like(item)  # type: ignore
         tlist.append(a)
 
     load_gm = make_fx(copy_to_buffer)(buffer, tlist)
@@ -279,7 +277,7 @@ def _copy_fe_to_buffer(
     for i in range(num_fusion_elements):
         pl_map[pl_list[i + 1]] = in_fe_list[i].grad_tensor_node  # type: ignore
 
-    insert_node = in_fe_list[-1].comm_node
+    insert_node = copy_list[-1].comm_node
 
     def remap_copy_args(in_node: fx.Node) -> fx.Node:
         out_node = in_node
@@ -305,19 +303,19 @@ def _copy_fe_to_buffer(
     # # TODO - pg group matching
     # _build_buffer_comm_graph(gm, gi)
 
-    buffer_comm_node = in_fe_list[-1].comm_node
+    buffer_comm_node = copy_list[-1].comm_node
     buffer_comm_node.update_arg(0, [buffer_node])  # type: ignore
 
 
 def _build_buffer_comm_graph(
     gi: GraphInfo, gm: fx.GraphModule
 ) -> fx.GraphModule:
-    """Have to make our own all_reduce and wait subgraph for buffer"""
+    """This function is only a stub atm, for cases where we have
+    to make our own all_reduce and wait subgraph for buffer. Wrapping with
+    CommTensor is required to complete.
+    """
     # from torch.distributed._spmd.comm_tensor import CommTensor
-    from torch.distributed.distributed_c10d import (  # ProcessGroup,; Work,; all_reduce,
-        ReduceOp,
-        _get_default_group,
-    )
+    from torch.distributed.distributed_c10d import ReduceOp, _get_default_group
 
     buffer_size = gi.global_buffer_size
 
@@ -552,7 +550,7 @@ def _finalize_output_node(
             ), f"Non comm gradient output tensor incorrectly handled...needs fix. {new_output_args[start+i]}"
             new_output_args[start + i] = replacement_mapping[curr_node]
 
-    # _debug(f"537 - updated output args = {new_output_args}\n")
+    _debug(f"537 - updated output args = {new_output_args}\n")
 
 
 def _determine_peak_memory(gi: GraphInfo, fusion_policy: int) -> int:
@@ -573,7 +571,7 @@ def _determine_peak_memory(gi: GraphInfo, fusion_policy: int) -> int:
             fast_index = 0
             curr_memory = 0
 
-    # _debug(f"574, peak memory determined to be {peak_memory}")
+    _debug(f"574, peak memory determined to be {peak_memory}")
     gi.peak_memory_required = peak_memory
 
     return peak_memory
@@ -591,7 +589,7 @@ def run_comm_fusion(gm: fx.GraphModule) -> None:
     gi = GraphInfo()
     gi.update_info(gm)
 
-    # _debug(f"\n Start of fusion pass graph {gm.graph.print_tabular()}\n")
+    _debug(f"\n Start of fusion pass graph {gm.graph.print_tabular()}\n")
 
     # scan graph for all comm sections (fusion elements)
     fe_list = _scan_graph_for_fusion_elements(gm, comm_type=CommType.allreduce)
@@ -612,7 +610,7 @@ def run_comm_fusion(gm: fx.GraphModule) -> None:
 
     offset = 0
     count = 0
-    # new_output_args=[]
+
     start_output_args: List[fx.Node] = gi.output.args[0]  # type: ignore
     new_output_args: List[fx.Node] = list(start_output_args)  # type: ignore
 
@@ -645,15 +643,9 @@ def run_comm_fusion(gm: fx.GraphModule) -> None:
 
     _debug(f"631, processed {index+1} fe items")
 
-    # final verification of output node - # TODO remove as this is debugging util
-    # for node in reversed(gm.graph.nodes):
-    #    if node.op == OP.OUTPUT:
-    #       new_output = node
-    #       break
-    # _debug(f"703, updated output node args {new_output.args=}\n")
+    _debug(f"656, updated output node args {new_output_args=}\n")
 
     # final review print
     graph_cleanup(gm)
 
     gm.recompile()
-    return gm
