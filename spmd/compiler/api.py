@@ -185,6 +185,11 @@ def _remove_clone_tensor(subgm: fx.GraphModule) -> fx.GraphModule:
     """rewrite dummy add graph to remove clone of grad tensor"""
     nodemap = create_graph_node_map(subgm)
 
+    _debug(f"188, submap type {type(subgm)}\n ")
+    _debug(f"189, {subgm.graph.print_tabular()} ")
+    _debug(f"189, {print(subgm.graph)}")
+    _debug(f"190, {nodemap=}\n")
+
     clone_node = nodemap.get("clone")
     comm_node = nodemap.get("allreduce__default")
 
@@ -192,6 +197,24 @@ def _remove_clone_tensor(subgm: fx.GraphModule) -> fx.GraphModule:
     assert clone_node is not None, "expected clone node not present."
 
     grad_tensor_node = clone_node.args[0]
+
+    # confirm clone node is being used for comm node
+    comm_node_target = comm_node.args[0][0]
+
+    assert (
+        comm_node_target == clone_node
+    ), f"clone node removal requires clone node as arg in {comm_node.name}"
+
+    # confirm clone node only has one user
+    assert (
+        len(clone_node.users) == 1
+    ), f"clone node has {len(clone_node.users)} users...expecting only 1."
+
+    # confirm cloned tensor only has 1 use within the comm subgraph
+    assert (
+        len(grad_tensor_node.users) == 1
+    ), f"grad tensor node has {len(grad_tensor_node.users)} users.  Expected only 1 user."
+
     comm_node.update_arg(0, [grad_tensor_node])
 
     subgm.graph.erase_node(clone_node)
