@@ -147,48 +147,48 @@ class TraceDeviceMeshTestBase:
                 )
 
 
-# class TraceDeviceMesh3DTest(DTensorTestBase, TraceDeviceMeshTestBase):
-#     @property
-#     def world_size(self):
-#         return 8
+class TraceDeviceMesh3DTest(DTensorTestBase, TraceDeviceMeshTestBase):
+    @property
+    def world_size(self):
+        return 8
 
-#     @with_comms
-#     def test_tracing_all_reduce_nd(self):
-#         self._test_tracing_all_reduce_nd(torch.arange(8).reshape(2, 2, 2))
+    @with_comms
+    def test_tracing_all_reduce_nd(self):
+        self._test_tracing_all_reduce_nd(torch.arange(8).reshape(2, 2, 2))
 
-#     @with_comms
-#     def test_broadcast_nd(self):
-#         self._test_broadcast_nd(torch.arange(8).reshape(2, 2, 2))
+    @with_comms
+    def test_broadcast_nd(self):
+        self._test_broadcast_nd(torch.arange(8).reshape(2, 2, 2))
 
-#     @with_comms
-#     def test_scatter_nd(self):
-#         self._test_scatter_nd(torch.arange(8).reshape(2, 2, 2))
+    @with_comms
+    def test_scatter_nd(self):
+        self._test_scatter_nd(torch.arange(8).reshape(2, 2, 2))
 
-#     @with_comms
-#     def test_all_gather_nd(self):
-#         self._test_all_gather_nd(torch.arange(8).reshape(2, 2, 2))
+    @with_comms
+    def test_all_gather_nd(self):
+        self._test_all_gather_nd(torch.arange(8).reshape(2, 2, 2))
 
 
-# class TraceDeviceMesh2DTest(DTensorTestBase, TraceDeviceMeshTestBase):
-#     @property
-#     def world_size(self):
-#         return 4
+class TraceDeviceMesh2DTest(DTensorTestBase, TraceDeviceMeshTestBase):
+    @property
+    def world_size(self):
+        return 4
 
-#     @with_comms
-#     def test_tracing_all_reduce_nd(self):
-#         self._test_tracing_all_reduce_nd(torch.arange(4).reshape(2, 2))
+    @with_comms
+    def test_tracing_all_reduce_nd(self):
+        self._test_tracing_all_reduce_nd(torch.arange(4).reshape(2, 2))
 
-#     @with_comms
-#     def test_broadcast_nd(self):
-#         self._test_broadcast_nd(torch.arange(4).reshape(2, 2))
+    @with_comms
+    def test_broadcast_nd(self):
+        self._test_broadcast_nd(torch.arange(4).reshape(2, 2))
 
-#     @with_comms
-#     def test_scatter_nd(self):
-#         self._test_scatter_nd(torch.arange(4).reshape(2, 2))
+    @with_comms
+    def test_scatter_nd(self):
+        self._test_scatter_nd(torch.arange(4).reshape(2, 2))
 
-#     @with_comms
-#     def test_all_gather_nd(self):
-#         self._test_all_gather_nd(torch.arange(4).reshape(2, 2))
+    @with_comms
+    def test_all_gather_nd(self):
+        self._test_all_gather_nd(torch.arange(4).reshape(2, 2))
 
 
 class TraceModuleTest(DTensorTestBase):
@@ -254,64 +254,64 @@ class TraceModuleTest(DTensorTestBase):
         self._test_trace_replicate(Model().to(self.device_type), torch.rand((2, 4)).to(self.device_type), **inp_kwargs)
 
 
-    # @with_comms
-    # def test_layer_norm_fw(self):
-    #     # This test is for get_item support. layer_norm contains
-    #     # tuples in its output which means we need to support get_item.
-    #     input_dims = []
+    @with_comms
+    def test_layer_norm_fw(self):
+        # This test is for get_item support. layer_norm contains
+        # tuples in its output which means we need to support get_item.
+        input_dims = []
 
-    #     input = np.random.randn(4, 5).astype(np.float32)
-    #     model = nn.LayerNorm(input.shape[1:]).to(self.device_type)
-    #     pt_input = torch.tensor(input, dtype=torch.float).to(self.device_type)
-    #     self._test_trace_replicate(model, pt_input, only_fw=True)
+        input = np.random.randn(4, 5).astype(np.float32)
+        model = nn.LayerNorm(input.shape[1:]).to(self.device_type)
+        pt_input = torch.tensor(input, dtype=torch.float).to(self.device_type)
+        self._test_trace_replicate(model, pt_input, only_fw=True)
 
-    # @with_comms
-    # def test_baked_in_shape(self):
-    #     class LCE(torch.nn.Module):
-    #         def __init__(self):
-    #             super().__init__()
-    #             torch.manual_seed(5)
-    #             self.w = torch.nn.Parameter(torch.rand((5, 10)))
-    #             self.b = torch.nn.Parameter(torch.rand((5)))
+    @with_comms
+    def test_baked_in_shape(self):
+        class LCE(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                torch.manual_seed(5)
+                self.w = torch.nn.Parameter(torch.rand((5, 10)))
+                self.b = torch.nn.Parameter(torch.rand((5)))
 
-    #         def forward(self, x, *args, **kwargs):
-    #             # the code below will bake in the shape of x_t as arguments to expand
-    #             x_t = x.permute(0, 2, 1)
-    #             y_t = kwargs["dict_test"]["value"].expand(x_t.shape) + args[0][
-    #                 0
-    #             ].expand(x_t.shape)
-    #             # code below triggers an "expand" with shape baked in.
-    #             return torch.nn.functional.linear(y_t, self.w, self.b)
+            def forward(self, x, *args, **kwargs):
+                # the code below will bake in the shape of x_t as arguments to expand
+                x_t = x.permute(0, 2, 1)
+                y_t = kwargs["dict_test"]["value"].expand(x_t.shape) + args[0][
+                    0
+                ].expand(x_t.shape)
+                # code below triggers an "expand" with shape baked in.
+                return torch.nn.functional.linear(y_t, self.w, self.b)
 
-    #     model = LCE().to(self.device_type)
-    #     x = torch.randn(2, 10, 80).to(self.device_type)
-    #     y = torch.randn(2, 80, 10).to(self.device_type)
-    #     z = torch.randn(2, 80, 10).to(self.device_type)
-    #     self._test_trace_replicate(model, x, [y], dict_test={"value": z})
+        model = LCE().to(self.device_type)
+        x = torch.randn(2, 10, 80).to(self.device_type)
+        y = torch.randn(2, 80, 10).to(self.device_type)
+        z = torch.randn(2, 80, 10).to(self.device_type)
+        self._test_trace_replicate(model, x, [y], dict_test={"value": z})
 
-    # @with_comms
-    # def test_sequential(self):
-    #     model = nn.Sequential(*[nn.Linear(10, 10) for _ in range(2)]).to(
-    #         self.device_type
-    #     )
-    #     x = torch.randn(2, 10).to(self.device_type)
-    #     self._test_trace_replicate(model, x)
+    @with_comms
+    def test_sequential(self):
+        model = nn.Sequential(*[nn.Linear(10, 10) for _ in range(2)]).to(
+            self.device_type
+        )
+        x = torch.randn(2, 10).to(self.device_type)
+        self._test_trace_replicate(model, x)
 
-    # @with_comms
-    # def test_parallel(self):
-    #     class Model(nn.Module):
-    #         def __init__(self):
-    #             super().__init__()
-    #             self.module_list = nn.ModuleList(
-    #                 [nn.Linear(10, 10) for _ in range(2)]
-    #             )
+    @with_comms
+    def test_parallel(self):
+        class Model(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.module_list = nn.ModuleList(
+                    [nn.Linear(10, 10) for _ in range(2)]
+                )
 
-    #         def forward(self, x):
-    #             return sum([m(x) for m in self.module_list])
+            def forward(self, x):
+                return sum([m(x) for m in self.module_list])
 
-    #     model = Model().to(self.device_type)
-    #     x = torch.randn(2, 10).to(self.device_type)
-    #     self._test_trace_replicate(model, x)
+        model = Model().to(self.device_type)
+        x = torch.randn(2, 10).to(self.device_type)
+        self._test_trace_replicate(model, x)
 
 
 if __name__ == "__main__":
