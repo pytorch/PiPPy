@@ -12,7 +12,7 @@ from torch.fx.experimental.proxy_tensor import make_fx
 from torch.fx.passes.shape_prop import TensorMetadata
 
 from .graph_utils import (
-    OP,  # get_all_nodes_of_type,; pretty_print_graph,
+    OP,
     create_graph_node_map,
     get_node_tensor_numel_shape,
     get_output_node,
@@ -36,7 +36,9 @@ class CommType(str, Enum):
 class FusionElement:
     """This class tracks the nodes for a DTensor expanded communication collective in the graph"""
 
+    # monitor if this FusionElement is in the main graph or removed as part of fusion
     in_graph: bool = False
+    # has gone through the fusion policy process
     processed: bool = False
     size: Optional[int] = 0
     shape: Optional[Iterable[[int], [int]]] = field(default_factory=lambda: [])  # type: ignore
@@ -51,9 +53,9 @@ class FusionElement:
     def _get_next_node(
         self,
     ) -> fx.Node:
-        """get the next node after this FE section"""
+        """Get the next node after this FE section"""
         next_node = self.node_list[-1].next  # type: ignore
-        # _debug(f"57, next node name is {next_node.name}")
+
         assert (
             next_node is not None
         ), f"failed to get valid next node after {self.node_list[-1].name}"  # type: ignore
@@ -62,23 +64,32 @@ class FusionElement:
 
 @dataclass
 class GraphInfo:
-    """provides a home for global aspects of this graph.
+    """Provides a home for global aspects of this graph.
     Currently tracks first and last node, len of the graph and
     the location and size of the global buffer node
     """
 
+    # starting len of the graph
     len: int = 0
+    # total count of initial fusion elements
     num_starting_fe: int = 0
+    # list of all FusionElements in the graph
     fe_list: Optional[Iterable[FusionElement]] = None  # type: ignore
+    # max memory needed for fusion buffer
     peak_memory_required: int = 0
+    # node housing global buffer for fusion comms
     global_buffer_node: Optional[fx.Node] = None  # type: ignore
+    # size of the global buffer
     global_buffer_size: int = 0
+    # real buffer (not node) used for tracing fusion subgraphs
     tracing_buffer: Optional[torch.Tensor] = None  # type: ignore
+    # first node in graph (head)
     first: Optional[fx.Node] = None
+    # last node in graph (tail / output)
     output: Optional[fx.Node] = None
 
     def update_info(self, gm: fx.GraphModule) -> None:
-        """get the len, input and output nodes"""
+        """Get the len, input and output nodes"""
         graph_len = gm.graph._len
         if not graph_len:
             raise ValueError("Empty graph passed in....")
@@ -94,11 +105,11 @@ class GraphInfo:
         self.output = get_output_node(gm)
         assert (
             self.output is not None
-        ), f"unable to locate output node in gm {gm.graph}"
+        ), f"Unable to locate output node in gm {gm.graph}"
 
         rank0_debug(
             logger,
-            f"updated graph_info - len = {self.len} input = {self.first}, output = {self.output}",
+            f"Updated graph_info - len = {self.len} input = {self.first}, output = {self.output}",
         )
 
 
@@ -107,7 +118,7 @@ def _insert_fusion_buffer_node(
     buffer_size: int,
     gi: Optional[GraphInfo] = None,
 ) -> fx.Node:
-    """insert a torch.empty node for the global buffer.
+    """Insert a torch.empty node for the global buffer.
     defaults to first node after placeholder nodes.
     appends to GlobalInfo if passed in"""
 
@@ -148,7 +159,7 @@ def _scan_graph_for_fusion_elements(
     gm: fx.GraphModule,
     comm_type: CommType = CommType.allreduce,
 ) -> Optional[List[FusionElement]]:
-    """scan entire graph for matching sections of CommTensor style expansions
+    """Scan entire graph for matching sections of CommTensor style expansions
     returns list of FusionElements that match CommType"""
 
     element_list = []
@@ -217,7 +228,7 @@ def _scan_graph_for_fusion_elements(
 def _copy_fe_to_buffer(
     gi: GraphInfo, gm: fx.GraphModule, in_fe_list: list[FusionElement]
 ) -> None:
-    """first half of fusion - move desired items to buffer and create graph"""
+    """First half of fusion - move desired items to buffer and create graph"""
     buffer_node = gi.global_buffer_node
     buffer_size = gi.global_buffer_size
 
@@ -301,7 +312,7 @@ def _copy_fe_to_buffer(
 def _build_buffer_comm_graph(
     gi: GraphInfo, gm: fx.GraphModule
 ) -> fx.GraphModule:
-    """have to make our own all_reduce and wait subgraph for buffer"""
+    """Have to make our own all_reduce and wait subgraph for buffer"""
     # from torch.distributed._spmd.comm_tensor import CommTensor
     from torch.distributed.distributed_c10d import (  # ProcessGroup,; Work,; all_reduce,
         ReduceOp,
@@ -333,7 +344,7 @@ def _build_buffer_comm_graph(
 def _scatter_results_from_buffer(
     gi: GraphInfo, gm: fx.GraphModule, fe_list: List[FusionElement]
 ) -> None:
-    """after comm event with buffer, scatter results back to original fe grad tensors"""
+    """After comm event with buffer, scatter results back to original fe grad tensors"""
 
     buffer_node = gi.global_buffer_node
     buffer_size = gi.global_buffer_size
@@ -445,7 +456,7 @@ def _scatter_results_from_buffer(
 
 def _update_new_copy_nodes_users(value_remap: Dict[fx.Node, fx.Node]) -> None:
     """
-    we have to manually update users for new copy nodes to ensure count > 0.
+    We have to manually update users for new copy nodes to ensure count > 0.
     This seems to be an fx bug, but for now we update or else fusion will get removed during graph linting
     """
     for subnode, node in value_remap.items():
@@ -466,7 +477,7 @@ def _update_node_tensor_metadata(
     in_dtype: Optional[torch.dtype] = None,
     in_memory_format: Optional[torch.memory_format] = None,
 ) -> TensorMetadata:
-    """update a node's metadata to the the new shape, dtype and/or memory format"""
+    """Update a node's metadata to the the new shape, dtype and/or memory format"""
     curr = node.meta.get("tensor_meta")
     assert (
         curr is not None
@@ -514,7 +525,7 @@ def _finalize_output_node(
     stop: int,
     new_output_args: List[fx.Node],
 ) -> None:
-    """reworks output node args to original grad tensors, replacing the wait_comms
+    """Reworks output node args to original grad tensors, replacing the wait_comms
     we update a copy of the output args, then finalized after all fusion is done."""
 
     # output_node = gi.output
@@ -546,7 +557,7 @@ def _finalize_output_node(
 
 def _determine_peak_memory(gi: GraphInfo, fusion_policy: int) -> int:
     """
-    scans fe list to determine max memory required across all fusion instances.
+    Scans fe list to determine max memory required across all fusion instances.
     this result is used to allocate the global buffer for fusion, where we
     re-use a global buffer to avoid repeated allocations per fusion.
     """
@@ -568,11 +579,10 @@ def _determine_peak_memory(gi: GraphInfo, fusion_policy: int) -> int:
     return peak_memory
 
 
-def run_comm_fusion(gm: fx.GraphModule) -> fx.GraphModule:
-    """main entry into remapping graph for all_reduce fusion"""
-
-    # result = False  TODO - do we return a success code or the graph,
-    # since graph is modified directly in place?
+def run_comm_fusion(gm: fx.GraphModule) -> None:
+    """Main entry into remapping graph for all_reduce fusion.
+    Modifications are in place to the graph.  Errors will result in stoppage
+    to alert user rather than handling and returning error codes."""
 
     # first recompile to make sure we have coherent graph
     gm.recompile()
@@ -622,7 +632,7 @@ def run_comm_fusion(gm: fx.GraphModule) -> fx.GraphModule:
 
             # switch wait_comms to output gradient nodes in output directly
             # fusion will have removed and reworked existing wait_comms
-            # TODO - this will break atm for dynamic fusion...rework for unlimited fusion case.
+
             _finalize_output_node(
                 gi, gm, curr_fe_list, start_index, stop_index, new_output_args
             )
@@ -644,18 +654,6 @@ def run_comm_fusion(gm: fx.GraphModule) -> fx.GraphModule:
 
     # final review print
     graph_cleanup(gm)
-
-    # TODO - remove this.  This is purely a final check to verify all meta data
-    # related to fusion has been updated to use the buffer size rather than original.
-
-    # get_nodes = get_all_nodes_of_type(
-    #    gm, OP.CALL_FUNCTION, starts_with="get", require_meta=True
-    # )
-
-    # _debug(f"\672 ++++++++++++++++ \n{get_nodes=}\n")
-    # ---- end final meta tensors debug review -----------
-
-    # result = True  # TODO - make this mean something
 
     gm.recompile()
     return gm
