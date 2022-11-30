@@ -7,11 +7,12 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.nn as nn
-from compiler.log_utils import rank0_debug
+from spmd.compiler.log_utils import rank0_debug
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from spmd import SPMD, Schema
 from spmd.tensor import DeviceMesh, Replicate
+from typing import List
 
 logger: logging.Logger = logging.getLogger(__name__)
 _debug = partial(rank0_debug, logger)  # type: ignore
@@ -21,7 +22,7 @@ _debug = partial(rank0_debug, logger)  # type: ignore
 DEVICE_TYPE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
-def setup(rank: int, world_size: int, use_cuda: bool = True):
+def setup(rank: int, world_size: int, use_cuda: bool = True) -> None:
     logging.getLogger().setLevel(
         logging.DEBUG if rank == 0 else logging.CRITICAL
     )
@@ -53,7 +54,7 @@ def formatted_print(rank, name, val, rank_only=False):
 
 # --- model
 
-mnist_dims = [28 * 28, 500, 250, 100, 50, 25, 10]
+mnist_dims: List[int] = [28 * 28, 500, 250, 100, 50, 25, 10]
 
 
 class MyModel(nn.Module):
@@ -150,9 +151,9 @@ def work_main(rank: int, world_size: int) -> None:
                 # visual display of initial grads
                 div_grad = p2.grad[0] / world_size
 
-                print(f"DDP:\n {p1.grad[0]}\nSPMD:\n {div_grad}\n")
+                print(f"DDP:\n {p1.grad[0]}\nSPMD:\n {div_grad}\n")  # type: ignore
 
-            assert p1.grad.allclose(
+            assert p1.grad.allclose(  # type: ignore
                 p2.grad / world_size
             ), "Mismatch in resulting grads between DDP and SPMD."
     _debug("--> run completed, all grads matching!")
