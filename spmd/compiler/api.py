@@ -162,7 +162,13 @@ def _get_dtensor_dispatch_graph(
     def unwrap_local(e: object) -> object:
         return e._local_tensor if isinstance(e, DTensor) else e
 
-    return make_fx(dispatch)(local_target_args)
+    gm = make_fx(dispatch)(local_target_args)
+    for nd in gm.graph.nodes:
+        if nd.name == "_tensor_constant0":
+            print(
+                f"WARNING: found constant while SPMD expansion for {node}. Graph {gm}. This is not supported."
+            )
+    return gm
 
 
 def _build_dummy_add_graph(
@@ -310,13 +316,19 @@ def _convert_to_distributed(
     inps: List[torch.Tensor],
     schemas: List[Schema],
     _allow_partial: bool = False,
-) -> fx.GraphModule:
+) -> Tuple[fx.GraphModule, Dict[str, Schema]]:
+    """
+    Returns:
+        - transformed graph module
+        - map from output name to DTensorSpec
+    """
     node_to_obj: Dict[fx.Node, object] = {}
     # map local op node in traced_f to its corresponding subgraph of
     # DTensor ops.
     node_replacements: Dict[torch.fx.Node, torch.fx.GraphModule] = {}
 
     rank0_info(logger, f"Training phase: {training_phase}")
+    output_schemas: Dict[str, Schema] = {}
     for i, node in enumerate(gm.graph.nodes):
         rank0_info(logger, f"node{i}: op={node.op} target={node.target}")
         if node.op == OP.PLACEHOLDER:
@@ -326,7 +338,7 @@ def _convert_to_distributed(
             if training_phase == TrainingPhase.FORWARD:
                 # in the forward phase we start with the full "global" ensors.
                 # we needed this because we needed to capture the original graph.
-                node_to_obj[node] = distribute_tensor(  # DTensor.from_local(
+                node_to_obj[node] = distribute_tensor(
                     inps[i],
                     schemas[i].mesh,
                     schemas[i].placements,
@@ -346,6 +358,15 @@ def _convert_to_distributed(
                 node, node_to_obj
             )
         elif node.op == OP.OUTPUT:
+            # save output sharding for the inputs to backward pass
+            for a in node.args[0]:
+                if isinstance(a, fx.Node):
+                    obj = node_to_obj[a]
+                    if isinstance(obj, DTensor):
+                        output_schemas[a.name] = Schema(
+                            obj.device_mesh, obj.placements  # type: ignore
+                        )
+
             if not _allow_partial:
                 _convert_output(gm, node, node_to_obj)
                 break
@@ -372,12 +393,17 @@ def _convert_to_distributed(
 
     _rebuild_graph(gm, node_replacements)
 
-    return make_boxed_func(gm)
+    return make_boxed_func(gm), output_schemas
 
 
 class SPMD(nn.Module):
     # TODO: add schema_override
-    def __init__(self, module: nn.Module, schema: Schema) -> None:
+    def __init__(
+        self,
+        module: nn.Module,
+        schema: Schema,
+        input_schemas: Sequence[Placement] = None,  # type: ignore
+    ) -> None:
         super().__init__()
         assert schema.placements == [
             Replicate()
@@ -390,6 +416,10 @@ class SPMD(nn.Module):
         self._local_module: nn.Module = module
         self._schema: Schema = schema
         self._compiled_m: Optional[nn.Module] = None
+        # used to propagate sharding from the output of the forward pass to the input of backward pass
+        self._known_specs_by_node_name: Dict[str, Schema] = {}
+        # Override the default sharding of input to the model.
+        self._input_schemas = input_schemas
 
     def _compile(
         self,
@@ -406,11 +436,44 @@ class SPMD(nn.Module):
         shard_schema: Schema = Schema(
             mesh=self._schema.mesh, placements=[Shard(0)]
         )
-        schemas: List[Schema] = [
-            self._schema if is_param(inp) else shard_schema for inp in inps
-        ]
+        schemas: List[Schema] = []
+        inp_schema_count = 0
+        # iterate through inputs (and initial nodes of the graph that should correspond 1:1 to those inputs)
+        for inp, placeholder_node in zip(inps, gm.graph.nodes):
+            # This is a no-op but we want the order of schemas
+            # to match the order of inputs when we iterate through
+            # the graph. Usually the non-tensor inputs are at the
+            # end of the list so we could drop the schemas for it.
 
-        return _convert_to_distributed(training_phase, gm, inps, schemas)
+            assert (
+                placeholder_node.op == "placeholder"
+            ), "Expected initial nodes of the GraphModule to be input placeholders. Got {placeholder_node.op}"
+
+            known_schema = self._known_specs_by_node_name.get(
+                placeholder_node.name
+            )
+
+            if known_schema is not None:
+                schemas.append(known_schema)
+            elif not isinstance(inp, torch.Tensor):
+                schemas.append(
+                    Schema(mesh=self._schema.mesh, placements=[Replicate()])
+                )
+            else:
+                if is_param(inp):
+                    schemas.append(self._schema)
+                else:
+                    if self._input_schemas:
+                        schemas.append(self._input_schemas[inp_schema_count])  # type: ignore
+                        inp_schema_count += 1
+                    else:
+                        schemas.append(shard_schema)
+
+        parallelized_gm, output_specs = _convert_to_distributed(
+            training_phase, gm, inps, schemas
+        )
+        self._known_specs_by_node_name.update(output_specs)
+        return parallelized_gm
 
     def forward(
         self, *args: Tuple[object], **kwargs: Dict[str, object]
