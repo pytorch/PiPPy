@@ -402,7 +402,7 @@ class SPMD(nn.Module):
         self,
         module: nn.Module,
         schema: Schema,
-        input_schemas: Sequence[Placement] = None,
+        input_schemas: Sequence[Placement] = None,  # type: ignore
     ) -> None:
         super().__init__()
         assert schema.placements == [
