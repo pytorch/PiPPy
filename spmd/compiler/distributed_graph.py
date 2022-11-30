@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import torch.nn as nn
 from torch import fx
@@ -47,7 +47,7 @@ class DistributedGraph:
         self._dirty = False
         return self
 
-    def profile(self, *args, **kwargs) -> "DistributedGraph":
+    def profile(self, *args: Any, **kwargs: Any) -> "DistributedGraph":
         """
         Profile the given distributed graph. The profiler does not support
         distributed profiling. So this API will invoke another compile step

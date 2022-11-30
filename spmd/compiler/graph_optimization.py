@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Callable, DefaultDict, Iterable, Set
+from typing import Any, Callable, DefaultDict, Iterable, Set
 
 from .bucketing_strategies import BucketingStrategy
 from .distributed_graph import DistributedGraph
@@ -11,7 +11,7 @@ from .scheduling_policies import SchedulingPolicy
 _run_before_sets: DefaultDict[str, Set[str]] = defaultdict(set)
 
 
-def graph_optimization_pass(run_after: Iterable[str] = tuple()) -> Callable:
+def graph_optimization_pass(run_after: Iterable[str] = tuple()) -> Any:
     """
     The contract of graph optimization pass. All the passes should be wrapped with
     this decorator. The first argument of a pass is the target DistGraphOptimization,
@@ -19,12 +19,12 @@ def graph_optimization_pass(run_after: Iterable[str] = tuple()) -> Callable:
     Users can then chain the passes to optimize the whole graph.
     """
 
-    def pass_wrapper(func) -> Callable:
+    def pass_wrapper(func: Any) -> Any:
         for name in run_after:
             _run_before_sets[name].add(func.__name__)
 
         def pass_func(
-            self: "DistGraphOptimization", *args, **kwargs
+            self: "DistGraphOptimization", *args: Any, **kwargs: Any
         ) -> "DistGraphOptimization":
             assert not (
                 self._optimized or func.__name__ in self._optimized_func

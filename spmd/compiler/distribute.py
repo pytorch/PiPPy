@@ -422,9 +422,9 @@ class _SPMD:
     ) -> fx.GraphModule:
         def is_param(t: torch.Tensor) -> bool:
             # N.B.: id(t) and id(param) does not match
+            orig_module = cast(nn.Module, self._dist_graph.orig_module)
             return t.storage().data_ptr() in (
-                p.storage().data_ptr()
-                for p in self._dist_graph.orig_module.parameters()
+                p.storage().data_ptr() for p in orig_module.parameters()
             )
 
         shard_schema: Schema = Schema(
@@ -505,7 +505,7 @@ def distribute(
 
     spmd = _SPMD(dist_graph, param_schema, input_schemas)
     compiled_m = aot_module(
-        dist_graph.orig_module,
+        cast(nn.Module, dist_graph.orig_module),
         partial(spmd._compile, TrainingPhase.FORWARD),
         partial(spmd._compile, TrainingPhase.BACKWARD),
         pre_compile_fn=gather_inputs_for_compilation,
@@ -523,7 +523,7 @@ def distribute(
     # TODO(chienchin): figure out how to be compatible with optimizer state_dict
     # loading.
     if force_compile:
-        output = cast(nn.Module, compiled_m)(*args, **kwargs)
+        output = compiled_m(*args, **kwargs)
         # Force to compile the backward
         output.sum().backward()
         # Clear the gradient
