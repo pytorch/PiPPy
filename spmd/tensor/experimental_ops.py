@@ -1,16 +1,14 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import cast, List, Optional, Sequence, Tuple
+from typing import List, Optional, Tuple
 
 import torch
 
 from torch.distributed._tensor.placement_types import (
-    _Partial,
     DTensorSpec,
     Placement,
     Replicate,
     Shard,
 )
-from torch.distributed._tensor.api import DTensor
 from torch.distributed._tensor.dispatch import OpSchema, OutputSharding
 from torch.distributed._tensor.ops.utils import register_prop_rule
 
@@ -47,7 +45,7 @@ def _prop_native_layer_norm(op_schema: OpSchema) -> OutputSharding:
     )
 
 
-@register_prop_rule("aten.cat.default")		
+@register_prop_rule("aten.cat.default")
 def prop_cat(op_schema: OpSchema) -> OutputSharding:
     tensor_list = op_schema.args_schema[0]
     if len(op_schema.args_schema) > 1:
@@ -64,7 +62,7 @@ def prop_cat(op_schema: OpSchema) -> OutputSharding:
     for tensor in tensor_list:
         assert isinstance(tensor, DTensorSpec)
         if output_placements is None:
-            output_placements = tensor.placements
+            output_placements = tensor.placements  # type: ignore
         else:
             # not sure why we're getting a tuple here sometimes, so casting to list to be sure
             assert list(output_placements) == list(
@@ -97,26 +95,26 @@ def _refine_sharding(
     # we'll apply exactly the pointwise rule.
     args_schema = [
         DTensorSpec(
-            mesh=s.mesh,
-            placements=s.placements,
-            shape=s.shape[0:active_dim] + (1,) + s.shape[active_dim + 1 :]
+            mesh=s.mesh,  # type: ignore
+            placements=s.placements,  # type: ignore
+            shape=s.shape[0:active_dim] + (1,) + s.shape[active_dim + 1 :]  # type: ignore
             if active_dim is not None
-            else s.shape,
+            else s.shape,  # type: ignore
         )
         for s in op_schema.args_schema[:2]
     ]
 
     op_schema = OpSchema(
         func_schema=op_schema.func_schema,
-        args_schema=args_schema,
+        args_schema=args_schema,  # type: ignore
         kwargs_schema={},
         is_inplace=op_schema.is_inplace,
         is_out_variant=op_schema.is_out_variant,
     )
-    output_sharding = pointwise_rule(op_schema, linearity=False)
+    output_sharding = pointwise_rule(op_schema, linearity=False)  # type: ignore
     if output_sharding.output_spec:
         assert isinstance(output_sharding.output_spec, DTensorSpec)
-        return output_sharding.output_spec.placements
+        return output_sharding.output_spec.placements  # type: ignore
     else:
         return output_sharding.schema_suggestions[0].args_schema[0].placements
 
@@ -147,7 +145,7 @@ def prop_slice_scatter(op_schema: OpSchema) -> OutputSharding:
     # pointwise, no exceptions.
     if input.shape[dim] == src.shape[dim]:
         assert start == 0
-        assert end >= src.shape[dim]
+        assert end >= src.shape[dim]  # type: ignore
         dim = None
 
     # apply sharding refinement as implemented in pointwise_rule
@@ -156,4 +154,43 @@ def prop_slice_scatter(op_schema: OpSchema) -> OutputSharding:
     for i, p in enumerate(input_suggestion):
         if isinstance(p, Shard) and p.dim == dim:
             input_suggestion[i] = Replicate()
-    input_suggestion = tuple(input_suggestion)
+    input_suggestion = tuple(input_suggestion)  # type: ignore
+
+    if input_suggestion == tuple(input.placements) and src.placements == tuple(
+        input.placements
+    ):
+        # if our sharding is correct, the output sharding will be the same as the input.
+        return OutputSharding(
+            output_spec=DTensorSpec(
+                mesh=input.mesh,
+                placements=input.placements,
+                shape=input.shape,
+                ndim=input.ndim,
+            )
+        )
+    else:
+        # otherwise, return the suggestion.
+        return OutputSharding(
+            output_spec=None,
+            schema_suggestions=[
+                OpSchema(
+                    func_schema=op_schema.func_schema,
+                    args_schema=(
+                        DTensorSpec(
+                            mesh=input.mesh,
+                            placements=input_suggestion,
+                            shape=input.shape,
+                            ndim=input.ndim,
+                        ),
+                        DTensorSpec(
+                            mesh=src.mesh,
+                            placements=input_suggestion,
+                            shape=src.shape,
+                            ndim=src.ndim,
+                        ),
+                    )
+                    + op_schema.args_schema[2:],
+                    kwargs_schema=op_schema.kwargs_schema,
+                )
+            ],
+        )

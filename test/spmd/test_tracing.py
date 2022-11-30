@@ -10,7 +10,6 @@ from torch.testing._internal.distributed._tensor.common_dtensor import (
     DTensorTestBase,
     with_comms,
 )
-from torch.distributed._tensor.placement_types import _Partial
 from torch.fx.experimental.proxy_tensor import make_fx
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.testing._internal.common_utils import run_tests
@@ -236,7 +235,7 @@ class TraceModuleTest(DTensorTestBase):
     @with_comms
     def test_torch_cat(self):
         x = torch.rand((2, 4)).to(self.device_type)
-        
+
         class Model(torch.nn.Module):
             def __init__(self):
                 super().__init__()
@@ -255,14 +254,13 @@ class TraceModuleTest(DTensorTestBase):
                     self.device_type, torch.arange(self.world_size)
                 ),
                 placements=[Replicate()],
-             )
+            )
         ]
         self._test_trace_replicate(
             Model().to(self.device_type),
             torch.rand((2, 4)).to(self.device_type),
             **inp_kwargs
         )
-
 
     @with_comms
     def test_layer_norm_fw(self):

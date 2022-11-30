@@ -338,7 +338,7 @@ def _convert_to_distributed(
             if training_phase == TrainingPhase.FORWARD:
                 # in the forward phase we start with the full "global" ensors.
                 # we needed this because we needed to capture the original graph.
-                node_to_obj[node] = distribute_tensor(  # DTensor.from_local(
+                node_to_obj[node] = distribute_tensor(
                     inps[i],
                     schemas[i].mesh,
                     schemas[i].placements,
@@ -363,8 +363,8 @@ def _convert_to_distributed(
                 if isinstance(a, fx.Node):
                     obj = node_to_obj[a]
                     if isinstance(obj, DTensor):
-                         output_schemas[a.name] = Schema(
-                            obj.device_mesh, obj.placements
+                        output_schemas[a.name] = Schema(
+                            obj.device_mesh, obj.placements  # type: ignore
                         )
 
             if not _allow_partial:
@@ -464,7 +464,7 @@ class SPMD(nn.Module):
                     schemas.append(self._schema)
                 else:
                     if self._input_schemas:
-                        schemas.append(self._input_schemas[inp_schema_count])
+                        schemas.append(self._input_schemas[inp_schema_count])  # type: ignore
                         inp_schema_count += 1
                     else:
                         schemas.append(shard_schema)
