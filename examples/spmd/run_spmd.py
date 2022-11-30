@@ -2,6 +2,7 @@ import logging
 import os
 from copy import deepcopy
 from functools import partial
+import random
 
 import torch
 import torch.distributed as dist
@@ -88,7 +89,7 @@ class Permute(torch.nn.Module):
         return torch.nn.functional.linear(x_t, self.w, self.b)
 
 
-class replicaModel(nn.Module):
+class ReplicaModel(nn.Module):
     def __init__(self, layer_count: int = 2, _with_bias: bool = False) -> None:
         super().__init__()
         self.seq = nn.Sequential(
@@ -115,11 +116,11 @@ def work_main(rank: int, world_size: int) -> None:
     mesh = DeviceMesh(device_type=_device_type, mesh=gpu_placement)
     _debug(f"mesh set to {mesh}\n")
 
-    # control depth of replicaModel
+    # control depth of ReplicaModel
     layers = 2
 
     # model = Permute().to(rank)  #
-    model = replicaModel(layer_count=layers).to(_device_type)
+    model = ReplicaModel(layer_count=layers).to(_device_type)
 
     ddp = DDP(deepcopy(model))
     ddp.to(rank)
@@ -181,8 +182,13 @@ def main(rank: int, world_size: int, use_cuda: bool = True) -> None:
 
 if __name__ == "__main__":
     os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "29502"
+    # obtain random port
+    random.seed(2022)
+    port = random.randint(49152, 65535)
+    os.environ["MASTER_PORT"] = str(port)
+
     world_size = 2
     use_cuda: bool = DEVICE_TYPE == "cuda"
+
     print(f"use_cuda == {use_cuda}, starting run_SPMD...\n")
     mp.spawn(main, args=(world_size,), nprocs=world_size, join=True)
