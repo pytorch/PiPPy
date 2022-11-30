@@ -31,6 +31,7 @@ class DistributedGraph:
         self.primal_to_param: List[Dict[fx.Node, nn.Parameter]] = []
         self.grad_to_primal: List[Dict[fx.Node, fx.Node]] = []
 
+        # Indicate `update()` must be called before applying any optimization.
         self._dirty = True
 
     def _map_param_grad(self) -> None:

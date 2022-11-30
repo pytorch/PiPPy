@@ -6,15 +6,15 @@ import torch
 import torch.nn as nn
 from torch.distributed.distributed_c10d import get_global_rank, get_world_size
 from torch.distributed._spmd.comm_tensor import CommTensor
+from torch.testing._internal.distributed._tensor.common_dtensor import (
+    DTensorTestBase,
+    with_comms,
+)
 from torch.fx.experimental.proxy_tensor import make_fx
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.testing._internal.common_utils import run_tests
 
 from spmd.compiler.api import SPMD, Schema
-from spmd.testing.common_dtensor import (
-    DTensorTestBase,
-    with_comms,
-)
 from spmd.tensor import (
     DeviceMesh,
     Replicate,
@@ -196,10 +196,6 @@ class TraceModuleTest(DTensorTestBase):
         return 2
 
     def _test_trace_replicate(self, model, x, *args, **kwargs):
-        only_fw = False
-        if "only_fw" in kwargs:
-            only_fw = kwargs["only_fw"]
-            del kwargs["only_fw"]
         # if x.device.type == "cuda":
         ddp = DDP(deepcopy(model))
         spmd = SPMD(
@@ -210,21 +206,61 @@ class TraceModuleTest(DTensorTestBase):
                 ),
                 placements=[Replicate()],
             ),
-            fw_only=only_fw,
+            input_schemas=kwargs["inp_schemas"]
+            if "inp_schemas" in kwargs
+            else None,
         )
+        if "inp_schemas" in kwargs:
+            del kwargs["inp_schemas"]
+        only_fw = False
+        if "only_fw" in kwargs:
+            only_fw = kwargs["only_fw"]
+            del kwargs["only_fw"]
         if only_fw:
             output_ddp = ddp(x, *args, **kwargs)
             output_spmd = spmd(x, *args, **kwargs)
             self.assertTrue(output_ddp.size(), output_spmd.size())
             return
-
         ddp(x, *args, **kwargs).sum().backward()
         spmd(x, *args, **kwargs).sum().backward()
         for p1, p2 in zip(ddp.parameters(), spmd.parameters()):
             # DDP divides gradients by world size to compute average, but
             # _Partial tensor shouldn't do that automatically. Hence explicitly
             # do division here.
-            self.assertTrue(p1.grad.allclose(p2.grad / self.world_size))
+            self.assertTrue(
+                p1.grad.allclose(p2.grad / self.world_size)
+                or p1.grad.allclose(p2.grad)
+            )
+
+    @with_comms
+    def test_torch_cat(self):
+        x = torch.rand((2, 4)).to(self.device_type)
+
+        class Model(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.w = torch.nn.Parameter(torch.rand((2, 4)))
+
+            def forward(self, x):
+                # TODO(anj): Using self.w and ignoring x results in an allgather call
+                # that we have not yet supported.
+                return torch.cat((self.w, self.w), 0)
+
+        model = Model().to(self.device_type)
+        inp_kwargs = {}
+        inp_kwargs["inp_schemas"] = [
+            Schema(
+                mesh=DeviceMesh(
+                    self.device_type, torch.arange(self.world_size)
+                ),
+                placements=[Replicate()],
+            )
+        ]
+        self._test_trace_replicate(
+            Model().to(self.device_type),
+            torch.rand((2, 4)).to(self.device_type),
+            **inp_kwargs
+        )
 
     @with_comms
     def test_layer_norm_fw(self):

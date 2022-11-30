@@ -2,7 +2,7 @@ import logging
 from dataclasses import dataclass
 from enum import auto, Enum
 from functools import partial
-from typing import cast, Dict, List, Optional, Sequence, Set, Tuple
+from typing import cast, Dict, List, Sequence, Set, Tuple
 
 import functorch.compile
 
@@ -10,19 +10,25 @@ import torch
 import torch.fx as fx
 import torch.nn as nn
 from functorch.compile import aot_module, make_boxed_func
-from spmd.tensor import DeviceMesh, distribute_tensor, DTensor
-from spmd.tensor.dispatch import (
+from spmd.tensor import (
     _CURRENT_DECOMPOSITION_TABLE,
+    _Partial,
+    _redistribute_with_local_tensor,
+    DeviceMesh,
+    distribute_tensor,
+    DTensor,
     operator_dispatch,
+    Placement,
     propagate_input_sharding,
+    Replicate,
+    Shard,
 )
-from spmd.tensor.placement_types import _Partial, Placement, Replicate, Shard
-from spmd.tensor.redistribute import _redistribute_with_local_tensor
 from torch.distributed._spmd.comm_tensor import _get_tracer
 from torch.fx.experimental.proxy_tensor import make_fx, proxy_slot
 from torch.utils._pytree import tree_flatten, tree_map, tree_unflatten
 
 from .aot_function_patch import patched_aot_function
+from .distributed_graph import DistributedGraph
 from .graph_utils import OP
 from .log_utils import rank0_info
 
@@ -159,7 +165,13 @@ def _get_dtensor_dispatch_graph(
     def unwrap_local(e: object) -> object:
         return e._local_tensor if isinstance(e, DTensor) else e
 
-    return make_fx(dispatch)(local_target_args)
+    gm = make_fx(dispatch)(local_target_args)
+    for nd in gm.graph.nodes:
+        if nd.name == "_tensor_constant0":
+            print(
+                f"WARNING: found constant while SPMD expansion for {node}. Graph {gm}. This is not supported."
+            )
+    return gm
 
 
 def _build_dummy_add_graph(
@@ -301,30 +313,36 @@ def _rebuild_graph(
     gm.recompile()
 
 
-def _convert_to_distributed_graph(
+def _convert_to_distributed(
     training_phase: TrainingPhase,
     gm: fx.GraphModule,
-    inputs: List[torch.Tensor],
+    inps: List[torch.Tensor],
     schemas: List[Schema],
     _allow_partial: bool = False,
-) -> fx.GraphModule:
+) -> Tuple[fx.GraphModule, Dict[str, Schema]]:
+    """
+    Returns:
+        - transformed graph module
+        - map from output name to DTensorSpec
+    """
     node_to_obj: Dict[fx.Node, object] = {}
     # map local op node in traced_f to its corresponding subgraph of
     # DTensor ops.
     node_replacements: Dict[torch.fx.Node, torch.fx.GraphModule] = {}
 
     rank0_info(logger, f"Training phase: {training_phase}")
+    output_schemas: Dict[str, Schema] = {}
     for i, node in enumerate(gm.graph.nodes):
         rank0_info(logger, f"node{i}: op={node.op} target={node.target}")
         if node.op == OP.PLACEHOLDER:
             assert i < len(
-                inputs
-            ), f"got more placeholer nodes ({i + 1}) than inputs ({len(inputs)})"
+                inps
+            ), f"got more placeholer nodes ({i + 1}) than inputs ({len(inps)})"
             if training_phase == TrainingPhase.FORWARD:
                 # in the forward phase we start with the full "global" ensors.
                 # we needed this because we needed to capture the original graph.
-                node_to_obj[node] = distribute_tensor(  # DTensor.from_local(
-                    inputs[i],
+                node_to_obj[node] = distribute_tensor(
+                    inps[i],
                     schemas[i].mesh,
                     schemas[i].placements,
                 )
@@ -333,7 +351,7 @@ def _convert_to_distributed_graph(
                 # so we have to actually make DTensors out of them
                 assert training_phase == TrainingPhase.BACKWARD
                 node_to_obj[node] = DTensor.from_local(
-                    inputs[i],
+                    inps[i],
                     schemas[i].mesh,
                     schemas[i].placements,
                 )
@@ -343,6 +361,15 @@ def _convert_to_distributed_graph(
                 node, node_to_obj
             )
         elif node.op == OP.OUTPUT:
+            # save output sharding for the inputs to backward pass
+            for a in node.args[0]:
+                if isinstance(a, fx.Node):
+                    obj = node_to_obj[a]
+                    if isinstance(obj, DTensor):
+                        output_schemas[a.name] = Schema(
+                            obj.device_mesh, obj.placements  # type: ignore
+                        )
+
             if not _allow_partial:
                 _convert_output(gm, node, node_to_obj)
                 break
@@ -368,56 +395,97 @@ def _convert_to_distributed_graph(
             raise ValueError(f"Unrecognized node {node}")
 
     _rebuild_graph(gm, node_replacements)
-    return gm
+
+    return gm, output_schemas
 
 
 class _SPMD:
-    def __init__(self, orig_module: nn.Module, param_schema: Schema) -> None:
-        self._orig_module = orig_module
+    def __init__(
+        self,
+        dist_graph: DistributedGraph,
+        param_schema: Schema,
+        input_schemas: Sequence[Placement],
+    ) -> None:
+        self._dist_graph = dist_graph
         self._param_schema = param_schema
-        self._fwd_gm: Optional[fx.GraphModule] = None
-        self._bwd_gm: Optional[fx.GraphModule] = None
+        # Override the default sharding of input to the model.
+        self._input_schemas = input_schemas
+        # used to propagate sharding from the output of the forward pass to
+        # the input of backward pass
+        self._known_specs_by_node_name: Dict[str, Schema] = {}
 
     def _compile(
         self,
         training_phase: TrainingPhase,
         gm: fx.GraphModule,
-        inputs: List[torch.Tensor],
+        inps: List[torch.Tensor],
     ) -> fx.GraphModule:
         def is_param(t: torch.Tensor) -> bool:
             # N.B.: id(t) and id(param) does not match
             return t.storage().data_ptr() in (
-                p.storage().data_ptr() for p in self._orig_module.parameters()
+                p.storage().data_ptr()
+                for p in self._dist_graph.orig_module.parameters()
             )
 
         shard_schema: Schema = Schema(
             mesh=self._param_schema.mesh, placements=[Shard(0)]
         )
-        schemas: List[Schema] = [
-            self._param_schema if is_param(inp) else shard_schema
-            for inp in inputs
-        ]
+        schemas: List[Schema] = []
+        inp_schema_count = 0
+        # iterate through inputs (and initial nodes of the graph that should
+        # correspond 1:1 to those inputs)
+        for inp, placeholder_node in zip(inps, gm.graph.nodes):
+            # This is a no-op but we want the order of schemas
+            # to match the order of inputs when we iterate through
+            # the graph. Usually the non-tensor inputs are at the
+            # end of the list so we could drop the schemas for it.
 
-        gm = _convert_to_distributed_graph(
-            training_phase,
-            gm,
-            inputs,
-            schemas,
+            assert placeholder_node.op == "placeholder", (
+                "Expected initial nodes of the GraphModule to be input placeholders. "
+                "Got {placeholder_node.op}"
+            )
+
+            known_schema = self._known_specs_by_node_name.get(
+                placeholder_node.name
+            )
+
+            if known_schema is not None:
+                schemas.append(known_schema)
+            elif not isinstance(inp, torch.Tensor):
+                schemas.append(
+                    Schema(
+                        mesh=self._param_schema.mesh, placements=[Replicate()]
+                    )
+                )
+            else:
+                if is_param(inp):
+                    schemas.append(self._param_schema)
+                elif self._input_schemas:
+                    schemas.append(self._input_schemas[inp_schema_count])  # type: ignore
+                    inp_schema_count += 1
+                else:
+                    schemas.append(shard_schema)
+
+        parallelized_gm, output_specs = _convert_to_distributed(
+            training_phase, gm, inps, schemas
         )
+        self._known_specs_by_node_name.update(output_specs)
+
         if training_phase == TrainingPhase.FORWARD:
-            self._fwd_gm = gm
+            self._dist_graph.fwd_graph_modules.append(parallelized_gm)
         elif training_phase == TrainingPhase.BACKWARD:
-            self._bwd_gm = gm
-        return make_boxed_func(gm)
+            self._dist_graph.bwd_graph_modules.append(parallelized_gm)
+        return make_boxed_func(parallelized_gm)
 
 
 def distribute(
-    module: nn.Module,
+    dist_graph: DistributedGraph,
     param_schema: Schema,
-    fw_only: bool,
+    input_schemas: Sequence[Placement],
+    force_compile: bool,
     *args: Tuple[object],
     **kwargs: Dict[str, object],
-) -> Tuple[nn.Module, fx.GraphModule, Optional[fx.GraphModule]]:
+) -> nn.Module:
     flat_args, _ = tree_flatten(args)
     flat_kwargs, _ = tree_flatten(kwargs)
     input_set: Set[object] = set(flat_args + flat_kwargs)
@@ -435,26 +503,27 @@ def distribute(
         )
         return compile_inps
 
-    spmd = _SPMD(module, param_schema)
+    spmd = _SPMD(dist_graph, param_schema, input_schemas)
     compiled_m = aot_module(
-        module,
+        dist_graph.orig_module,
         partial(spmd._compile, TrainingPhase.FORWARD),
         partial(spmd._compile, TrainingPhase.BACKWARD),
         pre_compile_fn=gather_inputs_for_compilation,
         decompositions=_CURRENT_DECOMPOSITION_TABLE,
     )
 
-    # Forcing to execute one step to get the forward and backwarg graph.
+    # Force to execute one step to get the forward and backward graph.
     # One major issue of this flow is the optimizer states. All optimizer
     # states are lazily initialized by default but PT-D distributed checkpoint
     # requires eagerly initialization states. Eager initialization means the
     # optimizer state is initialized and loaded before ``forward()`` is called.
     # One way to solve the issue is to ensure that this ``distribute()`` is
     # called before optimizer ``load_state_dict()`` is executed.
-    output = cast(nn.Module, compiled_m)(*args, **kwargs)
-    if not fw_only:
-        # fw_only is a hack if we cannot compile the backward. Should be a
-        # temporary solution.
+    #
+    # TODO(chienchin): figure out how to be compatible with optimizer state_dict
+    # loading.
+    if force_compile:
+        output = cast(nn.Module, compiled_m)(*args, **kwargs)
         # Force to compile the backward
         output.sum().backward()
         # Clear the gradient
@@ -462,5 +531,4 @@ def distribute(
             if p.grad is not None:
                 p.grad = None
 
-    assert spmd._fwd_gm is not None
-    return compiled_m, spmd._fwd_gm, spmd._bwd_gm
+    return compiled_m

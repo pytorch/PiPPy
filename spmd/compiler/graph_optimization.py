@@ -77,6 +77,10 @@ class DistGraphOptimization:
             self._optimizing = False
         return self._graph
 
+    @property
+    def optimized(self) -> bool:
+        return self._optimized
+
     @graph_optimization_pass()
     def fuse_communication(
         self,
