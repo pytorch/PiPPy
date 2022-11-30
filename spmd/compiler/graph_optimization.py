@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Any, Callable, DefaultDict, Iterable, Set
+from typing import Any, DefaultDict, Iterable, Set
 
 from .bucketing_strategies import BucketingStrategy
 from .distributed_graph import DistributedGraph
