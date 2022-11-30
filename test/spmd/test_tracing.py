@@ -207,7 +207,9 @@ class TraceModuleTest(DTensorTestBase):
                 ),
                 placements=[Replicate()],
             ),
-            input_schemas=kwargs["inp_schemas"] if "inp_schemas" in kwargs else None
+            input_schemas=kwargs["inp_schemas"]
+            if "inp_schemas" in kwargs
+            else None,
         )
         if "inp_schemas" in kwargs:
             del kwargs["inp_schemas"]
@@ -226,32 +228,40 @@ class TraceModuleTest(DTensorTestBase):
             # DDP divides gradients by world size to compute average, but
             # _Partial tensor shouldn't do that automatically. Hence explicitly
             # do division here.
-            self.assertTrue(p1.grad.allclose(p2.grad / self.world_size) or p1.grad.allclose(p2.grad))
+            self.assertTrue(
+                p1.grad.allclose(p2.grad / self.world_size)
+                or p1.grad.allclose(p2.grad)
+            )
 
     @with_comms
     def test_torch_cat(self):
         x = torch.rand((2, 4)).to(self.device_type)
         
         class Model(torch.nn.Module):
-
             def __init__(self):
                 super().__init__()
                 self.w = torch.nn.Parameter(torch.rand((2, 4)))
-            
+
             def forward(self, x):
                 # TODO(anj): Using self.w and ignoring x results in an allgather call
                 # that we have not yet supported.
                 return torch.cat((self.w, self.w), 0)
-        
+
         model = Model().to(self.device_type)
         inp_kwargs = {}
-        inp_kwargs["inp_schemas"] = [Schema(
+        inp_kwargs["inp_schemas"] = [
+            Schema(
                 mesh=DeviceMesh(
                     self.device_type, torch.arange(self.world_size)
                 ),
                 placements=[Replicate()],
-            )]
-        self._test_trace_replicate(Model().to(self.device_type), torch.rand((2, 4)).to(self.device_type), **inp_kwargs)
+             )
+        ]
+        self._test_trace_replicate(
+            Model().to(self.device_type),
+            torch.rand((2, 4)).to(self.device_type),
+            **inp_kwargs
+        )
 
 
     @with_comms

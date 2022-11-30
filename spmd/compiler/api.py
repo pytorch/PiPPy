@@ -164,8 +164,10 @@ def _get_dtensor_dispatch_graph(
 
     gm = make_fx(dispatch)(local_target_args)
     for nd in gm.graph.nodes:
-        if nd.name == '_tensor_constant0':
-            print(f'WARNING: found constant while SPMD expansion for {node}. Graph {gm}. This is not supported.')
+        if nd.name == "_tensor_constant0":
+            print(
+                f"WARNING: found constant while SPMD expansion for {node}. Graph {gm}. This is not supported."
+            )
     return gm
 
 
@@ -361,7 +363,9 @@ def _convert_to_distributed(
                 if isinstance(a, fx.Node):
                     obj = node_to_obj[a]
                     if isinstance(obj, DTensor):
-                        output_schemas[a.name] = Schema(obj.device_mesh, obj.placements)
+                         output_schemas[a.name] = Schema(
+                            obj.device_mesh, obj.placements
+                        )
 
             if not _allow_partial:
                 _convert_output(gm, node, node_to_obj)
@@ -394,7 +398,12 @@ def _convert_to_distributed(
 
 class SPMD(nn.Module):
     # TODO: add schema_override
-    def __init__(self, module: nn.Module, schema: Schema, input_schemas:Sequence[Placement]=None) -> None:
+    def __init__(
+        self,
+        module: nn.Module,
+        schema: Schema,
+        input_schemas: Sequence[Placement] = None,
+    ) -> None:
         super().__init__()
         assert schema.placements == [
             Replicate()
@@ -436,16 +445,20 @@ class SPMD(nn.Module):
             # the graph. Usually the non-tensor inputs are at the
             # end of the list so we could drop the schemas for it.
 
-            assert placeholder_node.op == 'placeholder', 'Expected initial nodes of the GraphModule to be input placeholders. Got {placeholder_node.op}'
+            assert (
+                placeholder_node.op == "placeholder"
+            ), "Expected initial nodes of the GraphModule to be input placeholders. Got {placeholder_node.op}"
 
-            known_schema = self._known_specs_by_node_name.get(placeholder_node.name)
+            known_schema = self._known_specs_by_node_name.get(
+                placeholder_node.name
+            )
 
             if known_schema is not None:
                 schemas.append(known_schema)
             elif not isinstance(inp, torch.Tensor):
-                schemas.append(Schema(
-                    mesh=self._schema.mesh, placements=[Replicate()]
-                ))
+                schemas.append(
+                    Schema(mesh=self._schema.mesh, placements=[Replicate()])
+                )
             else:
                 if is_param(inp):
                     schemas.append(self._schema)
@@ -456,7 +469,9 @@ class SPMD(nn.Module):
                     else:
                         schemas.append(shard_schema)
 
-        parallelized_gm, output_specs = _convert_to_distributed(training_phase, gm, inps, schemas)
+        parallelized_gm, output_specs = _convert_to_distributed(
+            training_phase, gm, inps, schemas
+        )
         self._known_specs_by_node_name.update(output_specs)
         return parallelized_gm
 

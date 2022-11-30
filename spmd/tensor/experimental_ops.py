@@ -3,7 +3,13 @@ from typing import cast, List, Optional, Sequence, Tuple
 
 import torch
 
-from torch.distributed._tensor.placement_types import _Partial, DTensorSpec, Placement, Replicate, Shard
+from torch.distributed._tensor.placement_types import (
+    _Partial,
+    DTensorSpec,
+    Placement,
+    Replicate,
+    Shard,
+)
 from torch.distributed._tensor.api import DTensor
 from torch.distributed._tensor.dispatch import OpSchema, OutputSharding
 from torch.distributed._tensor.ops.utils import register_prop_rule
@@ -44,11 +50,12 @@ def _prop_native_layer_norm(op_schema: OpSchema) -> OutputSharding:
 @register_prop_rule("aten.cat.default")		
 def prop_cat(op_schema: OpSchema) -> OutputSharding:
     tensor_list = op_schema.args_schema[0]
-    # dim = op_schema.args_schema[1]
-    dim = -1
+    if len(op_schema.args_schema) > 1:
+        dim = op_schema.args_schema[1]
+    else:
+        dim = -1
     assert isinstance(tensor_list, (list, tuple))
     assert isinstance(dim, int)
-    print(f'cat.default: {tensor_list}')
 
     if dim < 0:
         dim += len(tensor_list[0].shape)
@@ -60,7 +67,9 @@ def prop_cat(op_schema: OpSchema) -> OutputSharding:
             output_placements = tensor.placements
         else:
             # not sure why we're getting a tuple here sometimes, so casting to list to be sure
-            assert list(output_placements) == list(tensor.placements), f'Current only accept cat when all inputs are same sharded. Got {output_placements} vs. {tensor.placements}'
+            assert list(output_placements) == list(
+                tensor.placements
+            ), f"Current only accept cat when all inputs are same sharded. Got {output_placements} vs. {tensor.placements}"
     assert output_placements is not None
 
     output_shape = list(tensor_list[0].shape)
@@ -76,7 +85,9 @@ def prop_cat(op_schema: OpSchema) -> OutputSharding:
     )
 
 
-def _refine_sharding(op_schema: OpSchema, active_dim: Optional[int]) -> Tuple[Placement]:
+def _refine_sharding(
+    op_schema: OpSchema, active_dim: Optional[int]
+) -> Tuple[Placement]:
     """
     Considers 2 first inputs of op_schema as having same shape,
     and returns suggested placement for a pointwise operation.
@@ -88,7 +99,9 @@ def _refine_sharding(op_schema: OpSchema, active_dim: Optional[int]) -> Tuple[Pl
         DTensorSpec(
             mesh=s.mesh,
             placements=s.placements,
-            shape=s.shape[0:active_dim] + (1, ) + s.shape[active_dim + 1:] if active_dim is not None else s.shape,
+            shape=s.shape[0:active_dim] + (1,) + s.shape[active_dim + 1 :]
+            if active_dim is not None
+            else s.shape,
         )
         for s in op_schema.args_schema[:2]
     ]
@@ -98,7 +111,8 @@ def _refine_sharding(op_schema: OpSchema, active_dim: Optional[int]) -> Tuple[Pl
         args_schema=args_schema,
         kwargs_schema={},
         is_inplace=op_schema.is_inplace,
-        is_out_variant=op_schema.is_out_variant)
+        is_out_variant=op_schema.is_out_variant,
+    )
     output_sharding = pointwise_rule(op_schema, linearity=False)
     if output_sharding.output_spec:
         assert isinstance(output_sharding.output_spec, DTensorSpec)
