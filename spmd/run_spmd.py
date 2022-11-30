@@ -46,7 +46,9 @@ def teardown(rank: int) -> None:
     _debug(f"shut down process group on rank {rank}")
 
 
-def formatted_print(rank, name, val, rank_only=False):
+def formatted_print(
+    rank: int, name: str, val: int, rank_only: bool = False
+) -> None:
     if rank_only and not rank == 0:
         return
     print(f"{rank} --> {name} = {val}")
@@ -58,7 +60,7 @@ mnist_dims: List[int] = [28 * 28, 500, 250, 100, 50, 25, 10]
 
 
 class MyModel(nn.Module):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.mod = nn.Sequential(
             *[
@@ -71,29 +73,29 @@ class MyModel(nn.Module):
             ]
         )
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         return self.mod(x)
 
 
 class Permute(torch.nn.Module):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.w = torch.nn.Parameter(torch.rand((5, 10)))
         self.b = torch.nn.Parameter(torch.rand((5)))
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         x_t = x.permute(0, 2, 1)
         return torch.nn.functional.linear(x_t, self.w, self.b)
 
 
 class replicaModel(nn.Module):
-    def __init__(self, layer_count=2, _with_bias=False):
+    def __init__(self, layer_count: int = 2, _with_bias: bool = False) -> None:
         super().__init__()
         self.seq = nn.Sequential(
             *[nn.Linear(10, 10, bias=_with_bias) for _ in range(layer_count)]
         )
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         return sum([self.seq(x)])
 
 
@@ -162,7 +164,7 @@ def work_main(rank: int, world_size: int) -> None:
 # --------- main above -------------------------
 
 
-def main(rank: int, world_size: int, use_cuda: bool = True):
+def main(rank: int, world_size: int, use_cuda: bool = True) -> None:
 
     # init
     setup(rank, world_size, use_cuda)
@@ -181,6 +183,6 @@ if __name__ == "__main__":
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = "29502"
     world_size = 2
-    use_cuda = DEVICE_TYPE == "cuda"
+    use_cuda: bool = DEVICE_TYPE == "cuda"
     print(f"use_cuda == {use_cuda}, starting run_SPMD...\n")
     mp.spawn(main, args=(world_size,), nprocs=world_size, join=True)
