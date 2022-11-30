@@ -8,7 +8,6 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.nn as nn
 from compiler.log_utils import rank0_debug
-from torch.fx.experimental.proxy_tensor import make_fx
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from spmd import SPMD, Schema
@@ -22,7 +21,7 @@ _debug = partial(rank0_debug, logger)  # type: ignore
 DEVICE_TYPE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
-def setup(rank, world_size, use_cuda=True):
+def setup(rank: int, world_size: int, use_cuda: bool = True):
     logging.getLogger().setLevel(
         logging.DEBUG if rank == 0 else logging.CRITICAL
     )
@@ -37,7 +36,7 @@ def setup(rank, world_size, use_cuda=True):
         dist.init_process_group("gloo", rank=rank, world_size=world_size)
 
 
-def teardown(rank) -> None:
+def teardown(rank: int) -> None:
 
     # Wait for all ranks to reach here before starting shutdown.
     _debug(f"rank {rank} entering teardown")
@@ -100,7 +99,7 @@ class replicaModel(nn.Module):
 # ------------ main loop --------------------
 
 
-def work_main(rank, world_size):
+def work_main(rank: int, world_size: int) -> None:
     torch.manual_seed(10)
 
     _device_type = "cuda" if torch.cuda.is_available() else "cpu"
@@ -117,10 +116,11 @@ def work_main(rank, world_size):
     layers = 2
 
     # model = Permute().to(rank)  #
-    model = replicaModel(layer_count=layers).to("cuda")
+    model = replicaModel(layer_count=layers).to(_device_type)
 
     ddp = DDP(deepcopy(model))
     ddp.to(rank)
+
     spmd = SPMD(
         deepcopy(model),
         schema=Schema(
@@ -133,7 +133,7 @@ def work_main(rank, world_size):
 
     # model input - need to adjust to match models
     # permute_input = x = torch.randn(2, 10, 40).to("cuda")
-    x = torch.randn(2, 10).to("cuda")
+    x = torch.randn(2, 10).to(_device_type)
     _debug(f"\ninput tensor, first item = {x[0][0]:.4f}")
 
     # fire off comms
@@ -143,7 +143,7 @@ def work_main(rank, world_size):
     if rank == 0:
         _debug(f" --> backwards run complete, rank {rank}")
 
-        print(f"Visual of resulting grads:\n")
+        print("Visual of resulting grads:\n")
         for i, (p1, p2) in enumerate(zip(ddp.parameters(), spmd.parameters())):
             # just show first row of first 2 grad tensors for quick visual
             if i < 2:
@@ -154,15 +154,14 @@ def work_main(rank, world_size):
 
             assert p1.grad.allclose(
                 p2.grad / world_size
-            ), f"Mismatch in resulting grads between DDP and SPMD."
-    _debug(f"--> run completed, all grads matching!")
-    return
+            ), "Mismatch in resulting grads between DDP and SPMD."
+    _debug("--> run completed, all grads matching!")
 
 
 # --------- main above -------------------------
 
 
-def main(rank, world_size, use_cuda=True):
+def main(rank: int, world_size: int, use_cuda: bool = True):
 
     # init
     setup(rank, world_size, use_cuda)
