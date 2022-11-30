@@ -12,7 +12,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 from spmd import SPMD, Schema
 from spmd.tensor import DeviceMesh, Replicate
-from typing import List
+from typing import List, Union, Literal
 
 logger: logging.Logger = logging.getLogger(__name__)
 _debug = partial(rank0_debug, logger)  # type: ignore
@@ -95,7 +95,7 @@ class replicaModel(nn.Module):
             *[nn.Linear(10, 10, bias=_with_bias) for _ in range(layer_count)]
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> Union[torch.Tensor, Literal[0]]:
         return sum([self.seq(x)])
 
 
