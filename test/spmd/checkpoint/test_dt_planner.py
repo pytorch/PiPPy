@@ -13,7 +13,7 @@ from spmd.checkpoint.dt_planner import (
     DistributedTensorSavePlanner,
 )
 from spmd.testing.checkpoint_utils import with_temp_dir
-from spmd.testing.common_dtensor import (
+from torch.testing._internal.distributed._tensor.common_dtensor import (
     DTensorTestBase,
     with_comms,
     skip_unless_torch_gpu,

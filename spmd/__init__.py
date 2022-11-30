@@ -1,8 +1,8 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 from spmd.tensor import *  # noqa: F401, F403
-from spmd.tensor.device_mesh import DeviceMesh
+from spmd.tensor import DeviceMesh
 from spmd.compiler.api import Schema, SPMD
-from spmd.tensor.placement_types import Shard, Replicate
+from spmd.tensor import Shard, Replicate
 
 
 # All public APIs from spmd package
