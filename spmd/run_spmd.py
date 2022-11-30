@@ -73,7 +73,7 @@ class MyModel(nn.Module):
             ]
         )
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.mod(x)
 
 
@@ -83,7 +83,7 @@ class Permute(torch.nn.Module):
         self.w = torch.nn.Parameter(torch.rand((5, 10)))
         self.b = torch.nn.Parameter(torch.rand((5)))
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         x_t = x.permute(0, 2, 1)
         return torch.nn.functional.linear(x_t, self.w, self.b)
 
@@ -95,7 +95,7 @@ class replicaModel(nn.Module):
             *[nn.Linear(10, 10, bias=_with_bias) for _ in range(layer_count)]
         )
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return sum([self.seq(x)])
 
 
