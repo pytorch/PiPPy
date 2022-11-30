@@ -1,33 +1,25 @@
-# rework ddp_master to use spmd
-import torch
-import torch.nn as nn
-
-import os
-import torch.multiprocessing as mp
-
-# sys.path.append(../)
-from spmd import SPMD, Schema
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.fx.experimental.proxy_tensor import make_fx
-
-# from spmd.testing.common_utils import (  # type: ignore
-#    DistTensorTestBase,
-#   with_comms,
-# )
-from spmd.tensor import (
-    DeviceMesh,
-    Replicate,
-)
-from copy import deepcopy
-
-
-import torch.distributed as dist
 import logging
+import os
+from copy import deepcopy
+from functools import partial
+
+import torch
+import torch.distributed as dist
+import torch.multiprocessing as mp
+import torch.nn as nn
+from compiler.log_utils import rank0_debug
+from torch.fx.experimental.proxy_tensor import make_fx
+from torch.nn.parallel import DistributedDataParallel as DDP
+
+from spmd import SPMD, Schema
+from spmd.tensor import DeviceMesh, Replicate
+
+logger: logging.Logger = logging.getLogger(__name__)
+_debug = partial(rank0_debug, logger)  # type: ignore
 
 # globals --------------
 
 DEVICE_TYPE = "cuda" if torch.cuda.is_available() else "cpu"
-g_device_type = DEVICE_TYPE
 
 
 def setup(rank, world_size, use_cuda=True):
@@ -36,22 +28,22 @@ def setup(rank, world_size, use_cuda=True):
     )
 
     if use_cuda:
-        print(f"init for rank {rank}")
+        _debug("--> init process group using nccl")
         dist.init_process_group("nccl", rank=rank, world_size=world_size)
-        print(f"--> init device for rank {rank}")
         torch.cuda.set_device(rank)
-        print(f"device set for rank {rank}")
+        print(f"--> device set for rank {rank}")
     else:
+        _debug("--> init process group using gloo")
         dist.init_process_group("gloo", rank=rank, world_size=world_size)
 
 
 def teardown(rank) -> None:
 
     # Wait for all ranks to reach here before starting shutdown.
-    print(f"rank {rank} entering teardown")
+    _debug(f"rank {rank} entering teardown")
     dist.barrier()
     dist.destroy_process_group()
-    logging.info(f"shut down process group on rank {rank}")
+    _debug(f"shut down process group on rank {rank}")
 
 
 def formatted_print(rank, name, val, rank_only=False):
@@ -62,7 +54,7 @@ def formatted_print(rank, name, val, rank_only=False):
 
 # --- model
 
-DIMS = [28 * 28, 500, 250, 100, 50, 25, 10]
+mnist_dims = [28 * 28, 500, 250, 100, 50, 25, 10]
 
 
 class MyModel(nn.Module):
@@ -73,7 +65,7 @@ class MyModel(nn.Module):
                 layer
                 for i in range(2)
                 for layer in [
-                    nn.Linear(DIMS[i], DIMS[i + 1], bias=True),
+                    nn.Linear(mnist_dims[i], mnist_dims[i + 1], bias=True),
                     nn.ReLU(),
                 ]
             ]
@@ -86,7 +78,6 @@ class MyModel(nn.Module):
 class Permute(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        torch.manual_seed(5)
         self.w = torch.nn.Parameter(torch.rand((5, 10)))
         self.b = torch.nn.Parameter(torch.rand((5)))
 
@@ -101,17 +92,9 @@ class replicaModel(nn.Module):
         self.seq = nn.Sequential(
             *[nn.Linear(10, 10, bias=_with_bias) for _ in range(layer_count)]
         )
-        # self.module_list = nn.ModuleList(
-        #    [nn.Linear(10, 10) for _ in range(layer_count)]
-        # )
 
     def forward(self, x):
         return sum([self.seq(x)])
-        # return sum([m(x) for m in self.module_list])
-
-
-def message(rank, msg, title=""):
-    print(f"{rank} --> {title} ... {msg}\n")
 
 
 # ------------ main loop --------------------
@@ -120,22 +103,17 @@ def message(rank, msg, title=""):
 def work_main(rank, world_size):
     torch.manual_seed(10)
 
-    # model = MyModel()
-    # model.to(rank)
-    # message(rank, "model moved to gpu")
-
-    # test tensor
-    # local_tensor = torch.ones(world_size).to(rank) * rank
-    # message(rank, local_tensor, "local_tensor")
-
     _device_type = "cuda" if torch.cuda.is_available() else "cpu"
-    gpu_placement = torch.arange(world_size)  # .reshape(2, 2)
-    # print(f"gpu_placement start = {gpu_placement}")
-    gpu_placement = gpu_placement.tolist()
-    print(f"updated gpu place = {gpu_placement}")
+
+    gpu_placement = torch.arange(
+        world_size
+    )  # .reshape(2, 2) for world_size = 4
+    _debug(f"updated gpu placement = {gpu_placement}")
 
     mesh = DeviceMesh(device_type=_device_type, mesh=gpu_placement)
-    print(f"mesh set to {mesh}\n")
+    _debug(f"mesh set to {mesh}\n")
+
+    # control depth of replicaModel
     layers = 2
 
     # model = Permute().to(rank)  #
@@ -153,79 +131,38 @@ def work_main(rank, world_size):
         ),
     )
 
-    # spmd.to(_device_type)
-
+    # model input - need to adjust to match models
+    # permute_input = x = torch.randn(2, 10, 40).to("cuda")
     x = torch.randn(2, 10).to("cuda")
-    if rank == 0:
-        print(f"\ninput tensor, first item = {x[0][0]:.4f}")
-    # print(f"spmd mesh = {spmd._schema}")
+    _debug(f"\ninput tensor, first item = {x[0][0]:.4f}")
 
     # fire off comms
     spmd(x).sum().backward()
     ddp(x).sum().backward()
 
     if rank == 0:
-        print(f"backwards run complete, rank {rank}")
+        _debug(f" --> backwards run complete, rank {rank}")
 
-        for p1, p2 in zip(ddp.parameters(), spmd.parameters()):
-            # DDP divides gradients by world size to compute average, but
-            # _Partial tensor shouldn't do that automatically. Hence explicitly
-            # do division here.
-            div_grad = p2.grad[0] / world_size
-            print(f"loop {p1.grad[0]=}\n, {div_grad }")
+        print(f"Visual of resulting grads:\n")
+        for i, (p1, p2) in enumerate(zip(ddp.parameters(), spmd.parameters())):
+            # just show first row of first 2 grad tensors for quick visual
+            if i < 2:
+                # visual display of initial grads
+                div_grad = p2.grad[0] / world_size
 
-            # assert p1.grad.allclose(p2.grad), "p1 p2 grad mismatch"
-            assert p1.grad.allclose(p2.grad / world_size)
+                print(f"DDP:\n {p1.grad[0]}\nSPMD:\n {div_grad}\n")
 
+            assert p1.grad.allclose(
+                p2.grad / world_size
+            ), f"Mismatch in resulting grads between DDP and SPMD."
+    _debug(f"--> run completed, all grads matching!")
     return
-
-    # execute traced DeviceMesh communication
-    # reduced_tensor_fx = traced_fn(local_tensor)
-    # message(rank, reduced_tensor_fx, "reduced_tensor_fx")
-
-    # ----- all gather
-    dim_to_subgroups = mesh.get_dim_groups()
-    for dim, dim_group in enumerate(dim_to_subgroups):
-        dim_group_size = dist.get_world_size(dim_group)
-        global_ranks = [
-            dist.get_global_rank(dim_group, i) for i in range(dim_group_size)
-        ]
-        # print(f"{rank} --> global ranks, {global_ranks}")
-
-        all_gather_base_tensor = torch.ones(world_size).to(rank) * rank
-
-        def fn_ag(tensor: torch.Tensor, output_shape):
-            return mesh.all_gather(tensor, output_shape, mesh_dim=dim)
-
-        # use a local_tensor + 1 for tracing to make sure that we are not
-        # simply replaying recorded tensor value
-        traced_fn = make_fx(fn_ag)(
-            all_gather_base_tensor + 1, (dim_group_size * 3, 3)
-        )
-        gathered_tensor = traced_fn(
-            all_gather_base_tensor, (dim_group_size * 3, 3)
-        )
-
-        exp_tensor = torch.ones(3 * dim_group_size, 3)
-        for i in range(len(global_ranks)):
-            exp_tensor[i * 3 : (i + 1) * 3] = torch.ones(3, 3) * global_ranks[i]
-
-        print(
-            f"{rank} --> test all gather.  exp_tensor = {exp_tensor}\n gathered tensor = {gathered_tensor}"
-        )
-
-    # res_num = sum(global_ranks)
 
 
 # --------- main above -------------------------
 
 
 def main(rank, world_size, use_cuda=True):
-
-    # import os
-
-    # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-    # os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
 
     # init
     setup(rank, world_size, use_cuda)
@@ -245,5 +182,5 @@ if __name__ == "__main__":
     os.environ["MASTER_PORT"] = "29502"
     world_size = 2
     use_cuda = DEVICE_TYPE == "cuda"
-    print(f"use_cuda == {use_cuda}, starting run_fusion...\n")
+    print(f"use_cuda == {use_cuda}, starting run_SPMD...\n")
     mp.spawn(main, args=(world_size,), nprocs=world_size, join=True)
