@@ -454,7 +454,7 @@ class SPMD(nn.Module):
                         schemas.append(self._input_schemas[inp_schema_count])
                         inp_schema_count += 1
                     else:
-                        schemas.append(self._schema)
+                        schemas.append(shard_schema)
 
         parallelized_gm, output_specs = _convert_to_distributed(training_phase, gm, inps, schemas)
         self._known_specs_by_node_name.update(output_specs)
