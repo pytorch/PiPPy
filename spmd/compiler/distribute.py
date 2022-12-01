@@ -467,7 +467,11 @@ class _SPMD:
                     schemas.append(shard_schema)
 
         parallelized_gm, output_specs = _convert_to_distributed(
-            training_phase, gm, inps, schemas, _allow_partial=False,
+            training_phase,
+            gm,
+            inps,
+            schemas,
+            _allow_partial=False,
         )
         self._known_specs_by_node_name.update(output_specs)
 
