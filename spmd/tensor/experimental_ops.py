@@ -11,6 +11,7 @@ from torch.distributed._tensor.placement_types import (
 )
 from torch.distributed._tensor.dispatch import OpSchema, OutputSharding
 from torch.distributed._tensor.ops.utils import register_prop_rule
+from torch.distributed._tensor.ops.common_rules import pointwise_rule
 
 
 @register_prop_rule("aten.native_layer_norm.default")
