@@ -80,6 +80,8 @@ class DDP2PipeConnector(nn.Module):
         rank = torch.distributed.get_rank()
         driver_rank = self.pp_ranks[0]
 
+        self.pp_group_gloo = torch.distributed.new_group(ranks=self.pp_ranks, backend="gloo")
+
         if rank == driver_rank:
             self.pipe_model = PipeModel()
 
@@ -131,11 +133,11 @@ class DDP2PipeConnector(nn.Module):
             logits_chunks = list(logits_concat.chunk(len(self.pp_ranks)))
         else:
             logits_chunks = None
-            loss = torch.empty((), device=self.device)
+
+        torch.distributed.barrier(group=self.pp_group_gloo)
 
         logits = torch.empty((x.size(0), DIMS[-1]), device=self.device)
         torch.distributed.scatter(logits, logits_chunks, src=driver_rank, group=self.pp_group)
-        torch.distributed.broadcast(loss, src=driver_rank, group=self.pp_group)
 
         if torch.is_grad_enabled():
             if rank == driver_rank:
@@ -147,7 +149,7 @@ class DDP2PipeConnector(nn.Module):
 
             self.last_grads = last_grads
 
-        return logits, loss
+        return logits
 
     def optimizer_zero_grad(self):
         rank = torch.distributed.get_rank()
@@ -167,7 +169,7 @@ class FullModel(nn.Module):
         super().__init__()
         self.flatten = nn.Flatten()
         self.ddp_model = DDPModel().to(device)
-        self.ddp_model = DDP(self.ddp_model)
+        self.ddp_model = DDP(self.ddp_model, find_unused_parameters=True, static_graph=False)
 
         rank = torch.distributed.get_rank()
         dp_group_size = len(pp_ranks_per_dp_group)
@@ -206,6 +208,8 @@ def run_master(args, pp_ranks_per_dp_group, pp_pg_per_dp_group):
 
     ddp_model_optimizer = optim.Adam(model.ddp_model.parameters())
 
+    group_gloo = torch.distributed.new_group(backend="gloo")
+
     loaders = {
         "train": train_dataloader,
         "valid": valid_dataloader
@@ -219,22 +223,23 @@ def run_master(args, pp_ranks_per_dp_group, pp_pg_per_dp_group):
             for i, (x_batch, y_batch) in enumerate(tqdm(dataloader) if USE_TQDM else dataloader):
                 x_batch = x_batch.to(args.device)
                 y_batch = y_batch.to(args.device)
+                torch.distributed.barrier(group=group_gloo)
                 if k == "train":
                     model.train()
                     ddp_model_optimizer.zero_grad()
                     model.pipe_model.optimizer_zero_grad()
-                    (outp, loss), ddp_outp = model(x_batch, y_batch)
+                    logits, ddp_outp = model(x_batch, y_batch)
                 else:
                     model.eval()
                     with torch.no_grad():
-                        (outp, _), _ = model(x_batch, y_batch)
-                preds = outp.argmax(-1)
+                        logits, _ = model(x_batch, y_batch)
+                preds = logits.argmax(-1)
                 correct = (preds == y_batch).sum()
                 all = len(y_batch)
                 epoch_correct += correct.item()
                 epoch_all += all
                 if k == "train":
-                    # loss.backward()
+                    torch.distributed.barrier(group=group_gloo)
                     ddp_outp.backward(gradient=model.pipe_model.last_grads)
                     model.pipe_model.optimizer_step()
                     ddp_model_optimizer.step()
