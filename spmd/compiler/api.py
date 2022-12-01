@@ -62,7 +62,8 @@ class SPMD(nn.Module):
             # Apply the graph optimizations if the graph is not optimized both
             # fwd and bwd graphs are ready. All optimizations should be directly
             # applied to the saved fwd and bwd gm.
-            DistGraphOptimization(self._dist_graph).fuse_communication(
+            self._dist_graph.update()
+            self._graph_optimization.fuse_communication(
                 BucketingStrategy.FIXED, SchedulingPolicy.FCFS
             )
 

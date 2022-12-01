@@ -1,27 +1,24 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+from copy import deepcopy
+from functools import wraps
 from typing import List
+
 import numpy as np
 
 import torch
 import torch.nn as nn
-from torch.distributed.distributed_c10d import get_global_rank, get_world_size
+
+from spmd.compiler.api import Schema, SPMD
+from spmd.tensor import DeviceMesh, Replicate
 from torch.distributed._spmd.comm_tensor import CommTensor
+from torch.distributed.distributed_c10d import get_global_rank, get_world_size
+from torch.fx.experimental.proxy_tensor import make_fx
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.testing._internal.common_utils import run_tests
 from torch.testing._internal.distributed._tensor.common_dtensor import (
     DTensorTestBase,
     with_comms as base_with_comms,
 )
-from torch.fx.experimental.proxy_tensor import make_fx
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.testing._internal.common_utils import run_tests
-
-from spmd.compiler.api import SPMD, Schema
-from spmd.tensor import (
-    DeviceMesh,
-    Replicate,
-)
-from functools import wraps
-
-from copy import deepcopy
 
 
 def with_comms(func):
@@ -209,7 +206,8 @@ class TraceModuleTest(DTensorTestBase):
     def world_size(self):
         return 2
 
-    def _test_trace_replicate(self, model, x, *args, **kwargs):
+    def _test_trace_replicate(self, model: nn.Module, x, *args, **kwargs):
+        optimize_first_iter = kwargs.pop("optimize_first_iter", False)
         # if x.device.type == "cuda":
         ddp = DDP(deepcopy(model))
         spmd = SPMD(
@@ -223,6 +221,7 @@ class TraceModuleTest(DTensorTestBase):
             input_schemas=kwargs["inp_schemas"]
             if "inp_schemas" in kwargs
             else None,
+            optimize_first_iter=optimize_first_iter,
         )
         if "inp_schemas" in kwargs:
             del kwargs["inp_schemas"]
@@ -318,6 +317,14 @@ class TraceModuleTest(DTensorTestBase):
         )
         x = torch.randn(2, 10).to(self.device_type)
         self._test_trace_replicate(model, x)
+
+    @with_comms
+    def test_optimize_first_iter(self):
+        model = nn.Sequential(*[nn.Linear(10, 10) for _ in range(2)]).to(
+            self.device_type
+        )
+        x = torch.randn(2, 10).to(self.device_type)
+        self._test_trace_replicate(model, x, optimize_first_iter=True)
 
     @with_comms
     def test_parallel(self):
