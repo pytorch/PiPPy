@@ -368,9 +368,6 @@ class TraceModuleTest(DTensorTestBase):
             # DDP divides gradients by world size to compute average, but
             # _Partial tensor shouldn't do that automatically. Hence explicitly
             # do division here.
-            print(
-                f"{torch.distributed.get_rank()}: Comparing {p1.grad} against {p2.grad}"
-            )
             self.assertTrue(
                 p1.grad.allclose(p2.grad / self.world_size)
                 or p1.grad.allclose(p2.grad)
