@@ -169,7 +169,12 @@ class FullModel(nn.Module):
         super().__init__()
         self.flatten = nn.Flatten()
         self.ddp_model = DDPModel().to(device)
-        self.ddp_model = DDP(self.ddp_model, find_unused_parameters=True, static_graph=False)
+        # The settings of find_unused_parameters and static_graph are added to avoid a hang related to a broadcast in
+        # the forward pass of DDP.  They disable DDP bucket rebuild hence disabling the broadcast.
+        self.ddp_model = DDP(self.ddp_model,
+                             find_unused_parameters=True,
+                             static_graph=False,
+                            )
 
         rank = torch.distributed.get_rank()
         dp_group_size = len(pp_ranks_per_dp_group)
