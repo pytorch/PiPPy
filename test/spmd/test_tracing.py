@@ -273,7 +273,7 @@ class TraceModuleTest(DTensorTestBase):
         self._test_trace_replicate(
             Model().to(self.device_type),
             torch.rand((2, 4)).to(self.device_type),
-            **inp_kwargs
+            **inp_kwargs,
         )
 
     @with_comms
@@ -334,6 +334,47 @@ class TraceModuleTest(DTensorTestBase):
         model = Model().to(self.device_type)
         x = torch.randn(2, 10).to(self.device_type)
         self._test_trace_replicate(model, x)
+
+    @with_comms
+    def test_hybrid(self):
+        bottom_model = nn.Sequential(
+            nn.Linear(4, 8),
+            nn.Softmax(),
+        ).to(self.device_type)
+
+        top_model = nn.Sequential(
+            nn.Linear(8, 2),
+            nn.Softmax(),
+        ).to(self.device_type)
+
+        hybrid = nn.Sequential(
+            DDP(deepcopy(bottom_model)),
+            SPMD(
+                deepcopy(top_model),
+                schema=Schema(
+                    mesh=DeviceMesh(
+                        self.device_type, torch.arange(self.world_size)
+                    ),
+                    placements=[Replicate()],
+                ),
+            ),
+        )
+        ddp = DDP(nn.Sequential(deepcopy(bottom_model), deepcopy(top_model)))
+        input = torch.randn(12, 4).to(self.device_type)
+
+        ddp(input).sum().backward()
+        hybrid(input).sum().backward()
+        for p1, p2 in zip(ddp.parameters(), hybrid.parameters()):
+            # DDP divides gradients by world size to compute average, but
+            # _Partial tensor shouldn't do that automatically. Hence explicitly
+            # do division here.
+            print(
+                f"{torch.distributed.get_rank()}: Comparing {p1.grad} against {p2.grad}"
+            )
+            self.assertTrue(
+                p1.grad.allclose(p2.grad / self.world_size)
+                or p1.grad.allclose(p2.grad)
+            )
 
 
 if __name__ == "__main__":
