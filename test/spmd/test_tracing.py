@@ -8,7 +8,7 @@ from torch.distributed.distributed_c10d import get_global_rank, get_world_size
 from torch.distributed._spmd.comm_tensor import CommTensor
 from torch.testing._internal.distributed._tensor.common_dtensor import (
     DTensorTestBase,
-    with_comms,
+    with_comms as base_with_comms,
 )
 from torch.fx.experimental.proxy_tensor import make_fx
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -19,8 +19,22 @@ from spmd.tensor import (
     DeviceMesh,
     Replicate,
 )
+from functools import wraps
 
 from copy import deepcopy
+
+
+def with_comms(func):
+    @base_with_comms
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        # make sure we set different random seeds for each rank
+        # otherwise we dont need DDP / SPMD
+        # (we would have the same parameters and inputs everywhere)
+        torch.manual_seed(torch.distributed.get_rank())
+        return func(self, *args, **kwargs)
+
+    return wrapper
 
 
 class TraceDeviceMeshTestBase:
