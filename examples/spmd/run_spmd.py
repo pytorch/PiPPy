@@ -104,7 +104,9 @@ class ReplicaModel(nn.Module):
 
 
 def work_main(rank: int, world_size: int) -> None:
-    torch.manual_seed(10)
+    # must randomize the seed per GPU to ensure all_reduce
+    # is meaningful.
+    torch.manual_seed(rank)
 
     _device_type = "cuda" if torch.cuda.is_available() else "cpu"
 
