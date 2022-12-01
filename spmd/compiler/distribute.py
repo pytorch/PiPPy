@@ -165,22 +165,17 @@ def _get_dtensor_dispatch_graph(
     def unwrap_local(e: object) -> object:
         return e._local_tensor if isinstance(e, DTensor) else e
 
-    gm = make_fx(dispatch)(local_target_args)
-    for nd in gm.graph.nodes:
-        if nd.name == "_tensor_constant0":
-            print(
-                f"WARNING: found constant while SPMD expansion for {node}. Graph {gm}. This is not supported."
-            )
-    return gm
+    return make_fx(dispatch)(local_target_args)
 
 
 def _build_dummy_add_graph(
     dt: DTensor, node_to_obj: Dict[fx.Node, object]
-) -> fx.GraphModule:
+) -> Tuple[fx.GraphModule, object]:
     """
     creates a graph for a dummy add function from a partial DTensor.
     This dummy add is used for triggering all_reduce on a Partial DTensor
     during the DTensor expansion of the traced graph.
+    Also returns the actual DTensor after resharding.
     """
 
     def dummy_add(grad: torch.Tensor, zero: torch.Tensor) -> torch.Tensor:
@@ -206,38 +201,44 @@ def _build_dummy_add_graph(
 
     traced_dispatch.graph.lint()
 
-    return traced_dispatch
+    return traced_dispatch, node_to_obj[call_functions[0]]
 
 
 def _convert_output(
     gm: fx.GraphModule,
     node: fx.Node,
     node_to_obj: Dict[fx.Node, object],
-) -> None:
+) -> fx.Node:
     new_args = []
     has_partial = False
     for argument in node.args[0]:  # type: ignore
         if not isinstance(argument, fx.Node):
             new_args.append(argument)
             continue
+
         obj = node_to_obj[argument]
 
-        has_partial = _is_partial_dtensor(obj)
-
-        if not has_partial:
+        if not _is_partial_dtensor(obj):
+            new_args.append(argument)
             continue
+
+        has_partial = True
 
         # we know it's a dtensor from is partial DT check...
         dt = cast(DTensor, obj)
 
-        traced_dispatch = _build_dummy_add_graph(dt, node_to_obj)
+        traced_dispatch, result_obj = _build_dummy_add_graph(dt, node_to_obj)
 
         wait = [n for n in traced_dispatch.graph.nodes if n.name == "wait_comm"]
         add = [n for n in traced_dispatch.graph.nodes if n.name == "add"]
         assert len(wait) == 1 and len(add) == 1
+
+        # remove add node and replace it with wait node
         add[0].replace_all_uses_with(wait[0])
         traced_dispatch.graph.lint()
         traced_dispatch.graph.eliminate_dead_code()
+        # also update the actual DTensor corresponding to the node
+        node_to_obj[wait[0]] = result_obj
 
         value_remap: Dict[fx.Node, fx.Node] = {}
         for dtn in traced_dispatch.graph.nodes:
@@ -250,6 +251,12 @@ def _convert_output(
                     len(dtn.args) == 1 and len(dtn.args[0]) == 1
                 ), f"Expecting single output, but got {dtn.args} {len(dtn.args)}"
                 new_args.append(value_remap[dtn.args[0][0]])
+                # the concrete DTensor value of output was added when creating the
+                # inner graph (in _build_dummy_add_graph). Just add it to the final
+                # output node so that we can report the final output specs correctly.
+                node_to_obj[value_remap[dtn.args[0][0]]] = node_to_obj[
+                    dtn.args[0][0]
+                ]
             else:
                 if dtn.op == OP.GET_ATTR:
                     setattr(
@@ -264,10 +271,10 @@ def _convert_output(
     if has_partial:
         rank0_info(logger, "The output has partial arguments.")
         gm.graph.erase_node(node)
-        gm.graph.output(new_args)
+        return gm.graph.output(new_args)
     else:
         rank0_info(logger, "The output does not have partial arguments.")
-    return
+        return node
 
 
 def _rebuild_graph(
@@ -361,6 +368,10 @@ def _convert_to_distributed(
                 node, node_to_obj
             )
         elif node.op == OP.OUTPUT:
+            if not _allow_partial:
+                # returns the possibly modified output node
+                node = _convert_output(gm, node, node_to_obj)
+
             # save output sharding for the inputs to backward pass
             for a in node.args[0]:
                 if isinstance(a, fx.Node):
@@ -370,9 +381,6 @@ def _convert_to_distributed(
                             obj.device_mesh, obj.placements  # type: ignore
                         )
 
-            if not _allow_partial:
-                _convert_output(gm, node, node_to_obj)
-                break
         elif node.op == OP.CALL_FUNCTION:
 
             def remap_arg(arg: object) -> object:
