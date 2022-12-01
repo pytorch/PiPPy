@@ -209,7 +209,7 @@ class TraceModuleTest(DTensorTestBase):
     def world_size(self):
         return 2
 
-    def _test_trace_replicate(self, model, x, *args, **kwargs):
+    def _test_trace_replicate(self, model, x, optimize_first_iter=False, *args, **kwargs):
         # if x.device.type == "cuda":
         ddp = DDP(deepcopy(model))
         spmd = SPMD(
@@ -223,6 +223,7 @@ class TraceModuleTest(DTensorTestBase):
             input_schemas=kwargs["inp_schemas"]
             if "inp_schemas" in kwargs
             else None,
+            optimize_first_iter=optimize_first_iter,
         )
         if "inp_schemas" in kwargs:
             del kwargs["inp_schemas"]
@@ -318,6 +319,14 @@ class TraceModuleTest(DTensorTestBase):
         )
         x = torch.randn(2, 10).to(self.device_type)
         self._test_trace_replicate(model, x)
+
+    @with_comms
+    def test_optimize_first_iter(self):
+        model = nn.Sequential(*[nn.Linear(10, 10) for _ in range(2)]).to(
+            self.device_type
+        )
+        x = torch.randn(2, 10).to(self.device_type)
+        self._test_trace_replicate(model, x, optimize_first_iter=True)
 
     @with_comms
     def test_parallel(self):

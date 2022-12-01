@@ -40,11 +40,13 @@ def graph_optimization_pass(
             assert (
                 not invalid_passes
             ), f"{invalid_passes} must run after {func.__name__}"
+            self.graph.update()
             self.graph.validate()
 
             ret = func(self.graph, *args, **kwargs)
 
             assert self.graph == ret
+            self.graph.update()
             self.graph.validate()
             self._optimized_func.add(func.__name__)
             return self
