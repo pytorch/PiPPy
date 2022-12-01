@@ -170,7 +170,7 @@ def _get_dtensor_dispatch_graph(
 
 def _build_dummy_add_graph(
     dt: DTensor, node_to_obj: Dict[fx.Node, object]
-) -> Tuple[fx.GraphModule, DTensor]:
+) -> Tuple[fx.GraphModule, object]:
     """
     creates a graph for a dummy add function from a partial DTensor.
     This dummy add is used for triggering all_reduce on a Partial DTensor
