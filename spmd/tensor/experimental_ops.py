@@ -1,5 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence
 
 import torch
 
@@ -86,7 +86,7 @@ def prop_cat(op_schema: OpSchema) -> OutputSharding:
 
 def _refine_sharding(
     op_schema: OpSchema, active_dim: Optional[int]
-) -> Tuple[Placement]:
+) -> Sequence[Placement]:
     """
     Considers 2 first inputs of op_schema as having same shape,
     and returns suggested placement for a pointwise operation.
@@ -117,7 +117,10 @@ def _refine_sharding(
         assert isinstance(output_sharding.output_spec, DTensorSpec)
         return output_sharding.output_spec.placements  # type: ignore
     else:
-        return output_sharding.schema_suggestions[0].args_schema[0].placements
+        assert output_sharding.schema_suggestions is not None
+        out_schema = output_sharding.schema_suggestions[0].args_schema[0]
+        assert isinstance(out_schema, DTensorSpec)
+        return tuple(out_schema.placements)
 
 
 @register_prop_rule("aten.slice_scatter.default")
