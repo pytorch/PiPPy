@@ -1,5 +1,4 @@
 import logging
-from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import partial
@@ -87,6 +86,8 @@ class GraphInfo:
     first: Optional[fx.Node] = None
     # last node in graph (tail / output)
     output: Optional[fx.Node] = None
+    # offset to comm node within a FusionElement sequence
+    fe_offset_to_comm_node: Optional[int] = None
 
     def update_info(self, gm: fx.GraphModule) -> None:
         """Get the len, input and output nodes"""
@@ -156,6 +157,7 @@ def _insert_fusion_buffer_node(
 
 
 def _scan_graph_for_fusion_elements(
+    gi: GraphInfo,
     gm: fx.GraphModule,
     comm_type: CommType = CommType.allreduce,
 ) -> Optional[List[FusionElement]]:
@@ -165,7 +167,7 @@ def _scan_graph_for_fusion_elements(
     element_list = []
 
     fe_sequence = [
-        # "clone",
+        "clone",
         "_tensor_constant",
         "_tensor_constant",
         comm_type,
@@ -178,6 +180,16 @@ def _scan_graph_for_fusion_elements(
     fe_size = len(fe_sequence) - 1
     index = 0
     curr_node_list = []
+
+    # depth to reach comm_node
+    if gi.fe_offset_to_comm_node is None:
+        for depth, item in enumerate(fe_sequence):
+            if isinstance(item, CommType):
+                gi.fe_offset_to_comm_node = depth
+                break
+    assert (
+        gi.fe_offset_to_comm_node is not None
+    ), f"Unable to locate comm node in {fe_sequence}."
 
     for i, node in enumerate(gm.graph.nodes):
         pattern = fe_sequence[index]
@@ -198,17 +210,16 @@ def _scan_graph_for_fusion_elements(
                 curr_node_list.append(node)
 
                 fe = FusionElement(
-                    comm_type=comm_type, node_list=deepcopy(curr_node_list)
+                    comm_type=comm_type, node_list=curr_node_list[:]
                 )
 
                 # need to fully populate this fe...
                 # we will be removing/rewriting the node list so we save prev and next
                 fe.prev_node = curr_node_list[0].prev
-                # fe.next_node = node.next
 
                 fe.output_name = node.name
                 fe.wait_node = node
-                fe.comm_node = curr_node_list[2]
+                fe.comm_node = curr_node_list[gi.fe_offset_to_comm_node]  # type: ignore
 
                 fe.grad_tensor_node = fe.comm_node.args[0][0]  # type: ignore
 
@@ -589,7 +600,9 @@ def run_comm_fusion(gm: fx.GraphModule) -> None:
     _debug(f"\n Start of fusion pass graph {gm.graph.print_tabular()}\n")
 
     # scan graph for all comm sections (fusion elements)
-    fe_list = _scan_graph_for_fusion_elements(gm, comm_type=CommType.allreduce)
+    fe_list = _scan_graph_for_fusion_elements(
+        graph_info, gm, comm_type=CommType.allreduce
+    )
 
     graph_info.num_starting_fe = len(fe_list)  # type: ignore
     graph_info.fe_list = fe_list
