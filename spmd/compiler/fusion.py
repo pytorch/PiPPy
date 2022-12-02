@@ -219,7 +219,7 @@ def _scan_graph_for_fusion_elements(
 
                 fe.output_name = node.name
                 fe.wait_node = node
-                fe.comm_node = curr_node_list[gi.fe_offset_to_comm_node]
+                fe.comm_node = curr_node_list[gi.fe_offset_to_comm_node]  # type: ignore
 
                 fe.grad_tensor_node = fe.comm_node.args[0][0]  # type: ignore
 
