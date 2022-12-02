@@ -361,6 +361,8 @@ def _convert_to_distributed(
                     inps[i],
                     schemas[i].mesh,
                     schemas[i].placements,
+                    # prevent running this collective in backwards pass
+                    run_check=False,
                 )
 
         elif isinstance(node.target, torch._ops.OpOverload):
