@@ -1,5 +1,4 @@
 import logging
-from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import partial
@@ -165,7 +164,7 @@ def _scan_graph_for_fusion_elements(
     element_list = []
 
     fe_sequence = [
-        # "clone",
+        "clone",
         "_tensor_constant",
         "_tensor_constant",
         comm_type,
@@ -178,6 +177,8 @@ def _scan_graph_for_fusion_elements(
     fe_size = len(fe_sequence) - 1
     index = 0
     curr_node_list = []
+    # depth to reach comm_node, adjust based on clone presence
+    offset_to_comm_node = 3
 
     for i, node in enumerate(gm.graph.nodes):
         pattern = fe_sequence[index]
@@ -198,17 +199,16 @@ def _scan_graph_for_fusion_elements(
                 curr_node_list.append(node)
 
                 fe = FusionElement(
-                    comm_type=comm_type, node_list=deepcopy(curr_node_list)
+                    comm_type=comm_type, node_list=curr_node_list[:]
                 )
 
                 # need to fully populate this fe...
                 # we will be removing/rewriting the node list so we save prev and next
                 fe.prev_node = curr_node_list[0].prev
-                # fe.next_node = node.next
 
                 fe.output_name = node.name
                 fe.wait_node = node
-                fe.comm_node = curr_node_list[2]
+                fe.comm_node = curr_node_list[offset_to_comm_node]
 
                 fe.grad_tensor_node = fe.comm_node.args[0][0]  # type: ignore
 
