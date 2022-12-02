@@ -117,6 +117,7 @@ def _refine_sharding(
         assert isinstance(output_sharding.output_spec, DTensorSpec)
         return output_sharding.output_spec.placements  # type: ignore
     else:
+        assert output_sharding.schema_suggestions is not None
         return output_sharding.schema_suggestions[0].args_schema[0].placements
 
 
