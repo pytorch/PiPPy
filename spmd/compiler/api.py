@@ -19,7 +19,24 @@ class SPMD(nn.Module):
         schema: Schema,
         input_schemas: Sequence[Placement] = tuple(),
         optimize_first_iter: bool = False,
+        apply_optimization: bool = False,
     ) -> None:
+        """
+        Given a non-distributed nn.Module, distribute the module and apply
+        optimizations over the distributed module (fx.GraphModule).
+
+        Args:
+            module (nn.Module): The target module.
+            schema (Schema): The distributed schema.
+            input_schemas (Sequence[Placement]): The schemas of the inputs.
+            optimize_first_iter (bool): If true, SPMD will call the forward
+               and backward passes to eagerly get the graphs. This can be
+               problematic since SPMD currently assumes a simple out of
+               the tensor and performs ``sum()`` to get the loss.
+            apply_optimization (bool): If true, SPMD will performance certain
+               optimzation, e.g., communication fusion. If false, SPMD will
+               parallelize the module.
+        """
         super().__init__()
         assert schema.placements == [
             Replicate()
@@ -36,6 +53,7 @@ class SPMD(nn.Module):
         self._dist_graph = DistributedGraph(orig_module=module)
         self._graph_optimization = DistGraphOptimization(self._dist_graph)
         self._optimize_first_iter = optimize_first_iter
+        self._apply_optimization = apply_optimization
 
     def forward(
         self, *args: Tuple[object], **kwargs: Dict[str, object]
@@ -53,6 +71,7 @@ class SPMD(nn.Module):
         if (
             not self._graph_optimization.optimized
             and self._dist_graph.bwd_graph_modules
+            and self._apply_optimization
         ):
             # Profile the module. Right now it will use the saved orig_module
             # to profile. There will be another compilation for the profiling

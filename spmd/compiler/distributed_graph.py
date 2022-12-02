@@ -1,16 +1,11 @@
 from typing import Any, Dict, List, Optional
 
+import torch
+
 import torch.nn as nn
 from torch import fx
 
-
-class Profiler:
-    """
-    This is a placeholder class to allow the definition of DistributedGraph.
-    Will pull in the profiler implementation later.
-    """
-
-    pass
+from .profiler import GraphProfiler, GraphType, ProfilerEngine
 
 
 class DistributedGraph:
@@ -20,9 +15,9 @@ class DistributedGraph:
     ) -> None:
         self.orig_module: Optional[nn.Module] = orig_module
         self.fwd_graph_modules: List[fx.GraphModule] = []
-        self.fwd_profilers: List[Profiler] = []
+        self.fwd_profilers: List[GraphProfiler] = []
         self.bwd_graph_modules: List[fx.GraphModule] = []
-        self.bwd_profilers: List[Profiler] = []
+        self.bwd_profilers: List[GraphProfiler] = []
 
         # The mapping information is required for graph optimization.
         # HACK: ideally, it will be better if fx/AOTAutograd can provide a way
@@ -49,12 +44,24 @@ class DistributedGraph:
 
     def profile(self, *args: Any, **kwargs: Any) -> "DistributedGraph":
         """
-        Profile the given distributed graph. The profiler does not support
-        distributed profiling. So this API will invoke another compile step
-        over the orig_module to get the graph that can be executed on single
-        node.
+        Profile the given distributed graph. The arguments are the inputs
+        of the module as a real run is required to do profiling.
         """
-        # TODO: add the profiling implementation.
+        # TODO(chienchin): fix how to get the correct forward_loss
+        def forward_loss(module: nn.Module, *args, **kwargs) -> torch.Tensor:
+            return module(*args, **kwargs).sum()
+
+        engine = ProfilerEngine(
+            self.orig_module,
+            forward_loss,
+            dist_fwd_gm=self.fwd_graph_modules[0],
+            dist_bwd_gm=self.bwd_graph_modules[0],
+        )
+        engine.run(*args, **kwargs)
+        engine.summarize(to_print=True)
+        self.fwd_profilers.append(engine.profilers[0][GraphType.FORWARD])
+        self.bwd_profilers.append(engine.profilers[0][GraphType.BACKWARD])
+
         return self
 
     def validate(self) -> None:
