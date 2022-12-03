@@ -1,7 +1,7 @@
 import math
 from dataclasses import dataclass, field
 from enum import auto, Enum
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.fx as fx
