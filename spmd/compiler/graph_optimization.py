@@ -1,10 +1,16 @@
+import logging
 from collections import defaultdict
+from functools import partial
 from typing import Any, Callable, DefaultDict, Iterable, Set
 
 from .bucketing_strategies import BucketingStrategy
 from .distributed_graph import DistributedGraph
+from .fusion import run_comm_fusion
+from .log_utils import rank0_debug
 from .scheduling_policies import SchedulingPolicy
 
+logger: logging.Logger = logging.getLogger(__name__)
+_debug = partial(rank0_debug, logger)  # type: ignore
 
 # It is more nature to set a run after list for a function decorator, but
 # it is easier to have check with run_before_set.
@@ -91,4 +97,9 @@ class DistGraphOptimization:
         bucketing_strategy: BucketingStrategy,
         scheduling_policy: SchedulingPolicy,
     ) -> "DistGraphOptimization":
+        assert len(self.bwd_graph_modules), f"no bwd  graph ready"
+        bwd_graph = self.bwd_graph_modules[0]
+
+        _debug(f"call run fusion next\n")
+        run_comm_fusion(bwd_graph)
         return self

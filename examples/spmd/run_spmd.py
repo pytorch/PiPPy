@@ -127,6 +127,7 @@ def work_main(rank: int, world_size: int) -> None:
     ddp = DDP(deepcopy(model))
     ddp.to(rank)
 
+    run_backward = False
     spmd = SPMD(
         deepcopy(model),
         schema=Schema(
@@ -135,6 +136,7 @@ def work_main(rank: int, world_size: int) -> None:
             ),
             placements=[Replicate()],
         ),
+        optimize_first_iter=run_backward,
     )
 
     # model input - need to adjust to match models
