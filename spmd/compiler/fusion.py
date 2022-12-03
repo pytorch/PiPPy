@@ -681,6 +681,48 @@ def run_comm_fusion(gm: fx.GraphModule) -> None:
     _teardown(gm)
 
 
+def get_source_node_next(comm_node: fx.Node) -> fx.Node:
+    """determine source gradient node from a given comm node.
+    Returns the next (prepend) node in the graph to prepare for insert.
+    """
+
+    curr_source = comm_node.args[0][0]
+
+    # if clone, find clone source
+    if curr_source.name.startswith("clone"):
+        clone_source = curr_source.args[0]
+        curr_source = clone_source
+
+    _debug(
+        f"695, found source node {curr_source.name} for comm_node {comm_node.name}"
+    )
+
+    prepend_node = curr_source.next
+
+    assert (
+        prepend_node is not None
+    ), f"failed to get next from {curr_source.name}"
+
+    _debug(f"686, prepend node = {prepend_node.name} for {comm_node.name}")
+
+    return prepend_node
+
+
+def _move_comm_section(
+    gm: fx.GraphModule, fe: FusionElement
+) -> Optional[List[fx.Node]]:
+    """find source node for comm node"""
+
+    prepend_node = get_source_node_next(fe.comm_node)
+    nodes_to_move = fe.node_list[0:4]
+    for item in nodes_to_move:
+        prepend_node.prepend(item)
+
+    # _debug(f"706, {gm.graph.print_tabular()}\n")
+
+    return nodes_to_move
+
+
 def run_overlap(gm: fx.GraphModule) -> None:
     """spreads the all_reduce to maximum dispersion by moving
     comm calls next to source nodes.
@@ -698,6 +740,20 @@ def run_overlap(gm: fx.GraphModule) -> None:
     # scan graph for all comm sections (fusion elements)
     fe_list = _scan_graph_for_fusion_elements(
         graph_info, gm, comm_type=CommType.allreduce
+    )
+
+    _debug(f"length of fe_list {len(fe_list)}")
+
+    # -- distribute comm nodes to source nodes for overlap
+    # the first (which is last) is not moved b/c it is already
+    # next to source node.
+    for i, item in enumerate(fe_list[1:]):
+        moved_nodes = _move_comm_section(gm, item)
+        _debug(f"\n750, moved the following nodes: {moved_nodes}\n")
+
+    gm.recompile()
+    _debug(
+        f"754,\n ======= post spread graph {gm.graph.print_tabular()}\n==================================="
     )
 
     # ---- end main work -------
