@@ -19,6 +19,7 @@ from torch.testing._internal.distributed._tensor.common_dtensor import (
     DTensorTestBase,
     with_comms as base_with_comms,
 )
+from spmd.tensor.experimental_ops import *  # noqa: F403
 
 
 def with_comms(func):
