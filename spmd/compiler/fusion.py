@@ -40,7 +40,7 @@ class FusionElement:
     # has gone through the fusion policy process
     processed: bool = False
     size: Optional[int] = 0
-    shape: Optional[Iterable[[int], [int]]] = field(default_factory=lambda: [])  # type: ignore
+    shape: Optional[List[int]] = field(default_factory=lambda: [])  # type: ignore
     comm_type: Optional[CommType] = None
     node_list: Optional[List[fx.Node]] = field(default_factory=lambda: [])  # type: ignore
     prev_node: Optional[fx.Node] = None  # node that was before start of section
@@ -585,10 +585,8 @@ def _determine_peak_memory(gi: GraphInfo, fusion_policy: int) -> int:
     return peak_memory
 
 
-def run_comm_fusion(gm: fx.GraphModule) -> None:
-    """Main entry into remapping graph for all_reduce fusion.
-    Modifications are in place to the graph.  Errors will result in stoppage
-    to alert user rather than handling and returning error codes."""
+def _setup(gm: fx.GraphModule) -> GraphInfo:
+    """shared setup for optimizations"""
 
     # first recompile to make sure we have coherent graph
     gm.recompile()
@@ -596,6 +594,24 @@ def run_comm_fusion(gm: fx.GraphModule) -> None:
     # get our main graph info
     graph_info = GraphInfo()
     graph_info.update_info(gm)
+
+    return graph_info
+
+
+def _teardown(gm: fx.GraphModule) -> None:
+    """final steps before exiting optimization phase"""
+
+    # final review print
+    graph_cleanup(gm)
+    _debug("605, final graph cleanup, ready to exit\n")
+
+
+def run_comm_fusion(gm: fx.GraphModule) -> None:
+    """Main entry into remapping graph for all_reduce fusion.
+    Modifications are in place to the graph.  Errors will result in stoppage
+    to alert user rather than handling and returning error codes."""
+
+    graph_info = _setup(gm)
 
     _debug(f"\n Start of fusion pass graph {gm.graph.print_tabular()}\n")
 
@@ -662,7 +678,30 @@ def run_comm_fusion(gm: fx.GraphModule) -> None:
 
     _debug(f"656, updated output node args {new_output_args=}\n")
 
-    # final review print
-    graph_cleanup(gm)
+    _teardown(gm)
 
-    gm.recompile()
+
+def run_overlap(gm: fx.GraphModule) -> None:
+    """spreads the all_reduce to maximum dispersion by moving
+    comm calls next to source nodes.
+    """
+    _debug("688, ------ start of run overlap pass -----\n")
+
+    graph_info = _setup(gm)
+
+    # ---- main work ----------
+
+    _debug(
+        f"\n Start of overlap spread pass, starting graph\n {gm.graph.print_tabular()}\n"
+    )
+
+    # scan graph for all comm sections (fusion elements)
+    fe_list = _scan_graph_for_fusion_elements(
+        graph_info, gm, comm_type=CommType.allreduce
+    )
+
+    # ---- end main work -------
+
+    _debug("705, ------ finish, run overlap pass -----\n")
+
+    _teardown(gm)

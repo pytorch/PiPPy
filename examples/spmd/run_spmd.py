@@ -127,7 +127,7 @@ def work_main(rank: int, world_size: int) -> None:
     ddp = DDP(deepcopy(model))
     ddp.to(rank)
 
-    run_backward = False
+    run_backward = True
     spmd = SPMD(
         deepcopy(model),
         schema=Schema(
