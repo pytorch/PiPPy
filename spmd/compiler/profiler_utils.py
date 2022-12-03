@@ -8,28 +8,28 @@ import torch.fx as fx
 
 # some pytorch low-level memory management constant the minimal allocate memory
 # size (Byte)
-PYTORCH_MIN_ALLOCATE = 2**20
+PYTORCH_MIN_ALLOCATE: int = 2**20
 # the minimal cache memory size (Byte)
-PYTORCH_MIN_CACHE = 2**20
+PYTORCH_MIN_CACHE: int = 2**20
 # default device for graph based profiling
 
 
 # Bidirectional Dictionary to store the mapping of the forward and backward pass
 # intermediate nodes
 class BiDict(dict[fx.Node, fx.Node]):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None
         super().__init__(*args, **kwargs)
         self.inverse: Dict[fx.Node, List[fx.Node]] = {}
         for key, value in self.items():
             self.inverse.setdefault(value, []).append(key)
 
-    def __setitem__(self, key, value):
+    def __setitem__(self, key: fx.Node, value: fx.Node) -> None:
         if key in self:
             self.inverse[self[key]].remove(key)
         super().__setitem__(key, value)
         self.inverse.setdefault(value, []).append(key)
 
-    def __delitem__(self, key):
+    def __delitem__(self, key: fx.Node) -> None:
         self.inverse.setdefault(self[key], []).remove(key)
         if self[key] in self.inverse and not self.inverse[self[key]]:
             del self.inverse[self[key]]
@@ -196,7 +196,7 @@ class IntermediateNodeInfo(NodeInfo):
     MSPS: float = 0.0
     is_recomp: bool = False
 
-    def update_MSPS(self):
+    def update_MSPS(self) -> None:
         # The metric currently being used in recomputation algorithm.
         self.MSPS = self.memory_size / self.exe_time
 

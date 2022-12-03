@@ -1,4 +1,5 @@
 # type: ignore
+# pyre-ignore-all-errors
 import logging
 from dataclasses import astuple, fields
 from typing import Any, Callable, cast, Dict, Iterator, List, Optional, Tuple

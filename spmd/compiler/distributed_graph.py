@@ -48,9 +48,12 @@ class DistributedGraph:
         of the module as a real run is required to do profiling.
         """
         # TODO(chienchin): fix how to get the correct forward_loss
-        def forward_loss(module: nn.Module, *args, **kwargs) -> torch.Tensor:
+        def forward_loss(
+            module: nn.Module, *args: Any, **kwargs: Any
+        ) -> torch.Tensor:
             return module(*args, **kwargs).sum()
 
+        assert self.orig_module is not None
         engine = ProfilerEngine(
             self.orig_module,
             forward_loss,
