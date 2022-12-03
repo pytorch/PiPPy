@@ -119,7 +119,7 @@ def work_main(rank: int, world_size: int) -> None:
     _debug(f"mesh set to {mesh}\n")
 
     # control depth of ReplicaModel
-    layers = 2
+    layers = 4
 
     # model = Permute().to(rank)  #
     model = ReplicaModel(layer_count=layers).to(_device_type)
@@ -187,7 +187,6 @@ def main(rank: int, world_size: int, use_cuda: bool = True) -> None:
 if __name__ == "__main__":
     os.environ["MASTER_ADDR"] = "localhost"
     # obtain random port
-    random.seed(2022)
     port = random.randint(49152, 65535)
     os.environ["MASTER_PORT"] = str(port)
 
