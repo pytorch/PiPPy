@@ -5,7 +5,7 @@ from typing import Any, Callable, DefaultDict, Iterable, Set
 
 from .bucketing_strategies import BucketingStrategy
 from .distributed_graph import DistributedGraph
-from .fusion import run_comm_fusion, run_overlap
+from .fusion import run_overlap
 from .log_utils import rank0_debug
 from .scheduling_policies import SchedulingPolicy
 
@@ -97,10 +97,9 @@ class DistGraphOptimization:
         bucketing_strategy: BucketingStrategy,
         scheduling_policy: SchedulingPolicy,
     ) -> "DistGraphOptimization":
+
         assert len(self.bwd_graph_modules), f"no bwd  graph ready"
         bwd_graph = self.bwd_graph_modules[0]
-
-        _debug(f"call run fusion next\n")
 
         run_overlap(bwd_graph)
         return self

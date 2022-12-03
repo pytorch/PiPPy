@@ -1,15 +1,11 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 from copy import deepcopy
 from functools import wraps
-from typing import List
+from typing import List, Literal, Union
 
 import numpy as np
-
 import torch
 import torch.nn as nn
-
-from spmd.compiler.api import Schema, SPMD
-from spmd.tensor import DeviceMesh, Replicate
 from torch.distributed._spmd.comm_tensor import CommTensor
 from torch.distributed.distributed_c10d import get_global_rank, get_world_size
 from torch.fx.experimental.proxy_tensor import make_fx
@@ -17,8 +13,13 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.testing._internal.common_utils import run_tests
 from torch.testing._internal.distributed._tensor.common_dtensor import (
     DTensorTestBase,
+)
+from torch.testing._internal.distributed._tensor.common_dtensor import (
     with_comms as base_with_comms,
 )
+
+from spmd.compiler.api import SPMD, Schema
+from spmd.tensor import DeviceMesh, Replicate
 
 
 def with_comms(func):
@@ -375,6 +376,70 @@ class TraceModuleTest(DTensorTestBase):
             # DDP divides gradients by world size to compute average, but
             # _Partial tensor shouldn't do that automatically. Hence explicitly
             # do division here.
+            self.assertTrue(
+                p1.grad.allclose(p2.grad / self.world_size)
+                or p1.grad.allclose(p2.grad)
+            )
+
+    @with_comms
+    def test_overlap_pass(self):
+        # test with and without overlap pass
+        model_layer_size = 4
+        gpu_placement = torch.arange(self.world_size)
+
+        class OverlapModel(nn.Module):
+            def __init__(
+                self, layer_count: int = 4, _with_bias: bool = False
+            ) -> None:
+                super().__init__()
+
+                self.seq = nn.Sequential(
+                    *[
+                        nn.Linear(10, 10, bias=_with_bias)
+                        for _ in range(layer_count)
+                    ]
+                )
+
+            def forward(
+                self, x: torch.Tensor
+            ) -> Union[torch.Tensor, Literal[0]]:
+                return sum([self.seq(x)])
+
+        base_model = OverlapModel(layer_count=model_layer_size).to(
+            self.device_type
+        )
+        overlap_model = OverlapModel(layer_count=model_layer_size).to(
+            self.device_type
+        )
+
+        spmd_base = SPMD(
+            deepcopy(base_model),
+            schema=Schema(
+                mesh=DeviceMesh(self.device_type, gpu_placement),
+                placements=[Replicate()],
+            ),
+            optimize_first_iter=False,
+        )
+
+        spmd_overlap = SPMD(
+            deepcopy(overlap_model),
+            schema=Schema(
+                mesh=DeviceMesh(self.device_type, gpu_placement),
+                placements=[Replicate()],
+            ),
+            optimize_first_iter=True,
+        )
+
+        input = torch.randn(2, 10).to(self.device_type)
+
+        spmd_base(input).sum().backward()
+        spmd_overlap(input).sum().backward()
+
+        for p1, p2 in zip(spmd_base.parameters(), spmd_overlap.parameters()):
+            # DDP divides gradients by world size to compute average, but
+            # _Partial tensor shouldn't do that automatically. Hence explicitly
+            # do division here.
+
             self.assertTrue(
                 p1.grad.allclose(p2.grad / self.world_size)
                 or p1.grad.allclose(p2.grad)
