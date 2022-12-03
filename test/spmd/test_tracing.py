@@ -408,12 +408,10 @@ class TraceModuleTest(DTensorTestBase):
         base_model = OverlapModel(layer_count=model_layer_size).to(
             self.device_type
         )
-        overlap_model = OverlapModel(layer_count=model_layer_size).to(
-            self.device_type
-        )
+        overlap_model = deepcopy(base_model).to(self.device_type)
 
         spmd_base = SPMD(
-            deepcopy(base_model),
+            base_model,
             schema=Schema(
                 mesh=DeviceMesh(self.device_type, gpu_placement),
                 placements=[Replicate()],
@@ -422,20 +420,39 @@ class TraceModuleTest(DTensorTestBase):
         )
 
         spmd_overlap = SPMD(
-            deepcopy(overlap_model),
+            overlap_model,
             schema=Schema(
                 mesh=DeviceMesh(self.device_type, gpu_placement),
                 placements=[Replicate()],
             ),
             optimize_first_iter=True,
         )
+        ddp_model = DDP(deepcopy(overlap_model)).to(self.device_type)
 
         input = torch.randn(2, 10).to(self.device_type)
 
         spmd_base(input).sum().backward()
         spmd_overlap(input).sum().backward()
+        ddp_model(input).sum().backward()
 
-        for p1, p2 in zip(spmd_base.parameters(), spmd_overlap.parameters()):
+        # compare overlap vs DDP
+        for i, (p1, p2) in enumerate(
+            zip(ddp_model.parameters(), spmd_overlap.parameters())
+        ):
+
+            assert p1.grad.allclose(  # type: ignore
+                p2.grad / self.world_size
+            ), "Mismatch in resulting grads between DDP and SPMD."
+
+            self.assertTrue(
+                p1.grad.allclose(p2.grad / self.world_size)
+                or p1.grad.allclose(p2.grad)
+            )
+
+        # compare overlap vs no overlap
+        for i, (p1, p2) in enumerate(
+            zip(spmd_base.parameters(), spmd_overlap.parameters())
+        ):
 
             self.assertTrue(p1.grad.allclose(p2.grad))
 
