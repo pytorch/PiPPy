@@ -13,7 +13,6 @@ from torch.distributed._tensor.placement_types import (
 import spmd.tensor.experimental_ops  # noqa: F403
 
 
- 
 class TraceModuleTest(DTensorTestBase):
     @property
     def world_size(self):
@@ -29,7 +28,7 @@ class TraceModuleTest(DTensorTestBase):
             l = z.sum()
             gx, gw, gb = torch.autograd.grad(l, [x, w, b])
             return l, gx, gw, gb
-        
+
         x = torch.randn([8, 16], device=DEVICE_TYPE, requires_grad=True)
         w = torch.randn([16], device=DEVICE_TYPE, requires_grad=True)
         b = torch.randn([16], device=DEVICE_TYPE, requires_grad=True)
@@ -44,13 +43,18 @@ class TraceModuleTest(DTensorTestBase):
 
         self.assertEqual(d_l.placements, [_Partial()])
         self.assertEqual(d_gx.placements, [Shard(0)])
-        self.assertEqual(d_gw.placements,[_Partial()])
+        self.assertEqual(d_gw.placements, [_Partial()])
         self.assertEqual(d_gb.placements, [_Partial()])
 
-        self.assertTrue(l.allclose(d_l.redistribute(mesh, [Replicate()]).to_local()))
-        self.assertTrue(gx.allclose(d_gx.redistribute(mesh, [Replicate()]).to_local()))
-        self.assertTrue(gw.allclose(d_gw.redistribute(mesh, [Replicate()]).to_local()))
-        self.assertTrue(gb.allclose(d_gb.redistribute(mesh, [Replicate()]).to_local()))
-
-
-
+        self.assertTrue(
+            l.allclose(d_l.redistribute(mesh, [Replicate()]).to_local())
+        )
+        self.assertTrue(
+            gx.allclose(d_gx.redistribute(mesh, [Replicate()]).to_local())
+        )
+        self.assertTrue(
+            gw.allclose(d_gw.redistribute(mesh, [Replicate()]).to_local())
+        )
+        self.assertTrue(
+            gb.allclose(d_gb.redistribute(mesh, [Replicate()]).to_local())
+        )

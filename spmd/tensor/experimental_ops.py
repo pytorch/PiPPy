@@ -27,16 +27,16 @@ def _prop_native_layer_norm(op_schema: OpSchema) -> OutputSharding:
     # only the left-most (non-normalized) dimensions of the input can be sharded
     batch_ndim = len(input.shape) - len(normalized_shape)
     assert all(
-        isinstance(p, Replicate) or (
-            isinstance(p, Shard) and
-            p.dim < batch_ndim,
-        )
+        isinstance(p, Replicate)
+        or (isinstance(p, Shard) and p.dim < batch_ndim,)
         for p in input.placements
     )
     stats_spec = DTensorSpec(
         mesh=weight.mesh,
         placements=input.placements,
-        shape=torch.Size(input.shape[:batch_ndim] + (1, ) * len(normalized_shape)),
+        shape=torch.Size(
+            input.shape[:batch_ndim] + (1,) * len(normalized_shape)
+        ),
         ndim=input.ndim,
     )
     return OutputSharding(output_spec=(input, stats_spec, stats_spec))
@@ -44,14 +44,26 @@ def _prop_native_layer_norm(op_schema: OpSchema) -> OutputSharding:
 
 @register_prop_rule("aten.native_layer_norm_backward.default")
 def _prop_native_layer_norm_backward(op_schema: OpSchema) -> OutputSharding:
-    grad, input, normalized_shape, result1, result2, weight, bias, grad_input_mask = op_schema.args_schema
+    (
+        grad,
+        input,
+        normalized_shape,
+        result1,
+        result2,
+        weight,
+        bias,
+        grad_input_mask,
+    ) = op_schema.args_schema
     assert isinstance(grad, DTensorSpec)
     assert isinstance(weight, DTensorSpec)
     assert isinstance(bias, DTensorSpec)
+    assert isinstance(grad_input_mask, (list, tuple))
     assert all(isinstance(s, Replicate) for s in weight.placements)
     assert all(isinstance(s, Replicate) for s in bias.placements)
     # ensure sharding on dim 0, which will trigger the "Partial" output on weight and bias grads
-    assert any(isinstance(s, Shard) and s.dim == 0 for s in grad.placements), f'Got {grad.placements}'
+    assert any(
+        isinstance(s, Shard) and s.dim == 0 for s in grad.placements
+    ), f"Got {grad.placements}"
     weight_grad = DTensorSpec(
         mesh=weight.mesh,
         placements=[_Partial()] * weight.mesh.ndim,
@@ -65,9 +77,14 @@ def _prop_native_layer_norm_backward(op_schema: OpSchema) -> OutputSharding:
         ndim=bias.ndim,
     )
     return OutputSharding(
+        # NOTE: type errors below are legit. This is because DTensor currently
+        # doesn't support Optional return values. Need to be fixed in DTensor repo.
         output_spec=(
+            # type: ignore
             grad if grad_input_mask[0] else None,
+            # type: ignore
             weight_grad if grad_input_mask[1] else None,
+            # type: ignore
             bias_grad if grad_input_mask[2] else None,
         ),
     )
