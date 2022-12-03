@@ -436,14 +436,8 @@ class TraceModuleTest(DTensorTestBase):
         spmd_overlap(input).sum().backward()
 
         for p1, p2 in zip(spmd_base.parameters(), spmd_overlap.parameters()):
-            # DDP divides gradients by world size to compute average, but
-            # _Partial tensor shouldn't do that automatically. Hence explicitly
-            # do division here.
 
-            self.assertTrue(
-                p1.grad.allclose(p2.grad / self.world_size)
-                or p1.grad.allclose(p2.grad)
-            )
+            self.assertTrue(p1.grad.allclose(p2.grad))
 
 
 if __name__ == "__main__":
