@@ -10,7 +10,7 @@ from torch.distributed._tensor.placement_types import (
     Shard,
     _Partial,
 )
-import spmd.tensor.experimental_ops  # noqa: F403
+from spmd.tensor.experimental_ops import *  # noqa: F401 F403
 
 
 class TraceModuleTest(DTensorTestBase):
