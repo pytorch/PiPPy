@@ -729,6 +729,8 @@ def run_overlap(gm: fx.GraphModule) -> None:
     """
     _debug("688, ------ start of run overlap pass -----\n")
 
+    _debug(f"732, code = {gm.code}\n")
+
     graph_info = _setup(gm)
 
     # ---- main work ----------
@@ -759,5 +761,7 @@ def run_overlap(gm: fx.GraphModule) -> None:
     # ---- end main work -------
 
     _debug("705, ------ finish, run overlap pass -----\n")
+
+    _debug(f"780, code = {gm.code}\n")
 
     _teardown(gm)

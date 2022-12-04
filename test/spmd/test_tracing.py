@@ -1,7 +1,9 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+from contextlib import contextmanager
 from copy import deepcopy
+from dataclasses import dataclass
 from functools import wraps
-from typing import List, Literal, Union
+from typing import Generator, List, Literal, Union
 
 import numpy as np
 import torch
@@ -20,6 +22,8 @@ from torch.testing._internal.distributed._tensor.common_dtensor import (
 
 from spmd.compiler.api import SPMD, Schema
 from spmd.tensor import DeviceMesh, Replicate
+import spmd.compiler.fusion as fusion
+import spmd.compiler.graph_optimization as graph_optimization
 
 
 def with_comms(func):
@@ -382,8 +386,9 @@ class TraceModuleTest(DTensorTestBase):
             )
 
     @with_comms
-    def test_overlap_pass(self):
-        # test with and without overlap pass
+    def test_overlap_pass_grads(self):
+        # test grads with overlap pass vs without overlap
+        # and vs ddp grads
         model_layer_size = 4
         gpu_placement = torch.arange(self.world_size)
 
@@ -455,6 +460,89 @@ class TraceModuleTest(DTensorTestBase):
         ):
 
             self.assertTrue(p1.grad.allclose(p2.grad))
+
+    @with_comms
+    def test_overlap_pass_called(self):
+        import torch.fx as fx
+
+        @dataclass
+        class RunOverlapProfile:
+            num_calls: int
+
+        @contextmanager
+        def overlap_profiler() -> Generator[RunOverlapProfile, None, None]:
+
+            original_run_overlap = graph_optimization.run_overlap
+            profile: RunOverlapProfile = RunOverlapProfile(num_calls=0)
+
+            # pyre-ignore[53]
+            def patched_run_overlap(
+                gm: fx.GraphModule,
+            ) -> None:
+                original_run_overlap(gm)
+                profile.num_calls += 1
+                print(
+                    f"Entered patched run overlap *************************************************"
+                )
+
+            try:
+                # pyre-ignore[9]
+                run_overlap = patched_run_overlap
+                print(
+                    f" profiler called ************************************************"
+                )
+                print(f"{profile=}")
+                print(f"{run_overlap=}")
+                print(f"{patched_run_overlap=}")
+                yield profile
+            finally:
+                run_overlap = original_run_overlap
+                print(
+                    f"Exiting profiler *********************************************"
+                )
+
+        with overlap_profiler() as profiler:
+            model_layer_size = 2
+            gpu_placement = torch.arange(self.world_size)
+
+            class OverlapModel(nn.Module):
+                def __init__(
+                    self, layer_count: int = 2, _with_bias: bool = False
+                ) -> None:
+                    super().__init__()
+
+                    self.seq = nn.Sequential(
+                        *[
+                            nn.Linear(10, 10, bias=_with_bias)
+                            for _ in range(layer_count)
+                        ]
+                    )
+
+                def forward(
+                    self, x: torch.Tensor
+                ) -> Union[torch.Tensor, Literal[0]]:
+                    return sum([self.seq(x)])
+
+            base_model = OverlapModel(layer_count=model_layer_size).to(
+                self.device_type
+            )
+
+            spmd_overlap = SPMD(
+                base_model,
+                schema=Schema(
+                    mesh=DeviceMesh(self.device_type, gpu_placement),
+                    placements=[Replicate()],
+                ),
+                optimize_first_iter=True,
+            )
+
+            input = torch.randn(2, 10).to(self.device_type)
+
+            spmd_overlap(input).sum().backward()
+
+        self.assertEqual(
+            profiler.num_calls, 1, "Expected a single call to run_overlap."
+        )
 
 
 if __name__ == "__main__":

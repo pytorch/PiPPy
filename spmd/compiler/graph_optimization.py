@@ -92,7 +92,7 @@ class DistGraphOptimization:
         return self._optimized
 
     @graph_optimization_pass()
-    def fuse_communication(
+    def overlap_communication(
         self,
         bucketing_strategy: BucketingStrategy,
         scheduling_policy: SchedulingPolicy,
