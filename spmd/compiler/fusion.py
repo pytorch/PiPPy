@@ -693,11 +693,11 @@ def get_source_node_next(comm_node: fx.Node) -> fx.Node:
         clone_source = curr_source.args[0]  # type: ignore
         curr_source = clone_source  # type: ignore
 
-    prepend_node = curr_source.next
+    prepend_node = curr_source.next  # type: ignore
 
     assert (
         prepend_node is not None
-    ), f"failed to get next from {curr_source.name}"
+    ), f"failed to get next from {curr_source.name}"  # type: ignore
 
     return prepend_node
 
@@ -707,11 +707,9 @@ def _move_comm_section(
 ) -> Optional[List[fx.Node]]:
     """find source node for comm node"""
 
-    prepend_node = get_source_node_next(fe.comm_node)  # type:ignore[arg-type]
+    prepend_node = get_source_node_next(fe.comm_node)  # type: ignore
     # we are moving the uppper section (comm node and support nodes) only
-    nodes_to_move = fe.node_list[
-        0 : gi.fe_offset_to_comm_node
-    ]  # type:ignore[arg-type]
+    nodes_to_move = fe.node_list[0 : gi.fe_offset_to_comm_node]  # type: ignore
     for item in nodes_to_move:
         prepend_node.prepend(item)
 
@@ -735,8 +733,8 @@ def run_overlap_communication(gm: fx.GraphModule) -> None:
     # -- distribute comm nodes to source nodes for overlap
     # the first (which is last) is not moved b/c it is already
     # next to source node.
-    for i, item in enumerate(fe_list[1:]):  # type:ignore
-        moved_nodes = _move_comm_section(graph_info, gm, item)
+    for i, item in enumerate(fe_list[1:]):  # type: ignore
+        moved_nodes = _move_comm_section(graph_info, gm, item)  # type: ignore
 
     _debug(
         f"\nOptimization stats:\nOverlap communication pass has moved -* {i+1} *- communication calls\n"

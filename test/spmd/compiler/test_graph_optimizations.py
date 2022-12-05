@@ -4,13 +4,11 @@ from copy import deepcopy
 
 # from dataclasses import dataclass
 from functools import wraps
-from typing import List  # Generator, Literal, Union
+
 
 import torch
 import torch.nn as nn
-from torch.distributed._spmd.comm_tensor import CommTensor
-from torch.distributed.distributed_c10d import get_global_rank, get_world_size
-from torch.fx.experimental.proxy_tensor import make_fx
+
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.testing._internal.common_utils import run_tests
 from torch.testing._internal.distributed._tensor.common_dtensor import (
