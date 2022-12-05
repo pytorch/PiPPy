@@ -1,4 +1,4 @@
-from functorch._src.aot_autograd import (
+from torch._functorch.aot_autograd import (
     default_partition,
     AOTConfig,
     AOT_COUNTER,
@@ -109,7 +109,7 @@ def patched_aot_function(
         bw_compiler=bw_compiler,
         partition_fn=partition_fn,
         # pyre-fixme
-        decompositions=decompositions,
+        decompositions=decompositions,  # type:ignore[arg-type]
         num_params_buffers=num_params_buffers,
         aot_id=next(AOT_COUNTER),
     )
