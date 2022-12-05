@@ -5,7 +5,7 @@ from typing import Any, Callable, DefaultDict, Iterable, Set
 
 from .bucketing_strategies import BucketingStrategy
 from .distributed_graph import DistributedGraph
-from .fusion import run_overlap
+from .fusion import run_fuse_communication, run_overlap_communication
 from .log_utils import rank0_debug
 from .scheduling_policies import SchedulingPolicy
 
@@ -92,14 +92,30 @@ class DistGraphOptimization:
         return self._optimized
 
     @graph_optimization_pass()
-    def overlap_communication(
+    def fuse_communication(
         self,
         bucketing_strategy: BucketingStrategy,
         scheduling_policy: SchedulingPolicy,
     ) -> "DistGraphOptimization":
 
-        assert len(self.bwd_graph_modules), f"no bwd  graph ready"
-        bwd_graph = self.bwd_graph_modules[0]
+        assert len(
+            self._graph.bwd_graph_modules
+        ), f"no bwd  graph ready from {self._graph}"
 
-        run_overlap(bwd_graph)
+        bwd_graph = self._graph.bwd_graph_modules[0]
+
+        run_fuse_communication(bwd_graph)
+        return self
+
+    def overlap_communication(
+        self,
+    ) -> "DistGraphOptimization":
+
+        assert len(
+            self._graph.bwd_graph_modules
+        ), f"no bwd graph ready from {self._graph}"
+
+        bwd_graph = self._graph.bwd_graph_modules[0]
+
+        run_overlap_communication(bwd_graph)
         return self

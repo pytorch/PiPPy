@@ -63,8 +63,9 @@ class SPMD(nn.Module):
             # fwd and bwd graphs are ready. All optimizations should be directly
             # applied to the saved fwd and bwd gm.
             self._dist_graph.update()
-            self._graph_optimization.overlap_communication(
-                BucketingStrategy.FIXED, SchedulingPolicy.FCFS
-            )
+            # self._graph_optimization.fuse_communication(
+            #    BucketingStrategy.FIXED, SchedulingPolicy.FCFS
+            # )
+            self._graph_optimization.overlap_communication()
 
         return cast(nn.Module, self._compiled_m)(*args, **kwargs)

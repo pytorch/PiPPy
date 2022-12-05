@@ -606,7 +606,7 @@ def _teardown(gm: fx.GraphModule) -> None:
     _debug("605, final graph cleanup, ready to exit\n")
 
 
-def run_comm_fusion(gm: fx.GraphModule) -> None:
+def run_fuse_communication(gm: fx.GraphModule) -> None:
     """Main entry into remapping graph for all_reduce fusion.
     Modifications are in place to the graph.  Errors will result in stoppage
     to alert user rather than handling and returning error codes."""
@@ -723,7 +723,7 @@ def _move_comm_section(
     return nodes_to_move
 
 
-def run_overlap(gm: fx.GraphModule) -> None:
+def run_overlap_communication(gm: fx.GraphModule) -> None:
     """spreads the all_reduce to maximum dispersion by moving
     comm calls next to source nodes.
     """
