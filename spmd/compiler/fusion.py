@@ -707,9 +707,11 @@ def _move_comm_section(
 ) -> Optional[List[fx.Node]]:
     """find source node for comm node"""
 
-    prepend_node = get_source_node_next(fe.comm_node)
+    prepend_node = get_source_node_next(fe.comm_node)  # type:ignore[arg-type]
     # we are moving the uppper section (comm node and support nodes) only
-    nodes_to_move = fe.node_list[0 : gi.fe_offset_to_comm_node]
+    nodes_to_move = fe.node_list[
+        0 : gi.fe_offset_to_comm_node
+    ]  # type:ignore[arg-type]
     for item in nodes_to_move:
         prepend_node.prepend(item)
 
@@ -726,23 +728,20 @@ def run_overlap_communication(gm: fx.GraphModule) -> None:
     # scan graph for all comm sections (fusion elements)
     fe_list = _scan_graph_for_fusion_elements(
         graph_info, gm, comm_type=CommType.allreduce
-    )
+    )  # type:ignore[arg-type]
 
     _debug(f"length of fe_list {len(fe_list)}")
 
     # -- distribute comm nodes to source nodes for overlap
     # the first (which is last) is not moved b/c it is already
     # next to source node.
-    for i, item in enumerate(fe_list[1:]):
+    for i, item in enumerate(fe_list[1:]):  # type:ignore
         moved_nodes = _move_comm_section(graph_info, gm, item)
 
     _debug(
         f"\nOptimization stats:\nOverlap communication pass has moved -* {i+1} *- communication calls\n"
     )
     gm.recompile()
-    # _debug(
-    #    f"754,\n ======= post spread graph {gm.graph.print_tabular()}\n==================================="
-    # )
 
     _debug(" ------ finish, run communication overlap pass -----\n")
 

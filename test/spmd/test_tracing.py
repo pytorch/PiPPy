@@ -1,9 +1,8 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from contextlib import contextmanager
+
 from copy import deepcopy
-from dataclasses import dataclass
 from functools import wraps
-from typing import Generator, List, Literal, Union
+from typing import List
 
 import numpy as np
 import torch
@@ -22,8 +21,6 @@ from torch.testing._internal.distributed._tensor.common_dtensor import (
 
 from spmd.compiler.api import SPMD, Schema
 from spmd.tensor import DeviceMesh, Replicate
-import spmd.compiler.fusion as fusion
-import spmd.compiler.graph_optimization as graph_optimization
 
 
 def with_comms(func):

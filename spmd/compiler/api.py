@@ -4,11 +4,12 @@ import torch.distributed as dist
 import torch.nn as nn
 from spmd.tensor import Placement, Replicate
 
-from .bucketing_strategies import BucketingStrategy
+# from .bucketing_strategies import BucketingStrategy
 from .distribute import distribute, Schema
 from .distributed_graph import DistributedGraph
 from .graph_optimization import DistGraphOptimization
-from .scheduling_policies import SchedulingPolicy
+
+# from .scheduling_policies import SchedulingPolicy
 
 
 class SPMD(nn.Module):

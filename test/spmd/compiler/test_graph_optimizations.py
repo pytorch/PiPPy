@@ -1,11 +1,11 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from contextlib import contextmanager
+# from contextlib import contextmanager
 from copy import deepcopy
-from dataclasses import dataclass
-from functools import wraps
-from typing import Generator, List, Literal, Union
 
-import numpy as np
+# from dataclasses import dataclass
+from functools import wraps
+from typing import List  # Generator, Literal, Union
+
 import torch
 import torch.nn as nn
 from torch.distributed._spmd.comm_tensor import CommTensor
