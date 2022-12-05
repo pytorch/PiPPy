@@ -2,7 +2,7 @@ import logging
 from dataclasses import dataclass
 from enum import Enum, auto
 from functools import partial
-from typing import Dict, List, Sequence, Set, Tuple, cast
+from typing import cast, Dict, List, Sequence, Set, Tuple
 
 import torch
 import torch.fx as fx
