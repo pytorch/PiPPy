@@ -40,7 +40,7 @@ class FusionElement:
     # has gone through the fusion policy process
     processed: bool = False
     size: Optional[int] = 0
-    shape: Optional[List[int]] = field(default_factory=lambda: [])  # type: ignore
+    shape: Optional[Tuple[int, int]] = field(default_factory=lambda: [])  # type: ignore
     comm_type: Optional[CommType] = None
     node_list: Optional[List[fx.Node]] = field(default_factory=lambda: [])  # type: ignore
     prev_node: Optional[fx.Node] = None  # node that was before start of section
@@ -686,16 +686,12 @@ def get_source_node_next(comm_node: fx.Node) -> fx.Node:
     Returns the next (prepend) node in the graph to prepare for insert.
     """
 
-    curr_source = comm_node.args[0][0]
+    curr_source = comm_node.args[0][0]  # type: ignore
 
     # if clone, find clone source
-    if curr_source.name.startswith("clone"):
-        clone_source = curr_source.args[0]
-        curr_source = clone_source
-
-    _debug(
-        f"695, found source node {curr_source.name} for comm_node {comm_node.name}"
-    )
+    if curr_source.name.startswith("clone"):  # type: ignore
+        clone_source = curr_source.args[0]  # type: ignore
+        curr_source = clone_source  # type: ignore
 
     prepend_node = curr_source.next
 
@@ -703,22 +699,19 @@ def get_source_node_next(comm_node: fx.Node) -> fx.Node:
         prepend_node is not None
     ), f"failed to get next from {curr_source.name}"
 
-    _debug(f"686, prepend node = {prepend_node.name} for {comm_node.name}")
-
     return prepend_node
 
 
 def _move_comm_section(
-    gm: fx.GraphModule, fe: FusionElement
+    gi: GraphInfo, gm: fx.GraphModule, fe: FusionElement
 ) -> Optional[List[fx.Node]]:
     """find source node for comm node"""
 
     prepend_node = get_source_node_next(fe.comm_node)
-    nodes_to_move = fe.node_list[0:4]
+    # we are moving the uppper section (comm node and support nodes) only
+    nodes_to_move = fe.node_list[0 : gi.fe_offset_to_comm_node]
     for item in nodes_to_move:
         prepend_node.prepend(item)
-
-    # _debug(f"706, {gm.graph.print_tabular()}\n")
 
     return nodes_to_move
 
@@ -727,17 +720,8 @@ def run_overlap_communication(gm: fx.GraphModule) -> None:
     """spreads the all_reduce to maximum dispersion by moving
     comm calls next to source nodes.
     """
-    _debug("688, ------ start of run overlap pass -----\n")
-
-    _debug(f"732, code = {gm.code}\n")
 
     graph_info = _setup(gm)
-
-    # ---- main work ----------
-
-    _debug(
-        f"\n Start of overlap spread pass, starting graph\n {gm.graph.print_tabular()}\n"
-    )
 
     # scan graph for all comm sections (fusion elements)
     fe_list = _scan_graph_for_fusion_elements(
@@ -750,18 +734,16 @@ def run_overlap_communication(gm: fx.GraphModule) -> None:
     # the first (which is last) is not moved b/c it is already
     # next to source node.
     for i, item in enumerate(fe_list[1:]):
-        moved_nodes = _move_comm_section(gm, item)
-        _debug(f"\n750, moved the following nodes: {moved_nodes}\n")
+        moved_nodes = _move_comm_section(graph_info, gm, item)
 
-    gm.recompile()
     _debug(
-        f"754,\n ======= post spread graph {gm.graph.print_tabular()}\n==================================="
+        f"\nOptimization stats:\nOverlap communication pass has moved -* {i+1} *- communication calls\n"
     )
+    gm.recompile()
+    # _debug(
+    #    f"754,\n ======= post spread graph {gm.graph.print_tabular()}\n==================================="
+    # )
 
-    # ---- end main work -------
-
-    _debug("705, ------ finish, run overlap pass -----\n")
-
-    _debug(f"780, code = {gm.code}\n")
+    _debug(" ------ finish, run communication overlap pass -----\n")
 
     _teardown(gm)

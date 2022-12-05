@@ -100,7 +100,7 @@ class DistGraphOptimization:
 
         assert len(
             self.bwd_graph_modules
-        ), f"no bwd  graph ready from {self.bwd_graph_modules}"
+        ), f"no bwd  graph ready from {self.bwd_graph_modules}"  # type: ignore
 
         bwd_graph = self.bwd_graph_modules[0]
 
@@ -111,10 +111,10 @@ class DistGraphOptimization:
     def overlap_communication(
         self,
     ) -> "DistGraphOptimization":
-        
+
         assert len(
             self.bwd_graph_modules
-        ), f"no bwd graph ready from {self.bwd_graph_modules}"
+        ), f"no bwd graph ready from {self.bwd_graph_modules}"  # type: ignore
 
         bwd_graph = self.bwd_graph_modules[0]
 
