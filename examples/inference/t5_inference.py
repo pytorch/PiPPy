@@ -20,9 +20,13 @@ from pippy.hf import PiPPyHFTracer
 from pippy.microbatch import CustomReducer, TensorChunkSpec
 from pippy.visualizer import events_to_json
 from pippy import split_on_size_threshold, split_into_equal_size
+from benchmark_utils.benchmark import get_enc_dec_batch, benchmark_cuda_event, benchmark_time_perfcounter, setup_logger
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+
 from transformers import T5Tokenizer, T5ForConditionalGeneration, T5Config
+from transformers import GPT2Tokenizer, OPTModel
 from split_utils import add_split_points, _add_split_points
+
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
@@ -57,10 +61,6 @@ def get_number_of_params(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-def resolve_pg_per_stage(pp_rank):
-    assert pippy.utils.dp_pg_per_pp_rank
-    return pippy.utils.dp_pg_per_pp_rank[pp_rank + pippy.utils.exclude_master]
-
 
 def run_master(pp_ranks, args):
 
@@ -76,25 +76,30 @@ def run_master(pp_ranks, args):
 
     device = args.device
 
-    t5 = AutoModelForSeq2SeqLM.from_pretrained('t5-11b', use_cache=False)
-    t5_config = t5.config
-    t5_config.num_layers = args.num_encoder_layers or t5_config.num_layers
-    t5_config.num_decoder_layers = args.num_decoder_layers or t5_config.num_decoder_layers
-    t5_config.use_cache = False  # don't output `past_key_values`
-    t5 = T5ForConditionalGeneration(t5_config)
-    t5.eval()
+    if 't5' in args.model_name:
+        model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name, use_cache=False)
+    if 'opt' in args.model_name:
+        print("&&&&&&&&&& we are loading OPT ########")
+        model = OPTModel.from_pretrained(args.model_name, use_cache=False)
+
+    model_config = model.config
+
+    model_config.use_cache = False  # don't output `past_key_values`
+    model.eval()
     memory_reserved = format_to_gb(torch.cuda.memory_reserved())
     memory_allocated = format_to_gb(torch.cuda.memory_allocated())
     print("***********************************************")
     print("memory_reserved after model intializaed from HF pretrained", memory_reserved)
     print("memory_allocated after model intializaed from HF pretrained", memory_allocated)
     print("***********************************************")
-    print(t5.config)
-    print(f"T5 total number of params = {get_number_of_params(t5) // 10 ** 6}M")
+    print(model.config)
+    print(f"model total number of params = {get_number_of_params(model) // 10 ** 6}M")
 
     number_of_workers = len(pp_ranks) - pippy.utils.exclude_master
     print(f"number_of_workers = {number_of_workers}")
-    # add_split_points(t5, number_of_workers)
+
+    #if need to do spliting manually make use of
+    # add_split_points(model, number_of_workers)
 
     if args.auto_split == "threshold":
         split_policy = split_on_size_threshold(490 * 1e6)
@@ -109,61 +114,72 @@ def run_master(pp_ranks, args):
     print("Using device:", device)
 
     torch.manual_seed(args.rank)
-    inp = torch.empty(bs, seq_length, dtype=torch.long, device=device).random_(t5.config.vocab_size)
+    inp = torch.empty(bs, seq_length, dtype=torch.long, device=device).random_(model.config.vocab_size)
+    if 't5' in args.model_name:
+        model_input_dict = {'input_ids': inp, 'decoder_input_ids': inp}
+    if 'opt' in args.model_name:
+        model_input_dict = {'input_ids': inp}
 
-    t5_input_dict = {'input_ids': inp, 'decoder_input_ids': inp}
 
 
-    input_names = t5_input_dict.keys()
-    sig = inspect.signature(t5.forward)
+    input_names = model_input_dict.keys()
+    sig = inspect.signature(model.forward)
     concrete_args = {p.name: p.default for p in sig.parameters.values() if p.name not in input_names}
 
-    print('Instantiating T5 Pipeline')
+    print('Instantiating model Pipeline')
     model_init_start = time.time()
-    t5_pipe = Pipe.from_tracing(t5, MULTI_USE_PARAM_CONFIG, tracer=PiPPyHFTracer(), concrete_args=concrete_args,
+    model_pipe = Pipe.from_tracing(model, MULTI_USE_PARAM_CONFIG, tracer=PiPPyHFTracer(), concrete_args=concrete_args,
                                 output_loss_value_spec=None, split_policy=split_policy
                                 )
    
-    t5_pipe.defer_stage_init(args.device)
+    model_pipe.defer_stage_init(args.device)
 
     torch.distributed.barrier(args.pp_group)
 
     if args.rank!=0:
         return 
     
-    split_gm_children = list(t5_pipe.split_gm.children())
+    split_gm_children = list(model_pipe.split_gm.children())
 
     total_params = 0
-    for i, sm in enumerate(t5_pipe.split_gm.children()):
+    for i, sm in enumerate(model_pipe.split_gm.children()):
         params = get_number_of_params(sm)
         print(f"submod_{i} {params // 10 ** 6}M params")
         total_params += params
     print(f"total {total_params // 10 ** 6}M params")
 
     args_chunk_spec = ()
+    
+    if 't5' in args.model_name:
+        kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'decoder_input_ids': TensorChunkSpec(0)}
+        output_chunk_spec = {"logits": TensorChunkSpec(0),"encoder_last_hidden_state": TensorChunkSpec(0)}
+    if 'opt' in args.model_name:
+        print("#################### we are in OPT##########")
+        kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0)}
+        output_chunk_spec = {"logits": TensorChunkSpec(0)}
 
-    kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'decoder_input_ids': TensorChunkSpec(0)}
-
-    output_chunk_spec = {"logits": TensorChunkSpec(0),"encoder_last_hidden_state": TensorChunkSpec(0)}
-
-    pipe_driver: PipelineDriverBase = schedules[args.schedule](t5_pipe, chunks, args_chunk_spec, kwargs_chunk_spec,
+    pipe_driver: PipelineDriverBase = schedules[args.schedule](model_pipe, chunks, args_chunk_spec, kwargs_chunk_spec,
                                                                output_chunk_spec,
                                                                world_size=len(all_worker_ranks),
                                                                all_ranks=all_worker_ranks,
-                                                               _debug_mask_minibatches=False,
-                                                               _record_mem_dumps=bool(args.record_mem_dumps),
-                                                               checkpoint=bool(args.checkpoint),
-                                                                # device=intermediate_device
                                                                 )
     model_init_end = time.time()
 
+    print("*********** init time {} seconds ***************".format(model_init_end - model_init_start))
+ 
+    memory_reserved = format_to_gb(torch.cuda.memory_reserved())
+    memory_allocated = format_to_gb(torch.cuda.memory_allocated())
+    print("***********************************************")
+    print("memory_reserved after model intializaed with pipelines {} GB".format(memory_reserved))
+    print("memory_allocated after model intializaed with pipelines {} GB".format(memory_allocated))
+    print("***********************************************")
+
     this_file_name = os.path.splitext(os.path.basename(__file__))[0]
 
-    print('Running T5 pipeline.')
+    print('Running model pipeline.')
     for i in range(args.num_batches):
-        pipe_driver(**t5_input_dict)
+        pipe_driver(**model_input_dict)
 
-    
     print('Inference is finished')
 
 
@@ -174,8 +190,7 @@ if __name__ == "__main__":
     parser.add_argument('--master_addr', type=str, default=os.getenv('MASTER_ADDR', 'localhost'))
     parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
 
-    model_config = os.path.dirname(os.path.realpath(__file__)) + "/" + "t5_200m_config.json"
-    parser.add_argument('--model_config', type=str, default=model_config)
+    parser.add_argument('--model_name', type=str, default='t5-3b')
     parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument("--chunks", type=int, default=1)
     parser.add_argument('--num_batches', type=int, default=1)
@@ -196,11 +211,11 @@ if __name__ == "__main__":
     parser.add_argument('--pp_group_size', type=int, default=8)
     parser.add_argument('--exclude_master', type=int, default=0, choices=[0, 1])
     parser.add_argument('--auto_split', type=str, default="equal_size")
+    parser.add_argument('--mode', type=str, default='large-cpu', choices=['small', 'large-cpu'])
 
     args = parser.parse_args()
 
     assert args.world_size % args.pp_group_size == 0
-   
     args.dp_group_size = args.world_size // args.pp_group_size
     args.gspmd = 1
 
