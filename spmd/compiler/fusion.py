@@ -728,7 +728,7 @@ def run_overlap_communication(gm: fx.GraphModule) -> None:
         graph_info, gm, comm_type=CommType.allreduce
     )  # type:ignore[arg-type]
 
-    _debug(f"length of fe_list {len(fe_list)}")
+    _debug(f"length of fe_list {len(fe_list)}")  # type: ignore
 
     # -- distribute comm nodes to source nodes for overlap
     # the first (which is last) is not moved b/c it is already
