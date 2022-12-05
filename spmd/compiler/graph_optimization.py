@@ -1,7 +1,7 @@
 import logging
 from collections import defaultdict
 from functools import partial
-from typing import Any, Callable, DefaultDict, Iterable, Set, Tuple
+from typing import Any, Callable, DefaultDict, Iterable, Set
 
 from .bucketing_strategies import BucketingStrategy
 from .distributed_graph import DistributedGraph
