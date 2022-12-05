@@ -64,7 +64,6 @@ def resolve_pg_per_stage(pp_rank):
 
 def run_master(pp_ranks, args):
 
-    # log_file = "log.csv"
     logger = setup_logger()
 
     torch.manual_seed(42)
