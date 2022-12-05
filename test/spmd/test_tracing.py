@@ -1,26 +1,37 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+from copy import deepcopy
+from functools import wraps
 from typing import List
+
 import numpy as np
 
 import torch
 import torch.nn as nn
-from torch.distributed.distributed_c10d import get_global_rank, get_world_size
+
+from spmd.compiler.api import Schema, SPMD
+from spmd.tensor import DeviceMesh, Replicate
 from torch.distributed._spmd.comm_tensor import CommTensor
-from torch.testing._internal.distributed._tensor.common_dtensor import (
-    DTensorTestBase,
-    with_comms,
-)
+from torch.distributed.distributed_c10d import get_global_rank, get_world_size
 from torch.fx.experimental.proxy_tensor import make_fx
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.testing._internal.common_utils import run_tests
-
-from spmd.compiler.api import SPMD, Schema
-from spmd.tensor import (
-    DeviceMesh,
-    Replicate,
+from torch.testing._internal.distributed._tensor.common_dtensor import (
+    DTensorTestBase,
+    with_comms as base_with_comms,
 )
 
-from copy import deepcopy
+
+def with_comms(func):
+    @base_with_comms
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        # make sure we set different random seeds for each rank
+        # otherwise we dont need DDP / SPMD
+        # (we would have the same parameters and inputs everywhere)
+        torch.manual_seed(torch.distributed.get_rank())
+        return func(self, *args, **kwargs)
+
+    return wrapper
 
 
 class TraceDeviceMeshTestBase:
@@ -195,7 +206,8 @@ class TraceModuleTest(DTensorTestBase):
     def world_size(self):
         return 2
 
-    def _test_trace_replicate(self, model, x, *args, **kwargs):
+    def _test_trace_replicate(self, model: nn.Module, x, *args, **kwargs):
+        optimize_first_iter = kwargs.pop("optimize_first_iter", False)
         # if x.device.type == "cuda":
         ddp = DDP(deepcopy(model))
         spmd = SPMD(
@@ -206,7 +218,13 @@ class TraceModuleTest(DTensorTestBase):
                 ),
                 placements=[Replicate()],
             ),
+            input_schemas=kwargs["inp_schemas"]
+            if "inp_schemas" in kwargs
+            else None,
+            optimize_first_iter=optimize_first_iter,
         )
+        if "inp_schemas" in kwargs:
+            del kwargs["inp_schemas"]
         only_fw = False
         if "only_fw" in kwargs:
             only_fw = kwargs["only_fw"]
@@ -216,14 +234,46 @@ class TraceModuleTest(DTensorTestBase):
             output_spmd = spmd(x, *args, **kwargs)
             self.assertTrue(output_ddp.size(), output_spmd.size())
             return
-
         ddp(x, *args, **kwargs).sum().backward()
         spmd(x, *args, **kwargs).sum().backward()
         for p1, p2 in zip(ddp.parameters(), spmd.parameters()):
             # DDP divides gradients by world size to compute average, but
             # _Partial tensor shouldn't do that automatically. Hence explicitly
             # do division here.
-            self.assertTrue(p1.grad.allclose(p2.grad / self.world_size))
+            self.assertTrue(
+                p1.grad.allclose(p2.grad / self.world_size)
+                or p1.grad.allclose(p2.grad)
+            )
+
+    @with_comms
+    def test_torch_cat(self):
+        x = torch.rand((2, 4)).to(self.device_type)
+
+        class Model(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.w = torch.nn.Parameter(torch.rand((2, 4)))
+
+            def forward(self, x):
+                # TODO(anj): Using self.w and ignoring x results in an allgather call
+                # that we have not yet supported.
+                return torch.cat((self.w, self.w), 0)
+
+        model = Model().to(self.device_type)
+        inp_kwargs = {}
+        inp_kwargs["inp_schemas"] = [
+            Schema(
+                mesh=DeviceMesh(
+                    self.device_type, torch.arange(self.world_size)
+                ),
+                placements=[Replicate()],
+            )
+        ]
+        self._test_trace_replicate(
+            Model().to(self.device_type),
+            torch.rand((2, 4)).to(self.device_type),
+            **inp_kwargs,
+        )
 
     @with_comms
     def test_layer_norm_fw(self):
@@ -269,6 +319,14 @@ class TraceModuleTest(DTensorTestBase):
         self._test_trace_replicate(model, x)
 
     @with_comms
+    def test_optimize_first_iter(self):
+        model = nn.Sequential(*[nn.Linear(10, 10) for _ in range(2)]).to(
+            self.device_type
+        )
+        x = torch.randn(2, 10).to(self.device_type)
+        self._test_trace_replicate(model, x, optimize_first_iter=True)
+
+    @with_comms
     def test_parallel(self):
         class Model(nn.Module):
             def __init__(self):
@@ -283,6 +341,44 @@ class TraceModuleTest(DTensorTestBase):
         model = Model().to(self.device_type)
         x = torch.randn(2, 10).to(self.device_type)
         self._test_trace_replicate(model, x)
+
+    @with_comms
+    def test_hybrid(self):
+        bottom_model = nn.Sequential(
+            nn.Linear(4, 8),
+            nn.Softmax(),
+        ).to(self.device_type)
+
+        top_model = nn.Sequential(
+            nn.Linear(8, 2),
+            nn.Softmax(),
+        ).to(self.device_type)
+
+        hybrid = nn.Sequential(
+            DDP(deepcopy(bottom_model)),
+            SPMD(
+                deepcopy(top_model),
+                schema=Schema(
+                    mesh=DeviceMesh(
+                        self.device_type, torch.arange(self.world_size)
+                    ),
+                    placements=[Replicate()],
+                ),
+            ),
+        )
+        ddp = DDP(nn.Sequential(deepcopy(bottom_model), deepcopy(top_model)))
+        input = torch.randn(12, 4).to(self.device_type)
+
+        ddp(input).sum().backward()
+        hybrid(input).sum().backward()
+        for p1, p2 in zip(ddp.parameters(), hybrid.parameters()):
+            # DDP divides gradients by world size to compute average, but
+            # _Partial tensor shouldn't do that automatically. Hence explicitly
+            # do division here.
+            self.assertTrue(
+                p1.grad.allclose(p2.grad / self.world_size)
+                or p1.grad.allclose(p2.grad)
+            )
 
 
 if __name__ == "__main__":
