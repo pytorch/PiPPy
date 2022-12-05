@@ -99,23 +99,24 @@ class DistGraphOptimization:
     ) -> "DistGraphOptimization":
 
         assert len(
-            self._graph.bwd_graph_modules
-        ), f"no bwd  graph ready from {self._graph}"
+            self.bwd_graph_modules
+        ), f"no bwd  graph ready from {self.bwd_graph_modules}"
 
-        bwd_graph = self._graph.bwd_graph_modules[0]
+        bwd_graph = self.bwd_graph_modules[0]
 
         run_fuse_communication(bwd_graph)
         return self
 
+    @graph_optimization_pass()
     def overlap_communication(
         self,
     ) -> "DistGraphOptimization":
-
+        
         assert len(
-            self._graph.bwd_graph_modules
-        ), f"no bwd graph ready from {self._graph}"
+            self.bwd_graph_modules
+        ), f"no bwd graph ready from {self.bwd_graph_modules}"
 
-        bwd_graph = self._graph.bwd_graph_modules[0]
+        bwd_graph = self.bwd_graph_modules[0]
 
         run_overlap_communication(bwd_graph)
         return self
