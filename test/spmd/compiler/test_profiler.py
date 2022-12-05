@@ -46,6 +46,12 @@ class TestProfiler(DTensorTestBase):
         for _ in range(5):
             model(batch).sum().backward()
 
+        for node in model._dist_graph.fwd_graph_modules.graph.nodes:
+            self.assertTrue(node in model.fwd_profilers[0].node_info, f"{node.name} {node.op}")
+
+        for node in model._dist_graph.bwd_graph_modules.graph.nodes:
+            self.assertTrue(node in model.bwd_profilers[0].node_info, f"{node.name} {node.op}")
+
 
 if __name__ == "__main__":
     run_tests()
