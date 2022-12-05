@@ -1,6 +1,6 @@
 ## PiPPY distributed inference for large models
 
-PiPPY helps to run very large models for inference by splitting the model into mutliple stages running in multiple GPUs.
+PiPPY helps to run very large models for inference by splitting the model into mutliple stages running on multiple GPUs.
 PiPPY make this easier by providing a auto split API that automates this process for user. 
 
 ### How it works
@@ -19,7 +19,7 @@ Unlike most of the available solutions that they need to know the model architec
 
 **Define a function such as run_master() and add the followings to it.**
 
-We use a HuggingFace T5 model as the running example here.
+We use a HuggingFace T5 model as the running example here. The `HF_inference.py` also support HF OPT which is encoder only model as well. Make sure to specifiy the model name as follows ` python HF_inference.py --model_name "facebook/opt-2.7b" `
 
 * Load your model normally on CPU
 
