@@ -201,7 +201,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     assert args.world_size % args.pp_group_size == 0
-    # cleanup()
+   
     args.dp_group_size = args.world_size // args.pp_group_size
     args.gspmd = 1
 
