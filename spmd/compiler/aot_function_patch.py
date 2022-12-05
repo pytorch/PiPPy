@@ -1,4 +1,4 @@
-from functorch._src.aot_autograd import (
+from torch._functorch.aot_autograd import (
     default_partition,
     AOTConfig,
     AOT_COUNTER,

@@ -35,7 +35,7 @@ from .log_utils import rank0_info
 
 # patch aot_function so that we can pass the full (non-sharded) input to capture the graph
 # pyre-fixme
-functorch._src.aot_autograd.aot_function = patched_aot_function
+torch._functorch.aot_autograd.aot_function = patched_aot_function
 
 
 logger: logging.Logger = logging.getLogger(__name__)
