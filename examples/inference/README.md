@@ -100,9 +100,7 @@ pipe_driver: PipelineDriverBase = schedules[args.schedule](t5_pipe, chunks, args
                                                             output_chunk_spec,
                                                             world_size=len(all_worker_ranks),
                                                             all_ranks=all_worker_ranks,
-                                                            _debug_mask_minibatches=False,
-                                                            _record_mem_dumps=bool(args.record_mem_dumps),
-                                                            checkpoint=bool(args.checkpoint),
+                                                            checkpoint=bool(args.checkpoint), #optional in case pretrained weights not required
                                                             )
 ```
 
