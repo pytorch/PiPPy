@@ -4,8 +4,6 @@ from enum import auto, Enum
 from functools import partial
 from typing import cast, Dict, List, Sequence, Set, Tuple
 
-import functorch.compile
-
 import torch
 import torch.fx as fx
 import torch.nn as nn
