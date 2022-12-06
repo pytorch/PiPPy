@@ -27,7 +27,7 @@ class CommType(str, Enum):
     SCATTER = "scatter_"
 
 
-comm_block_op_sequence: Tuple[Union[str, Set[str]], ...] = (
+comm_block_op_sequence: Tuple[Union[str, Set[CommType]], ...] = (
     "clone",
     "_tensor_constant",
     "_tensor_constant",
