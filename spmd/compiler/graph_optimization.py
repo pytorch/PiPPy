@@ -1,10 +1,16 @@
+import logging
 from collections import defaultdict
+from functools import partial
 from typing import Any, Callable, DefaultDict, Iterable, Set
 
 from .bucketing_strategies import BucketingStrategy
 from .distributed_graph import DistributedGraph
+from .fusion import run_fuse_communication, run_overlap_communication
+from .log_utils import rank0_debug
 from .scheduling_policies import SchedulingPolicy
 
+logger: logging.Logger = logging.getLogger(__name__)
+_debug = partial(rank0_debug, logger)  # type: ignore
 
 # It is more nature to set a run after list for a function decorator, but
 # it is easier to have check with run_before_set.
@@ -91,4 +97,26 @@ class DistGraphOptimization:
         bucketing_strategy: BucketingStrategy,
         scheduling_policy: SchedulingPolicy,
     ) -> "DistGraphOptimization":
+
+        assert len(
+            self.bwd_graph_modules  # type: ignore
+        ), f"no bwd  graph ready from {self.bwd_graph_modules}"  # type: ignore
+
+        bwd_graph = self.bwd_graph_modules[0]  # type: ignore
+
+        run_fuse_communication(bwd_graph)
+        return self
+
+    @graph_optimization_pass()
+    def overlap_communication(
+        self,
+    ) -> "DistGraphOptimization":
+
+        assert len(
+            self.bwd_graph_modules  # type: ignore
+        ), f"no bwd graph ready from {self.bwd_graph_modules}"  # type: ignore
+
+        bwd_graph = self.bwd_graph_modules[0]  # type: ignore
+
+        run_overlap_communication(bwd_graph)
         return self

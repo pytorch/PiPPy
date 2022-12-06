@@ -2,7 +2,7 @@ import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import partial
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -40,7 +40,7 @@ class FusionElement:
     # has gone through the fusion policy process
     processed: bool = False
     size: Optional[int] = 0
-    shape: Optional[Iterable[[int], [int]]] = field(default_factory=lambda: [])  # type: ignore
+    shape: Optional[Tuple[int, int]] = field(default_factory=lambda: [])  # type: ignore
     comm_type: Optional[CommType] = None
     node_list: Optional[List[fx.Node]] = field(default_factory=lambda: [])  # type: ignore
     prev_node: Optional[fx.Node] = None  # node that was before start of section
@@ -585,10 +585,8 @@ def _determine_peak_memory(gi: GraphInfo, fusion_policy: int) -> int:
     return peak_memory
 
 
-def run_comm_fusion(gm: fx.GraphModule) -> None:
-    """Main entry into remapping graph for all_reduce fusion.
-    Modifications are in place to the graph.  Errors will result in stoppage
-    to alert user rather than handling and returning error codes."""
+def _setup(gm: fx.GraphModule) -> GraphInfo:
+    """shared setup for optimizations"""
 
     # first recompile to make sure we have coherent graph
     gm.recompile()
@@ -596,6 +594,24 @@ def run_comm_fusion(gm: fx.GraphModule) -> None:
     # get our main graph info
     graph_info = GraphInfo()
     graph_info.update_info(gm)
+
+    return graph_info
+
+
+def _teardown(gm: fx.GraphModule) -> None:
+    """final steps before exiting optimization phase"""
+
+    # final review print
+    graph_cleanup(gm)
+    _debug("605, final graph cleanup, ready to exit\n")
+
+
+def run_fuse_communication(gm: fx.GraphModule) -> None:
+    """Main entry into remapping graph for all_reduce fusion.
+    Modifications are in place to the graph.  Errors will result in stoppage
+    to alert user rather than handling and returning error codes."""
+
+    graph_info = _setup(gm)
 
     _debug(f"\n Start of fusion pass graph {gm.graph.print_tabular()}\n")
 
@@ -662,7 +678,69 @@ def run_comm_fusion(gm: fx.GraphModule) -> None:
 
     _debug(f"656, updated output node args {new_output_args=}\n")
 
-    # final review print
-    graph_cleanup(gm)
+    _teardown(gm)
 
+
+def get_source_node_next(comm_node: fx.Node) -> fx.Node:
+    """determine source gradient node from a given comm node.
+    Returns the next (prepend) node in the graph to prepare for insert.
+    """
+
+    curr_source = comm_node.args[0][0]  # type: ignore
+
+    # if clone, find clone source
+    if curr_source.name.startswith("clone"):  # type: ignore
+        clone_source = curr_source.args[0]  # type: ignore
+        curr_source = clone_source  # type: ignore
+
+    prepend_node = curr_source.next  # type: ignore
+
+    assert (
+        prepend_node is not None
+    ), f"failed to get next from {curr_source.name}"  # type: ignore
+
+    return prepend_node
+
+
+def _move_comm_section(
+    gi: GraphInfo, gm: fx.GraphModule, fe: FusionElement
+) -> Optional[List[fx.Node]]:
+    """find source node for comm node"""
+
+    prepend_node = get_source_node_next(fe.comm_node)  # type: ignore
+    # we are moving the uppper section (comm node and support nodes) only
+    nodes_to_move = fe.node_list[0 : gi.fe_offset_to_comm_node]  # type: ignore
+    for item in nodes_to_move:
+        prepend_node.prepend(item)
+
+    return nodes_to_move
+
+
+def run_overlap_communication(gm: fx.GraphModule) -> None:
+    """spreads the all_reduce to maximum dispersion by moving
+    comm calls next to source nodes.
+    """
+
+    graph_info = _setup(gm)
+
+    # scan graph for all comm sections (fusion elements)
+    fe_list = _scan_graph_for_fusion_elements(
+        graph_info, gm, comm_type=CommType.allreduce
+    )  # type:ignore[arg-type]
+
+    _debug(f"length of fe_list {len(fe_list)}")  # type: ignore
+
+    # -- distribute comm nodes to source nodes for overlap
+    # the first (which is last) is not moved b/c it is already
+    # next to source node.
+    for i, item in enumerate(fe_list[1:]):  # type: ignore
+        moved_nodes = _move_comm_section(graph_info, gm, item)  # type: ignore
+
+    _debug(
+        f"\nOptimization stats:\nOverlap communication pass has moved -* {i+1} *- communication calls\n"
+    )
     gm.recompile()
+
+    _debug(" ------ finish, run communication overlap pass -----\n")
+
+    _teardown(gm)

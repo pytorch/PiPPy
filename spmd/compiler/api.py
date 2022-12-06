@@ -4,11 +4,12 @@ import torch.distributed as dist
 import torch.nn as nn
 from spmd.tensor import Placement, Replicate
 
-from .bucketing_strategies import BucketingStrategy
+# from .bucketing_strategies import BucketingStrategy
 from .distribute import distribute, Schema
 from .distributed_graph import DistributedGraph
 from .graph_optimization import DistGraphOptimization
-from .scheduling_policies import SchedulingPolicy
+
+# from .scheduling_policies import SchedulingPolicy
 
 
 class SPMD(nn.Module):
@@ -63,8 +64,9 @@ class SPMD(nn.Module):
             # fwd and bwd graphs are ready. All optimizations should be directly
             # applied to the saved fwd and bwd gm.
             self._dist_graph.update()
-            self._graph_optimization.fuse_communication(
-                BucketingStrategy.FIXED, SchedulingPolicy.FCFS
-            )
+            # self._graph_optimization.fuse_communication(
+            #    BucketingStrategy.FIXED, SchedulingPolicy.FCFS
+            # )
+            self._graph_optimization.overlap_communication()
 
         return cast(nn.Module, self._compiled_m)(*args, **kwargs)
