@@ -1,4 +1,4 @@
-from typing import cast, Dict, Optional, Sequence, Tuple
+from typing import Dict, Optional, Sequence, Tuple
 
 import torch.distributed as dist
 import torch.nn as nn
@@ -7,7 +7,7 @@ from spmd.tensor import Placement, Replicate
 # from .bucketing_strategies import BucketingStrategy
 from .distribute import distribute, Schema
 from .distributed_graph import DistributedGraph
-from .graph_optimization import DistGraphOptimization
+from .graph_optimization import DistGraphOptimization, GraphOptimization
 
 # from .scheduling_policies import SchedulingPolicy
 
@@ -20,6 +20,7 @@ class SPMD(nn.Module):
         schema: Schema,
         input_schemas: Sequence[Placement] = tuple(),
         optimize_first_iter: bool = False,
+        optimizations: Sequence[GraphOptimization] = tuple(),
     ) -> None:
         super().__init__()
         assert schema.placements == [
@@ -37,6 +38,7 @@ class SPMD(nn.Module):
         self._dist_graph = DistributedGraph(orig_module=module)
         self._graph_optimization = DistGraphOptimization(self._dist_graph)
         self._optimize_first_iter = optimize_first_iter
+        self._optimizations = optimizations
 
     def forward(
         self, *args: Tuple[object], **kwargs: Dict[str, object]
@@ -54,19 +56,18 @@ class SPMD(nn.Module):
         if (
             not self._graph_optimization.optimized
             and self._dist_graph.bwd_graph_modules
+            and self._optimizations
         ):
             # Profile the module. Right now it will use the saved orig_module
             # to profile. There will be another compilation for the profiling
             # purpose.
             self._dist_graph.profile(*args, **kwargs)
+            self._dist_graph.update()
 
             # Apply the graph optimizations if the graph is not optimized both
             # fwd and bwd graphs are ready. All optimizations should be directly
             # applied to the saved fwd and bwd gm.
-            self._dist_graph.update()
-            # self._graph_optimization.fuse_communication(
-            #    BucketingStrategy.FIXED, SchedulingPolicy.FCFS
-            # )
-            self._graph_optimization.overlap_communication()
+            self._graph_optimization.apply(self._optimizations)
 
-        return cast(nn.Module, self._compiled_m)(*args, **kwargs)
+        assert self._compiled_m is not None
+        return self._compiled_m(*args, **kwargs)

@@ -4,17 +4,19 @@ from copy import deepcopy
 
 # from dataclasses import dataclass
 from functools import wraps
-from typing import Union, Literal
+from typing import Literal, Union
+
 import torch
 import torch.nn as nn
+from spmd.compiler.api import Schema, SPMD
+from spmd.compiler.graph_optimization import GraphOptimization
+from spmd.tensor import DeviceMesh, Replicate
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.testing._internal.common_utils import run_tests
 from torch.testing._internal.distributed._tensor.common_dtensor import (
     DTensorTestBase,
     with_comms as base_with_comms,
 )
-from spmd.compiler.api import SPMD, Schema
-from spmd.tensor import DeviceMesh, Replicate
 
 # import spmd.compiler.graph_optimization as graph_optimization
 
@@ -73,8 +75,9 @@ class CommOverlapTest(DTensorTestBase):
                 mesh=DeviceMesh(self.device_type, gpu_placement),
                 placements=[Replicate()],
             ),
-            optimize_first_iter=False,
+            optimize_first_iter=True,
         )
+        self.assertFalse(spmd_base._graph_optimization.optimized)
 
         spmd_overlap = SPMD(
             overlap_model,
@@ -83,6 +86,7 @@ class CommOverlapTest(DTensorTestBase):
                 placements=[Replicate()],
             ),
             optimize_first_iter=True,
+            optimizations=[GraphOptimization("overlap_communication")],
         )
         ddp_model = DDP(deepcopy(overlap_model)).to(self.device_type)
 
