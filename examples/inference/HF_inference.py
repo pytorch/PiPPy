@@ -71,17 +71,9 @@ def run_master(pp_ranks, args):
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if args.replicate else MultiUseParameterConfig.TRANSMIT
     print(f'REPLICATE config: {args.replicate} -> {MULTI_USE_PARAM_CONFIG}')
     print("Using schedule:", args.schedule)
-
-   
-
+    
     device = args.device
-
-    if 't5' in args.model_name:
-        model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name, use_cache=False)
-    if 'opt' in args.model_name:
-        print("&&&&&&&&&& we are loading OPT ########")
-        model = OPTModel.from_pretrained(args.model_name, use_cache=False)
-
+    model = args.model
     model_config = model.config
 
     model_config.use_cache = False  # don't output `past_key_values`
@@ -211,12 +203,16 @@ if __name__ == "__main__":
     parser.add_argument('--pp_group_size', type=int, default=8)
     parser.add_argument('--exclude_master', type=int, default=0, choices=[0, 1])
     parser.add_argument('--auto_split', type=str, default="equal_size")
-    parser.add_argument('--mode', type=str, default='large-cpu', choices=['small', 'large-cpu'])
+
 
     args = parser.parse_args()
 
     assert args.world_size % args.pp_group_size == 0
     args.dp_group_size = args.world_size // args.pp_group_size
     args.gspmd = 1
-
+    if 't5' in args.model_name:
+        model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name, use_cache=False)
+    if 'opt' in args.model_name:
+        model = OPTModel.from_pretrained(args.model_name, use_cache=False)
+    args.model = model
     run_pippy(run_master, args)
