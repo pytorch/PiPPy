@@ -77,6 +77,7 @@ class CommOverlapTest(DTensorTestBase):
             ),
             optimize_first_iter=True,
         )
+        self.assertFalse(spmd_base._graph_optimization.optimized)
 
         spmd_overlap = SPMD(
             overlap_model,
