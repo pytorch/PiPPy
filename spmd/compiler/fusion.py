@@ -11,7 +11,7 @@ from torch.fx.passes.shape_prop import TensorMetadata
 
 from .graph_utils import (
     CommType,
-    get_comm_block_ops,
+    get_comm_block_nodes,
     get_node_tensor_metadata,
     get_output_node,
     OP,
@@ -162,16 +162,16 @@ def _scan_graph_for_fusion_elements(
     element_list = []
     for node in gm.graph.nodes:
         if node.name.startswith("wait_comm"):
-            comm_idx, comm_block_ops = get_comm_block_ops(node, comm_type)
-            comm_node = comm_block_ops[comm_idx]
+            comm_idx, comm_block_nodes = get_comm_block_nodes(node, comm_type)
+            comm_node = comm_block_nodes[comm_idx]
             grad_node = cast(Tuple[fx.Node, ...], comm_node.args[0])[0]
             tmeta = get_node_tensor_metadata(grad_node)
             fe = FusionElement(
                 comm_type=comm_type,
-                node_list=comm_block_ops[:],
+                node_list=comm_block_nodes[:],
                 # Need to fully populate this fe. We will be
                 # revoing/rewriting the node list so we save prev and next.
-                prev_node=comm_block_ops[0].prev,
+                prev_node=comm_block_nodes[0].prev,
                 output_name=node.name,
                 wait_node=node,
                 comm_node=comm_node,
