@@ -28,7 +28,7 @@ from torch.utils._pytree import tree_flatten, tree_map, tree_unflatten
 
 from .aot_function_patch import patched_aot_function
 from .distributed_graph import DistributedGraph
-from .graph_utils import CommType, get_comm_block_ops, OP
+from .graph_utils import CommType, get_comm_block_nodes, OP
 from .log_utils import rank0_info
 
 # patch aot_function so that we can pass the full (non-sharded) input to capture the graph
@@ -464,10 +464,10 @@ class _SPMD:
             all(grad is not None for grad in grads)
             for grad, param in zip(grads, params):
                 if grad.name.startswith("wait_comm"):
-                    comm_idx, comm_block_ops = get_comm_block_ops(
+                    comm_idx, comm_block_nodes = get_comm_block_nodes(
                         grad, CommType.ALLREDUCE
                     )
-                    comm_node = comm_block_ops[comm_idx]
+                    comm_node = comm_block_nodes[comm_idx]
                     grad = cast(Tuple[fx.Node, ...], comm_node.args[0])[0]
                 self._dist_graph.grad_to_primal[0][grad] = param
 

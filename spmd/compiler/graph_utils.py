@@ -40,9 +40,22 @@ comm_block_op_sequence: Tuple[Union[str, Set[str]], ...] = (
 )
 
 
-def get_comm_block_ops(
+def get_comm_block_nodes(
     wait_node: fx.Node, comm_type: CommType
 ) -> Tuple[int, List[fx.Node]]:
+    """
+    Given a wait_comm node, find out all the nodes belong to this communcation.
+
+    Args:
+        wait_node(fx.Node): The target wait_comm node.
+        comm_type(CommType): The communication type of this communication block.
+            Currently, only allreduce is supported. An exception will be raised
+            if other values are passed.
+    Returns:
+        comm_idx(int): The index to the communication node in the return list.
+        node_list(List[fx.Node]): The list that contain the nodes in the order
+           of inserting to the graph.
+    """
     if not wait_node.name.startswith("wait_comm"):
         raise ValueError(
             "Passing a wait_node that name does not start with ``wait_comm``. "
