@@ -69,4 +69,5 @@ class SPMD(nn.Module):
             # applied to the saved fwd and bwd gm.
             self._graph_optimization.apply(self._optimizations)
 
+        assert self._compiled_m is not None
         return self._compiled_m(*args, **kwargs)
