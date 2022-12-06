@@ -139,7 +139,7 @@ class DistGraphOptimization:
 
         assert len(
             self._graph.bwd_graph_modules
-        ), f"no bwd  graph ready from {self.bwd_graph_modules}"
+        ), f"no bwd graph ready from {self._graph.bwd_graph_modules}"
 
         run_fuse_communication(self._graph.bwd_graph_modules[0])
         return self
@@ -149,7 +149,7 @@ class DistGraphOptimization:
 
         assert len(
             self._graph.bwd_graph_modules
-        ), f"no bwd graph ready from {self.bwd_graph_modules}"
+        ), f"no bwd graph ready from {self._graph.bwd_graph_modules}"
 
         run_overlap_communication(self._graph.bwd_graph_modules[0])
         return self
