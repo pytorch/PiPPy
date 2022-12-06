@@ -237,7 +237,7 @@ def _scan_graph_for_fusion_elements(
 
 
 def _copy_fe_to_buffer(
-    gi: GraphInfo, gm: fx.GraphModule, copy_list: list[FusionElement]
+    gi: GraphInfo, gm: fx.GraphModule, copy_list: List[FusionElement]
 ) -> None:
     """First half of fusion - move desired items to buffer and create graph"""
     buffer_node = gi.global_buffer_node
