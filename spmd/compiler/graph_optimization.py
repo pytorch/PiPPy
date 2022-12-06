@@ -1,7 +1,9 @@
 import logging
 from collections import defaultdict
+from dataclasses import dataclass, field
+from enum import Enum
 from functools import partial
-from typing import Any, Callable, DefaultDict, Iterable, Set
+from typing import Any, Callable, DefaultDict, Dict, Iterable, Sequence, Set
 
 from .bucketing_strategies import BucketingStrategy
 from .distributed_graph import DistributedGraph
@@ -17,6 +19,22 @@ _debug = partial(rank0_debug, logger)  # type: ignore
 _run_before_sets: DefaultDict[str, Set[str]] = defaultdict(set)
 
 
+class GraphOptimizationType(str, Enum):
+    OVERLAP_COMMUNICATION = "overlap_communication"
+    FUSE_COMMUNICATION = "fuse_communication"
+
+
+@dataclass
+class GraphOptimization:
+    optim_type: GraphOptimizationType
+    kwargs: Dict[str, Any] = field(default_factory=dict)
+
+
+_GraphOptimizationMapping: Dict[
+    GraphOptimizationType, Callable[..., "DistGraphOptimization"]
+] = {}
+
+
 def graph_optimization_pass(
     run_after: Iterable[str] = tuple(),
 ) -> Callable[..., Callable[..., "DistGraphOptimization"]]:
@@ -30,6 +48,17 @@ def graph_optimization_pass(
     def pass_wrapper(
         func: Callable[..., "DistGraphOptimization"]
     ) -> Callable[..., "DistGraphOptimization"]:
+        valid_optim = False
+        for optim_type in GraphOptimizationType:
+            if func.__name__ == optim_type:
+                _GraphOptimizationMapping[optim_type] = func
+                valid_optim = True
+                break
+        assert valid_optim, (
+            "The optimization is not in OptimizationType. "
+            "Users won't be able to use with ``apply()``."
+        )
+
         for name in run_after:
             _run_before_sets[name].add(func.__name__)
 
@@ -48,7 +77,7 @@ def graph_optimization_pass(
             ), f"{invalid_passes} must run after {func.__name__}"
             self.graph.validate()
 
-            ret = func(self.graph, *args, **kwargs)
+            ret = func(self, *args, **kwargs)
 
             assert self.graph == ret
             self.graph.validate()
@@ -91,6 +120,16 @@ class DistGraphOptimization:
     def optimized(self) -> bool:
         return self._optimized
 
+    def apply(
+        self, optimizations: Sequence[GraphOptimization]
+    ) -> "DistGraphOptimization":
+        for optim in optimizations:
+            _self = _GraphOptimizationMapping[optim.optim_type](
+                self, **optim.kwargs
+            )
+            assert _self == self
+        return self
+
     @graph_optimization_pass()
     def fuse_communication(
         self,
@@ -99,24 +138,18 @@ class DistGraphOptimization:
     ) -> "DistGraphOptimization":
 
         assert len(
-            self.bwd_graph_modules  # type: ignore
-        ), f"no bwd  graph ready from {self.bwd_graph_modules}"  # type: ignore
+            self._graph.bwd_graph_modules
+        ), f"no bwd  graph ready from {self.bwd_graph_modules}"
 
-        bwd_graph = self.bwd_graph_modules[0]  # type: ignore
-
-        run_fuse_communication(bwd_graph)
+        run_fuse_communication(self._graph.bwd_graph_modules[0])
         return self
 
     @graph_optimization_pass()
-    def overlap_communication(
-        self,
-    ) -> "DistGraphOptimization":
+    def overlap_communication(self) -> "DistGraphOptimization":
 
         assert len(
-            self.bwd_graph_modules  # type: ignore
-        ), f"no bwd graph ready from {self.bwd_graph_modules}"  # type: ignore
+            self._graph.bwd_graph_modules
+        ), f"no bwd graph ready from {self.bwd_graph_modules}"
 
-        bwd_graph = self.bwd_graph_modules[0]  # type: ignore
-
-        run_overlap_communication(bwd_graph)
+        run_overlap_communication(self._graph.bwd_graph_modules[0])
         return self
