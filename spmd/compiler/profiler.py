@@ -24,9 +24,12 @@ from .profiler_utils import (
     TensorStatus,
 )
 
-MEM_LIMIT = torch.cuda.get_device_properties(
-    torch.cuda.current_device()
-).total_memory
+MEM_LIMIT = 0
+
+if torch.cuda.is_available():
+    MEM_LIMIT = torch.cuda.get_device_properties(
+        torch.cuda.current_device()
+    ).total_memory
 
 
 class GraphProfiler(fx.Interpreter):
