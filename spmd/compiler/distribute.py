@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass
-from enum import Enum, auto
+from enum import auto, Enum
 from functools import partial
 from typing import cast, Dict, List, Sequence, Set, Tuple
 
@@ -8,27 +8,27 @@ import torch
 import torch.fx as fx
 import torch.nn as nn
 from functorch.compile import aot_module, make_boxed_func
+
+from spmd.tensor import (
+    _CURRENT_DECOMPOSITION_TABLE,
+    _Partial,
+    _redistribute_with_local_tensor,
+    DeviceMesh,
+    distribute_tensor,
+    DTensor,
+    operator_dispatch,
+    Placement,
+    propagate_input_sharding,
+    Replicate,
+    Shard,
+)
 from torch.distributed._spmd.comm_tensor import _get_tracer
 from torch.fx.experimental.proxy_tensor import make_fx, proxy_slot
 from torch.utils._pytree import tree_flatten, tree_map, tree_unflatten
 
-from spmd.tensor import (
-    _CURRENT_DECOMPOSITION_TABLE,
-    DeviceMesh,
-    DTensor,
-    Placement,
-    Replicate,
-    Shard,
-    _Partial,
-    _redistribute_with_local_tensor,
-    distribute_tensor,
-    operator_dispatch,
-    propagate_input_sharding,
-)
-
 from .aot_function_patch import patched_aot_function
 from .distributed_graph import DistributedGraph
-from .graph_utils import OP
+from .graph_utils import CommType, get_comm_block_ops, OP
 from .log_utils import rank0_info
 
 # patch aot_function so that we can pass the full (non-sharded) input to capture the graph
@@ -413,6 +413,7 @@ class _SPMD:
         dist_graph: DistributedGraph,
         param_schema: Schema,
         input_schemas: Sequence[Placement],
+        map_param_and_grad: bool = False,
     ) -> None:
         self._dist_graph = dist_graph
         self._param_schema = param_schema
@@ -421,6 +422,54 @@ class _SPMD:
         # used to propagate sharding from the output of the forward pass to
         # the input of backward pass
         self._known_specs_by_node_name: Dict[str, Schema] = {}
+        # A switch that allow users to turn off map_param_and_grad since it is
+        # brittle as for now (the impl depends on the param and grad order).
+        self._map_param_and_grad = map_param_and_grad
+
+    def _is_param(self, t: torch.Tensor) -> bool:
+        # N.B.: id(t) and id(param) does not match
+        orig_module = cast(nn.Module, self._dist_graph.orig_module)
+        return t.storage().data_ptr() in (
+            p.storage().data_ptr() for p in orig_module.parameters()
+        )
+
+    def _map_primal_to_param(
+        self, gm: fx.GraphModule, inputs: List[torch.Tensor], nparams: int
+    ) -> None:
+        self._dist_graph.primal_name_to_node.append({})
+        self._dist_graph.primal_to_param.append({})
+        for inp, node in zip(inputs, gm.graph.nodes):
+            if self._is_param(inp) and node.name.startswith("primals_"):
+                self._dist_graph.primal_name_to_node[0][node.name] = node
+                self._dist_graph.primal_to_param[0][node] = cast(
+                    nn.Parameter, inp
+                )
+        assert len(self._dist_graph.primal_name_to_node[0]) == nparams, (
+            len(self._dist_graph.primal_name_to_node[0]),
+            nparams,
+        )
+
+    def _map_grad_to_param(self, gm: fx.GraphModule) -> None:
+        # This assumes that the order of gradients are in the same order
+        # as the parameters in the input. The last argument of the output
+        # is None.
+        # TODO: this is very brittle, verify how we can do better than this.
+        self._dist_graph.grad_to_primal.append({})
+        for node in gm.graph.nodes:
+            if node.op != OP.OUTPUT:
+                continue
+            params = list(self._dist_graph.primal_name_to_node[0].values())
+            grads = node.args[0][: len(params)]
+            assert len(grads) == len(params), (grads, len(params))
+            all(grad is not None for grad in grads)
+            for grad, param in zip(grads, params):
+                if grad.name.startswith("wait_comm"):
+                    comm_idx, comm_block_ops = get_comm_block_ops(
+                        grad, CommType.ALLREDUCE
+                    )
+                    comm_node = comm_block_ops[comm_idx]
+                    grad = cast(Tuple[fx.Node, ...], comm_node.args[0])[0]
+                self._dist_graph.grad_to_primal[0][grad] = param
 
     def _compile(
         self,
@@ -428,18 +477,13 @@ class _SPMD:
         gm: fx.GraphModule,
         inps: List[torch.Tensor],
     ) -> fx.GraphModule:
-        def is_param(t: torch.Tensor) -> bool:
-            # N.B.: id(t) and id(param) does not match
-            orig_module = cast(nn.Module, self._dist_graph.orig_module)
-            return t.storage().data_ptr() in (
-                p.storage().data_ptr() for p in orig_module.parameters()
-            )
-
         shard_schema: Schema = Schema(
             mesh=self._param_schema.mesh, placements=[Shard(0)]
         )
         schemas: List[Schema] = []
         inp_schema_count = 0
+        nparams = 0
+
         # iterate through inputs (and initial nodes of the graph that should
         # correspond 1:1 to those inputs)
         for inp, placeholder_node in zip(inps, gm.graph.nodes):
@@ -466,8 +510,9 @@ class _SPMD:
                     )
                 )
             else:
-                if is_param(inp):
+                if self._is_param(inp):
                     schemas.append(self._param_schema)
+                    nparams += 1
                 elif self._input_schemas:
                     schemas.append(self._input_schemas[inp_schema_count])  # type: ignore
                     inp_schema_count += 1
@@ -485,8 +530,12 @@ class _SPMD:
 
         if training_phase == TrainingPhase.FORWARD:
             self._dist_graph.fwd_graph_modules.append(parallelized_gm)
+            if self._map_param_and_grad:
+                self._map_primal_to_param(parallelized_gm, inps, nparams)
         elif training_phase == TrainingPhase.BACKWARD:
             self._dist_graph.bwd_graph_modules.append(parallelized_gm)
+            if self._map_param_and_grad:
+                self._map_grad_to_param(parallelized_gm)
         return make_boxed_func(parallelized_gm)
 
 
@@ -495,6 +544,7 @@ def distribute(
     param_schema: Schema,
     input_schemas: Sequence[Placement],
     force_compile: bool,
+    map_param_and_grad: bool,
     *args: Tuple[object],
     **kwargs: Dict[str, object],
 ) -> nn.Module:
@@ -515,7 +565,7 @@ def distribute(
         )
         return compile_inps
 
-    spmd = _SPMD(dist_graph, param_schema, input_schemas)
+    spmd = _SPMD(dist_graph, param_schema, input_schemas, map_param_and_grad)
     compiled_m = aot_module(
         cast(nn.Module, dist_graph.orig_module),
         partial(spmd._compile, TrainingPhase.FORWARD),
