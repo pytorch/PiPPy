@@ -12,6 +12,8 @@ from torch.distributed._spmd.comm_tensor import _get_tracer
 from torch.fx.experimental.proxy_tensor import make_fx, proxy_slot
 from torch.utils._pytree import tree_flatten, tree_map, tree_unflatten
 
+from torch._subclasses.fake_tensor import FakeTensorMode
+
 from spmd.tensor import (
     _CURRENT_DECOMPOSITION_TABLE,
     DeviceMesh,
@@ -502,6 +504,19 @@ def distribute(
     flat_kwargs, _ = tree_flatten(kwargs)
     input_set: Set[object] = set(flat_args + flat_kwargs)
 
+    fake_mode = FakeTensorMode()
+
+    def input_to_fake(x):
+        if not isinstance(x, torch.Tensor):
+            return x
+        y = fake_mode.from_tensor(x)
+        if x not in input_set:
+            return y
+        return DTensor.from_local(
+            x, param_schema.mesh, [Shard(0)]).redistribute(
+                param_schema.mesh, [Replicate()]).to_local()
+
+
     def gather_inputs_for_compilation(
         inps: Tuple[object, ...],
     ) -> Tuple[object, ...]:
@@ -513,7 +528,8 @@ def distribute(
             .to_local()
             for x in inps
         )
-        return compile_inps
+        # return compile_inps
+        return tuple(input_to_fake(x) for x in inps)
 
     spmd = _SPMD(dist_graph, param_schema, input_schemas)
     compiled_m = aot_module(
