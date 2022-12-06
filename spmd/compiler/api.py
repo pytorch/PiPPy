@@ -1,15 +1,12 @@
-from typing import cast, Dict, Optional, Sequence, Tuple
+from typing import Dict, Optional, Sequence, Tuple
 
 import torch.distributed as dist
 import torch.nn as nn
 from spmd.tensor import Placement, Replicate
 
-# from .bucketing_strategies import BucketingStrategy
 from .distribute import distribute, Schema
 from .distributed_graph import DistributedGraph
 from .graph_optimization import DistGraphOptimization
-
-# from .scheduling_policies import SchedulingPolicy
 
 
 class SPMD(nn.Module):
@@ -20,6 +17,7 @@ class SPMD(nn.Module):
         schema: Schema,
         input_schemas: Sequence[Placement] = tuple(),
         optimize_first_iter: bool = False,
+        map_param_and_grad: bool = True,
     ) -> None:
         super().__init__()
         assert schema.placements == [
@@ -37,6 +35,7 @@ class SPMD(nn.Module):
         self._dist_graph = DistributedGraph(orig_module=module)
         self._graph_optimization = DistGraphOptimization(self._dist_graph)
         self._optimize_first_iter = optimize_first_iter
+        self._map_param_and_grad = False
 
     def forward(
         self, *args: Tuple[object], **kwargs: Dict[str, object]
@@ -47,6 +46,7 @@ class SPMD(nn.Module):
                 self._param_schema,
                 self._input_schemas,
                 self._optimize_first_iter,
+                self._map_param_and_grad,
                 *args,
                 **kwargs
             )
@@ -69,4 +69,4 @@ class SPMD(nn.Module):
             # )
             self._graph_optimization.overlap_communication()
 
-        return cast(nn.Module, self._compiled_m)(*args, **kwargs)
+        return self._compiled_m(*args, **kwargs)
