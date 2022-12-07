@@ -2,7 +2,7 @@ import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import partial
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional
 
 import torch
 import torch.distributed as dist
@@ -225,7 +225,7 @@ def _scan_graph_for_fusion_elements(
 
                 size, shape = get_node_tensor_numel_shape(fe.grad_tensor_node)  # type: ignore
                 fe.size = size
-                fe.shape = shape
+                fe.shape = shape  # type: ignore
 
                 element_list.append(fe)
 
