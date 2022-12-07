@@ -1,8 +1,7 @@
 import logging
 from dataclasses import dataclass, field
-from enum import Enum
 from functools import partial
-from typing import Dict, Iterable, List, Optional
+from typing import cast, Dict, Iterable, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -11,53 +10,49 @@ from torch.fx.experimental.proxy_tensor import make_fx
 from torch.fx.passes.shape_prop import TensorMetadata
 
 from .graph_utils import (
-    OP,
-    create_name_to_node_map,
-    get_node_tensor_numel_shape,
+    CommType,
+    get_comm_block_nodes,
+    get_node_tensor_metadata,
     get_output_node,
-    graph_cleanup,
+    OP,
+    rebuild_graph,
 )
 from .log_utils import rank0_debug
+
 
 logger: logging.Logger = logging.getLogger(__name__)
 _debug = partial(rank0_debug, logger)  # type: ignore
 
-# enum for the supported fusion comm types
-class CommType(str, Enum):
-    allreduce = "allreduce_"
-    allgather = "allgather_"
-    broadcast = "broadcast_"
-    reducescatter = "reduce_scatter_"
-    scatter = "scatter_"
-
 
 @dataclass
 class FusionElement:
-    """This class tracks the nodes for a DTensor expanded communication collective in the graph"""
+    """
+    This class tracks the nodes for a DTensor expanded communication collective
+    in the graph.
+    """
 
-    # monitor if this FusionElement is in the main graph or removed as part of fusion
+    # Monitor if this FusionElement is in the main graph or removed as part of
+    # fusion.
     in_graph: bool = False
-    # has gone through the fusion policy process
+    # Has gone through the fusion policy process
     processed: bool = False
-    size: Optional[int] = 0
+    size: Optional[int] = None
     shape: Optional[torch.Size] = None
     comm_type: Optional[CommType] = None
-    node_list: Optional[List[fx.Node]] = field(default_factory=lambda: [])  # type: ignore
-    prev_node: Optional[fx.Node] = None  # node that was before start of section
+    node_list: List[fx.Node] = field(default_factory=lambda: [])  # type: ignore
+    # Node that was before start of the section.
+    prev_node: Optional[fx.Node] = None
     output_name: str = ""
-    comm_node: Optional[fx.Node] = None  # type: ignore
-    wait_node: Optional[fx.Node] = None  # type: ignore
-    grad_tensor_node: Optional[fx.Node] = None  # type: ignore
+    comm_node: Optional[fx.Node] = None
+    wait_node: Optional[fx.Node] = None
+    grad_tensor_node: Optional[fx.Node] = None
 
-    def _get_next_node(
-        self,
-    ) -> fx.Node:
+    def _get_next_node(self) -> fx.Node:
         """Get the next node after this FE section"""
-        next_node = self.node_list[-1].next  # type: ignore
-
+        next_node = self.node_list[-1].next
         assert (
             next_node is not None
-        ), f"failed to get valid next node after {self.node_list[-1].name}"  # type: ignore
+        ), f"failed to get valid next node after {self.node_list[-1].name}"
         return next_node
 
 
@@ -159,80 +154,32 @@ def _insert_fusion_buffer_node(
 def _scan_graph_for_fusion_elements(
     gi: GraphInfo,
     gm: fx.GraphModule,
-    comm_type: CommType = CommType.allreduce,
+    comm_type: CommType = CommType.ALLREDUCE,
 ) -> Optional[List[FusionElement]]:
     """Scan entire graph for matching sections of CommTensor style expansions
     returns list of FusionElements that match CommType"""
 
     element_list = []
-
-    fe_sequence = [
-        "clone",
-        "_tensor_constant",
-        "_tensor_constant",
-        comm_type,
-        "comm_result",
-        "getitem",
-        "getitem",
-        "wait_comm",
-    ]
-
-    fe_size = len(fe_sequence) - 1
-    index = 0
-    curr_node_list = []
-
-    # depth to reach comm_node
-    if gi.fe_offset_to_comm_node is None:
-        for depth, item in enumerate(fe_sequence):
-            if isinstance(item, CommType):
-                gi.fe_offset_to_comm_node = depth
-                break
-    assert (
-        gi.fe_offset_to_comm_node is not None
-    ), f"Unable to locate comm node in {fe_sequence}."
-
-    for i, node in enumerate(gm.graph.nodes):
-        pattern = fe_sequence[index]
-
-        if index < fe_size:
-            if node.name.startswith(pattern):
-                curr_node_list.append(node)
-                index += 1
-                continue
-            else:
-                index = 0
-                curr_node_list.clear()
-                continue
-
-        elif index == fe_size:
-            # should be last node
-            if node.name.startswith(pattern):
-                curr_node_list.append(node)
-
-                fe = FusionElement(
-                    comm_type=comm_type, node_list=curr_node_list[:]
-                )
-
-                # need to fully populate this fe...
-                # we will be removing/rewriting the node list so we save prev and next
-                fe.prev_node = curr_node_list[0].prev
-
-                fe.output_name = node.name
-                fe.wait_node = node
-                fe.comm_node = curr_node_list[gi.fe_offset_to_comm_node]  # type: ignore
-
-                fe.grad_tensor_node = fe.comm_node.args[0][0]  # type: ignore
-
-                size, shape = get_node_tensor_numel_shape(fe.grad_tensor_node)  # type: ignore
-                fe.size = size
-                fe.shape = shape
-
-                element_list.append(fe)
-
-            index = 0
-            curr_node_list.clear()
-            continue
-
+    for node in gm.graph.nodes:
+        if node.name.startswith("wait_comm"):
+            comm_idx, comm_block_nodes = get_comm_block_nodes(node, comm_type)
+            comm_node = comm_block_nodes[comm_idx]
+            grad_node = cast(Tuple[fx.Node, ...], comm_node.args[0])[0]
+            tmeta = get_node_tensor_metadata(grad_node)
+            fe = FusionElement(
+                comm_type=comm_type,
+                node_list=comm_block_nodes[:],
+                # Need to fully populate this fe. We will be
+                # revoing/rewriting the node list so we save prev and next.
+                prev_node=comm_block_nodes[0].prev,
+                output_name=node.name,
+                wait_node=node,
+                comm_node=comm_node,
+                grad_tensor_node=grad_node,
+                size=tmeta.shape.numel(),
+                shape=tmeta.shape,
+            )
+            element_list.append(fe)
     return element_list
 
 
@@ -269,8 +216,6 @@ def _copy_fe_to_buffer(
         tlist.append(a)
 
     load_gm = make_fx(copy_to_buffer)(buffer, tlist)
-
-    subnodemap = create_name_to_node_map(load_gm)
 
     # update load loop to use main graph items
     fn_list = []
@@ -327,7 +272,7 @@ def _build_buffer_comm_graph(
     CommTensor is required to complete.
     """
     # from torch.distributed._spmd.comm_tensor import CommTensor
-    from torch.distributed.distributed_c10d import ReduceOp, _get_default_group
+    from torch.distributed.distributed_c10d import _get_default_group, ReduceOp
 
     buffer_size = gi.global_buffer_size
 
@@ -602,7 +547,7 @@ def _teardown(gm: fx.GraphModule) -> None:
     """final steps before exiting optimization phase"""
 
     # final review print
-    graph_cleanup(gm)
+    rebuild_graph(gm)
     _debug("605, final graph cleanup, ready to exit\n")
 
 
@@ -617,7 +562,7 @@ def run_fuse_communication(gm: fx.GraphModule) -> None:
 
     # scan graph for all comm sections (fusion elements)
     fe_list = _scan_graph_for_fusion_elements(
-        graph_info, gm, comm_type=CommType.allreduce
+        graph_info, gm, comm_type=CommType.ALLREDUCE
     )
 
     graph_info.num_starting_fe = len(fe_list)  # type: ignore
@@ -725,7 +670,7 @@ def run_overlap_communication(gm: fx.GraphModule) -> None:
 
     # scan graph for all comm sections (fusion elements)
     fe_list = _scan_graph_for_fusion_elements(
-        graph_info, gm, comm_type=CommType.allreduce
+        graph_info, gm, comm_type=CommType.ALLREDUCE
     )  # type:ignore[arg-type]
 
     _debug(f"length of fe_list {len(fe_list)}")  # type: ignore
