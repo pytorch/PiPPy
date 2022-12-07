@@ -3,7 +3,6 @@
 set -x
 
 # Print test options
-echo "VERBOSE: ${VERBOSE}"
 echo "REPLICATE: ${REPLICATE}"
 echo "SCHEDULE: ${SCHEDULE}"
 

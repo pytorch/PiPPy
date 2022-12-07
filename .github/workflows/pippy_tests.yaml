@@ -104,7 +104,6 @@ jobs:
         schedule: ["FillDrain", "1F1B"]
         checkpoint: [ "0", "1" ]
     env:
-      VERBOSE: "0"
       OMP_NUM_THREADS: "1"
     container:
       image: python:${{ matrix.python-version }}
@@ -147,7 +146,6 @@ jobs:
         replicate: ["0", "1"]
         schedule: ["FillDrain", "1F1B"]
     env:
-      VERBOSE: "0"
       OMP_NUM_THREADS: "1"
     container:
       image: python:${{ matrix.python-version }}
@@ -191,7 +189,6 @@ jobs:
     env:
       DOCKER_IMAGE: qts8n/cuda-python:devel
       PIPPY_ROOT: /PiPPy
-      VERBOSE: "0"
       OMP_NUM_THREADS: "1"
       REPLICATE: ${{ matrix.replicate }}
       SCHEDULE: ${{ matrix.schedule }}
@@ -217,7 +214,6 @@ jobs:
           container_name=$(docker run \
             --gpus all \
             --shm-size=1g --ulimit memlock=-1 \
-            -e VERBOSE \
             -e OMP_NUM_THREADS \
             -e REPLICATE \
             -e SCHEDULE \
