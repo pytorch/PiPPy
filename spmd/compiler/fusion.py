@@ -40,7 +40,7 @@ class FusionElement:
     # has gone through the fusion policy process
     processed: bool = False
     size: Optional[int] = 0
-    shape: Optional[Tuple[int, int]] = field(default_factory=lambda: [])  # type: ignore
+    shape: Optional[torch.Size] = None
     comm_type: Optional[CommType] = None
     node_list: Optional[List[fx.Node]] = field(default_factory=lambda: [])  # type: ignore
     prev_node: Optional[fx.Node] = None  # node that was before start of section
