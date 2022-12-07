@@ -96,6 +96,9 @@ class CommOverlapTest(DTensorTestBase):
         spmd_overlap(input).sum().backward()
         ddp_model(input).sum().backward()
 
+        self.assertTrue(spmd_overlap._graph_optimization.optimized)
+        self.assertFalse(spmd_overlap._graph_optimization._optimizing)
+
         # compare overlap vs DDP
         for i, (p1, p2) in enumerate(
             zip(ddp_model.parameters(), spmd_overlap.parameters())
