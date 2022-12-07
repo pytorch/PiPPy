@@ -36,7 +36,7 @@ def get_node_tensor_numel_shape(
     """takes an fx node, and if tensor data available, optionally displays and returns numel"""
     size = None
     shape = None
-    tmeta: TensorMetadata = node.meta.get("tensor_meta")
+    tmeta: Optional[TensorMetadata] = node.meta.get("tensor_meta")
     if tmeta is None:
         raise RuntimeError(f"failed to locate metadata for node {node.name}")
     size = tmeta.shape.numel()
