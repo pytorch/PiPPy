@@ -35,7 +35,10 @@ if PIPPY_VERBOSITY == "DEBUG":
     logging.getLogger().setLevel(logging.DEBUG)
 elif PIPPY_VERBOSITY == "INFO":
     logging.getLogger().setLevel(logging.INFO)
-
+elif PIPPY_VERBOSITY == "OFF":
+    pass
+else:
+    print(f"Unsupported PIPPY_VERBOSITY level: {PIPPY_VERBOSITY}")
 
 def has_efa() -> bool:
     try:
