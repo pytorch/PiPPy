@@ -736,9 +736,9 @@ def run_overlap_communication(gm: fx.GraphModule) -> None:
     for i, item in enumerate(fe_list[1:]):  # type: ignore
         moved_nodes = _move_comm_section(graph_info, gm, item)  # type: ignore
 
-    _debug(
-        f"\nOptimization stats:\nOverlap communication pass has moved -* {i+1} *- communication calls\n"
-    )
+        _debug(
+            f"\nOptimization stats:\nOverlap communication pass has moved -* {i+1} *- communication calls\n"
+        )
     gm.recompile()
 
     _debug(" ------ finish, run communication overlap pass -----\n")
