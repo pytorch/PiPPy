@@ -33,12 +33,39 @@ pippy.fx.Tracer.proxy_buffer_attributes = True
 def get_number_of_params(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-
-def add_split_points(gpt2, decoders_per_rank):
-    for i in range(0, gpt2.config.n_layer // decoders_per_rank):
-        annotate_split_points(gpt2, {f'transformer.h.{i * decoders_per_rank}': PipeSplitWrapper.SplitPoint.BEGINNING})
+# n: decoder_layers
+# m: decoder_workers
+# k: max decoder layers per worker (`decoders_per_rank`)
+# a: number of workers with k layers
+# b: number of workers with (k - 1) layers
+# st: (i) a + b = m
+#     (ii) k * a + (k - 1) * b = n
+# Solve:
+# a = n + m - m * k
+def add_split_points(gpt2, decoders_per_rank, decoder_workers):
+    # First, split between embed and decoder layers
+    split_point = 0
+    annotate_split_points(gpt2, {f'transformer.h.0': PipeSplitWrapper.SplitPoint.BEGINNING})
+    splits = 1
+    # Second, split decoder layers using `decoders_per_rank`
+    a = gpt2.config.n_layer + decoder_workers - decoder_workers * decoders_per_rank
+    for _ in range(0, a):
+        split_point += decoders_per_rank
+        if split_point >= gpt2.config.n_layer:
+            break
+        annotate_split_points(gpt2, {f'transformer.h.{split_point}': PipeSplitWrapper.SplitPoint.BEGINNING})
+        splits += 1
+    # Third, split decoder layers using `decoders_per_rank` - 1
+    b = decoder_workers - a
+    for _ in range(0, b - 1):
+        split_point += decoders_per_rank - 1
+        annotate_split_points(gpt2, {f'transformer.h.{split_point}': PipeSplitWrapper.SplitPoint.BEGINNING})
+        splits += 1
+    # Last, split between decoder layers and ln_f
     annotate_split_points(gpt2, {f'transformer.ln_f': PipeSplitWrapper.SplitPoint.BEGINNING})
-    return gpt2.config.n_layer // decoders_per_rank + 2
+    splits += 1
+    # Total workers = splits + 1
+    return splits + 1
 
 
 def calc_flop(args, conf):
@@ -70,11 +97,11 @@ def run_gspmd(pp_ranks, args):
     print(f"GPT-2 total number of params = {get_number_of_params(gpt2) // 10 ** 6}M")
 
     emb_head = 2  # embeddings + head
-    master_emb_head = 1 + emb_head  # master + embeddings + head
-    decoders_per_rank = (gpt2.config.n_layer + (args.world_size - master_emb_head) - 1) // (
-            args.world_size - master_emb_head)  # a divider of gpt2.config.n_layer: [1, 2, 3, 4, 6, 12]
+    master_emb_head = pippy.utils.exclude_master + emb_head  # master + embeddings + head
+    decoder_workers = args.world_size - master_emb_head
+    decoders_per_rank = (gpt2.config.n_layer + decoder_workers - 1) // decoder_workers  # a divider of gpt2.config.n_layer: [1, 2, 3, 4, 6, 12]
     print(f"decoders_per_rank = {decoders_per_rank}")
-    number_of_workers = emb_head + gpt2.config.n_layer // decoders_per_rank  # 3 + a divider of gpt2.config.n_layer: [4, 5, 6, 7, 9, 15]
+    number_of_workers = emb_head + decoder_workers  # 2 + a divider of gpt2.config.n_layer: [4, 5, 6, 7, 9, 15]
     print(f"number_of_workers = {number_of_workers}")
 
     all_worker_ranks = pp_ranks[
@@ -94,7 +121,7 @@ def run_gspmd(pp_ranks, args):
         'labels': torch.empty(batch_size, seq_length, dtype=torch.long, device=device).random_(vocab_size),
         'position_ids': torch.arange(0, seq_length, dtype=torch.long, device=device)}
 
-    sm_cnt = add_split_points(gpt2, decoders_per_rank)
+    sm_cnt = add_split_points(gpt2, decoders_per_rank, decoder_workers)
     assert sm_cnt == len(all_worker_ranks), f"sm_cnt = {sm_cnt} all_worker_ranks = {all_worker_ranks}"
 
     # print(gpt2)
@@ -187,7 +214,7 @@ if __name__ == "__main__":
     parser.add_argument('--checkpoint', type=int, default=0, choices=[0, 1])
 
     parser.add_argument('--rpc_timeout', type=int, default=1800)
-    parser.add_argument('--num_worker_threads', type=int, default=512)
+    parser.add_argument('--num_worker_threads', type=int, default=1024)
 
     parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--warmup_batches', type=int, default=0)
