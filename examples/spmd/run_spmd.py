@@ -124,8 +124,8 @@ def work_main(rank: int, world_size: int) -> None:
     # model = Permute().to(rank)  #
     model = ReplicaModel(layer_count=layers).to(_device_type)
 
-    ddp = DDP(deepcopy(model))
-    ddp.to(rank)
+    # ddp = DDP(deepcopy(model))
+    # ddp.to(rank)
 
     run_backward = True
     spmd = SPMD(
@@ -146,24 +146,24 @@ def work_main(rank: int, world_size: int) -> None:
 
     # fire off comms
     spmd(x).sum().backward()
-    ddp(x).sum().backward()
+    # ddp(x).sum().backward()
 
-    if rank == 0:
-        _debug(f" --> backwards run complete, rank {rank}")
+    # if rank == 0:
+    #     _debug(f" --> backwards run complete, rank {rank}")
 
-        print("Visual of resulting grads:\n")
-        for i, (p1, p2) in enumerate(zip(ddp.parameters(), spmd.parameters())):
-            # just show first row of first 2 grad tensors for quick visual
-            if i < 2:
-                # visual display of initial grads
-                div_grad = p2.grad[0] / world_size
+    #     print("Visual of resulting grads:\n")
+    #     for i, (p1, p2) in enumerate(zip(ddp.parameters(), spmd.parameters())):
+    #         # just show first row of first 2 grad tensors for quick visual
+    #         if i < 2:
+    #             # visual display of initial grads
+    #             div_grad = p2.grad[0] / world_size
 
-                print(f"DDP:\n {p1.grad[0]}\nSPMD:\n {div_grad}\n")  # type: ignore
+    #             print(f"DDP:\n {p1.grad[0]}\nSPMD:\n {div_grad}\n")  # type: ignore
 
-            assert p1.grad.allclose(  # type: ignore
-                p2.grad / world_size
-            ), "Mismatch in resulting grads between DDP and SPMD."
-    _debug("--> run completed, all grads matching!")
+    #         assert p1.grad.allclose(  # type: ignore
+    #             p2.grad / world_size
+    #         ), "Mismatch in resulting grads between DDP and SPMD."
+    # _debug("--> run completed, all grads matching!")
 
 
 # --------- main above -------------------------

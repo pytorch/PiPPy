@@ -344,7 +344,7 @@ def _convert_to_distributed(
                 inps
             ), f"got more placeholer nodes ({i + 1}) than inputs ({len(inps)})"
             if training_phase == TrainingPhase.FORWARD:
-                # in the forward phase we start with the full "global" ensors.
+                # in the forward phase we start with the full "global" tensors.
                 # we needed this because we needed to capture the original graph.
                 node_to_obj[node] = distribute_tensor(
                     inps[i],
@@ -516,6 +516,10 @@ def distribute(
         return compile_inps
 
     spmd = _SPMD(dist_graph, param_schema, input_schemas)
+    print(f"pre_aot memory_allocated {torch.cuda.memory_allocated()/2**30}GB")
+    print(f"pre_aot max_memory_allocated {torch.cuda.max_memory_allocated()/2**30}GB")
+    print(f"pre_aot memory_reserved {torch.cuda.memory_reserved()/2**30}GB")
+    print(f"pre_aot max_memory_reserved {torch.cuda.max_memory_reserved()/2**30}GB")
     compiled_m = aot_module(
         cast(nn.Module, dist_graph.orig_module),
         partial(spmd._compile, TrainingPhase.FORWARD),
