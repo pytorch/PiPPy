@@ -2,7 +2,9 @@ import logging
 from enum import Enum
 from typing import Dict, Optional, Tuple
 
+import torch
 import torch.fx as fx
+from torch.fx.passes.shape_prop import TensorMetadata
 
 from .log_utils import rank0_debug, rank0_info
 
@@ -30,14 +32,13 @@ def create_name_to_node_map(gm: fx.GraphModule) -> Dict[str, fx.Node]:
 
 def get_node_tensor_numel_shape(
     node: fx.Node,
-) -> Tuple[Optional[int], Optional[Tuple[int, int]]]:
+) -> Tuple[Optional[int], Optional[torch.Size]]:
     """takes an fx node, and if tensor data available, optionally displays and returns numel"""
     size = None
     shape = None
-    tmeta = node.meta.get("tensor_meta")
+    tmeta: TensorMetadata = node.meta.get("tensor_meta")
     if tmeta is None:
-        assert tmeta is not None, f"failed to locate metadata for node {node}"
-        return size, shape
+        raise RuntimeError(f"failed to locate metadata for node {node.name}")
     size = tmeta.shape.numel()
     shape = tmeta.shape
 

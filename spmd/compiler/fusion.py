@@ -225,7 +225,7 @@ def _scan_graph_for_fusion_elements(
 
                 size, shape = get_node_tensor_numel_shape(fe.grad_tensor_node)  # type: ignore
                 fe.size = size
-                fe.shape = shape  # type: ignore
+                fe.shape = shape
 
                 element_list.append(fe)
 
