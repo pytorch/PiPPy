@@ -8,11 +8,10 @@ from typing import Any, Callable, DefaultDict, Dict, Iterable, Sequence, Set
 from .bucketing_strategies import BucketingStrategy
 from .distributed_graph import DistributedGraph
 from .fusion import run_fuse_communication, run_overlap_communication
-from .log_utils import rank0_debug
+from .log_utils import rank0_info
 from .scheduling_policies import SchedulingPolicy
 
 logger: logging.Logger = logging.getLogger(__name__)
-_debug = partial(rank0_debug, logger)  # type: ignore
 
 # It is more nature to set a run after list for a function decorator, but
 # it is easier to have check with run_before_set.
@@ -123,11 +122,23 @@ class DistGraphOptimization:
     def apply(
         self, optimizations: Sequence[GraphOptimization]
     ) -> "DistGraphOptimization":
+        if not optimizations:
+            return
+        rank0_info(logger, "The forward graph before optimization.")
+        rank0_info(logger, "\n" + self._graph.fwd_graph_modules[0].print_readable(print_output=False))
+        rank0_info(logger, "The backward graph before optimization.")
+        rank0_info(logger, "\n" + self._graph.bwd_graph_modules[0].print_readable(print_output=False))
+
         for optim in optimizations:
             _self = _GraphOptimizationMapping[optim.optim_type](
                 self, **optim.kwargs
             )
             assert _self == self
+
+        rank0_info(logger, "The forward graph after optimization.")
+        rank0_info(logger, "\n" + self._graph.fwd_graph_modules[0].print_readable(print_output=False))
+        rank0_info(logger, "The backward graph after optimization.")
+        rank0_info(logger, "\n" + self._graph.bwd_graph_modules[0].print_readable(print_output=False))
         return self
 
     @graph_optimization_pass()
