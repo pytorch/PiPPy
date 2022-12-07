@@ -82,10 +82,10 @@ def get_comm_block_nodes(
 
 
 def get_node_tensor_metadata(
-    node: fx.Node, must_present: bool = True
+    node: fx.Node, is_required: bool = True
 ) -> TensorMetadata:
     metadata = node.meta.get("tensor_meta", None)
-    if must_present and metadata is None:
+    if is_required and metadata is None:
         raise RuntimeError(
             f"Callsite expects that ``tensor_meta`` exists in ``{node.name}``, "
             f"but got None instead. Node: {node.op} {node.name} {node.target}"
