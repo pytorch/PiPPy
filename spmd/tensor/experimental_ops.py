@@ -79,7 +79,7 @@ def _prop_native_layer_norm_backward(op_schema: OpSchema) -> OutputSharding:
     return OutputSharding(
         # NOTE: type errors below are legit. This is because DTensor currently
         # doesn't support Optional return values. Need to be fixed in DTensor repo.
-        output_spec=(  # pyre-ignore[6]
+        output_spec=(
             # type: ignore
             grad if grad_input_mask[0] else None,
             # type: ignore
