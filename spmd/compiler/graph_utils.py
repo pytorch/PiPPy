@@ -2,6 +2,7 @@ import logging
 from enum import Enum
 from typing import List, Optional, Set, Tuple, Union
 
+import torch
 import torch.fx as fx
 from torch.fx.passes.shape_prop import TensorMetadata
 
