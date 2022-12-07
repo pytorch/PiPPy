@@ -43,11 +43,6 @@ schedules = {
     "Interleaved1F1B": PipelineDriverInterleaved1F1B,
 }
 
-VERBOSE = bool(int(os.environ.get("VERBOSE", False)))
-
-if VERBOSE:
-    logging.getLogger().setLevel(logging.DEBUG)
-
 
 # import ctypes
 # libc = ctypes.cdll.LoadLibrary("libc.so.6")

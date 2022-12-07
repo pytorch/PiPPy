@@ -39,11 +39,6 @@ schedules = {
     "Interleaved1F1B": PipelineDriverInterleaved1F1B,
 }
 
-VERBOSE = bool(int(os.environ.get("VERBOSE", False)))
-
-if VERBOSE:
-    logging.getLogger().setLevel(logging.DEBUG)
-
 
 def get_grad_from_executor(executor, qualname):
     mod = executor.local_value().mod

@@ -404,8 +404,8 @@ class RankWorker(EventRecorder):
                 kwargs = pippy.fx.node.map_aggregate(
                     kwargs, extract_tensor_args, dont_traverse_size
                 )
-                logging.debug(
-                    f"[{self.rank}][{work_item.microbatch_id}] Running forward module"  # type: ignore[union-attr]
+                logging.info(
+                    f"[{self.rank}] Running forward module for microbatch {work_item.microbatch_id}"  # type: ignore[union-attr]
                 )
 
                 def forward_maybe_with_ddp(args, kwargs):
@@ -481,8 +481,8 @@ class RankWorker(EventRecorder):
                     )
 
             elif work_item.phase == Phase.BACKWARD:
-                logging.debug(
-                    f"[{self.rank}][{work_item.microbatch_id}] Running backward"
+                logging.info(
+                    f"[{self.rank}] Running backward for microbatch {work_item.microbatch_id}"
                 )
 
                 batch_id_to_remaining_backward_microbatches[batch_id] -= 1
@@ -2049,7 +2049,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         if self.single_loss:
             raise NotImplementedError("Single minibatch loss not implemented")
 
-        logging.debug(
+        logging.info(
             f"[root] Running pipeline with {self.chunks} micro-batches"
         )
         # Roadmap:
