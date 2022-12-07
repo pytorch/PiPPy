@@ -1,6 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import argparse
-import logging
 import os
 import unittest
 

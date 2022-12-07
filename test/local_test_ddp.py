@@ -1,7 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import argparse
 import copy
-import logging
 import os
 import unittest
 from typing import Dict

@@ -40,6 +40,7 @@ elif PIPPY_VERBOSITY == "OFF":
 else:
     print(f"Unsupported PIPPY_VERBOSITY level: {PIPPY_VERBOSITY}")
 
+
 def has_efa() -> bool:
     try:
         import subprocess
