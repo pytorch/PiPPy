@@ -17,7 +17,7 @@ Unlike most of the available solutions that they need to know the model architec
 
 ### Setting you need to care about
 
-* pp_group_size configure the number of pipeline parallelism group, meaning essentially on how many gpus we need our model to be splitted.
+* pp_group_size configure the number of pipeline parallelism group, meaning essentially on how many gpus our model to need be splitted.
 
 We dont discuss the ddp_group_size here, as we are thinking currently all the gpus that involved in a pipleline will make up one model for inference.
 
