@@ -154,6 +154,9 @@ class DistGraphOptimization:
             rank0_info(
                 logger, f"\n {bwd_gm.print_readable(print_output=False)}"
             )
+
+        self._optimizing = False
+        self._optimized = True
         return self
 
     @graph_optimization_pass()
