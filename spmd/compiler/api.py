@@ -4,12 +4,10 @@ import torch.distributed as dist
 import torch.nn as nn
 from spmd.tensor import Placement, Replicate
 
-# from .bucketing_strategies import BucketingStrategy
 from .distribute import distribute, Schema
 from .distributed_graph import DistributedGraph
 from .graph_optimization import DistGraphOptimization, GraphOptimization
-
-# from .scheduling_policies import SchedulingPolicy
+from .log_utils import get_mem_usage
 
 
 class SPMD(nn.Module):
@@ -70,4 +68,5 @@ class SPMD(nn.Module):
             self._graph_optimization.apply(self._optimizations)
 
         assert self._compiled_m is not None
+        print(f"pre FW {get_mem_usage()}")
         return self._compiled_m(*args, **kwargs)

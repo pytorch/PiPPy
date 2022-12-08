@@ -11,6 +11,8 @@ from functorch.compile import aot_module, make_boxed_func
 from torch.distributed._spmd.comm_tensor import _get_tracer
 from torch.fx.experimental.proxy_tensor import make_fx, proxy_slot
 from torch.utils._pytree import tree_flatten, tree_map, tree_unflatten
+from torch._subclasses.fake_tensor import FakeTensorMode
+
 
 from spmd.tensor import (
     _CURRENT_DECOMPOSITION_TABLE,
@@ -29,7 +31,7 @@ from spmd.tensor import (
 from .aot_function_patch import patched_aot_function
 from .distributed_graph import DistributedGraph
 from .graph_utils import OP
-from .log_utils import rank0_info
+from .log_utils import rank0_info, get_mem_usage
 
 # patch aot_function so that we can pass the full (non-sharded) input to capture the graph
 # pyre-fixme
@@ -473,14 +475,52 @@ class _SPMD:
                     inp_schema_count += 1
                 else:
                     schemas.append(shard_schema)
+        
+        print(f"pre convert_to_distributed {training_phase} {get_mem_usage()}")
+  
+        from torch.utils._python_dispatch import _get_current_dispatch_mode
+        print(f"get_current_dispatch_mode {_get_current_dispatch_mode()}")
+        print(f"gm {gm.print_readable()}")
 
-        parallelized_gm, output_specs = _convert_to_distributed(
-            training_phase,
-            gm,
-            inps,
-            schemas,
-            _allow_partial=False,
-        )
+        from torch.utils._mode_utils import no_dispatch
+        from torch._subclasses.fake_tensor import FakeTensor
+        with no_dispatch():
+            # convert full inputs to sharded inputs before the transformation phase
+            def get_real_inputs(
+                inps: Tuple[object, ...],
+                ) -> Tuple[object, ...]:
+
+                    def conv_to_dtensor(x):
+                        x = torch.zeros_like(x, device=e.device)
+                        return DTensor.from_local(x, self._param_schema.mesh, [Shard(0)]).redistribute(self._param_schema.mesh, [Replicate()]).to_local()
+
+                    compile_inps = tuple(
+                        x
+                        if not isinstance(x, FakeTensor)
+                        else conv_to_dtensor(x)
+                        for x in inps
+                    )
+                    if torch.distributed.get_rank() == 0:
+                        print(f"compile_inps {compile_inps}")
+                    return compile_inps
+        
+            # def to_real_tensor(e):
+            #     if isinstance(e, FakeTensor):
+            #         out = torch.zeros_like(e, device=e.fake_device)
+            #         if e.is_sparse:
+            #             out._coalesced_(e.is_coalesced())
+            #         # inp_impls[id(out)] = e
+            #         return out
+            #     return e
+
+            parallelized_gm, output_specs = _convert_to_distributed(
+                training_phase,
+                gm,
+                tree_flatten(tuple(get_real_inputs(x) for x in inps)),
+                schemas,
+                _allow_partial=False,
+            )
+
         self._known_specs_by_node_name.update(output_specs)
 
         if training_phase == TrainingPhase.FORWARD:
@@ -502,6 +542,16 @@ def distribute(
     flat_kwargs, _ = tree_flatten(kwargs)
     input_set: Set[object] = set(flat_args + flat_kwargs)
 
+    from torch.utils._python_dispatch import _get_current_dispatch_mode
+    print(f"get_current_dispatch_mode pre FakeTensorMode {_get_current_dispatch_mode()}")
+    fake_mode = FakeTensorMode()
+    def input_to_fake(x):
+        if not isinstance(x, torch.Tensor) or x not in input_set:
+            return x
+        with fake_mode:
+            return fake_mode.from_tensor(x)
+
+
     def gather_inputs_for_compilation(
         inps: Tuple[object, ...],
     ) -> Tuple[object, ...]:
@@ -513,13 +563,11 @@ def distribute(
             .to_local()
             for x in inps
         )
-        return compile_inps
+        # return compile_inps
+        return tuple(input_to_fake(x) for x in inps)
 
     spmd = _SPMD(dist_graph, param_schema, input_schemas)
-    print(f"pre_aot memory_allocated {torch.cuda.memory_allocated()/2**30}GB")
-    print(f"pre_aot max_memory_allocated {torch.cuda.max_memory_allocated()/2**30}GB")
-    print(f"pre_aot memory_reserved {torch.cuda.memory_reserved()/2**30}GB")
-    print(f"pre_aot max_memory_reserved {torch.cuda.max_memory_reserved()/2**30}GB")
+    print(f"pre aot_module {get_mem_usage()}")
     compiled_m = aot_module(
         cast(nn.Module, dist_graph.orig_module),
         partial(spmd._compile, TrainingPhase.FORWARD),
