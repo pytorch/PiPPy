@@ -18,6 +18,7 @@ _run_before_sets: DefaultDict[str, Set[str]] = defaultdict(set)
 
 
 class GraphOptimizationType(str, Enum):
+    NOOP = "noop"
     OVERLAP_COMMUNICATION = "overlap_communication"
     FUSE_COMMUNICATION = "fuse_communication"
 
@@ -181,4 +182,9 @@ class DistGraphOptimization:
         ), f"no bwd graph ready from {self._graph.bwd_graph_modules}"
 
         run_overlap_communication(self._graph.bwd_graph_modules[0])
+        return self
+
+    @graph_optimization_pass()
+    def noop(self) -> "DistGraphOptimization":
+        """This optimization is for testing purpose, graphs won't be modified."""
         return self

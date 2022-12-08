@@ -7,7 +7,11 @@ from spmd.tensor import Placement, Replicate
 
 from .distribute import distribute, Schema
 from .distributed_graph import DistributedGraph
-from .graph_optimization import DistGraphOptimization, GraphOptimization
+from .graph_optimization import (
+    DistGraphOptimization,
+    GraphOptimization,
+    GraphOptimizationType,
+)
 from .log_utils import rank0_info
 
 
@@ -26,6 +30,22 @@ class SPMD(nn.Module):
         map_param_and_grad: bool = True,
         print_graph: bool = False,
     ) -> None:
+        """
+        Given a non-distributed nn.Module, distribute the module and apply
+        optimizations over the distributed module (fx.GraphModule).
+
+        Args:
+            module (nn.Module): The target module.
+            schema (Schema): The distributed schema.
+            input_schemas (Sequence[Placement]): The schemas of the inputs.
+            optimize_first_iter (bool): If true, SPMD will call the forward
+               and backward passes to eagerly get the graphs. This can be
+               problematic since SPMD currently assumes a simple out of
+               the tensor and performs ``sum()`` to get the loss.
+            apply_optimization (bool): If true, SPMD will performance certain
+               optimzation, e.g., communication fusion. If false, SPMD will
+               parallelize the module.
+        """
         super().__init__()
         assert schema.placements == [
             Replicate()
@@ -65,7 +85,14 @@ class SPMD(nn.Module):
                 # Profile the module. Right now it will use the saved orig_module
                 # to profile. There will be another compilation for the profiling
                 # purpose.
-                self._dist_graph.profile(*args, **kwargs)
+
+                # Gate the profiling call until it is fully verified with different
+                # models.
+                if (
+                    GraphOptimization(GraphOptimizationType.NOOP)
+                    in self._optimizations
+                ):
+                    self._dist_graph.profile(*args, **kwargs)
                 self._dist_graph.update()
 
                 # Apply the graph optimizations if the graph is not optimized both
