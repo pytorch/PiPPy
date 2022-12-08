@@ -119,7 +119,7 @@ def work_main(rank: int, world_size: int) -> None:
     _debug(f"mesh set to {mesh}\n")
 
     # control depth of ReplicaModel
-    layers = 2
+    layers = 21
 
     # model = Permute().to(rank)  #
     model = ReplicaModel(layer_count=layers).to(_device_type)
@@ -127,6 +127,7 @@ def work_main(rank: int, world_size: int) -> None:
     ddp = DDP(deepcopy(model))
     ddp.to(rank)
 
+    run_backward = True
     spmd = SPMD(
         deepcopy(model),
         schema=Schema(
@@ -135,6 +136,7 @@ def work_main(rank: int, world_size: int) -> None:
             ),
             placements=[Replicate()],
         ),
+        optimize_first_iter=run_backward,
     )
 
     # model input - need to adjust to match models
@@ -185,7 +187,6 @@ def main(rank: int, world_size: int, use_cuda: bool = True) -> None:
 if __name__ == "__main__":
     os.environ["MASTER_ADDR"] = "localhost"
     # obtain random port
-    random.seed(2022)
     port = random.randint(49152, 65535)
     os.environ["MASTER_PORT"] = str(port)
 

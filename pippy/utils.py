@@ -29,10 +29,16 @@ import torch.multiprocessing as mp
 import torch.distributed.rpc as rpc
 
 
-VERBOSE = bool(int(os.environ.get("VERBOSE", False)))
+PIPPY_VERBOSITY = os.environ.get("PIPPY_VERBOSITY", "OFF")
 
-if VERBOSE:
+if PIPPY_VERBOSITY == "DEBUG":
     logging.getLogger().setLevel(logging.DEBUG)
+elif PIPPY_VERBOSITY == "INFO":
+    logging.getLogger().setLevel(logging.INFO)
+elif PIPPY_VERBOSITY == "OFF":
+    pass
+else:
+    print(f"Unsupported PIPPY_VERBOSITY level: {PIPPY_VERBOSITY}")
 
 
 def has_efa() -> bool:

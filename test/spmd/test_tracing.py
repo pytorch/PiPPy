@@ -1,15 +1,12 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+
 from copy import deepcopy
 from functools import wraps
 from typing import List
 
 import numpy as np
-
 import torch
 import torch.nn as nn
-
-from spmd.compiler.api import Schema, SPMD
-from spmd.tensor import DeviceMesh, Replicate
 from torch.distributed._spmd.comm_tensor import CommTensor
 from torch.distributed.distributed_c10d import get_global_rank, get_world_size
 from torch.fx.experimental.proxy_tensor import make_fx
@@ -17,8 +14,13 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.testing._internal.common_utils import run_tests
 from torch.testing._internal.distributed._tensor.common_dtensor import (
     DTensorTestBase,
+)
+from torch.testing._internal.distributed._tensor.common_dtensor import (
     with_comms as base_with_comms,
 )
+
+from spmd.compiler.api import SPMD, Schema
+from spmd.tensor import DeviceMesh, Replicate
 
 
 def with_comms(func):
