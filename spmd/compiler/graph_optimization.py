@@ -136,8 +136,8 @@ class DistGraphOptimization:
     @graph_optimization_pass()
     def fuse_communication(
         self,
-        bucketing_strategy: BucketingStrategy,
-        scheduling_policy: SchedulingPolicy,
+        bucketing_strategy: BucketingStrategy = BucketingStrategy.FIXED,
+        scheduling_policy: SchedulingPolicy = SchedulingPolicy.FCFS,
     ) -> "DistGraphOptimization":
 
         assert len(

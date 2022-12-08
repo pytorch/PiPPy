@@ -193,14 +193,17 @@ def _copy_fe_to_buffer(
     num_fusion_elements = len(copy_list)
 
     def copy_to_buffer(
-        buffer: torch.Tensor, tensor_list: List[torch.Tensor]
+        concat_buffer: torch.Tensor, tensor_list: List[torch.Tensor]
     ) -> torch.Tensor:
+        return cocat_buffer.copy_(torch.cat(tensor_list))
+        """
         offset = 0
         for t in tensor_list:
             size = t.numel()
-            buffer[offset : offset + size] = t.view(-1)
+            concat_buffer[offset : offset + size] = t.view(-1)
             offset += size
-        return buffer
+        return concat_buffer
+        """
 
     # setup dummy vars
     buffer = None
@@ -210,7 +213,6 @@ def _copy_fe_to_buffer(
     elif gi.tracing_buffer:
         buffer = gi.tracing_buffer
 
-    tlist = []
     for item in copy_list:
         a = torch.zeros_like(item)  # type: ignore
         tlist.append(a)
