@@ -14,6 +14,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from spmd import SPMD, Schema
 from spmd.tensor import DeviceMesh, Replicate
 from typing import List, Union, Literal
+from spmd.compiler.graph_optimization import GraphOptimization
 
 logger: logging.Logger = logging.getLogger(__name__)
 _debug = partial(rank0_debug, logger)  # type: ignore
@@ -136,7 +137,8 @@ def work_main(rank: int, world_size: int) -> None:
             ),
             placements=[Replicate()],
         ),
-        optimize_first_iter=run_backward,
+        optimize_first_iter=True,
+        optimizations=[GraphOptimization("overlap_communication")],
     )
 
     # model input - need to adjust to match models

@@ -77,8 +77,10 @@ def get_comm_block_nodes(
 
     comm_idx = len(node_list) - comm_idx - 1
     node_list.reverse()
+    comm_idx_down = len(node_list) - comm_idx - 1
 
-    return comm_idx, node_list
+
+    return comm_idx, node_list, comm_idx_down
 
 
 def get_node_tensor_metadata(
