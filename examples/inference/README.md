@@ -6,7 +6,7 @@ PiPPY make this easier by providing a auto split API that automates this process
 ### How it works
 
 PiPPY splits your model into multiple stages, each stage loaded on one gpu then the input batch will be furhter divided into micro-batches and run through the splits from 
-rank0..N. Results are being returned to rank0 as its runing the PipelineDriver. Please read more on pipleines [here](https://github.com/pytorch/tau/blob/main/README.md)
+rank0..rankN. Results are being returned to rank0 as its runing the PipelineDriver. Please read more on pipleines [here](https://github.com/pytorch/tau/blob/main/README.md)
 
 ### PiPPY support arbitary checkpoint splitting 
 
@@ -14,6 +14,12 @@ Unlike most of the available solutions that they need to know the model architec
 * PiPPY supports both manual splitting and auto split.
 * Auto split uses `split_policy` and support both `equal_size` and `threshod` policies, the name are self-explanatory.
 * PiPPY use FX to trace and split the model.
+
+### Setting you need to care about
+
+* pp_group_size configure the number of pipeline parallelism group, meaning essentially on how many gpus we need our model to be splitted.
+
+We dont discuss the ddp_group_size here, as we are thinking currently all the gpus that involved in a pipleline will make up one model for inference.
 
 ### How to Use PiPPY for inference
 
@@ -127,4 +133,16 @@ if __name__ == "__main__":
 ```
 Then simply run your python inference script
 
-` python t5_inference.py`
+` python HF_inference.py --model_name 't5-11b' `
+
+### Run OPT model example
+
+This has been tested for [OPT 2.7 and 30B](https://huggingface.co/facebook/opt-30b) on 8 V100 GPUs.
+
+` python HF_inference.py --model_name 'facebook/opt-30b' `
+
+### Run RegNet Vision model example
+
+This has been tested for [RegNet 10B](https://huggingface.co/facebook/regnet-y-10b-seer) on 8 V100 GPUs.
+
+` python HF_inference.py --model_name 'facebook/regnet-y-10b-seer' `
