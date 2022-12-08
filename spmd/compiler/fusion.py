@@ -180,6 +180,11 @@ def _scan_graph_for_fusion_elements(
                 shape=tmeta.shape,
             )
             element_list.append(fe)
+            # ensure we have global index to comm_node
+            if not gi.fe_offset_to_comm_node:
+                len_comm_section = len(fe.node_list)
+                gi.fe_offset_to_comm_node = len_comm_section - comm_idx - 1
+                _debug(f"global comm index set {gi.fe_offset_to_comm_node}\n")
     return element_list
 
 
@@ -657,6 +662,7 @@ def _move_comm_section(
     prepend_node = get_source_node_next(fe.comm_node)  # type: ignore
     # we are moving the uppper section (comm node and support nodes) only
     nodes_to_move = fe.node_list[0 : gi.fe_offset_to_comm_node]  # type: ignore
+
     for item in nodes_to_move:
         prepend_node.prepend(item)
 
@@ -680,14 +686,22 @@ def run_overlap_communication(gm: fx.GraphModule) -> None:
     # -- distribute comm nodes to source nodes for overlap
     # the first (which is last) is not moved b/c it is already
     # next to source node.
-    for i, item in enumerate(fe_list[1:]):  # type: ignore
+    index = -1
+    for index, item in enumerate(fe_list[1:]):  # type: ignore
         moved_nodes = _move_comm_section(graph_info, gm, item)  # type: ignore
+        # _debug(f"{moved_nodes=}\n")
+
+    assert (
+        index > 0
+    ), f"comm_overlap did not find move any communication nodes...{index=}"
 
     _debug(
-        f"\nOptimization stats:\nOverlap communication pass has moved -* {i+1} *- communication calls\n"
+        f"\nOptimization stats:\nOverlap communication pass has moved -* {index+1} *- communication calls\n"
     )
     gm.recompile()
 
     _debug(" ------ finish, run communication overlap pass -----\n")
+    _debug(f"graph = {print(gm.graph)}\n")
+    # _debug(f"{gm.graph.print_tabular()}\n")
 
     _teardown(gm)

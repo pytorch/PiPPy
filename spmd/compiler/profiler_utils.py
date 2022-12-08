@@ -16,7 +16,7 @@ PYTORCH_MIN_CACHE: int = 2**20
 
 # Bidirectional Dictionary to store the mapping of the forward and backward pass
 # intermediate nodes
-class BiDict(dict):
+class BiDict(dict[fx.Node, fx.Node]):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.inverse: Dict[fx.Node, List[fx.Node]] = {}
