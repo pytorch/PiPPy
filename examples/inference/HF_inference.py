@@ -26,6 +26,10 @@ from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 from transformers import T5Tokenizer, T5ForConditionalGeneration, T5Config
 from transformers import GPT2Tokenizer, OPTModel
 from split_utils import add_split_points, _add_split_points
+from PIL import Image
+import requests
+from transformers import AutoFeatureExtractor, RegNetModel
+from datasets import load_dataset
 
 
 PROFILING_ENABLED = True
@@ -74,16 +78,13 @@ def run_master(pp_ranks, args):
     
     device = args.device
     model = args.model
+    if 'regnet' in args.model_name:
+        feature_extractor = args.feature_extractor
+
     model_config = model.config
 
     model_config.use_cache = False  # don't output `past_key_values`
     model.eval()
-    memory_reserved = format_to_gb(torch.cuda.memory_reserved())
-    memory_allocated = format_to_gb(torch.cuda.memory_allocated())
-    print("***********************************************")
-    print("memory_reserved after model intializaed from HF pretrained", memory_reserved)
-    print("memory_allocated after model intializaed from HF pretrained", memory_allocated)
-    print("***********************************************")
     print(model.config)
     print(f"model total number of params = {get_number_of_params(model) // 10 ** 6}M")
 
@@ -106,13 +107,20 @@ def run_master(pp_ranks, args):
     print("Using device:", device)
 
     torch.manual_seed(args.rank)
-    inp = torch.empty(bs, seq_length, dtype=torch.long, device=device).random_(model.config.vocab_size)
+
+    # preparing inputs based on the model choice
     if 't5' in args.model_name:
+        inp = torch.empty(bs, seq_length, dtype=torch.long, device=device).random_(model.config.vocab_size)
         model_input_dict = {'input_ids': inp, 'decoder_input_ids': inp}
     if 'opt' in args.model_name:
+        inp = torch.empty(bs, seq_length, dtype=torch.long, device=device).random_(model.config.vocab_size)
         model_input_dict = {'input_ids': inp}
-
-
+    if 'regnet' in args.model_name:
+        url = "http://images.cocodataset.org/val2017/000000039769.jpg"
+        image = Image.open(requests.get(url, stream=True).raw)
+        inputs = feature_extractor(image, return_tensors="pt")
+        inputs["pixel_values"] = inputs["pixel_values"].to(device)
+        model_input_dict = {'pixel_values': inputs["pixel_values"]}
 
     input_names = model_input_dict.keys()
     sig = inspect.signature(model.forward)
@@ -146,9 +154,12 @@ def run_master(pp_ranks, args):
         kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'decoder_input_ids': TensorChunkSpec(0)}
         output_chunk_spec = {"logits": TensorChunkSpec(0),"encoder_last_hidden_state": TensorChunkSpec(0)}
     if 'opt' in args.model_name:
-        print("#################### we are in OPT##########")
         kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0)}
         output_chunk_spec = {"logits": TensorChunkSpec(0)}
+    if 'regnet' in args.model_name:
+        kwargs_chunk_spec = {'pixel_values': TensorChunkSpec(0)}
+        output_chunk_spec = {"last_hidden_state": TensorChunkSpec(0), 'hidden_states':TensorChunkSpec(0)}
+    
 
     pipe_driver: PipelineDriverBase = schedules[args.schedule](model_pipe, chunks, args_chunk_spec, kwargs_chunk_spec,
                                                                output_chunk_spec,
@@ -157,14 +168,19 @@ def run_master(pp_ranks, args):
                                                                 )
     model_init_end = time.time()
 
-    print("*********** init time {} seconds ***************".format(model_init_end - model_init_start))
+    print("Model initialization time")
+    print("=========================")
+    print("{} seconds".format(model_init_end - model_init_start))
  
     memory_reserved = format_to_gb(torch.cuda.memory_reserved())
     memory_allocated = format_to_gb(torch.cuda.memory_allocated())
-    print("***********************************************")
-    print("memory_reserved after model intializaed with pipelines {} GB".format(memory_reserved))
-    print("memory_allocated after model intializaed with pipelines {} GB".format(memory_allocated))
-    print("***********************************************")
+    print("memory_reserved after model intializaed with pipelines on each rank")
+    print("===================================================================")
+    print(" {} GB".format(memory_reserved))
+    print("memory_allocated after model intializaed with pipelines on each rank")
+    print("===================================================================")
+    print(" {} GB".format(memory_allocated))
+
 
     this_file_name = os.path.splitext(os.path.basename(__file__))[0]
 
@@ -214,5 +230,10 @@ if __name__ == "__main__":
         model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name, use_cache=False)
     if 'opt' in args.model_name:
         model = OPTModel.from_pretrained(args.model_name, use_cache=False)
-    args.model = model
+    if 'regnet' in args.model_name:
+        feature_extractor = AutoFeatureExtractor.from_pretrained("facebook/regnet-y-10b-seer")
+        model = RegNetModel.from_pretrained("facebook/regnet-y-10b-seer")
+        args.model = model
+        args.feature_extractor = feature_extractor
+        args.model = model
     run_pippy(run_master, args)
