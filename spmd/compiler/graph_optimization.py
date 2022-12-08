@@ -128,6 +128,9 @@ class DistGraphOptimization:
                 self, **optim.kwargs
             )
             assert _self == self
+
+        self._optimizing = False
+        self._optimized = True
         return self
 
     @graph_optimization_pass()
