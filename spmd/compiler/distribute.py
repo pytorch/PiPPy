@@ -464,7 +464,7 @@ class _SPMD:
             all(grad is not None for grad in grads)
             for grad, param in zip(grads, params):
                 if grad.name.startswith("wait_comm"):
-                    comm_idx, comm_block_nodes, _ = get_comm_block_nodes(
+                    comm_idx, comm_block_nodes = get_comm_block_nodes(
                         grad, CommType.ALLREDUCE
                     )
                     comm_node = comm_block_nodes[comm_idx]

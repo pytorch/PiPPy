@@ -687,7 +687,7 @@ def run_overlap_communication(gm: fx.GraphModule) -> None:
     index = -1
     for index, item in enumerate(fe_list[1:]):  # type: ignore
         moved_nodes = _move_comm_section(graph_info, gm, item)  # type: ignore
-        _debug(f"{moved_nodes=}\n")
+        # _debug(f"{moved_nodes=}\n")
 
     assert (
         index > 0
