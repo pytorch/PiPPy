@@ -12,7 +12,6 @@ from .graph_optimization import (
     GraphOptimization,
     GraphOptimizationType,
 )
-from .graph_optimization import DistGraphOptimization, GraphOptimization
 from .log_utils import rank0_info
 
 
