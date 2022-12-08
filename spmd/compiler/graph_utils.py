@@ -42,7 +42,7 @@ comm_block_op_sequence: Tuple[Union[str, Set[CommType]], ...] = (
 
 def get_comm_block_nodes(
     wait_node: fx.Node, comm_type: CommType
-) -> Tuple[int, List[fx.Node]]:
+) -> Tuple[int, List[fx.Node], int]:
     """
     Given a wait_comm node, find out all the nodes belong to this communcation.
 
@@ -78,7 +78,6 @@ def get_comm_block_nodes(
     comm_idx = len(node_list) - comm_idx - 1
     node_list.reverse()
     comm_idx_down = len(node_list) - comm_idx - 1
-
 
     return comm_idx, node_list, comm_idx_down
 
