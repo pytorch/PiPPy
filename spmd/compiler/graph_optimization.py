@@ -2,17 +2,15 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
-from functools import partial
 from typing import Any, Callable, DefaultDict, Dict, Iterable, Sequence, Set
 
 from .bucketing_strategies import BucketingStrategy
 from .distributed_graph import DistributedGraph
 from .fusion import run_fuse_communication, run_overlap_communication
-from .log_utils import rank0_debug
+from .log_utils import rank0_info
 from .scheduling_policies import SchedulingPolicy
 
 logger: logging.Logger = logging.getLogger(__name__)
-_debug = partial(rank0_debug, logger)  # type: ignore
 
 # It is more nature to set a run after list for a function decorator, but
 # it is easier to have check with run_before_set.
@@ -122,13 +120,41 @@ class DistGraphOptimization:
         return self._optimized
 
     def apply(
-        self, optimizations: Sequence[GraphOptimization]
+        self,
+        optimizations: Sequence[GraphOptimization],
+        print_graph: bool = False,
     ) -> "DistGraphOptimization":
+        if not optimizations:
+            return self
+        fwd_gm = self._graph.fwd_graph_modules[0]
+        bwd_gm = self._graph.bwd_graph_modules[0]
+        if print_graph:
+            fwd_gm = self._graph.fwd_graph_modules[0]
+            bwd_gm = self._graph.bwd_graph_modules[0]
+            rank0_info(logger, "The forward graph before optimization.")
+            rank0_info(
+                logger, f"\n {fwd_gm.print_readable(print_output=False)}"
+            )
+            rank0_info(logger, "The backward graph before optimization.")
+            rank0_info(
+                logger, f"\n {bwd_gm.print_readable(print_output=False)}"
+            )
+
         for optim in optimizations:
             _self = _GraphOptimizationMapping[optim.optim_type](
                 self, **optim.kwargs
             )
             assert _self == self
+
+        if print_graph:
+            rank0_info(logger, "The forward graph after optimization.")
+            rank0_info(
+                logger, f"\n {fwd_gm.print_readable(print_output=False)}"
+            )
+            rank0_info(logger, "The backward graph after optimization.")
+            rank0_info(
+                logger, f"\n {bwd_gm.print_readable(print_output=False)}"
+            )
 
         self._optimizing = False
         self._optimized = True
