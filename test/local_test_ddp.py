@@ -1,5 +1,4 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-import argparse
 import copy
 import os
 import unittest
@@ -23,6 +22,7 @@ from pippy.PipelineDriver import (
     PipelineDriverInterleaved1F1B,
 )
 from pippy.microbatch import TensorChunkSpec, CustomReducer
+from pippy.utils import get_argparser
 
 # TODOs for implementing forward/backward/loss with schedules:
 # * ability to switch between full-batch loss vs. per-microbatch loss. shen mentioned
@@ -195,10 +195,11 @@ def run_master(pp_ranks, args):
 
 
 def main(args=None):
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--world_size", type=int, default=int(os.getenv("WORLD_SIZE", 4))
+    parser = get_argparser(
+        default_schedule=schedules.keys(), default_world_size=4
     )
+    args = parser.parse_args(args)
+
     # in row-major
     # DP ranks are contiguous rows of size `args.dp_group_size`
     # PP ranks are non-contiguous columns of size `args.pp_group_size`
@@ -211,31 +212,6 @@ def main(args=None):
     #
     # DP ranks are [0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11]
     # PP ranks are [0, 4, 8], [1, 5, 9], [2, 6, 10], [3, 7, 11]
-    parser.add_argument("--rank", type=int, default=int(os.getenv("RANK", -1)))
-    parser.add_argument(
-        "--master_addr", type=str, default=os.getenv("MASTER_ADDR", "localhost")
-    )
-    parser.add_argument(
-        "--master_port", type=str, default=os.getenv("MASTER_PORT", "29500")
-    )
-    parser.add_argument(
-        "-s",
-        "--schedule",
-        type=str,
-        default=list(schedules.keys())[0],
-        choices=schedules.keys(),
-    )
-    parser.add_argument(
-        "--replicate", type=int, default=int(os.getenv("REPLICATE", "0"))
-    )
-    parser.add_argument(
-        "--cuda", type=int, default=int(torch.cuda.is_available())
-    )
-    parser.add_argument(
-        "--record_mem_dumps", type=int, default=0, choices=[0, 1]
-    )
-    parser.add_argument("--checkpoint", type=int, default=0, choices=[0, 1])
-    args = parser.parse_args(args)
 
     # ExampleCode has two stages
     args.pp_group_size = 2

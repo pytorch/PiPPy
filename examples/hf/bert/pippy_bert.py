@@ -1,5 +1,4 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-import argparse
 import inspect
 import os
 from functools import reduce
@@ -16,6 +15,7 @@ from pippy.events import EventsContext
 from pippy.hf import PiPPyHFTracer
 from pippy.microbatch import CustomReducer, TensorChunkSpec
 from pippy.visualizer import events_to_json
+from pippy.utils import get_argparser
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
@@ -126,16 +126,7 @@ def run_master(_, args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 16)))
-    parser.add_argument('--rank', type=int, default=int(os.getenv("RANK", -1)))
-    parser.add_argument('--master_addr', type=str, default=os.getenv('MASTER_ADDR', 'localhost'))
-    parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
-    parser.add_argument('-s', '--schedule', type=str, default=list(schedules.keys())[0], choices=schedules.keys())
-    parser.add_argument('--replicate', type=int, default=int(os.getenv("REPLICATE", '0')))
-    parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
-    parser.add_argument('--record_mem_dumps', type=int, default=0, choices=[0, 1])
-    parser.add_argument('--checkpoint', type=int, default=0, choices=[0, 1])
+    parser = get_argparser(default_schedule=schedules.keys(), default_world_size=16)
     args = parser.parse_args()
 
     run_pippy(run_master, args)

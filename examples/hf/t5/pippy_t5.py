@@ -1,5 +1,4 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-import argparse
 import inspect
 import os
 from functools import reduce
@@ -28,6 +27,7 @@ from pippy.events import EventsContext
 from pippy.hf import PiPPyHFTracer
 from pippy.microbatch import CustomReducer, TensorChunkSpec
 from pippy.visualizer import events_to_json
+from pippy.utils import get_argparser
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
@@ -336,23 +336,14 @@ def run_master(pp_ranks, args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--world_size", type=int, default=int(os.getenv("WORLD_SIZE", 8))
-    )
-    parser.add_argument("--rank", type=int, default=int(os.getenv("RANK", -1)))
-    parser.add_argument(
-        "--master_addr", type=str, default=os.getenv("MASTER_ADDR", "localhost")
-    )
-    parser.add_argument(
-        "--master_port", type=str, default=os.getenv("MASTER_PORT", "29500")
-    )
-
     model_config = (
         os.path.dirname(os.path.realpath(__file__))
         + "/"
         + "t5_200m_config.json"
     )
+
+    parser = get_argparser(default_schedule=schedules.keys(), default_world_size=8)
+
     parser.add_argument("--model_config", type=str, default=model_config)
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--batches", type=int, default=1)
@@ -362,26 +353,9 @@ if __name__ == "__main__":
     parser.add_argument("--num_encoder_layers", type=int, default=None)
     parser.add_argument("--num_decoder_layers", type=int, default=None)
 
-    parser.add_argument(
-        "-s",
-        "--schedule",
-        type=str,
-        default=list(schedules.keys())[0],
-        choices=schedules.keys(),
-    )
-    parser.add_argument(
-        "--replicate", type=int, default=int(os.getenv("REPLICATE", "0"))
-    )
-    parser.add_argument(
-        "--cuda", type=int, default=int(torch.cuda.is_available())
-    )
     parser.add_argument("--visualize", type=int, default=1, choices=[0, 1])
-    parser.add_argument(
-        "--record_mem_dumps", type=int, default=0, choices=[0, 1]
-    )
-    parser.add_argument("--checkpoint", type=int, default=1, choices=[0, 1])
     parser.add_argument("--pp_group_size", type=int, default=8)
-    parser.add_argument("--exclude_master", type=int, default=0, choices=[0, 1])
+
     parser.add_argument("--auto_split", type=str, default=None)
     parser.add_argument(
         "--train",

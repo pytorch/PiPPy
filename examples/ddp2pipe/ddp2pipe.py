@@ -17,7 +17,7 @@ from tqdm import tqdm
 
 from pippy import Pipe, PipelineDriverFillDrain, annotate_split_points, PipeSplitWrapper
 from pippy.microbatch import TensorChunkSpec, CustomReducer
-from pippy.utils import tp_transports
+from pippy.utils import tp_transports, get_argparser
 
 # logging.getLogger().setLevel(logging.DEBUG)
 
