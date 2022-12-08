@@ -162,12 +162,7 @@ def _scan_graph_for_fusion_elements(
     element_list = []
     for node in gm.graph.nodes:
         if node.name.startswith("wait_comm"):
-            comm_idx, comm_block_nodes, comm_idx_down = get_comm_block_nodes(
-                node, comm_type
-            )
-            if not gi.fe_offset_to_comm_node:
-                gi.fe_offset_to_comm_node = comm_idx_down
-                _debug(f"170, comm index set {comm_idx_down}\n")
+            comm_idx, comm_block_nodes = get_comm_block_nodes(node, comm_type)
             comm_node = comm_block_nodes[comm_idx]
             grad_node = cast(Tuple[fx.Node, ...], comm_node.args[0])[0]
             tmeta = get_node_tensor_metadata(grad_node)
@@ -185,6 +180,11 @@ def _scan_graph_for_fusion_elements(
                 shape=tmeta.shape,
             )
             element_list.append(fe)
+            # ensure we have global index to comm_node
+            if not gi.fe_offset_to_comm_node:
+                len_comm_section = len(fe.node_list)
+                gi.fe_offset_to_comm_node = len_comm_section - comm_idx - 1
+                _debug(f"global comm index set {gi.fe_offset_to_comm_node}\n")
     return element_list
 
 
