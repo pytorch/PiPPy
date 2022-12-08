@@ -1,6 +1,10 @@
 import torch
 import torch.nn as nn
 from spmd.compiler.api import Schema, SPMD
+from spmd.compiler.graph_optimization import (
+    GraphOptimization,
+    GraphOptimizationType,
+)
 from spmd.compiler.graph_utils import OP
 from spmd.tensor import DeviceMesh, Replicate
 from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
@@ -41,7 +45,7 @@ class TestProfiler(DTensorTestBase):
                 placements=[Replicate()],
             ),
             optimize_first_iter=False,
-            apply_optimization=True,
+            optimizations=[GraphOptimization(GraphOptimizationType.NOOP)],
         )
         batch = torch.randn(5, 10).to(self.device_type)
         for _ in range(5):

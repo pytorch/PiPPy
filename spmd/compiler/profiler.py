@@ -168,8 +168,7 @@ class GraphProfiler(fx.Interpreter):
                 # part of the output
                 users_count = len(node.users)
                 if users_count == 1:
-                    users = [u for u in node.users.keys()]
-                    user = users[0]
+                    user = list(u for u in node.users.keys())[0]
                     assert type(user) == fx.Node
                     if user.op == OP.OUTPUT:
                         self.user_to_last_forward_uses.setdefault(

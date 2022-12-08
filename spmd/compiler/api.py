@@ -6,7 +6,11 @@ from spmd.tensor import Placement, Replicate
 
 from .distribute import distribute, Schema
 from .distributed_graph import DistributedGraph
-from .graph_optimization import DistGraphOptimization, GraphOptimization
+from .graph_optimization import (
+    DistGraphOptimization,
+    GraphOptimization,
+    GraphOptimizationType,
+)
 
 
 class SPMD(nn.Module):
@@ -80,7 +84,10 @@ class SPMD(nn.Module):
 
             # Gate the profiling call until it is fully verified with different
             # models.
-            if "fusion_communication" in self._optimizations:
+            if (
+                GraphOptimization(GraphOptimizationType.NOOP)
+                in self._optimizations
+            ):
                 self._dist_graph.profile(*args, **kwargs)
             self._dist_graph.update()
 
