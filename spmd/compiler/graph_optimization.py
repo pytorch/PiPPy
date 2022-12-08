@@ -119,7 +119,9 @@ class DistGraphOptimization:
         return self._optimized
 
     def apply(
-        self, optimizations: Sequence[GraphOptimization], print_graph: bool = False,
+        self,
+        optimizations: Sequence[GraphOptimization],
+        print_graph: bool = False,
     ) -> "DistGraphOptimization":
         if not optimizations:
             return self
@@ -129,9 +131,13 @@ class DistGraphOptimization:
             fwd_gm = self._graph.fwd_graph_modules[0]
             bwd_gm = self._graph.bwd_graph_modules[0]
             rank0_info(logger, "The forward graph before optimization.")
-            rank0_info(logger, f"\n {fwd_gm.print_readable(print_output=False)}")
+            rank0_info(
+                logger, f"\n {fwd_gm.print_readable(print_output=False)}"
+            )
             rank0_info(logger, "The backward graph before optimization.")
-            rank0_info(logger, f"\n {bwd_gm.print_readable(print_output=False)}")
+            rank0_info(
+                logger, f"\n {bwd_gm.print_readable(print_output=False)}"
+            )
 
         for optim in optimizations:
             _self = _GraphOptimizationMapping[optim.optim_type](
@@ -141,9 +147,13 @@ class DistGraphOptimization:
 
         if print_graph:
             rank0_info(logger, "The forward graph after optimization.")
-            rank0_info(logger, f"\n {fwd_gm.print_readable(print_output=False)}")
+            rank0_info(
+                logger, f"\n {fwd_gm.print_readable(print_output=False)}"
+            )
             rank0_info(logger, "The backward graph after optimization.")
-            rank0_info(logger, f"\n {bwd_gm.print_readable(print_output=False)}")
+            rank0_info(
+                logger, f"\n {bwd_gm.print_readable(print_output=False)}"
+            )
         return self
 
     @graph_optimization_pass()
