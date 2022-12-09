@@ -19,11 +19,21 @@ Unlike most of the available solutions that they need to know the model architec
 
 * pp_group_size configure the number of pipeline parallelism group, meaning essentially on how many gpus our model to need be splitted and form a pipeline.
 
-* ddp_group_size this can help to run multiple instances of a model as in multi-worker scenario for serving. The created pipelines can collectively call the init_data_parallel API. PiPPy will then create a DDP group for each stage, across the pipelines. 
+Main difference between Pippy for training and inference is in inference, we dont need to call the init_data_parallel API. The reason is DDP is only helpful if we need backward pass which is not the case for inference. 
 
-For example to serve to copies of the model with 8 gpus, assuming we can serve a full copy of a model splitted on 4 gpus, we set the pp_group_size=4 and ddp_group_size=2 and it would look like: 
 
-<img src="https://user-images.githubusercontent.com/9162336/206640153-067fa973-6c8f-4f5f-b6e2-bfdeb31bde77.png" alt="drawing" width="400"/>
+For example to serve two copies of the model with 8 gpus, assuming we can serve a full copy of a model splitted on 4 gpus, we set the pp_group_size=4. In this case the pipeline driver is running from rank 0 for the first copy and rank4 for the second copy of the model. In the run_master funtion after initializing the stage after splitting `model_pipe.defer_stage_init(args.device)' need to check if the rank=!0 or 4 to return. As shown below:
+```
+model_pipe.defer_stage_init(args.device)
+torch.distributed.barrier(args.pp_group)
+if args.rank!=0:
+        return 
+```
+        
+Then the resulted models (2 copies) will look like:
+
+<img src="https://user-images.githubusercontent.com/9162336/206811740-1d5d4d7a-7018-4e9b-8ab7-cad030e2981a.png" alt="drawing" width="400"/>
+
 
 
 
