@@ -286,7 +286,7 @@ class TraceModuleTest(DTensorTestBase):
         input = np.random.randn(4, 5).astype(np.float32)
         model = nn.LayerNorm(input.shape[1:]).to(self.device_type)
         pt_input = torch.tensor(input, dtype=torch.float).to(self.device_type)
-        self._test_trace_replicate(model, pt_input, only_fw=True)
+        self._test_trace_replicate(model, pt_input)
 
     @with_comms
     def test_baked_in_shape(self):
