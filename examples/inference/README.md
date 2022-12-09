@@ -147,6 +147,12 @@ This has been tested for [OPT 2.7 and 30B](https://huggingface.co/facebook/opt-3
 
 ` python HF_inference.py --model_name 'facebook/opt-30b' `
 
+### Run Bloom model example
+
+This has been tested for [Bloom 3b](https://huggingface.co/docs/transformers/model_doc/bloom) on 8 V100 GPUs.
+
+` python HF_inference.py --model_name 'bigscience/bloom-3b' `
+
 ### Run RegNet Vision model example
 
 This has been tested for [RegNet 10B](https://huggingface.co/facebook/regnet-y-10b-seer) on 8 V100 GPUs.
