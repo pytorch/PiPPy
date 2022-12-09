@@ -19,7 +19,7 @@ Unlike most of the available solutions that they need to know the model architec
 
 * pp_group_size configure the number of pipeline parallelism group, meaning essentially on how many gpus our model to need be splitted and form a pipeline.
 
-Main difference between Pippy for training and inference is in inference, we dont need to call the init_data_parallel API. The reason is DDP is only helpful if we need backward pass which is not the case for inference. 
+**Main difference between Pippy for training and inference is we dont need to call the init_data_parallel API in the inference. The reason is DDP init is only needed if we need backward pass which is not the case for inference.**
 
 
 For example to serve two copies of the model with 8 gpus, assuming we can serve a full copy of a model splitted on 4 gpus, we set the pp_group_size=4. In this case the pipeline driver is running from rank 0 for the first copy and rank4 for the second copy of the model. In the run_master funtion after initializing the stage after splitting `model_pipe.defer_stage_init(args.device)' need to check if the rank=!0 or 4 to return. As shown below:
