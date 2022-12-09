@@ -278,8 +278,9 @@ def _convert_output(
 def _rebuild_graph(
     gm: fx.GraphModule,
     node_replacements: Dict[torch.fx.Node, torch.fx.GraphModule],
-) -> None:
+) -> Dict[torch.fx.Node, torch.fx.Node]:
     # replace nodes in local traced graph with DTensor's dispatch graph
+    new_nodes: Dict[torch.fx.Node, torch.fx.Node] = {}
     for node in gm.graph.nodes:
         if node not in node_replacements:
             continue
@@ -307,7 +308,34 @@ def _rebuild_graph(
                     assert (
                         len(dtn.args) == 1
                     ), f"Expecting single output, but got {dtn.args} {len(dtn.args[0])}"
-                    node.replace_all_uses_with(value_remap[dtn.args[0][0]])
+                    outputs = dtn.args[0]
+                    # we currently support two very specific types of output
+                    # 1. single output
+                    # 2. multiple outputs resulting from getitem of all elements of tuple
+                    if len(outputs) == 1:
+                        # for single output, we replace the node with the single node
+                        output = outputs[0]
+                    else:
+                        # for multiple outputs, we check that these outputs correspond
+                        # to all elements of a tuple. In that case, we replace
+                        # uses of the output directly with the original tuple
+                        source = None
+                        for i, o in enumerate(outputs):
+                            # we allow None outputs for certain items in the tuple
+                            if o is None:
+                                continue
+                            assert o.op == "call_function"
+                            assert o.target.__module__ == "_operator"
+                            assert o.target.__name__ == "getitem"
+                            assert source is None or source == o.args[0]
+                            source = o.args[0]
+                            assert o.args[1] == i
+                        assert source is not None
+                        output = source
+
+                    new_node = value_remap[output]
+                    node.replace_all_uses_with(new_node)
+                    new_nodes[node] = new_node
                 else:
                     value_remap[dtn] = gm.graph.node_copy(
                         dtn, lambda n: value_remap[n]
@@ -316,6 +344,7 @@ def _rebuild_graph(
     gm.graph.lint()
     gm.graph.eliminate_dead_code()
     gm.recompile()
+    return new_nodes
 
 
 def _convert_to_distributed(
