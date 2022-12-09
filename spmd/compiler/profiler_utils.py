@@ -1,7 +1,19 @@
 import math
 from dataclasses import dataclass, field
 from enum import auto, Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import (
+    Any,
+    Dict,
+    ItemsView,
+    Iterator,
+    KeysView,
+    List,
+    MutableMapping,
+    Optional,
+    Tuple,
+    TypeVar,
+    ValuesView,
+)
 
 import torch
 import torch.fx as fx
@@ -14,26 +26,48 @@ PYTORCH_MIN_CACHE: int = 2**20
 # default device for graph based profiling
 
 
+KT = TypeVar("KT")
+VT = TypeVar("VT")
+
+
 # Bidirectional Dictionary to store the mapping of the forward and backward pass
 # intermediate nodes
-class BiDict(dict[fx.Node, fx.Node]):
+class BiDict(MutableMapping[KT, VT]):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self.inverse: Dict[fx.Node, List[fx.Node]] = {}
+        self.data: Dict[KT, VT] = dict(*args, **kwargs)
+        self.inverse: Dict[VT, List[KT]] = {}
         for key, value in self.items():
             self.inverse.setdefault(value, []).append(key)
 
-    def __setitem__(self, key: fx.Node, value: fx.Node) -> None:
+    def __getitem__(self, key: KT) -> VT:
+        return self.data.__getitem__(key)
+
+    def __setitem__(self, key: KT, value: VT) -> None:
         if key in self:
             self.inverse[self[key]].remove(key)
-        super().__setitem__(key, value)
+        self.data.__setitem__(key, value)
         self.inverse.setdefault(value, []).append(key)
 
-    def __delitem__(self, key: fx.Node) -> None:
+    def __delitem__(self, key: KT) -> None:
         self.inverse.setdefault(self[key], []).remove(key)
         if self[key] in self.inverse and not self.inverse[self[key]]:
             del self.inverse[self[key]]
-        super().__delitem__(key)
+        self.data.__delitem__(key)
+
+    def __len__(self) -> int:
+        return self.data.__len__()
+
+    def __iter__(self) -> Iterator[KT]:
+        return self.data.__iter__()
+
+    def keys(self) -> KeysView[KT]:
+        return self.data.keys()
+
+    def values(self) -> ValuesView[VT]:
+        return self.data.values()
+
+    def items(self) -> ItemsView[KT, VT]:
+        return self.data.items()
 
 
 class GraphType(Enum):
