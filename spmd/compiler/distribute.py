@@ -13,6 +13,9 @@ from torch.fx.experimental.proxy_tensor import make_fx, proxy_slot
 from torch.utils._pytree import tree_flatten, tree_map, tree_unflatten
 from torch._subclasses.fake_tensor import FakeTensorMode
 
+from torch.utils._python_dispatch import _get_current_dispatch_mode
+from torch.utils._mode_utils import no_dispatch
+from torch._subclasses.fake_tensor import FakeTensor
 
 from spmd.tensor import (
     _CURRENT_DECOMPOSITION_TABLE,
@@ -107,15 +110,17 @@ def _get_dtensor_dispatch_graph(
 
     op_overload = cast(torch._ops.OpOverload, node.target)
 
-    # run dispatch once to get the real DTensor output
-    out = operator_dispatch(
-        op_overload,
-        args,
-        kwargs,  # kwargs in this set of tests are all constants
-        DTensor._op_to_rules,
-        DTensor._custom_dispatch_ops,
-    )
+    with no_dispatch():
+        # run dispatch once to get the real DTensor output
+        out = operator_dispatch(
+            op_overload,
+            args,
+            kwargs,  # kwargs in this set of tests are all constants
+            DTensor._op_to_rules,
+            DTensor._custom_dispatch_ops,
+        )
     node_to_obj[node] = out
+    rank0_info(logger, f"op_overload {op_overload} out {out}")
 
     # get DTensor specs for inputs and outputs
     (target_schema, redistribute, output_sharding,) = propagate_input_sharding(
@@ -165,7 +170,7 @@ def _get_dtensor_dispatch_graph(
     def unwrap_local(e: object) -> object:
         return e._local_tensor if isinstance(e, DTensor) else e
 
-    return make_fx(dispatch)(local_target_args)
+    return make_fx(dispatch, tracing_mode="fake")(local_target_args)
 
 
 def _build_dummy_add_graph(
@@ -177,7 +182,6 @@ def _build_dummy_add_graph(
     during the DTensor expansion of the traced graph.
     Also returns the actual DTensor after resharding.
     """
-
     def dummy_add(grad: torch.Tensor, zero: torch.Tensor) -> torch.Tensor:
         return grad + zero
 
@@ -348,27 +352,30 @@ def _convert_to_distributed(
             if training_phase == TrainingPhase.FORWARD:
                 # in the forward phase we start with the full "global" tensors.
                 # we needed this because we needed to capture the original graph.
-                node_to_obj[node] = distribute_tensor(
-                    inps[i],
-                    schemas[i].mesh,
-                    schemas[i].placements,
-                )
+                with no_dispatch():
+                    node_to_obj[node] = distribute_tensor(
+                        inps[i],
+                        schemas[i].mesh,
+                        schemas[i].placements,
+                    )
             else:
                 # But in the backward pass we got "real" sharded inputs
                 # so we have to actually make DTensors out of them
                 assert training_phase == TrainingPhase.BACKWARD
-                node_to_obj[node] = DTensor.from_local(
-                    inps[i],
-                    schemas[i].mesh,
-                    schemas[i].placements,
-                    # prevent running this collective in backwards pass
-                    run_check=False,
-                )
+                with no_dispatch():
+                    node_to_obj[node] = DTensor.from_local(
+                        inps[i],
+                        schemas[i].mesh,
+                        schemas[i].placements,
+                        # prevent running this collective in backwards pass
+                        run_check=False,
+                    )
 
         elif isinstance(node.target, torch._ops.OpOverload):
             node_replacements[node] = _get_dtensor_dispatch_graph(
                 node, node_to_obj
             )
+            rank0_info(logger, f"node.op:{node.op} subgraph {node_replacements[node].graph.print_tabular()}")
         elif node.op == OP.OUTPUT:
             if not _allow_partial:
                 # returns the possibly modified output node
@@ -403,6 +410,10 @@ def _convert_to_distributed(
             node_to_obj[node] = node.target(args[0], args[1])
         else:
             raise ValueError(f"Unrecognized node {node}")
+
+    if training_phase == TrainingPhase.FORWARD:
+        for i, j in node_to_obj.items():
+            rank0_info(logger, f"{i}: {[j.size() if isinstance(j, DTensor) else j]}")
 
     _rebuild_graph(gm, node_replacements)
 
@@ -476,53 +487,32 @@ class _SPMD:
                 else:
                     schemas.append(shard_schema)
         
-        print(f"pre convert_to_distributed {training_phase} {get_mem_usage()}")
-  
-        from torch.utils._python_dispatch import _get_current_dispatch_mode
-        print(f"get_current_dispatch_mode {_get_current_dispatch_mode()}")
-        print(f"gm {gm.print_readable()}")
-
-        from torch.utils._mode_utils import no_dispatch
-        from torch._subclasses.fake_tensor import FakeTensor
+        parallelized_gm = None
+        real_inputs = None
         with no_dispatch():
-            # convert full inputs to sharded inputs before the transformation phase
-            def get_real_inputs(
-                inps: Tuple[object, ...],
-                ) -> Tuple[object, ...]:
+            real_inputs = [torch.randn(x.size()).to("cuda") for x in inps]
 
-                    def conv_to_dtensor(x):
-                        x = torch.zeros_like(x, device=e.device)
-                        return DTensor.from_local(x, self._param_schema.mesh, [Shard(0)]).redistribute(self._param_schema.mesh, [Replicate()]).to_local()
-
-                    compile_inps = tuple(
-                        x
-                        if not isinstance(x, FakeTensor)
-                        else conv_to_dtensor(x)
-                        for x in inps
-                    )
-                    if torch.distributed.get_rank() == 0:
-                        print(f"compile_inps {compile_inps}")
-                    return compile_inps
-        
-            # def to_real_tensor(e):
-            #     if isinstance(e, FakeTensor):
-            #         out = torch.zeros_like(e, device=e.fake_device)
-            #         if e.is_sparse:
-            #             out._coalesced_(e.is_coalesced())
-            #         # inp_impls[id(out)] = e
-            #         return out
-            #     return e
-
+        if training_phase == TrainingPhase.FORWARD:
             parallelized_gm, output_specs = _convert_to_distributed(
                 training_phase,
                 gm,
-                tree_flatten(tuple(get_real_inputs(x) for x in inps)),
+                real_inputs,
                 schemas,
                 _allow_partial=False,
             )
+            self._known_specs_by_node_name.update(output_specs)
+        else:
+            parallelized_gm, output_specs = _convert_to_distributed(
+                    training_phase,
+                    gm,
+                    inps,
+                    schemas,
+                    _allow_partial=False,
+                )
+            self._known_specs_by_node_name.update(output_specs)
 
-        self._known_specs_by_node_name.update(output_specs)
-
+        rank0_info(logger, f" {parallelized_gm.graph.print_tabular()}")
+        
         if training_phase == TrainingPhase.FORWARD:
             self._dist_graph.fwd_graph_modules.append(parallelized_gm)
         elif training_phase == TrainingPhase.BACKWARD:
@@ -542,32 +532,18 @@ def distribute(
     flat_kwargs, _ = tree_flatten(kwargs)
     input_set: Set[object] = set(flat_args + flat_kwargs)
 
-    from torch.utils._python_dispatch import _get_current_dispatch_mode
-    print(f"get_current_dispatch_mode pre FakeTensorMode {_get_current_dispatch_mode()}")
     fake_mode = FakeTensorMode()
     def input_to_fake(x):
         if not isinstance(x, torch.Tensor) or x not in input_set:
             return x
-        with fake_mode:
-            return fake_mode.from_tensor(x)
-
+        return fake_mode.from_tensor(x)
 
     def gather_inputs_for_compilation(
         inps: Tuple[object, ...],
     ) -> Tuple[object, ...]:
-        compile_inps = tuple(
-            x
-            if not isinstance(x, torch.Tensor) or x not in input_set
-            else DTensor.from_local(x, param_schema.mesh, [Shard(0)])
-            .redistribute(param_schema.mesh, [Replicate()])
-            .to_local()
-            for x in inps
-        )
-        # return compile_inps
         return tuple(input_to_fake(x) for x in inps)
 
     spmd = _SPMD(dist_graph, param_schema, input_schemas)
-    print(f"pre aot_module {get_mem_usage()}")
     compiled_m = aot_module(
         cast(nn.Module, dist_graph.orig_module),
         partial(spmd._compile, TrainingPhase.FORWARD),
@@ -575,7 +551,6 @@ def distribute(
         pre_compile_fn=gather_inputs_for_compilation,
         decompositions=_CURRENT_DECOMPOSITION_TABLE,
     )
-
     # Force to execute one step to get the forward and backward graph.
     # One major issue of this flow is the optimizer states. All optimizer
     # states are lazily initialized by default but PT-D distributed checkpoint
