@@ -23,7 +23,7 @@ Unlike most of the available solutions that they need to know the model architec
 
 For example to serve to copies of the model with 8 gpus, assuming we can serve a full copy of a model splitted on 4 gpus, we set the pp_group_size=4 and ddp_group_size=2 and it would look like: 
 
-<img src="https://user-images.githubusercontent.com/9162336/206640153-067fa973-6c8f-4f5f-b6e2-bfdeb31bde77.png" alt="drawing" width="200"/>
+<img src="https://user-images.githubusercontent.com/9162336/206640153-067fa973-6c8f-4f5f-b6e2-bfdeb31bde77.png" alt="drawing" width="400"/>
 
 
 
