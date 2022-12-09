@@ -28,7 +28,7 @@ from transformers import GPT2Tokenizer, OPTModel
 from split_utils import add_split_points, _add_split_points
 from PIL import Image
 import requests
-from transformers import AutoFeatureExtractor, RegNetModel
+from transformers import AutoFeatureExtractor, RegNetModel, BloomConfig, BloomModel
 from datasets import load_dataset
 
 
@@ -112,7 +112,7 @@ def run_master(pp_ranks, args):
     if 't5' in args.model_name:
         inp = torch.empty(bs, seq_length, dtype=torch.long, device=device).random_(model.config.vocab_size)
         model_input_dict = {'input_ids': inp, 'decoder_input_ids': inp}
-    if 'opt' in args.model_name:
+    if 'opt' or 'bloom' in args.model_name:
         inp = torch.empty(bs, seq_length, dtype=torch.long, device=device).random_(model.config.vocab_size)
         model_input_dict = {'input_ids': inp}
     if 'regnet' in args.model_name:
@@ -153,7 +153,7 @@ def run_master(pp_ranks, args):
     if 't5' in args.model_name:
         kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'decoder_input_ids': TensorChunkSpec(0)}
         output_chunk_spec = {"logits": TensorChunkSpec(0),"encoder_last_hidden_state": TensorChunkSpec(0)}
-    if 'opt' in args.model_name:
+    if 'opt' or 'bloom' in args.model_name:
         kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0)}
         output_chunk_spec = {"logits": TensorChunkSpec(0)}
     if 'regnet' in args.model_name:
@@ -230,10 +230,11 @@ if __name__ == "__main__":
         model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name, use_cache=False)
     if 'opt' in args.model_name:
         model = OPTModel.from_pretrained(args.model_name, use_cache=False)
+    if 'bloom' in args.model_name:
+        model = BloomModel.from_pretrained(args.model_name, use_cache=False)
     if 'regnet' in args.model_name:
         feature_extractor = AutoFeatureExtractor.from_pretrained("facebook/regnet-y-10b-seer")
         model = RegNetModel.from_pretrained("facebook/regnet-y-10b-seer")
-        args.model = model
         args.feature_extractor = feature_extractor
-        args.model = model
+    args.model = model
     run_pippy(run_master, args)
