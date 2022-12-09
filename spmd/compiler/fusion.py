@@ -212,12 +212,12 @@ def _copy_fe_to_buffer(
     if gi.tracing_buffer is None:
         buffer = torch.empty(buffer_size)
         gi.tracing_buffer = buffer
-    elif gi.tracing_buffer:
+    else:
         buffer = gi.tracing_buffer
 
     tlist = []
     for item in copy_list:
-        a = torch.zeros_like(item)  # type: ignore
+        a = torch.zeros(item.shape)  # type: ignore
         tlist.append(a)
 
     load_gm = make_fx(copy_to_buffer)(buffer, tlist)
@@ -329,9 +329,8 @@ def _scatter_results_from_buffer(
 
     tlist = []
     for item in scatter_list:
-        shape = item.shape
 
-        a = torch.zeros(item.shape[0], item.shape[1])  # type: ignore
+        a = torch.zeros(item.shape)  # type: ignore
 
         tlist.append(a)  # clone().detach())
 

@@ -138,7 +138,8 @@ def work_main(rank: int, world_size: int) -> None:
             placements=[Replicate()],
         ),
         optimize_first_iter=True,
-        optimizations=[GraphOptimization("overlap_communication")],
+        # optimizations=[GraphOptimization("overlap_communication")],
+        optimizations=[GraphOptimization("fuse_communication")],
     )
 
     # model input - need to adjust to match models
