@@ -1,7 +1,20 @@
 import math
 from dataclasses import dataclass, field
 from enum import auto, Enum
-from typing import Any, Dict, List, Optional, Tuple, MutableMapping, TypeVar
+from typing import (
+    Any,
+    Dict,
+    ItemsView,
+    Iterable,
+    Iterator,
+    KeysView,
+    List,
+    MutableMapping,
+    Optional,
+    Tuple,
+    TypeVar,
+    ValuesView,
+)
 
 import torch
 import torch.fx as fx
@@ -22,22 +35,40 @@ VT = TypeVar("VT")
 # intermediate nodes
 class BiDict(MutableMapping[KT, VT]):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+        self.data: Dict[KT, VT] = dict(*args, **kwargs)
         self.inverse: Dict[VT, List[KT]] = {}
         for key, value in self.items():
             self.inverse.setdefault(value, []).append(key)
 
+    def __getitem__(self, key: KT) -> VT:
+        return self.data.__getitem__(key)
+
     def __setitem__(self, key: KT, value: VT) -> None:
         if key in self:
             self.inverse[self[key]].remove(key)
-        super().__setitem__(key, value)
+        self.data.__setitem__(key, value)
         self.inverse.setdefault(value, []).append(key)
 
     def __delitem__(self, key: KT) -> None:
         self.inverse.setdefault(self[key], []).remove(key)
         if self[key] in self.inverse and not self.inverse[self[key]]:
             del self.inverse[self[key]]
-        super().__delitem__(key)
+        self.data.__delitem__(key)
+
+    def __len__(self) -> int:
+        return self.data.__len__(*args, **kwargs)
+
+    def __iter__(self) -> Iterator[KT]:
+        return self.data.__iter__(*args, **kwargs)
+
+    def keys(self) -> KeysView[KT]:
+        return self.data.keys(*args, **kwargs)
+
+    def values(self) -> ValuesView[VT]:
+        return self.data.values(*args, **kwargs)
+
+    def items(self) -> ItemsView[KT, VT]:
+        return self.data.items(*args, **kwargs)
 
 
 class GraphType(Enum):
