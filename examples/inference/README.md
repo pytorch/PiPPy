@@ -17,9 +17,14 @@ Unlike most of the available solutions that they need to know the model architec
 
 ### Setting you need to care about
 
-* pp_group_size configure the number of pipeline parallelism group, meaning essentially on how many gpus our model to need be splitted.
+* pp_group_size configure the number of pipeline parallelism group, meaning essentially on how many gpus our model to need be splitted and form a pipeline.
 
-We dont discuss the ddp_group_size here, as we are thinking currently all the gpus that involved in a pipleline will make up one model for inference.
+* ddp_group_size this can help to run multiple instances of a model as in multi-worker scenario for serving. The created pipelines can collectively call the init_data_parallel API. PiPPy will then create a DDP group for each stage, across the pipelines. 
+
+For example to serve to copies of the model with 8 gpus, assuming we can serve a full copy of a model splitted on 4 gpus, we set the pp_group_size=4 and ddp_group_size=2 and it would look like: 
+
+![pp_grou](https://user-images.githubusercontent.com/9162336/206640153-067fa973-6c8f-4f5f-b6e2-bfdeb31bde77.png)
+
 
 ### How to Use PiPPY for inference
 
