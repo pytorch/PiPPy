@@ -56,19 +56,19 @@ class BiDict(MutableMapping[KT, VT]):
         self.data.__delitem__(key)
 
     def __len__(self) -> int:
-        return self.data.__len__(*args, **kwargs)
+        return self.data.__len__()
 
     def __iter__(self) -> Iterator[KT]:
-        return self.data.__iter__(*args, **kwargs)
+        return self.data.__iter__()
 
     def keys(self) -> KeysView[KT]:
-        return self.data.keys(*args, **kwargs)
+        return self.data.keys()
 
     def values(self) -> ValuesView[VT]:
-        return self.data.values(*args, **kwargs)
+        return self.data.values()
 
     def items(self) -> ItemsView[KT, VT]:
-        return self.data.items(*args, **kwargs)
+        return self.data.items()
 
 
 class GraphType(Enum):
