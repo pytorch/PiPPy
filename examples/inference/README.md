@@ -63,9 +63,7 @@ if args.auto_split == "threshold":
 elif args.auto_split == "equal_size":
         split_policy = split_into_equal_size(number_of_workers)
 ```
-* Make the concerete args, this is required for FX tracing by giving it concerete inputs, this will be used to run the input through the model to check if there any control flow.
-
-For now control flow is not supported in FX tracing, we are working on integrating Torch Dynamo to make this more flexible. 
+* Make the concerete args, this is required for FX tracing by giving it concerete inputs, this will be used to run the input through the model to check if there any control flow. For now control flow is not supported in FX tracing, we are working on integrating Torch Dynamo to make this more flexible. 
 
 ```
 t5_input_dict = {'input_ids': inp, 'decoder_input_ids': inp}
