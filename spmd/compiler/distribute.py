@@ -278,7 +278,7 @@ def _convert_output(
 def _rebuild_graph(
     gm: fx.GraphModule,
     node_replacements: Dict[torch.fx.Node, torch.fx.GraphModule],
-) -> Dict[torch.fx.Node, torch.fx.Node]:
+) -> None:
     # replace nodes in local traced graph with DTensor's dispatch graph
     new_nodes: Dict[torch.fx.Node, torch.fx.Node] = {}
     for node in gm.graph.nodes:
@@ -320,16 +320,16 @@ def _rebuild_graph(
                         # to all elements of a tuple. In that case, we replace
                         # uses of the output directly with the original tuple
                         source = None
-                        for i, o in enumerate(outputs):
+                        for i, out in enumerate(outputs):
                             # we allow None outputs for certain items in the tuple
-                            if o is None:
+                            if out is None:
                                 continue
-                            assert o.op == "call_function"
-                            assert o.target.__module__ == "_operator"
-                            assert o.target.__name__ == "getitem"
-                            assert source is None or source == o.args[0]
-                            source = o.args[0]
-                            assert o.args[1] == i
+                            assert out.op == "call_function"
+                            assert out.target.__module__ == "_operator"
+                            assert out.target.__name__ == "getitem"
+                            assert source is None or source == out.args[0]
+                            source = out.args[0]
+                            assert out.args[1] == i
                         assert source is not None
                         output = source
 
@@ -344,7 +344,6 @@ def _rebuild_graph(
     gm.graph.lint()
     gm.graph.eliminate_dead_code()
     gm.recompile()
-    return new_nodes
 
 
 def _convert_to_distributed(
