@@ -120,7 +120,7 @@ def _get_dtensor_dispatch_graph(
             DTensor._custom_dispatch_ops,
         )
     node_to_obj[node] = out
-    rank0_info(logger, f"op_overload {op_overload} out {out}")
+    # rank0_info(logger, f"op_overload {op_overload} out {out}")
 
     # get DTensor specs for inputs and outputs
     (target_schema, redistribute, output_sharding,) = propagate_input_sharding(
@@ -186,9 +186,10 @@ def _build_dummy_add_graph(
         return grad + zero
 
     grad: torch.Tensor = dt._local_tensor
-    zero: torch.Tensor = torch.zeros_like(dt._local_tensor)
+    with no_dispatch():
+        zero: torch.Tensor = torch.zeros_like(dt._local_tensor)
 
-    traced_add = make_fx(dummy_add)(grad, zero)
+    traced_add = make_fx(dummy_add, tracing_mode="fake")(grad, zero)
 
     placeholders = [n for n in traced_add.graph.nodes if n.op == OP.PLACEHOLDER]
     call_functions = [
@@ -202,6 +203,8 @@ def _build_dummy_add_graph(
     traced_dispatch = _get_dtensor_dispatch_graph(
         call_functions[0], node_to_obj
     )
+
+    rank0_info(logger, f"traced_dispatch graph {traced_dispatch.graph.print_tabular()}")
 
     traced_dispatch.graph.lint()
 
@@ -375,7 +378,6 @@ def _convert_to_distributed(
             node_replacements[node] = _get_dtensor_dispatch_graph(
                 node, node_to_obj
             )
-            rank0_info(logger, f"node.op:{node.op} subgraph {node_replacements[node].graph.print_tabular()}")
         elif node.op == OP.OUTPUT:
             if not _allow_partial:
                 # returns the possibly modified output node
@@ -410,10 +412,6 @@ def _convert_to_distributed(
             node_to_obj[node] = node.target(args[0], args[1])
         else:
             raise ValueError(f"Unrecognized node {node}")
-
-    if training_phase == TrainingPhase.FORWARD:
-        for i, j in node_to_obj.items():
-            rank0_info(logger, f"{i}: {[j.size() if isinstance(j, DTensor) else j]}")
 
     _rebuild_graph(gm, node_replacements)
 
@@ -489,6 +487,9 @@ class _SPMD:
         
         parallelized_gm = None
         real_inputs = None
+        
+        rank0_info(logger, f"inputs {[x.size() for x in inps]}")
+
         with no_dispatch():
             real_inputs = [torch.randn(x.size()).to("cuda") for x in inps]
 
@@ -517,6 +518,10 @@ class _SPMD:
             self._dist_graph.fwd_graph_modules.append(parallelized_gm)
         elif training_phase == TrainingPhase.BACKWARD:
             self._dist_graph.bwd_graph_modules.append(parallelized_gm)
+
+        rank0_info(logger, f"inputs {[x.size() for x in inps]}")
+        rank0_info(logger, f"schemas {schemas}")
+        rank0_info(logger, f"output_specs {output_specs}")
         return make_boxed_func(parallelized_gm)
 
 
