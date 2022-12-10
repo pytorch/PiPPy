@@ -170,7 +170,9 @@ def _get_dtensor_dispatch_graph(
     def unwrap_local(e: object) -> object:
         return e._local_tensor if isinstance(e, DTensor) else e
 
-    return make_fx(dispatch, tracing_mode="fake")(local_target_args)
+    # return make_fx(dispatch, tracing_mode="fake")(local_target_args)
+    with no_dispatch():
+        return make_fx(dispatch)(local_target_args)
 
 
 def _build_dummy_add_graph(
@@ -186,11 +188,12 @@ def _build_dummy_add_graph(
         return grad + zero
 
     grad: torch.Tensor = dt._local_tensor
+    traced_add = None
     with no_dispatch():
         zero: torch.Tensor = torch.zeros_like(dt._local_tensor)
+    traced_add = make_fx(dummy_add)(grad, zero)
 
-    traced_add = make_fx(dummy_add, tracing_mode="fake")(grad, zero)
-
+    rank0_info(logger, f"traced_add graph {traced_add.graph.print_tabular()}")
     placeholders = [n for n in traced_add.graph.nodes if n.op == OP.PLACEHOLDER]
     call_functions = [
         n for n in traced_add.graph.nodes if n.op == OP.CALL_FUNCTION
@@ -203,8 +206,6 @@ def _build_dummy_add_graph(
     traced_dispatch = _get_dtensor_dispatch_graph(
         call_functions[0], node_to_obj
     )
-
-    rank0_info(logger, f"traced_dispatch graph {traced_dispatch.graph.print_tabular()}")
 
     traced_dispatch.graph.lint()
 
