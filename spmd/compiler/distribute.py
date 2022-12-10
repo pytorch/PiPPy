@@ -120,7 +120,7 @@ def _get_dtensor_dispatch_graph(
             DTensor._custom_dispatch_ops,
         )
     node_to_obj[node] = out
-    # rank0_info(logger, f"op_overload {op_overload} out {out}")
+    rank0_info(logger, f"op_overload {op_overload} out {out}")
 
     # get DTensor specs for inputs and outputs
     (target_schema, redistribute, output_sharding,) = propagate_input_sharding(
@@ -170,10 +170,7 @@ def _get_dtensor_dispatch_graph(
     def unwrap_local(e: object) -> object:
         return e._local_tensor if isinstance(e, DTensor) else e
 
-    # return make_fx(dispatch, tracing_mode="fake")(local_target_args)
-    with no_dispatch():
-        return make_fx(dispatch)(local_target_args)
-
+    return make_fx(dispatch, tracing_mode="fake")(local_target_args)
 
 def _build_dummy_add_graph(
     dt: DTensor, node_to_obj: Dict[fx.Node, object]
@@ -191,9 +188,9 @@ def _build_dummy_add_graph(
     traced_add = None
     with no_dispatch():
         zero: torch.Tensor = torch.zeros_like(dt._local_tensor)
-    traced_add = make_fx(dummy_add)(grad, zero)
 
-    rank0_info(logger, f"traced_add graph {traced_add.graph.print_tabular()}")
+    traced_add = make_fx(dummy_add, tracing_mode="fake")(grad, zero)
+
     placeholders = [n for n in traced_add.graph.nodes if n.op == OP.PLACEHOLDER]
     call_functions = [
         n for n in traced_add.graph.nodes if n.op == OP.CALL_FUNCTION
@@ -202,6 +199,8 @@ def _build_dummy_add_graph(
     assert len(call_functions) == 1
     node_to_obj[placeholders[0]] = dt
     node_to_obj[placeholders[1]] = zero
+
+    # rank0_info(logger, f"node_to_obj {node_to_obj}")
 
     traced_dispatch = _get_dtensor_dispatch_graph(
         call_functions[0], node_to_obj
@@ -217,6 +216,7 @@ def _convert_output(
     node: fx.Node,
     node_to_obj: Dict[fx.Node, object],
 ) -> fx.Node:
+    rank0_info(logger, f" graph {gm.graph.print_tabular()}")
     new_args = []
     has_partial = False
     for argument in node.args[0]:  # type: ignore
@@ -236,7 +236,7 @@ def _convert_output(
         dt = cast(DTensor, obj)
 
         traced_dispatch, result_obj = _build_dummy_add_graph(dt, node_to_obj)
-
+        rank0_info(logger, f"traced_dispatch graph {traced_dispatch.graph.print_tabular()}")
         wait = [n for n in traced_dispatch.graph.nodes if n.name == "wait_comm"]
         add = [n for n in traced_dispatch.graph.nodes if n.name == "add"]
         assert len(wait) == 1 and len(add) == 1
@@ -322,7 +322,7 @@ def _rebuild_graph(
                     value_remap[dtn] = gm.graph.node_copy(
                         dtn, lambda n: value_remap[n]
                     )
-
+    rank0_info(logger, f" graph {gm.graph.print_tabular()}")
     gm.graph.lint()
     gm.graph.eliminate_dead_code()
     gm.recompile()
@@ -380,6 +380,7 @@ def _convert_to_distributed(
                 node, node_to_obj
             )
         elif node.op == OP.OUTPUT:
+            rank0_info(logger, f" {gm.graph.print_tabular()}")
             if not _allow_partial:
                 # returns the possibly modified output node
                 node = _convert_output(gm, node, node_to_obj)
@@ -503,6 +504,7 @@ class _SPMD:
                 _allow_partial=False,
             )
             self._known_specs_by_node_name.update(output_specs)
+            rank0_info(logger, f" {parallelized_gm.graph.print_tabular()}")
         else:
             parallelized_gm, output_specs = _convert_to_distributed(
                     training_phase,
