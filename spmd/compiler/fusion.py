@@ -212,12 +212,12 @@ def _copy_fe_to_buffer(
     if gi.tracing_buffer is None:
         buffer = torch.empty(buffer_size)
         gi.tracing_buffer = buffer
-    elif gi.tracing_buffer:
+    else:
         buffer = gi.tracing_buffer
 
     tlist = []
     for item in copy_list:
-        a = torch.zeros_like(item)  # type: ignore
+        a = torch.zeros(item.shape)  # type: ignore
         tlist.append(a)
 
     load_gm = make_fx(copy_to_buffer)(buffer, tlist)
@@ -329,9 +329,8 @@ def _scatter_results_from_buffer(
 
     tlist = []
     for item in scatter_list:
-        shape = item.shape
 
-        a = torch.zeros(item.shape[0], item.shape[1])  # type: ignore
+        a = torch.zeros(item.shape)  # type: ignore
 
         tlist.append(a)  # clone().detach())
 
@@ -417,9 +416,9 @@ def _update_new_copy_nodes_users(value_remap: Dict[fx.Node, fx.Node]) -> None:
     """
     for subnode, node in value_remap.items():
         if node.name.startswith("copy"):
-            _debug(
-                f"426 copy or wait node pre user update len {len(node.users)}, {node.name=}, {node.users=}, {node.args=}"
-            )
+            # _debug(
+            #    f"426 copy or wait node pre user update len {len(node.users)}, {node.name=}, {node.users=}, {node.args=}"
+            # )
             # if len(node.users) == 0:
             user = node.args[0]
             node.users[user] = ""  # type: ignore
@@ -553,17 +552,18 @@ def _teardown(gm: fx.GraphModule) -> None:
 
     # final review print
     rebuild_graph(gm)
-    _debug("605, final graph cleanup, ready to exit\n")
+    _debug("final graph cleanup, ready to exit\n")
+    # _debug(f"\n Final Graph ===== \n {gm.graph.print_tabular()}\n")
 
 
-def run_fuse_communication(gm: fx.GraphModule) -> None:
+def run_fuse_communication(gm: fx.GraphModule, fusion_policy: int = 4) -> None:
     """Main entry into remapping graph for all_reduce fusion.
     Modifications are in place to the graph.  Errors will result in stoppage
     to alert user rather than handling and returning error codes."""
 
     graph_info = _setup(gm)
 
-    _debug(f"\n Start of fusion pass graph {gm.graph.print_tabular()}\n")
+    # _debug(f"\n Start of fusion pass graph {gm.graph.print_tabular()}\n")
 
     # scan graph for all comm sections (fusion elements)
     fe_list = _scan_graph_for_fusion_elements(
@@ -575,7 +575,7 @@ def run_fuse_communication(gm: fx.GraphModule) -> None:
 
     # simple fusion policy where int = num buckets to fuse...start with 2,
     # meaning every 2 comms are fused into 1
-    fusion_policy: int = 2
+    assert fusion_policy > 1, f"fusion policy requires > 1 for actual fusion. "
 
     # determine peak memory using fusion policy
     peak_memory_required = _determine_peak_memory(graph_info, fusion_policy)
@@ -624,9 +624,9 @@ def run_fuse_communication(gm: fx.GraphModule) -> None:
     gm.graph.erase_node(graph_info.output)
     gm.graph.output(new_output_args)
 
-    _debug(f"631, processed {index+1} fe items")
+    _debug(f"\nComm Fusion processed {index+1} fe items\n")
 
-    _debug(f"656, updated output node args {new_output_args=}\n")
+    _debug(f"Final output node args {new_output_args=}\n")
 
     _teardown(gm)
 
