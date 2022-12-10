@@ -86,21 +86,21 @@
 
 #         model = FSDP(model, process_group=my_fsdp)
 #         """
-#         When the model is initialized, the param and extra_state_dict are as followed: 
-#         param: tensor([ 0.,  1., 10., 11.], device='cuda:0', requires_grad=True) 
-#         extra_state: 0  
+#         When the model is initialized, the param and extra_state_dict are as followed:
+#         param: tensor([ 0.,  1., 10., 11.], device='cuda:0', requires_grad=True)
+#         extra_state: 0
 #         extra_state: tensor([[ 1., -1.], [ 1., -1.]])
 
-#         param: tensor([ 0.,  1., 10., 11.], device='cuda:2', requires_grad=True) 
-#         extra_state:0 
+#         param: tensor([ 0.,  1., 10., 11.], device='cuda:2', requires_grad=True)
+#         extra_state:0
 #         extra_state:tensor([[ 1., -1.], [ 1., -1.]])
 
-#         param: tensor([ 4.,  5., 14., 15.], device='cuda:1', requires_grad=True) 
-#         extra_state:0 
+#         param: tensor([ 4.,  5., 14., 15.], device='cuda:1', requires_grad=True)
+#         extra_state:0
 #         extra_state:tensor([[ 1., -1.], [ 1., -1.]])
 
-#         param: tensor([ 4.,  5., 14., 15.], device='cuda:3', requires_grad=True) 
-#         extra_state:0 
+#         param: tensor([ 4.,  5., 14., 15.], device='cuda:3', requires_grad=True)
+#         extra_state:0
 #         extra_state:tensor([[ 1., -1.], [ 1., -1.]])
 #         """
 
@@ -120,22 +120,22 @@
 #         ).cuda(dist.get_rank())
 #         model = FSDP(model, process_group=my_fsdp)
 #         """
-#         When the model is re-initialized, we have changed param and extra_state_dict. 
+#         When the model is re-initialized, we have changed param and extra_state_dict.
 #         The updated values are as followed:
-#         param: tensor([400., 401., 402., 403.], device='cuda:0', requires_grad=True) 
-#         extra_state: 100 
+#         param: tensor([400., 401., 402., 403.], device='cuda:0', requires_grad=True)
+#         extra_state: 100
 #         extra_state: tensor([[ 100., -100.], [ 100., -100.]])
 
-#         param: tensor([400., 401., 402., 403.], device='cuda:2', requires_grad=True) 
-#         extra_state: 100 
+#         param: tensor([400., 401., 402., 403.], device='cuda:2', requires_grad=True)
+#         extra_state: 100
 #         extra_state: tensor([[ 100., -100.], [ 100., -100.]])
 
-#         param: tensor([400., 401., 402., 403.], device='cuda:1', requires_grad=True) 
-#         extra_state: 100 
+#         param: tensor([400., 401., 402., 403.], device='cuda:1', requires_grad=True)
+#         extra_state: 100
 #         extra_state: tensor([[ 100., -100.], [ 100., -100.]])
 
-#         param: tensor([400., 401., 402., 403.], device='cuda:3', requires_grad=True) 
-#         extra_state: 100 
+#         param: tensor([400., 401., 402., 403.], device='cuda:3', requires_grad=True)
+#         extra_state: 100
 #         extra_state: tensor([[ 100., -100.], [ 100., -100.]])
 #         """
 
