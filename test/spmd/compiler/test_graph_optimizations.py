@@ -12,6 +12,7 @@ from spmd.compiler.api import Schema, SPMD
 from spmd.compiler.graph_optimization import GraphOptimization
 from spmd.tensor import DeviceMesh, Replicate
 from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.testing._internal.common_distributed import skip_if_lt_x_gpu
 from torch.testing._internal.common_utils import run_tests
 from torch.testing._internal.distributed._tensor.common_dtensor import (
     DTensorTestBase,
@@ -39,6 +40,7 @@ class CommOverlapTest(DTensorTestBase):
     def world_size(self):
         return 2
 
+    @skip_if_lt_x_gpu(2)
     @with_comms
     def test_optimizations(self):
         # test grads with overlap pass vs without overlap

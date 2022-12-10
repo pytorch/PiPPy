@@ -2,7 +2,7 @@ import logging
 import operator
 from dataclasses import dataclass, field
 from functools import partial
-from typing import cast, Dict, Iterable, List, Optional, Tuple
+from typing import cast, Dict, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -69,7 +69,7 @@ class GraphInfo:
     # total count of initial fusion elements
     num_starting_fe: int = 0
     # list of all FusionElements in the graph
-    fe_list: Optional[Iterable[FusionElement]] = None  # type: ignore
+    fe_list: Optional[List[FusionElement]] = None  # type: ignore
     # max memory needed for fusion buffer
     peak_memory_required: int = 0
     # node housing global buffer for fusion comms
@@ -758,6 +758,7 @@ def _fuse_with_cat(
     # ff. allreduce(cat_node)
     assert copy_list[-1].comm_node is not None
     fused_comm_node = copy_list[-1].comm_node
+    assert fused_comm_node is not None, "Pyre is not as smart as Mypy."
     fused_comm_node.update_arg(0, [cat_node])
 
     # Move the fused_comm_node and its args to right after the source node
