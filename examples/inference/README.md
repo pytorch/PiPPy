@@ -1,9 +1,9 @@
-## PiPPY distributed inference for large models
+# PiPPY distributed inference for large models
 
 PiPPY helps to run very large models for inference by splitting the model into mutliple stages running on multiple GPUs.
 PiPPY make this easier by providing a auto split API that automates this process for user. 
 
-### How it works
+## How it works
 
 PiPPY splits your model into multiple stages, each stage loaded on one gpu then the input batch will be furhter divided into micro-batches and run through the splits from 
 rank0..rankN. Results are being returned to rank0 as its runing the PipelineDriver. Please read more on pipleines [here](https://github.com/pytorch/tau/blob/main/README.md)
@@ -13,14 +13,14 @@ The flowchart below helps to visualize the process in high level as well.
 <img src="https://user-images.githubusercontent.com/9162336/206815839-60d43f93-ff4b-4a5e-99db-1e0c4a55a4ac.png" alt="drawing" width="400"/>
 
 
-### PiPPY support arbitary checkpoint splitting 
+## PiPPY support arbitary checkpoint splitting 
 
 Unlike most of the available solutions that they need to know the model architecture beforehand, PiPPY supports arbitary PyTorch checkpoints.
 * PiPPY supports both manual splitting and auto split.
 * Auto split uses `split_policy` and support both `equal_size` and `threshod` policies, the name are self-explanatory.
 * PiPPY use FX to trace and split the model.
 
-### Setting you need to care about
+## Setting you need to care about
 
 * pp_group_size configure the number of pipeline parallelism group, meaning essentially on how many gpus our model to need be splitted and form a pipeline.
 
@@ -42,11 +42,11 @@ Then the resulted models (2 copies) will look like:
 
 
 
-### How to Use PiPPY for inference
+## How to Use PiPPY for inference
 
 **Define a function such as run_master() and add the followings to it.**
 
-We use a HuggingFace T5 model as the running example here. The `HF_inference.py` also support HF OPT which is encoder only model as well. Make sure to specifiy the model name as follows ` python HF_inference.py --model_name "facebook/opt-2.7b" `
+We use a HuggingFace T5 model as the running example here. The `HF_inference.py` also support HF OPT, Bloom, RegNet models as well. Make sure to specifiy the model name as follows ` python HF_inference.py --model_name "facebook/opt-2.7b" `
 
 * Load your model normally on CPU
 
