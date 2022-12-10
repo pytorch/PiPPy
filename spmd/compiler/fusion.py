@@ -69,15 +69,15 @@ class GraphInfo:
     # total count of initial fusion elements
     num_starting_fe: int = 0
     # list of all FusionElements in the graph
-    fe_list: Optional[List[FusionElement]] = None  # type: ignore
+    fe_list: List[FusionElement] = field(default_factory=lambda: [])
     # max memory needed for fusion buffer
     peak_memory_required: int = 0
     # node housing global buffer for fusion comms
-    global_buffer_node: Optional[fx.Node] = None  # type: ignore
+    global_buffer_node: Optional[fx.Node] = None
     # size of the global buffer
     global_buffer_size: int = 0
     # real buffer (not node) used for tracing fusion subgraphs
-    tracing_buffer: Optional[torch.Tensor] = None  # type: ignore
+    tracing_buffer: Optional[torch.Tensor] = None
     # first node in graph (head)
     first: Optional[fx.Node] = None
     # last node in graph (tail / output)
@@ -849,9 +849,7 @@ def run_fuse_communication_cat(gm: fx.GraphModule, fusion_length: int) -> None:
             graph_info.actual_grad_index_mapping[node] = idx
 
     # Fuse every ``fusion_length`` FusionElement.
-    assert graph_info.fe_list is not None, "Why can't Pyre figure it out?"
     for start in range(0, len(graph_info.fe_list), fusion_length):
-        assert graph_info.fe_list is not None, "Why can't Pyre figure it out?"
         fe_list = graph_info.fe_list[start : (start + fusion_length)]
         fused_comm_node = _fuse_with_cat(graph_info, gm, fe_list)
         grad_nodes = _scatter_results(graph_info, gm, fe_list)
