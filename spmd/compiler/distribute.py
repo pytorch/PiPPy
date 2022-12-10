@@ -343,25 +343,15 @@ def _convert_to_distributed(
             assert i < len(
                 inps
             ), f"got more placeholer nodes ({i + 1}) than inputs ({len(inps)})"
-            if False:  # training_phase == TrainingPhase.FORWARD:
-                # in the forward phase we start with the full "global" ensors.
-                # we needed this because we needed to capture the original graph.
-                node_to_obj[node] = distribute_tensor(
-                    inps[i],
-                    schemas[i].mesh,
-                    schemas[i].placements,
-                )
-            else:
-                # But in the backward pass we got "real" sharded inputs
-                # so we have to actually make DTensors out of them
-                # assert training_phase == TrainingPhase.BACKWARD
-                node_to_obj[node] = DTensor.from_local(
-                    inps[i],
-                    schemas[i].mesh,
-                    schemas[i].placements,
-                    # prevent running this collective in backwards pass
-                    run_check=False,
-                )
+
+            # our example inputs are local shards. Create DTensors from them.
+            node_to_obj[node] = DTensor.from_local(
+                inps[i],
+                schemas[i].mesh,
+                schemas[i].placements,
+                # prevent running this collective in backwards pass
+                run_check=False,
+            )
 
         elif isinstance(node.target, torch._ops.OpOverload):
             node_replacements[node] = _get_dtensor_dispatch_graph(
