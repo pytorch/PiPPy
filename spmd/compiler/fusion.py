@@ -18,7 +18,7 @@ from .graph_utils import (
     OP,
     rebuild_graph,
 )
-from .log_utils import rank0_debug, rank0_info
+from .log_utils import rank0_debug
 
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -171,7 +171,7 @@ def _scan_graph_for_fusion_elements(
     gi: GraphInfo,
     gm: fx.GraphModule,
     comm_type: CommType = CommType.ALLREDUCE,
-) -> Optional[List[FusionElement]]:
+) -> List[FusionElement]:
     """Scan entire graph for matching sections of CommTensor style expansions
     returns list of FusionElements that match CommType"""
 
@@ -727,16 +727,21 @@ def _fuse_with_cat(
     # Find the actual last gradient.
     all_grad_tensor_nodes = []
     for fe in copy_list:
+        assert fe.grad_tensor_node is not None
         assert fe.grad_tensor_node.name.startswith("clone")
         all_grad_tensor_nodes.append(fe.grad_tensor_node)
     grad_indices_mapping = [
-        gi.actual_grad_index_mapping[grad_tensor_node.args[0]]
+        gi.actual_grad_index_mapping[
+            cast(Tuple[fx.Node], grad_tensor_node.args)[0]
+        ]
         for grad_tensor_node in all_grad_tensor_nodes
     ]
     last_grad_fe_index = grad_indices_mapping.index(max(grad_indices_mapping))
-    last_grad_tensor_node = copy_list[last_grad_fe_index].grad_tensor_node.args[
-        0
-    ]
+    assert copy_list[last_grad_fe_index].grad_tensor_node is not None
+    last_grad_tensor_node = cast(
+        fx.Node,
+        cast(fx.Node, copy_list[last_grad_fe_index].grad_tensor_node).args[0],
+    )
 
     # ff. flat_grads = [torch.flatten(grad) for grad in fusion_gradients]
     with gm.graph.inserting_after(last_grad_tensor_node):
@@ -750,6 +755,7 @@ def _fuse_with_cat(
         cat_node = gm.graph.call_function(torch.cat, (cat_inputs,))
 
     # ff. allreduce(cat_node)
+    assert copy_list[-1].comm_node is not None
     fused_comm_node = copy_list[-1].comm_node
     fused_comm_node.update_arg(0, [cat_node])
 
@@ -772,7 +778,7 @@ def _fuse_with_cat(
 
 def _scatter_results(
     gi: GraphInfo, gm: fx.GraphModule, scatter_list: List[FusionElement]
-) -> fx.Node:
+) -> List[fx.Node]:
     # ff. split = torch.split(allreduce_result)
     scatter_sizes = [fe.size for fe in scatter_list]
     assert scatter_list[-1].wait_node is not None
@@ -827,11 +833,15 @@ def run_fuse_communication_cat(gm: fx.GraphModule, fusion_length: int) -> None:
         "The expected wait_nodes in graph_info is different from fe_list "
         f"{len(graph_info.wait_node_idx)} {len(fe_list)}."
     )
-    new_output_args = cast(List[fx.Node], list(graph_info.output.args[0]))
+    assert graph_info.output is not None
+    new_output_args = list(cast(Tuple[fx.Node], graph_info.output.args[0]))
 
     # Need this mapping because the gradient may not have the same order
     # as clone.
-    actual_gradients = set(fe.grad_tensor_node.args[0] for fe in fe_list)
+    actual_gradients = set(
+        cast(Tuple[fx.Node], cast(fx.Node, fe.grad_tensor_node).args)[0]
+        for fe in fe_list
+    )
     for idx, node in enumerate(gm.graph.nodes):
         if node in actual_gradients:
             graph_info.actual_grad_index_mapping[node] = idx
