@@ -1,7 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import argparse
 import copy
-import logging
 import os
 import unittest
 from typing import Dict
@@ -38,11 +37,6 @@ schedules = {
     "1F1B": PipelineDriver1F1B,
     "Interleaved1F1B": PipelineDriverInterleaved1F1B,
 }
-
-VERBOSE = bool(int(os.environ.get("VERBOSE", False)))
-
-if VERBOSE:
-    logging.getLogger().setLevel(logging.DEBUG)
 
 
 def get_grad_from_executor(executor, qualname):

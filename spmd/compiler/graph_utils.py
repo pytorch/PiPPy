@@ -1,14 +1,13 @@
 import logging
 from enum import Enum
-from typing import Dict, Optional, Tuple
+from typing import List, Optional, Set, Tuple, Union
 
 import torch.fx as fx
+from torch.fx.passes.shape_prop import TensorMetadata
 
-from .log_utils import rank0_debug, rank0_info
+from .log_utils import rank0_info
 
 logger: logging.Logger = logging.getLogger(__name__)
-
-# ------------------------------------------
 
 
 class OP(str, Enum):
@@ -20,59 +19,96 @@ class OP(str, Enum):
     PLACEHOLDER = "placeholder"
 
 
-def create_name_to_node_map(gm: fx.GraphModule) -> Dict[str, fx.Node]:
-    """utility to put graph module into a node map for easier adjustments"""
-    mapping = {}
-    for node in gm.graph.nodes:
-        mapping[node.name] = node
-    return mapping
+class CommType(str, Enum):
+    ALLREDUCE = "allreduce_"
+    ALLGATHER = "allgather_"
+    BROADCAST = "broadcast_"
+    REDUCESCATTER = "reduce_scatter_"
+    SCATTER = "scatter_"
 
 
-def get_node_tensor_numel_shape(
-    node: fx.Node,
-) -> Tuple[Optional[int], Optional[Tuple[int, int]]]:
-    """takes an fx node, and if tensor data available, optionally displays and returns numel"""
-    size = None
-    shape = None
-    tdata = node.meta.get("tensor_meta")
-    if tdata is None:
-        # assert tdata is not None, f"failed to locate metadata for node {node}"
-        return size, shape
+comm_block_op_sequence: Tuple[Union[str, Set[CommType]], ...] = (
+    "clone",
+    "_tensor_constant",
+    "_tensor_constant",
+    # The supported communication type.
+    set((CommType.ALLREDUCE,)),
+    "comm_result",
+    "getitem",
+    "getitem",
+    "wait_comm",
+)
 
-    if len(tdata.shape) == 1:
-        m = tdata.shape
-        shape = (m,)
-    else:
-        m, n = tdata.shape
-        size = m * n
-        shape = (m, n)  # type: ignore
 
-    rank0_debug(
-        logger,
-        f"--> tensor of size {size} and shape {shape} found for {node=}\n",
-    )
+def get_comm_block_nodes(
+    wait_node: fx.Node, comm_type: CommType
+) -> Tuple[int, List[fx.Node]]:
+    """
+    Given a wait_comm node, find out all the nodes belong to this communcation.
 
-    return size, shape  # type: ignore
+    Args:
+        wait_node(fx.Node): The target wait_comm node.
+        comm_type(CommType): The communication type of this communication block.
+            Currently, only allreduce is supported. An exception will be raised
+            if other values are passed.
+    Returns:
+        comm_idx(int): The index to the communication node in the return list.
+        node_list(List[fx.Node]): The list that contain the nodes in the order
+           of inserting to the graph.
+    """
+    if not wait_node.name.startswith("wait_comm"):
+        raise ValueError(
+            "Passing a wait_node that name does not start with ``wait_comm``. "
+            f"Name is {wait_node.name}, OP is {wait_node.op}."
+        )
+    node = wait_node
+    node_list = []
+    for i, prefix in enumerate(reversed(comm_block_op_sequence)):
+        node_list.append(node)
+        if isinstance(prefix, set):
+            if comm_type not in prefix:
+                raise ValueError(f"Not supported CommType {comm_type}")
+            prefix = comm_type
+            comm_idx = i
+        assert node.name.startswith(
+            prefix
+        ), f"Comm block op sequence mismatches, {node.op} {node.name} {i} {prefix}."
+        node = node.prev
+
+    comm_idx = len(node_list) - comm_idx - 1
+    node_list.reverse()
+
+    return comm_idx, node_list
+
+
+def get_node_tensor_metadata(
+    node: fx.Node, is_required: bool = True
+) -> TensorMetadata:
+    metadata = node.meta.get("tensor_meta", None)
+    if is_required and metadata is None:
+        raise RuntimeError(
+            f"Callsite expects that ``tensor_meta`` exists in ``{node.name}``, "
+            f"but got None instead. Node: {node.op} {node.name} {node.target}"
+        )
+    return metadata
 
 
 def get_output_node(gm: fx.GraphModule) -> Optional[fx.Node]:
-    """take a graphmodule and returns the graph output node
-    we traverse in reverse to expedite it, with the idea that last node should be output"""
-
+    """
+    Take a graphmodule and returns the graph output node. We traverse in reverse
+    to expedite it, with the idea that last node should be output
+    """
     if gm.graph is None:
-        raise ValueError("missing graph from graph module")
-    output_node = None
+        raise ValueError("Missing graph from graph module.")
 
     for node in reversed(gm.graph.nodes):
         if node.op == OP.OUTPUT:
-            output_node = node
-            break
-
-    return output_node
+            return node
+    return None
 
 
 def pretty_print_graph(gm: fx.GraphModule, header: str = "graph") -> None:
-    """print graphs with surrounding markers to make spotting in console easy"""
+    """Print graph with surrounding markers to make spotting in console easy."""
 
     rank0_info(
         logger,
@@ -82,47 +118,12 @@ def pretty_print_graph(gm: fx.GraphModule, header: str = "graph") -> None:
     )
 
 
-def get_all_nodes_of_type(
-    gm: fx.GraphModule,
-    node_type: OP,
-    starts_with: Optional[str] = None,
-    require_meta: bool = False,
-) -> Dict[str, fx.Node]:
-
-    results_dict = {}
-
-    for node in gm.graph.nodes:
-
-        starts_with_met = False
-        require_meta_met = False
-
-        if node.op != node_type:
-            continue
-
-        if starts_with is not None:
-            if node.name.startswith(starts_with):
-                starts_with_met = True
-        elif starts_with is None:
-            starts_with_met = True
-
-        if require_meta:
-            metadata = node.meta.get("tensor_meta")
-            if metadata:
-                require_meta_met = True
-        elif not require_meta:
-            require_meta_met
-
-        # add qualifying node
-        if starts_with_met and require_meta_met:
-            results_dict[node.name] = node
-
-    return results_dict
-
-
-def graph_cleanup(gm: fx.GraphModule, remove_dead_code: bool = True) -> None:
-    """runs the required steps to ensure production-ready graph.
+def rebuild_graph(gm: fx.GraphModule, remove_dead_code: bool = True) -> None:
+    """
+    Runs the required steps to ensure production-ready graph.
     note - per the fx docs, eliminate dead code is not very precise.
-    Hence, the flag to make this step optional."""
+    Hence, the flag to make this step optional.
+    """
 
     gm.graph.lint()
     if remove_dead_code:
