@@ -343,7 +343,7 @@ def _convert_to_distributed(
             assert i < len(
                 inps
             ), f"got more placeholer nodes ({i + 1}) than inputs ({len(inps)})"
-            if training_phase == TrainingPhase.FORWARD:
+            if False:  # training_phase == TrainingPhase.FORWARD:
                 # in the forward phase we start with the full "global" ensors.
                 # we needed this because we needed to capture the original graph.
                 node_to_obj[node] = distribute_tensor(
@@ -354,7 +354,7 @@ def _convert_to_distributed(
             else:
                 # But in the backward pass we got "real" sharded inputs
                 # so we have to actually make DTensors out of them
-                assert training_phase == TrainingPhase.BACKWARD
+                # assert training_phase == TrainingPhase.BACKWARD
                 node_to_obj[node] = DTensor.from_local(
                     inps[i],
                     schemas[i].mesh,
@@ -405,6 +405,8 @@ def _convert_to_distributed(
     _rebuild_graph(gm, node_replacements)
 
     return gm, output_schemas
+
+from torch.fx.experimental.proxy_tensor import maybe_disable_fake_tensor_mode
 
 
 class _SPMD:
@@ -470,6 +472,16 @@ class _SPMD:
                     comm_node = comm_block_nodes[comm_idx]
                     grad = cast(Tuple[fx.Node, ...], comm_node.args[0])[0]
                 self._dist_graph.grad_to_primal[0][grad] = param
+
+    def _compile_wrapper(
+        self,
+        training_phase: TrainingPhase,
+        original_inputs,
+        gm: fx.GraphModule,
+        inps: List[torch.Tensor],
+    ) -> fx.GraphModule:
+        with maybe_disable_fake_tensor_mode():
+            return self._compile(training_phase, gm, original_inputs[0])
 
     def _compile(
         self,
@@ -556,6 +568,9 @@ def distribute(
 
     fake_mode = FakeTensorMode()
 
+    # will update this to the original forward inputs
+    original_inputs = [None]
+
     def input_to_fake(x):
         if not isinstance(x, torch.Tensor):
             return x
@@ -563,19 +578,20 @@ def distribute(
         if x in input_set:
             # "unshard" our fake tensor
             # (considers that inputs are sharded)
-            y = y.repeat(param_schema.mesh.size[0], *((1, ) * (y.ndim - 1)))
+            y = y.repeat(param_schema.mesh.size(0), *((1, ) * (y.ndim - 1)))
         # TODO assume non-inputs (params, etc) are replicated for now.
         return y
 
     def gather_inputs_for_compilation(
         inps: Tuple[object, ...],
     ) -> Tuple[object, ...]:
+        original_inputs[0] = inps
         return tuple(input_to_fake(x) for x in inps)
 
     spmd = _SPMD(dist_graph, param_schema, input_schemas, map_param_and_grad)
     compiled_m = aot_module(
         cast(nn.Module, dist_graph.orig_module),
-        partial(spmd._compile, TrainingPhase.FORWARD),
+        partial(spmd._compile_wrapper, TrainingPhase.FORWARD, original_inputs),
         partial(spmd._compile, TrainingPhase.BACKWARD),
         pre_compile_fn=gather_inputs_for_compilation,
         decompositions=_CURRENT_DECOMPOSITION_TABLE,
