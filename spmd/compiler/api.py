@@ -28,7 +28,7 @@ class SPMD(nn.Module):
         optimize_first_iter: bool = False,
         optimizations: Sequence[GraphOptimization] = tuple(),
         map_param_and_grad: bool = True,
-        print_graph: bool = True,
+        print_graph: bool = False,
     ) -> None:
         """
         Given a non-distributed nn.Module, distribute the module and apply
