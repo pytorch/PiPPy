@@ -130,7 +130,11 @@ def work_main(rank: int, world_size: int) -> None:
     run_backward = True
     all_spmd = []
     optimizations = [
-        [GraphOptimization("fuse_communication_cat")],
+        [
+            GraphOptimization("fuse_communication")
+            GraphOptimization("fuse_communication_cat")
+            GraphOptimization("overlap_communication")
+        ],
     ]
     for optim in optimizations:
         spmd = SPMD(

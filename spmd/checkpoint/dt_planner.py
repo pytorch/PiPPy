@@ -4,7 +4,7 @@ from typing import Any, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
-from torch.distributed.checkpoint.dedup_tensors import dedup_tensors
+from torch.distributed.checkpoint._dedup_tensors import dedup_tensors
 from torch.distributed.checkpoint.default_planner import (
     DefaultLoadPlanner,
     DefaultSavePlanner,
