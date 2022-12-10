@@ -212,6 +212,7 @@ class TraceModuleTest(DTensorTestBase):
         optimize_first_iter = kwargs.pop("optimize_first_iter", False)
         # if x.device.type == "cuda":
         ddp = DDP(deepcopy(model))
+        print('-------------')
         spmd = SPMD(
             deepcopy(model),
             schema=Schema(
@@ -225,17 +226,22 @@ class TraceModuleTest(DTensorTestBase):
             else None,
             optimize_first_iter=optimize_first_iter,
         )
+        print('=================')
         if "inp_schemas" in kwargs:
             del kwargs["inp_schemas"]
         only_fw = False
         if "only_fw" in kwargs:
             only_fw = kwargs["only_fw"]
             del kwargs["only_fw"]
+        print('///////////////////')
         if only_fw:
+            print('......')
             output_ddp = ddp(x, *args, **kwargs)
+            print('2222222222')
             output_spmd = spmd(x, *args, **kwargs)
             self.assertTrue(output_ddp.size(), output_spmd.size())
             return
+        print('+++++++++++++++++')
         ddp(x, *args, **kwargs).sum().backward()
         spmd(x, *args, **kwargs).sum().backward()
         for p1, p2 in zip(ddp.parameters(), spmd.parameters()):
@@ -246,6 +252,8 @@ class TraceModuleTest(DTensorTestBase):
                 p1.grad.allclose(p2.grad / self.world_size)
                 or p1.grad.allclose(p2.grad)
             )
+        print('/////////////////////////////////')
+
 
     @with_comms
     def test_torch_cat(self):
@@ -283,10 +291,11 @@ class TraceModuleTest(DTensorTestBase):
         # tuples in its output which means we need to support get_item.
         input_dims = []
 
-        input = np.random.randn(4, 5).astype(np.float32)
+        input = torch.randn(4, 5, dtype=torch.float, device=self.device_type)
         model = nn.LayerNorm(input.shape[1:]).to(self.device_type)
-        pt_input = torch.tensor(input, dtype=torch.float).to(self.device_type)
-        self._test_trace_replicate(model, pt_input, only_fw=True)
+        print(input)
+        print(model)
+        self._test_trace_replicate(model, input)
 
     @with_comms
     def test_baked_in_shape(self):

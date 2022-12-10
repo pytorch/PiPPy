@@ -539,6 +539,8 @@ class _SPMD:
         return make_boxed_func(parallelized_gm)
 
 
+from torch._subclasses.fake_tensor import FakeTensorMode
+
 def distribute(
     dist_graph: DistributedGraph,
     param_schema: Schema,
@@ -552,18 +554,23 @@ def distribute(
     flat_kwargs, _ = tree_flatten(kwargs)
     input_set: Set[object] = set(flat_args + flat_kwargs)
 
+    fake_mode = FakeTensorMode()
+
+    def input_to_fake(x):
+        if not isinstance(x, torch.Tensor):
+            return x
+        y = fake_mode.from_tensor(x)
+        if x in input_set:
+            # "unshard" our fake tensor
+            # (considers that inputs are sharded)
+            y = y.repeat(param_schema.mesh.size[0], *((1, ) * (y.ndim - 1)))
+        # TODO assume non-inputs (params, etc) are replicated for now.
+        return y
+
     def gather_inputs_for_compilation(
         inps: Tuple[object, ...],
     ) -> Tuple[object, ...]:
-        compile_inps = tuple(
-            x
-            if not isinstance(x, torch.Tensor) or x not in input_set
-            else DTensor.from_local(x, param_schema.mesh, [Shard(0)])
-            .redistribute(param_schema.mesh, [Replicate()])
-            .to_local()
-            for x in inps
-        )
-        return compile_inps
+        return tuple(input_to_fake(x) for x in inps)
 
     spmd = _SPMD(dist_graph, param_schema, input_schemas, map_param_and_grad)
     compiled_m = aot_module(
