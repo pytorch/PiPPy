@@ -849,7 +849,9 @@ def run_fuse_communication_cat(gm: fx.GraphModule, fusion_length: int) -> None:
             graph_info.actual_grad_index_mapping[node] = idx
 
     # Fuse every ``fusion_length`` FusionElement.
+    assert graph_inf.felist is not None, "Why can't Pyre figure it out?"
     for start in range(0, len(graph_info.fe_list), fusion_length):
+        assert graph_inf.felist is not None, "Why can't Pyre figure it out?"
         fe_list = graph_info.fe_list[start : (start + fusion_length)]
         fused_comm_node = _fuse_with_cat(graph_info, gm, fe_list)
         grad_nodes = _scatter_results(graph_info, gm, fe_list)
