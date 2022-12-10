@@ -8,6 +8,11 @@ PiPPY make this easier by providing a auto split API that automates this process
 PiPPY splits your model into multiple stages, each stage loaded on one gpu then the input batch will be furhter divided into micro-batches and run through the splits from 
 rank0..rankN. Results are being returned to rank0 as its runing the PipelineDriver. Please read more on pipleines [here](https://github.com/pytorch/tau/blob/main/README.md)
 
+The flowchart below helps to visualize the process in high level as well.
+
+<img src="https://user-images.githubusercontent.com/9162336/206815839-60d43f93-ff4b-4a5e-99db-1e0c4a55a4ac.png" alt="drawing" width="400"/>
+
+
 ### PiPPY support arbitary checkpoint splitting 
 
 Unlike most of the available solutions that they need to know the model architecture beforehand, PiPPY supports arbitary PyTorch checkpoints.
