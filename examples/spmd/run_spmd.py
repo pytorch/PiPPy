@@ -1,19 +1,19 @@
 import logging
 import os
-from copy import deepcopy
-from typing import List, Union, Literal
-from functools import partial
 import random
+from copy import deepcopy
+from functools import partial
+from typing import List, Literal, Union
 
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.nn as nn
-from torch.nn.parallel import DistributedDataParallel as DDP
-from spmd import SPMD, Schema
-from spmd.tensor import DeviceMesh, Replicate
-from spmd.compiler.log_utils import rank0_debug
+from spmd import Schema, SPMD
 from spmd.compiler.graph_optimization import GraphOptimization
+from spmd.compiler.log_utils import rank0_debug
+from spmd.tensor import DeviceMesh, Replicate
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 logger: logging.Logger = logging.getLogger(__name__)
 _debug = partial(rank0_debug, logger)  # type: ignore
@@ -128,17 +128,23 @@ def work_main(rank: int, world_size: int) -> None:
     ddp.to(rank)
 
     run_backward = True
-    spmd = SPMD(
-        deepcopy(model),
-        schema=Schema(
-            mesh=DeviceMesh(
-                _device_type, gpu_placement  # torch.arange(world_size)
+    all_spmd = []
+    optimizations = [
+        [GraphOptimization("fuse_communication_cat")],
+    ]
+    for optim in optimizations:
+        spmd = SPMD(
+            deepcopy(model),
+            schema=Schema(
+                mesh=DeviceMesh(
+                    _device_type, gpu_placement  # torch.arange(world_size)
+                ),
+                placements=[Replicate()],
             ),
-            placements=[Replicate()],
-        ),
-        optimize_first_iter=True,
-        optimizations=[GraphOptimization("fuse_communication")],
-    )
+            optimize_first_iter=True,
+            optimizations=optim,
+        )
+        all_spmd.append(spmd)
 
     # model input - need to adjust to match models
     # permute_input = x = torch.randn(2, 10, 40).to("cuda")
@@ -146,24 +152,28 @@ def work_main(rank: int, world_size: int) -> None:
     _debug(f"\ninput tensor, first item = {x[0][0]:.4f}")
 
     # fire off comms
-    spmd(x).sum().backward()
+    for spmd in all_spmd:
+        spmd(x).sum().backward()
     ddp(x).sum().backward()
 
     if rank == 0:
         _debug(f" --> backwards run complete, rank {rank}")
 
         print("Visual of resulting grads:\n")
-        for i, (p1, p2) in enumerate(zip(ddp.parameters(), spmd.parameters())):
-            # just show first row of first 2 grad tensors for quick visual
-            if i < 2:
-                # visual display of initial grads
-                div_grad = p2.grad[0] / world_size
+        for spmd in all_spmd:
+            for i, (p1, p2) in enumerate(
+                zip(ddp.parameters(), spmd.parameters())
+            ):
+                # just show first row of first 2 grad tensors for quick visual
+                if i < 2:
+                    # visual display of initial grads
+                    div_grad = p2.grad[0] / world_size
 
-                print(f"DDP:\n {p1.grad[0]}\nSPMD:\n {div_grad}\n")  # type: ignore
+                    print(f"DDP:\n {p1.grad[0]}\nSPMD:\n {div_grad}\n")  # type: ignore
 
-            assert p1.grad.allclose(  # type: ignore
-                p2.grad / world_size
-            ), "Mismatch in resulting grads between DDP and SPMD."
+                assert p1.grad.allclose(  # type: ignore
+                    p2.grad / world_size
+                ), "Mismatch in resulting grads between DDP and SPMD."
     _debug("--> run completed, all grads matching!")
 
 
