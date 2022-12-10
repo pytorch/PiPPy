@@ -125,7 +125,7 @@ class DistributedTensorPlanner(DTensorTestBase):
         dist_cp.save_state_dict(
             state_dict=state_dict,
             storage_writer=dist_cp.FileSystemWriter(path=CHECKPOINT_DIR),
-            planner=DistributedTensorSavePlanner(),
+            planner=DistributedTensorSavePlanner(dedup_replicated_tensors=True),
         )
         sharded_dt = distribute_tensor(
             local_tensor * 10, mesh, placements=[DShard(0)]
