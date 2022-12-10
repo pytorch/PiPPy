@@ -575,7 +575,9 @@ def run_fuse_communication(gm: fx.GraphModule, fusion_policy: int = 4) -> None:
 
     # simple fusion policy where int = num buckets to fuse...start with 2,
     # meaning every 2 comms are fused into 1
-    assert fusion_policy > 1, f"fusion policy requires > 1 for actual fusion. "
+    assert (
+        fusion_policy > 1
+    ), f"fusion policy is {fusion_policy}, but requires > 1 for actual fusion. "
 
     # determine peak memory using fusion policy
     peak_memory_required = _determine_peak_memory(graph_info, fusion_policy)
