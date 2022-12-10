@@ -163,13 +163,12 @@ class TestProcessGroupAwarePlanner(DTensorTestBase):
         """
         with FSDP.summon_full_params(model):
             self.assertEqual(tensor_dict[dist.get_rank()], model.param.detach())
-            # self.assertEqual(0, model.extra_state)
-            # self.assertEqual(
-            #     torch.tensor([[1.0, -1.0], [1.0, -1.0]]),
-            #     model.extra_state_tensor,
-            # )
+            self.assertEqual(0, model.extra_state)
+            self.assertEqual(
+                torch.tensor([[1.0, -1.0], [1.0, -1.0]]),
+                model.extra_state_tensor,
+            )
 
 
-if __name__ == "__main__":
-
-    run_tests()
+# if __name__ == "__main__":
+#     run_tests()

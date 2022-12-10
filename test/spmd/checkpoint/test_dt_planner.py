@@ -205,5 +205,5 @@ class DistributedTensorPlanner(DTensorTestBase):
                 self.assertEqual(torch.tensor([0.0]), v["extra_state_tensor"])
 
 
-if __name__ == "__main__":
-    run_tests()
+# if __name__ == "__main__":
+#     run_tests()
