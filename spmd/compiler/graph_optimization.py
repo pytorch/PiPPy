@@ -165,13 +165,14 @@ class DistGraphOptimization:
         self,
         bucketing_strategy: BucketingStrategy = BucketingStrategy.FIXED,
         scheduling_policy: SchedulingPolicy = SchedulingPolicy.FCFS,
+        fusion_policy: int = 10,
     ) -> "DistGraphOptimization":
 
         assert len(
             self._graph.bwd_graph_modules
         ), f"no bwd graph ready from {self._graph.bwd_graph_modules}"
 
-        run_fuse_communication(self._graph.bwd_graph_modules[0])
+        run_fuse_communication(self._graph.bwd_graph_modules[0], fusion_policy)
         return self
 
     @graph_optimization_pass()
