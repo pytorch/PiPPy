@@ -1,7 +1,7 @@
 # type: ignore
 # pyre-ignore-all-errors
 import logging
-from dataclasses import astuple, fields
+from dataclasses import fields
 from typing import Any, Callable, cast, Dict, Iterator, List, Optional, Tuple
 
 import torch
@@ -810,7 +810,8 @@ class ProfilerEngine:
         # Flatten NodeInfo to a tuple that contains hashable values.
         for node, node_info in prof.node_info.items():
             plain_node_info = []
-            for item in astuple(node_info):
+            for field in fields(node_info):
+                item = getattr(node_info, field.name)
                 if isinstance(item, (torch.Tensor, torch.cuda.Event)):
                     plain_node_info.append(None)
                 elif isinstance(item, fx.Node):
