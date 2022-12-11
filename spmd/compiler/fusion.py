@@ -232,7 +232,7 @@ def _copy_fe_to_buffer(
         buffer = gi.tracing_buffer
 
     tlist = []
-    for item in copy_list[::-1]:
+    for item in copy_list:
         a = torch.zeros(item.shape)  # type: ignore
         tlist.append(a)
 
@@ -254,7 +254,7 @@ def _copy_fe_to_buffer(
         # pl map remaps traced placeholders used in copy graph to main graph grad tensors
         pl_map[pl_list[i + 1]] = copy_list[i].grad_tensor_node  # type: ignore
 
-    insert_node = copy_list[0].comm_node
+    insert_node = copy_list[-1].comm_node
     value_remap: Dict[fx.Node, fx.Node] = {}
 
     def remap_copy_args(in_node: fx.Node) -> fx.Node:
@@ -267,9 +267,44 @@ def _copy_fe_to_buffer(
 
     # overlap - move the new gather section to the source node
     source_node = get_source_node_next(insert_node)
-    _debug(f"overlap - was {insert_node.name}, now {source_node.name}\n")
-    with gm.graph.inserting_before(source_node):
+    _debug(f"270 overlap - was {insert_node.name}, now {source_node.name}\n")
+
+    # move clone nodes
+    curr_node = source_node
+    for item in copy_list:
+        clone_node = item.node_list[0]
+        curr_node.append(clone_node)
+        curr_node = curr_node.next
+
+    # _debug(f"279 =====after clone node  =====\n {gm.graph.print_tabular()}\n")
+
+    # move final tensor_constants
+    constant_list = [copy_list[-1].node_list[1], copy_list[-1].node_list[2]]
+
+    assert constant_list[0].name.startswith(
+        "_tensor_constant"
+    ), f"failed to locate tensor constant node {constant_list[0]}"
+    assert constant_list[1].name.startswith(
+        "_tensor_constant"
+    ), f"failed to locate tensor constant node {constant_list[1]}"
+
+    for item in copy_list:
+        curr_node.append(item)
+        curr_node = curr_node.next
+
+    # move all_reduce final node
+    buffer_comm_node = copy_list[-1].comm_node
+    buffer_comm_node.update_arg(0, [buffer_node])  # type: ignore
+    curr_node.append(buffer_comm_node)
+    curr_node = curr_node.next
+
+    _debug(
+        f"287 =====after clone, tensor_constant and allreduce insert =====\n {gm.graph.print_tabular()}\n"
+    )
+    nodes_inserted_count = 0
+    with gm.graph.inserting_before(curr_node):
         for innernode in load_gm.graph.nodes:
+            nodes_inserted_count += 1
             if innernode.op in [OP.PLACEHOLDER, OP.OUTPUT]:
                 continue
             value_remap[innernode] = gm.graph.node_copy(
@@ -277,14 +312,15 @@ def _copy_fe_to_buffer(
             )
 
     _update_new_copy_nodes_users(value_remap)
-
+    _debug(f"282 - nodes inserted = {nodes_inserted_count}\n")
     # update allreduce to use buffer
     # (we currently don't) have to make our own all_reduce/comm_wait section
     # # TODO - pg group matching
     # _build_buffer_comm_graph(gm, gi)
 
-    buffer_comm_node = copy_list[0].comm_node
-    buffer_comm_node.update_arg(0, [buffer_node])  # type: ignore
+    _debug(f"286 =====after insert =====\n {gm.graph.print_tabular()}\n")
+
+    # TODO - move this to last node
 
 
 def _build_buffer_comm_graph(
@@ -508,6 +544,8 @@ def _finalize_output_node(
     replacement_mapping: Dict[fx.Node, fx.Node] = {}
 
     # map out all updated nodes in our list
+    # working in reverse for fusion, so undo for simple replacement
+    fe_list = fe_list[::-1]
     for item in fe_list:
         grad_node = item.grad_tensor_node
         wait_node = item.wait_node
@@ -596,18 +634,11 @@ def run_fuse_communication_ring(
     #    _debug(f"{i} grad node = {item.grad_tensor_node.name}\n")
     _debug(f"597, initial {fe_list=}\n")
 
-    rev_fe_list = fe_list[::-1]
-    graph_info.fe_list = rev_fe_list
+    fe_list = fe_list[::-1]
+    graph_info.fe_list = fe_list
 
-    _debug(f"602, reversed {rev_fe_list=}\n")
+    _debug(f"602, reversed {fe_list[0].node_list[0].name=}\n")
 
-    fe_list = rev_fe_list
-
-    # for i, item in enumerate(reversed(fe_list)):
-    #    _debug(f"\n{i} grad node reversed = {item.grad_tensor_node.name}\n")
-
-    # simple fusion policy where int = num buckets to fuse...start with 2,
-    # meaning every 2 comms are fused into 1
     assert (
         fusion_policy > 1
     ), f"fusion policy is {fusion_policy}, but requires > 1 for actual fusion. "
@@ -618,6 +649,8 @@ def run_fuse_communication_ring(
     assert (
         peak_memory_required > 0
     ), f"failed to compute effective peak memory - determined {peak_memory_required} as buffer size\n"
+
+    # TODO - ring buffer
 
     buffer_node = _insert_fusion_buffer_node(
         gm, peak_memory_required, graph_info
@@ -633,8 +666,11 @@ def run_fuse_communication_ring(
 
     # ----------- main fusion loop ------------------------
     index = -1
-    _debug(f"630, ")
+
     _debug(f"ring fusion policy = {fusion_policy}\n")
+    num_Nones = len([x for x in new_output_args if x is None])
+    _debug(f"{num_Nones=}\n")
+
     for index, item in enumerate(graph_info.fe_list):  # type: ignore
         count += 1
         _debug(f"633, fusion loop index = {count}\n")
@@ -644,7 +680,7 @@ def run_fuse_communication_ring(
 
             curr_fe_list = graph_info.fe_list[start_index:stop_index]  # type: ignore
 
-            _debug(f"638, {curr_fe_list=}\n")
+            _debug(f"638, preparing to fuse - {curr_fe_list=}\n")
 
             _copy_fe_to_buffer(graph_info, gm, curr_fe_list)
 
@@ -652,13 +688,19 @@ def run_fuse_communication_ring(
 
             # switch wait_comms to output gradient nodes in output directly
             # fusion will have removed and reworked existing wait_comms
+            # TODO use num_NONES
+            out_node_start = len(fe_list) - offset - count  # - num_Nones
+            out_node_stop = len(fe_list) - offset  # - num_Nones
+            _debug(
+                f"676, Indexes {start_index=}, {stop_index=}, // {out_node_start=}, {out_node_stop=}\n"
+            )
 
             _finalize_output_node(
                 graph_info,
                 gm,
                 curr_fe_list,
-                start_index,
-                stop_index,
+                out_node_start,
+                out_node_stop,
                 new_output_args,
             )
 
