@@ -232,7 +232,7 @@ def _copy_fe_to_buffer(
         buffer = gi.tracing_buffer
 
     tlist = []
-    for item in copy_list:
+    for item in copy_list[::-1]:
         a = torch.zeros(item.shape)  # type: ignore
         tlist.append(a)
 
@@ -254,7 +254,7 @@ def _copy_fe_to_buffer(
         # pl map remaps traced placeholders used in copy graph to main graph grad tensors
         pl_map[pl_list[i + 1]] = copy_list[i].grad_tensor_node  # type: ignore
 
-    insert_node = copy_list[-1].comm_node
+    insert_node = copy_list[0].comm_node
     value_remap: Dict[fx.Node, fx.Node] = {}
 
     def remap_copy_args(in_node: fx.Node) -> fx.Node:
@@ -265,7 +265,10 @@ def _copy_fe_to_buffer(
             out_node = value_remap[in_node]
         return out_node
 
-    with gm.graph.inserting_before(insert_node):
+    # overlap - move the new gather section to the source node
+    source_node = get_source_node_next(insert_node)
+    _debug(f"overlap - was {insert_node.name}, now {source_node.name}\n")
+    with gm.graph.inserting_before(source_node):
         for innernode in load_gm.graph.nodes:
             if innernode.op in [OP.PLACEHOLDER, OP.OUTPUT]:
                 continue
@@ -280,7 +283,7 @@ def _copy_fe_to_buffer(
     # # TODO - pg group matching
     # _build_buffer_comm_graph(gm, gi)
 
-    buffer_comm_node = copy_list[-1].comm_node
+    buffer_comm_node = copy_list[0].comm_node
     buffer_comm_node.update_arg(0, [buffer_node])  # type: ignore
 
 
@@ -589,13 +592,19 @@ def run_fuse_communication_ring(
     )
 
     graph_info.num_starting_fe = len(fe_list)  # type: ignore
-    for i, item in enumerate(fe_list):
-        _debug(f"{i} grad node = {item.grad_tensor_node.name}\n")
+    # for i, item in enumerate(fe_list):
+    #    _debug(f"{i} grad node = {item.grad_tensor_node.name}\n")
+    _debug(f"597, initial {fe_list=}\n")
 
-    graph_info.fe_list = fe_list
+    rev_fe_list = fe_list[::-1]
+    graph_info.fe_list = rev_fe_list
 
-    for i, item in enumerate(reversed(fe_list)):
-        _debug(f"\n{i} grad node reversed = {item.grad_tensor_node.name}\n")
+    _debug(f"602, reversed {rev_fe_list=}\n")
+
+    fe_list = rev_fe_list
+
+    # for i, item in enumerate(reversed(fe_list)):
+    #    _debug(f"\n{i} grad node reversed = {item.grad_tensor_node.name}\n")
 
     # simple fusion policy where int = num buckets to fuse...start with 2,
     # meaning every 2 comms are fused into 1
@@ -624,13 +633,18 @@ def run_fuse_communication_ring(
 
     # ----------- main fusion loop ------------------------
     index = -1
+    _debug(f"630, ")
+    _debug(f"ring fusion policy = {fusion_policy}\n")
     for index, item in enumerate(graph_info.fe_list):  # type: ignore
         count += 1
+        _debug(f"633, fusion loop index = {count}\n")
         if count == fusion_policy:
             start_index = offset
             stop_index = offset + count
 
             curr_fe_list = graph_info.fe_list[start_index:stop_index]  # type: ignore
+
+            _debug(f"638, {curr_fe_list=}\n")
 
             _copy_fe_to_buffer(graph_info, gm, curr_fe_list)
 
