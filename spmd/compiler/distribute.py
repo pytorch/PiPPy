@@ -106,14 +106,15 @@ def _get_dtensor_dispatch_graph(
     op_overload = cast(torch._ops.OpOverload, node.target)
 
     # run dispatch once to get the real DTensor output
-    out = operator_dispatch(
-        op_overload,
-        args,
-        kwargs,  # kwargs in this set of tests are all constants
-        DTensor._op_to_rules,
-        DTensor._custom_dispatch_ops,
-    )
-    node_to_obj[node] = out
+    with torch.no_grad():
+        out = operator_dispatch(
+            op_overload,
+            args,
+            kwargs,  # kwargs in this set of tests are all constants
+            DTensor._op_to_rules,
+            DTensor._custom_dispatch_ops,
+        )
+        node_to_obj[node] = out
 
     # get DTensor specs for inputs and outputs
     (target_schema, redistribute, output_sharding,) = propagate_input_sharding(
@@ -318,6 +319,26 @@ def _rebuild_graph(
     gm.recompile()
 
 
+def get_user_to_last_uses(nodes: Sequence[fx.Node]) -> Dict[fx.Node, List[fx.Node]]:
+    # Run through reverse nodes and record the first instance of a use
+    # of a given node. This represents the *last* use of the node in the
+    # execution order of the program, which we will use to free unused
+    # values
+    node_to_last_use : Dict[fx.Node, fx.Node] = {}
+    user_to_last_uses : Dict[fx.Node, List[fx.Node]] = {}
+
+    def register_last_uses(n : fx.Node, user : fx.Node):
+        if n not in node_to_last_use:
+            node_to_last_use[n] = user
+            user_to_last_uses.setdefault(user, []).append(n)
+
+    for node in reversed(nodes):
+        fx.node.map_arg(node.args, lambda n: register_last_uses(n, node))
+        fx.node.map_arg(node.kwargs, lambda n: register_last_uses(n, node))
+
+    return user_to_last_uses
+
+
 def _convert_to_distributed(
     training_phase: TrainingPhase,
     gm: fx.GraphModule,
@@ -335,6 +356,8 @@ def _convert_to_distributed(
     # DTensor ops.
     node_replacements: Dict[torch.fx.Node, torch.fx.GraphModule] = {}
 
+    user_to_last_uses = get_user_to_last_uses(gm.graph.nodes)
+ 
     rank0_info(logger, f"Training phase: {training_phase}")
     output_schemas: Dict[str, Schema] = {}
     for i, node in enumerate(gm.graph.nodes):
@@ -391,6 +414,11 @@ def _convert_to_distributed(
             node_to_obj[node] = node.target(args[0], args[1])
         else:
             raise ValueError(f"Unrecognized node {node}")
+
+        if node in user_to_last_uses:
+            # save memory by deleting objs that wont be used anymore
+            for last_use in user_to_last_uses[node]:
+                del node_to_obj[last_use]
 
     _rebuild_graph(gm, node_replacements)
 
