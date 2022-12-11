@@ -22,7 +22,11 @@ from spmd.tensor import (
     Shard,
 )
 from torch.distributed._spmd.comm_tensor import _get_tracer
-from torch.fx.experimental.proxy_tensor import make_fx, proxy_slot
+from torch.fx.experimental.proxy_tensor import (
+    make_fx,
+    proxy_slot,
+    maybe_disable_fake_tensor_mode,
+)
 from torch.utils._pytree import tree_flatten, tree_map, tree_unflatten
 
 from .aot_function_patch import patched_aot_function
@@ -424,9 +428,6 @@ def _convert_to_distributed(
     _rebuild_graph(gm, node_replacements)
 
     return gm, output_schemas
-
-
-from torch.fx.experimental.proxy_tensor import maybe_disable_fake_tensor_mode
 
 
 class _SPMD:
