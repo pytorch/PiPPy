@@ -2,7 +2,7 @@ import logging
 from dataclasses import dataclass
 from enum import auto, Enum
 from functools import partial
-from typing import cast, Dict, List, Sequence, Set, Tuple
+from typing import cast, Dict, List, Optional, Sequence, Set, Tuple
 
 import torch
 import torch.fx as fx
@@ -14,7 +14,6 @@ from spmd.tensor import (
     _Partial,
     _redistribute_with_local_tensor,
     DeviceMesh,
-    distribute_tensor,
     DTensor,
     operator_dispatch,
     Placement,
@@ -319,20 +318,22 @@ def _rebuild_graph(
     gm.recompile()
 
 
-def get_user_to_last_uses(nodes: Sequence[fx.Node]) -> Dict[fx.Node, List[fx.Node]]:
+def get_user_to_last_uses(
+    graph: fx.Graph,
+) -> Dict[fx.Node, List[fx.Node]]:
     # Run through reverse nodes and record the first instance of a use
     # of a given node. This represents the *last* use of the node in the
     # execution order of the program, which we will use to free unused
     # values
-    node_to_last_use : Dict[fx.Node, fx.Node] = {}
-    user_to_last_uses : Dict[fx.Node, List[fx.Node]] = {}
+    node_to_last_use: Dict[fx.Node, fx.Node] = {}
+    user_to_last_uses: Dict[fx.Node, List[fx.Node]] = {}
 
-    def register_last_uses(n : fx.Node, user : fx.Node):
+    def register_last_uses(n: fx.Node, user: fx.Node) -> None:
         if n not in node_to_last_use:
             node_to_last_use[n] = user
             user_to_last_uses.setdefault(user, []).append(n)
 
-    for node in reversed(nodes):
+    for node in reversed(graph.nodes):
         fx.node.map_arg(node.args, lambda n: register_last_uses(n, node))
         fx.node.map_arg(node.kwargs, lambda n: register_last_uses(n, node))
 
@@ -356,8 +357,8 @@ def _convert_to_distributed(
     # DTensor ops.
     node_replacements: Dict[torch.fx.Node, torch.fx.GraphModule] = {}
 
-    user_to_last_uses = get_user_to_last_uses(gm.graph.nodes)
- 
+    user_to_last_uses = get_user_to_last_uses(gm.graph)
+
     rank0_info(logger, f"Training phase: {training_phase}")
     output_schemas: Dict[str, Schema] = {}
     for i, node in enumerate(gm.graph.nodes):
@@ -423,6 +424,7 @@ def _convert_to_distributed(
     _rebuild_graph(gm, node_replacements)
 
     return gm, output_schemas
+
 
 from torch.fx.experimental.proxy_tensor import maybe_disable_fake_tensor_mode
 
@@ -494,7 +496,7 @@ class _SPMD:
     def _compile_wrapper(
         self,
         training_phase: TrainingPhase,
-        original_inputs,
+        original_inputs: List[List[torch.Tensor]],
         gm: fx.GraphModule,
         inps: List[torch.Tensor],
     ) -> fx.GraphModule:
@@ -571,6 +573,7 @@ class _SPMD:
 
 from torch._subclasses.fake_tensor import FakeTensorMode
 
+
 def distribute(
     dist_graph: DistributedGraph,
     param_schema: Schema,
@@ -584,19 +587,19 @@ def distribute(
     flat_kwargs, _ = tree_flatten(kwargs)
     input_set: Set[object] = set(flat_args + flat_kwargs)
 
-    fake_mode = FakeTensorMode()
+    fake_mode: FakeTensorMode = FakeTensorMode()
 
     # will update this to the original forward inputs
-    original_inputs = [None]
+    original_inputs: List[Optional[Sequence[object]]] = [None]
 
-    def input_to_fake(x):
+    def input_to_fake(x: object) -> object:
         if not isinstance(x, torch.Tensor):
             return x
         y = fake_mode.from_tensor(x)
         if x in input_set:
             # "unshard" our fake tensor
             # (considers that inputs are sharded)
-            y = y.repeat(param_schema.mesh.size(0), *((1, ) * (y.ndim - 1)))
+            y = y.repeat(param_schema.mesh.size(0), *((1,) * (y.ndim - 1)))
         # TODO assume non-inputs (params, etc) are replicated for now.
         return y
 
