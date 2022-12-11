@@ -534,7 +534,8 @@ def _determine_peak_memory(gi: GraphInfo, fusion_policy: int) -> int:
     peak_memory = 0  # currently measured in numel
     curr_memory = 0
     curr_fe_index = 0
-    for i, item in enumerate(gi.fe_list):  # type: ignore
+
+    for item in gi.fe_list:  # type: ignore
         curr_fe_index += 1
         curr_memory += item.size  # type: ignore
 
@@ -543,7 +544,7 @@ def _determine_peak_memory(gi: GraphInfo, fusion_policy: int) -> int:
             curr_fe_index = 0
             curr_memory = 0
 
-    _debug(f"574, peak memory determined to be {peak_memory}")
+    _debug(f"peak memory determined to be {peak_memory}")
     gi.peak_memory_required = peak_memory
 
     return peak_memory
@@ -571,7 +572,9 @@ def _teardown(gm: fx.GraphModule) -> None:
     # _debug(f"\n Final Graph ===== \n {gm.graph.print_tabular()}\n")
 
 
-def run_fuse_communication(gm: fx.GraphModule, fusion_policy: int = 4) -> None:
+def run_fuse_communication_ring(
+    gm: fx.GraphModule, fusion_policy: int = 4
+) -> None:
     """Main entry into remapping graph for all_reduce fusion.
     Modifications are in place to the graph.  Errors will result in stoppage
     to alert user rather than handling and returning error codes."""
@@ -586,7 +589,13 @@ def run_fuse_communication(gm: fx.GraphModule, fusion_policy: int = 4) -> None:
     )
 
     graph_info.num_starting_fe = len(fe_list)  # type: ignore
+    for i, item in enumerate(fe_list):
+        _debug(f"{i} grad node = {item.grad_tensor_node.name}\n")
+
     graph_info.fe_list = fe_list
+
+    for i, item in enumerate(reversed(fe_list)):
+        _debug(f"\n{i} grad node reversed = {item.grad_tensor_node.name}\n")
 
     # simple fusion policy where int = num buckets to fuse...start with 2,
     # meaning every 2 comms are fused into 1
@@ -596,6 +605,10 @@ def run_fuse_communication(gm: fx.GraphModule, fusion_policy: int = 4) -> None:
 
     # determine peak memory using fusion policy
     peak_memory_required = _determine_peak_memory(graph_info, fusion_policy)
+
+    assert (
+        peak_memory_required > 0
+    ), f"failed to compute effective peak memory - determined {peak_memory_required} as buffer size\n"
 
     buffer_node = _insert_fusion_buffer_node(
         gm, peak_memory_required, graph_info
@@ -610,7 +623,7 @@ def run_fuse_communication(gm: fx.GraphModule, fusion_policy: int = 4) -> None:
     new_output_args: List[fx.Node] = list(start_output_args)  # type: ignore
 
     # ----------- main fusion loop ------------------------
-
+    index = -1
     for index, item in enumerate(graph_info.fe_list):  # type: ignore
         count += 1
         if count == fusion_policy:
@@ -646,6 +659,10 @@ def run_fuse_communication(gm: fx.GraphModule, fusion_policy: int = 4) -> None:
     _debug(f"Final output node args {new_output_args=}\n")
 
     _teardown(gm)
+
+    _debug(
+        f"\n ======= Final Graph, Ring Fusion ======\n{gm.graph.print_tabular()}()\n"
+    )
 
 
 def get_source_node_next(comm_node: fx.Node) -> fx.Node:
