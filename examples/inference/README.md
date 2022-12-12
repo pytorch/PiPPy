@@ -31,7 +31,7 @@ For example to serve two copies of the model with 8 gpus, assuming we can serve 
 ```
 model_pipe.defer_stage_init(args.device)
 torch.distributed.barrier(args.pp_group)
-if args.rank!=0:
+if args.rank!=0 or args.rank!=4:
         return 
 ```
         
