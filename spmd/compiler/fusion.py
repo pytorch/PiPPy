@@ -72,10 +72,13 @@ class GraphInfo:
     fe_list: List[FusionElement] = field(default_factory=lambda: [])
     # max memory needed for fusion buffer
     peak_memory_required: int = 0
-    # node housing global buffer for fusion comms
-    global_buffer_node: Optional[fx.Node] = None
+    # list housing global buffers for fusion comms
+    _ring_buffer: Optional[List[fx.Node]] = None
     # size of the global buffer
     global_buffer_size: int = 0
+    _ring_size: int = 0
+    _ring_index: int = 0
+    _current_ring_index: int = 0
     # real buffer (not node) used for tracing fusion subgraphs
     tracing_buffer: Optional[torch.Tensor] = None
     # first node in graph (head)
@@ -91,6 +94,38 @@ class GraphInfo:
     actual_grad_index_mapping: Dict[fx.Node, int] = field(
         default_factory=lambda: {}
     )
+
+    def setup_ring_buffer(
+        self, buffer_node_list: List[fx.Node], buffer_size: int
+    ):
+        """init ring buffer for sequential allocation"""
+        self._ring_buffer = buffer_node_list
+        self._ring_size = len(self._ring_buffer)
+        self._ring_index = 0
+
+        self.global_buffer_size = buffer_size
+
+        _debug(f"107, ring buffer setup: {self._ring_buffer=}")
+
+    def get_next_ring_buffer(
+        self,
+    ) -> fx.Node:
+        """get the next buffer node in the ring"""
+        buffer_node = self._ring_buffer[self._ring_index]
+        self._current_ring_index = self._ring_index
+        assert (
+            buffer_node is not None
+        ), f"failed to get ring buffer for index {self._ring_index}\n"
+        self._ring_index += 1
+        if self._ring_index >= self._ring_size:
+            self._ring_index = 0
+        return buffer_node
+
+    def get_current_ring_buffer(
+        self,
+    ):
+        """used to retrieve the current one (for remapping)"""
+        return self._ring_buffer[self._current_ring_index]
 
     def update_info(self, gm: fx.GraphModule) -> "GraphInfo":
         """Get the len, input and output nodes"""
@@ -128,7 +163,8 @@ class GraphInfo:
 def _insert_fusion_buffer_node(
     gm: fx.GraphModule,
     buffer_size: int,
-    gi: Optional[GraphInfo] = None,
+    gi: Optional[GraphInfo],
+    ring_size: int = 2,
 ) -> fx.Node:
     """Insert a torch.empty node for the global buffer.
     defaults to first node after placeholder nodes.
@@ -148,23 +184,26 @@ def _insert_fusion_buffer_node(
         torch.cuda.set_device(rank)
     rank_device = torch.cuda.current_device()
 
+    ring_buffer = []
     with gm.graph.inserting_before(insert_before_node):
-        new_buffer_node = gm.graph.create_node(
-            OP.CALL_FUNCTION,
-            target=torch.empty,
-            # TODO - need device from DTensor to put buffer on gpu
-            args=(buffer_size,),
-            kwargs={"device": rank_device},
-        )
+        for i in range(ring_size):
+            new_buffer_node = gm.graph.create_node(
+                OP.CALL_FUNCTION,
+                target=torch.empty,
+                # TODO - need device from DTensor to put buffer on gpu
+                args=(buffer_size,),
+                kwargs={"device": rank_device},
+            )
+            ring_buffer.append(new_buffer_node)
+
     assert (
         new_buffer_node is not None
     ), f"failed to create buffer node, size={buffer_size}"
 
-    if gi is not None:
-        gi.global_buffer_node = new_buffer_node
-        gi.global_buffer_size = buffer_size
+    # init ring buffer
+    gi.setup_ring_buffer(ring_buffer, buffer_size)
 
-    return new_buffer_node
+    return ring_buffer
 
 
 def _scan_graph_for_fusion_elements(
@@ -208,7 +247,7 @@ def _copy_fe_to_buffer(
     gi: GraphInfo, gm: fx.GraphModule, copy_list: List[FusionElement]
 ) -> None:
     """First half of fusion - move desired items to buffer and create graph"""
-    buffer_node = gi.global_buffer_node
+    buffer_node = gi.get_next_ring_buffer()
     buffer_size = gi.global_buffer_size
 
     num_fusion_elements = len(copy_list)
@@ -248,7 +287,7 @@ def _copy_fe_to_buffer(
 
     # create placeholder remapping
     pl_map: Dict[fx.Node, fx.Node] = {}
-    pl_map[pl_list[0]] = gi.global_buffer_node  # type: ignore
+    pl_map[pl_list[0]] = buffer_node  # type: ignore
 
     for i in range(num_fusion_elements):
         # pl map remaps traced placeholders used in copy graph to main graph grad tensors
@@ -360,7 +399,7 @@ def _scatter_results_from_buffer(
 ) -> None:
     """After comm event with buffer, scatter results back to original fe grad tensors"""
 
-    buffer_node = gi.global_buffer_node
+    buffer_node = gi.get_current_ring_buffer()
     buffer_size = gi.global_buffer_size
 
     scatter_list = fe_list
@@ -401,7 +440,7 @@ def _scatter_results_from_buffer(
 
     # create placeholder remapping
     pl_map: Dict[fx.Node, fx.Node] = {}
-    pl_map[pl_list[0]] = gi.global_buffer_node  # type: ignore
+    pl_map[pl_list[0]] = buffer_node  # type: ignore
     for i in range(num_fe_items):
         pl_map[pl_list[i + 1]] = fe_list[i].grad_tensor_node  # type: ignore
 
@@ -454,7 +493,7 @@ def _scatter_results_from_buffer(
     ), f"failed to get tensor metadata for last getitem node {last_get_item_node=}"
 
     # replace with buffer metadata
-    buffer_meta = gi.global_buffer_node.meta.get("tensor_meta", None)  # type: ignore
+    buffer_meta = buffer_node.meta.get("tensor_meta", None)  # type: ignore
 
     new_tensor_meta = _update_node_tensor_metadata(
         last_get_item_node, new_shape=buffer_shape  # type: ignore
@@ -651,9 +690,10 @@ def run_fuse_communication_ring(
     ), f"failed to compute effective peak memory - determined {peak_memory_required} as buffer size\n"
 
     # TODO - ring buffer
+    ring_size = 2
 
-    buffer_node = _insert_fusion_buffer_node(
-        gm, peak_memory_required, graph_info
+    ring_buffer = _insert_fusion_buffer_node(
+        gm, peak_memory_required, graph_info, ring_size
     )
 
     # Main process loop - iterate all fusion elements, apply fusion to subsets
