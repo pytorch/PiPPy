@@ -337,9 +337,9 @@ def _copy_fe_to_buffer(
     curr_node.append(buffer_comm_node)
     curr_node = curr_node.next
 
-    _debug(
-        f"287 =====after clone, tensor_constant and allreduce insert =====\n {gm.graph.print_tabular()}\n"
-    )
+    # _debug(
+    #    f"287 =====after clone, tensor_constant and allreduce insert =====\n {gm.graph.print_tabular()}\n"
+    # )
     nodes_inserted_count = 0
     with gm.graph.inserting_before(curr_node):
         for innernode in load_gm.graph.nodes:
@@ -357,7 +357,7 @@ def _copy_fe_to_buffer(
     # # TODO - pg group matching
     # _build_buffer_comm_graph(gm, gi)
 
-    _debug(f"286 =====after insert =====\n {gm.graph.print_tabular()}\n")
+    # _debug(f"286 =====after insert =====\n {gm.graph.print_tabular()}\n")
 
     # TODO - move this to last node
 
@@ -653,7 +653,9 @@ def _teardown(gm: fx.GraphModule) -> None:
 
 
 def run_fuse_communication_ring(
-    gm: fx.GraphModule, fusion_policy: int = 4
+    gm: fx.GraphModule,
+    fusion_policy: int = 2,
+    ring_buffer_size: int = 2,
 ) -> None:
     """Main entry into remapping graph for all_reduce fusion.
     Modifications are in place to the graph.  Errors will result in stoppage
@@ -676,7 +678,7 @@ def run_fuse_communication_ring(
     fe_list = fe_list[::-1]
     graph_info.fe_list = fe_list
 
-    _debug(f"602, reversed {fe_list[0].node_list[0].name=}\n")
+    # _debug(f"602, reversed {fe_list[0].node_list[0].name=}\n")
 
     assert (
         fusion_policy > 1
@@ -689,11 +691,8 @@ def run_fuse_communication_ring(
         peak_memory_required > 0
     ), f"failed to compute effective peak memory - determined {peak_memory_required} as buffer size\n"
 
-    # TODO - ring buffer
-    ring_size = 2
-
     ring_buffer = _insert_fusion_buffer_node(
-        gm, peak_memory_required, graph_info, ring_size
+        gm, peak_memory_required, graph_info, ring_buffer_size
     )
 
     # Main process loop - iterate all fusion elements, apply fusion to subsets
@@ -707,9 +706,10 @@ def run_fuse_communication_ring(
     # ----------- main fusion loop ------------------------
     index = -1
 
-    _debug(f"ring fusion policy = {fusion_policy}\n")
     num_Nones = len([x for x in new_output_args if x is None])
-    _debug(f"{num_Nones=}\n")
+    working_output_len = len(new_output_args) - num_Nones
+
+    # _debug(f"{num_Nones=}\n")
 
     for index, item in enumerate(graph_info.fe_list):  # type: ignore
         count += 1
@@ -720,7 +720,7 @@ def run_fuse_communication_ring(
 
             curr_fe_list = graph_info.fe_list[start_index:stop_index]  # type: ignore
 
-            _debug(f"638, preparing to fuse - {curr_fe_list=}\n")
+            # _debug(f"638, preparing to fuse - {curr_fe_list=}\n")
 
             _copy_fe_to_buffer(graph_info, gm, curr_fe_list)
 
@@ -728,9 +728,9 @@ def run_fuse_communication_ring(
 
             # switch wait_comms to output gradient nodes in output directly
             # fusion will have removed and reworked existing wait_comms
-            # TODO use num_NONES
-            out_node_start = len(fe_list) - offset - count  # - num_Nones
-            out_node_stop = len(fe_list) - offset  # - num_Nones
+
+            out_node_start = working_output_len - offset - count
+            out_node_stop = working_output_len - offset
             _debug(
                 f"676, Indexes {start_index=}, {stop_index=}, // {out_node_start=}, {out_node_stop=}\n"
             )
