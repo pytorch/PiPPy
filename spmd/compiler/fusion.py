@@ -748,7 +748,8 @@ def _fuse_with_cat(
     with gm.graph.inserting_after(last_grad_tensor_node):
         cat_inputs = [
             gm.graph.call_function(
-                torch.flatten, (fe.grad_tensor_node.args[0],)
+                torch.flatten,
+                (cast(fx.Node, cast(fx.Node, fe.grad_tensor_node).args[0]),),
             )
             for fe in copy_list
         ]
