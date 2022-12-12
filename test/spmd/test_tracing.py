@@ -1,25 +1,39 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+
+from copy import deepcopy
+from functools import wraps
 from typing import List
 
+import numpy as np
 import torch
 import torch.nn as nn
-from torch.distributed.distributed_c10d import get_global_rank, get_world_size
 from torch.distributed._spmd.comm_tensor import CommTensor
+from torch.distributed.distributed_c10d import get_global_rank, get_world_size
 from torch.fx.experimental.proxy_tensor import make_fx
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.testing._internal.common_utils import run_tests
-
-from spmd.api import SPMD, Schema
-from spmd.testing.common_utils import (  # type: ignore
-    DistTensorTestBase,
-    with_comms,
+from torch.testing._internal.distributed._tensor.common_dtensor import (
+    DTensorTestBase,
 )
-from spmd.tensor import (
-    DeviceMesh,
-    Replicate,
+from torch.testing._internal.distributed._tensor.common_dtensor import (
+    with_comms as base_with_comms,
 )
 
-from copy import deepcopy
+from spmd.compiler.api import SPMD, Schema
+from spmd.tensor import DeviceMesh, Replicate
+
+
+def with_comms(func):
+    @base_with_comms
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+        # make sure we set different random seeds for each rank
+        # otherwise we dont need DDP / SPMD
+        # (we would have the same parameters and inputs everywhere)
+        torch.manual_seed(torch.distributed.get_rank())
+        return func(self, *args, **kwargs)
+
+    return wrapper
 
 
 class TraceDeviceMeshTestBase:
@@ -145,7 +159,7 @@ class TraceDeviceMeshTestBase:
                 )
 
 
-class TraceDeviceMesh3DTest(DistTensorTestBase, TraceDeviceMeshTestBase):
+class TraceDeviceMesh3DTest(DTensorTestBase, TraceDeviceMeshTestBase):
     @property
     def world_size(self):
         return 8
@@ -167,7 +181,7 @@ class TraceDeviceMesh3DTest(DistTensorTestBase, TraceDeviceMeshTestBase):
         self._test_all_gather_nd(torch.arange(8).reshape(2, 2, 2))
 
 
-class TraceDeviceMesh2DTest(DistTensorTestBase, TraceDeviceMeshTestBase):
+class TraceDeviceMesh2DTest(DTensorTestBase, TraceDeviceMeshTestBase):
     @property
     def world_size(self):
         return 4
@@ -189,12 +203,13 @@ class TraceDeviceMesh2DTest(DistTensorTestBase, TraceDeviceMeshTestBase):
         self._test_all_gather_nd(torch.arange(4).reshape(2, 2))
 
 
-class TraceModuleTest(DistTensorTestBase):
+class TraceModuleTest(DTensorTestBase):
     @property
     def world_size(self):
         return 2
 
-    def _test_trace_replicate(self, model, x):
+    def _test_trace_replicate(self, model: nn.Module, x, *args, **kwargs):
+        optimize_first_iter = kwargs.pop("optimize_first_iter", False)
         # if x.device.type == "cuda":
         ddp = DDP(deepcopy(model))
         spmd = SPMD(
@@ -205,15 +220,97 @@ class TraceModuleTest(DistTensorTestBase):
                 ),
                 placements=[Replicate()],
             ),
+            input_schemas=kwargs["inp_schemas"]
+            if "inp_schemas" in kwargs
+            else None,
+            optimize_first_iter=optimize_first_iter,
         )
-
-        ddp(x).sum().backward()
-        spmd(x).sum().backward()
+        if "inp_schemas" in kwargs:
+            del kwargs["inp_schemas"]
+        only_fw = False
+        if "only_fw" in kwargs:
+            only_fw = kwargs["only_fw"]
+            del kwargs["only_fw"]
+        if only_fw:
+            output_ddp = ddp(x, *args, **kwargs)
+            output_spmd = spmd(x, *args, **kwargs)
+            self.assertTrue(output_ddp.size(), output_spmd.size())
+            return
+        ddp(x, *args, **kwargs).sum().backward()
+        spmd(x, *args, **kwargs).sum().backward()
         for p1, p2 in zip(ddp.parameters(), spmd.parameters()):
             # DDP divides gradients by world size to compute average, but
             # _Partial tensor shouldn't do that automatically. Hence explicitly
             # do division here.
-            self.assertTrue(p1.grad.allclose(p2.grad / self.world_size))
+            self.assertTrue(
+                p1.grad.allclose(p2.grad / self.world_size)
+                or p1.grad.allclose(p2.grad)
+            )
+
+    @with_comms
+    def test_torch_cat(self):
+        x = torch.rand((2, 4)).to(self.device_type)
+
+        class Model(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.w = torch.nn.Parameter(torch.rand((2, 4)))
+
+            def forward(self, x):
+                # TODO(anj): Using self.w and ignoring x results in an allgather call
+                # that we have not yet supported.
+                return torch.cat((self.w, self.w), 0)
+
+        model = Model().to(self.device_type)
+        inp_kwargs = {}
+        inp_kwargs["inp_schemas"] = [
+            Schema(
+                mesh=DeviceMesh(
+                    self.device_type, torch.arange(self.world_size)
+                ),
+                placements=[Replicate()],
+            )
+        ]
+        self._test_trace_replicate(
+            Model().to(self.device_type),
+            torch.rand((2, 4)).to(self.device_type),
+            **inp_kwargs,
+        )
+
+    @with_comms
+    def test_layer_norm_fw(self):
+        # This test is for get_item support. layer_norm contains
+        # tuples in its output which means we need to support get_item.
+        input_dims = []
+
+        input = np.random.randn(4, 5).astype(np.float32)
+        model = nn.LayerNorm(input.shape[1:]).to(self.device_type)
+        pt_input = torch.tensor(input, dtype=torch.float).to(self.device_type)
+        self._test_trace_replicate(model, pt_input)
+
+    @with_comms
+    def test_baked_in_shape(self):
+        class LCE(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                torch.manual_seed(5)
+                self.w = torch.nn.Parameter(torch.rand((5, 10)))
+                self.b = torch.nn.Parameter(torch.rand((5)))
+
+            def forward(self, x, *args, **kwargs):
+                # the code below will bake in the shape of x_t as arguments to expand
+                x_t = x.permute(0, 2, 1)
+                y_t = kwargs["dict_test"]["value"].expand(x_t.shape) + args[0][
+                    0
+                ].expand(x_t.shape)
+                # code below triggers an "expand" with shape baked in.
+                return torch.nn.functional.linear(y_t, self.w, self.b)
+
+        model = LCE().to(self.device_type)
+        x = torch.randn(2, 10, 80).to(self.device_type)
+        y = torch.randn(2, 80, 10).to(self.device_type)
+        z = torch.randn(2, 80, 10).to(self.device_type)
+        self._test_trace_replicate(model, x, [y], dict_test={"value": z})
 
     @with_comms
     def test_sequential(self):
@@ -222,6 +319,14 @@ class TraceModuleTest(DistTensorTestBase):
         )
         x = torch.randn(2, 10).to(self.device_type)
         self._test_trace_replicate(model, x)
+
+    @with_comms
+    def test_optimize_first_iter(self):
+        model = nn.Sequential(*[nn.Linear(10, 10) for _ in range(2)]).to(
+            self.device_type
+        )
+        x = torch.randn(2, 10).to(self.device_type)
+        self._test_trace_replicate(model, x, optimize_first_iter=True)
 
     @with_comms
     def test_parallel(self):
@@ -238,6 +343,44 @@ class TraceModuleTest(DistTensorTestBase):
         model = Model().to(self.device_type)
         x = torch.randn(2, 10).to(self.device_type)
         self._test_trace_replicate(model, x)
+
+    @with_comms
+    def test_hybrid(self):
+        bottom_model = nn.Sequential(
+            nn.Linear(4, 8),
+            nn.Softmax(),
+        ).to(self.device_type)
+
+        top_model = nn.Sequential(
+            nn.Linear(8, 2),
+            nn.Softmax(),
+        ).to(self.device_type)
+
+        hybrid = nn.Sequential(
+            DDP(deepcopy(bottom_model)),
+            SPMD(
+                deepcopy(top_model),
+                schema=Schema(
+                    mesh=DeviceMesh(
+                        self.device_type, torch.arange(self.world_size)
+                    ),
+                    placements=[Replicate()],
+                ),
+            ),
+        )
+        ddp = DDP(nn.Sequential(deepcopy(bottom_model), deepcopy(top_model)))
+        input = torch.randn(12, 4).to(self.device_type)
+
+        ddp(input).sum().backward()
+        hybrid(input).sum().backward()
+        for p1, p2 in zip(ddp.parameters(), hybrid.parameters()):
+            # DDP divides gradients by world size to compute average, but
+            # _Partial tensor shouldn't do that automatically. Hence explicitly
+            # do division here.
+            self.assertTrue(
+                p1.grad.allclose(p2.grad / self.world_size)
+                or p1.grad.allclose(p2.grad)
+            )
 
 
 if __name__ == "__main__":

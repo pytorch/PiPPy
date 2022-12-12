@@ -1,7 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import argparse
 import inspect
-import logging
 import os
 import time
 from functools import reduce
@@ -28,11 +27,6 @@ schedules = {
     'Interleaved1F1B': PipelineDriverInterleaved1F1B,
 }
 
-VERBOSE = bool(int(os.environ.get('VERBOSE', False)))
-
-if VERBOSE:
-    logging.getLogger().setLevel(logging.DEBUG)
-
 pippy.fx.Tracer.proxy_buffer_attributes = True
 
 
@@ -57,7 +51,7 @@ def calc_flop(args, conf):
     return 96 * B * s * l * h * h * (1 + s/6/h + V/16/l/h)
 
 
-def run_master(_, args):
+def run_gspmd(pp_ranks, args):
     print(args)
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if args.replicate else MultiUseParameterConfig.TRANSMIT
     assert args.world_size >= 4, "This program requires at least 3 workers + 1 master"
@@ -83,15 +77,14 @@ def run_master(_, args):
     number_of_workers = emb_head + gpt2.config.n_layer // decoders_per_rank  # 3 + a divider of gpt2.config.n_layer: [4, 5, 6, 7, 9, 15]
     print(f"number_of_workers = {number_of_workers}")
 
-    all_worker_ranks = list(range(args.exclude_master, args.exclude_master + number_of_workers))
+    all_worker_ranks = pp_ranks[
+        pippy.utils.exclude_master : pippy.utils.exclude_master
+        + number_of_workers
+    ]
     chunks = len(all_worker_ranks)
     seq_length = args.seq_length
     batch_size = args.batch_size * chunks
     vocab_size = gpt2.config.vocab_size
-
-    FLOP = calc_flop(args, config)
-
-    print(f"FLOP per iteration {FLOP}")
 
     device = args.device
     print("Using device:", device)
@@ -116,8 +109,19 @@ def run_master(_, args):
     gpt2_pipe = Pipe.from_tracing(gpt2, MULTI_USE_PARAM_CONFIG, tracer=PiPPyHFTracer(), concrete_args=concrete_args,
                                   output_loss_value_spec=output_loss_value_spec, deep_copy_module=False)
     assert sm_cnt == len(list(gpt2_pipe.split_gm.children()))
-    if args.mode == 'small':
+
+    # Materialize model differently depending on run mode
+    if args.gspmd == 1:
+        print(f"Deferring stage init on device {device}")
+        gpt2_pipe.defer_stage_init(device)
+        # Make sure every rank has deferred its stage init before master creates the driver
+        pippy.utils.pp_group_barrier()
+    else:
         gpt2_pipe.to(device)
+
+    if args.rank != 0:
+        # Workers return here
+        return
 
     # gpt2_pipe(**gpt2_input_dict)
 
@@ -128,17 +132,13 @@ def run_master(_, args):
     kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'labels': TensorChunkSpec(0), 'position_ids': None}
     output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b), 'logits': TensorChunkSpec(0),
                          'past_key_values': [[TensorChunkSpec(0) for _ in range(2)] for _ in range(config.n_layer)]}
-    if args.mode == 'large-cpu':
-        intermediate_device = device
-    else:
-        intermediate_device = None
     pipe_driver: PipelineDriverBase = schedules[args.schedule](gpt2_pipe, chunks, args_chunk_spec, kwargs_chunk_spec,
                                                                output_chunk_spec, len(all_worker_ranks),
                                                                all_ranks=all_worker_ranks,
                                                                _debug_mask_minibatches=False,
                                                                _record_mem_dumps=bool(args.record_mem_dumps),
                                                                checkpoint=bool(args.checkpoint),
-                                                               device=intermediate_device)
+                                                              )
 
     this_file_name = os.path.splitext(os.path.basename(__file__))[0]
 
@@ -147,6 +147,8 @@ def run_master(_, args):
         for i in range(args.warmup_batches):
             pipe_driver(**gpt2_input_dict)
 
+    FLOP = calc_flop(args, config)
+    print(f"FLOP per iteration {FLOP}")
     print(f'Running GPT-2 pipeline {args.batches} batches for TFLOP/s/GPU measurement.')
 
     start = time.time()
@@ -196,8 +198,8 @@ if __name__ == "__main__":
     parser.add_argument('--n_layer', type=int, default=None)
     parser.add_argument('--n_head', type=int, default=None)
 
-    parser.add_argument('--mode', type=str, default='small', choices=['small', 'large-cpu'])
+    parser.add_argument('--gspmd', type=int, default=0, choices=[0, 1])
 
     args = parser.parse_args()
 
-    run_pippy(run_master, args)
+    run_pippy(run_gspmd, args)

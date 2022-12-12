@@ -1,5 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-# Owner(s): ["module: distributed"]
+# Owner(s): ["oncall: distributed"]
 
 import torch
 import sys
@@ -21,14 +21,15 @@ from torch.testing._internal.common_device_type import (
 import torch.testing._internal.common_methods_invocations as common_ops
 from torch.testing._internal.common_methods_invocations import DecorateInfo
 
-from spmd import DTensor, DeviceMesh, Replicate
-from spmd.testing.dtensor_lagging_op_db import dtensor_lagging_op_db
-from spmd.testing.common_utils import (
-    DistTensorTestBase,
+from torch.distributed._tensor import DTensor, DeviceMesh, Replicate
+from torch.testing._internal.distributed._tensor.dtensor_lagging_op_db import (
+    dtensor_lagging_op_db,
+)
+from torch.testing._internal.distributed._tensor.common_dtensor import (
+    DTensorTestBase,
     TEST_SKIPS,
     DTensorConverter,
     DEVICE_TYPE,
-    NUM_DEVICES,
 )
 
 # rewrite common size variables to sth can be sharded evenly
@@ -184,6 +185,7 @@ dtensor_fails = {
     xfail("diag_embed"),
     xfail("diagflat"),
     xfail("diagonal"),
+    xfail("diagonal_copy"),
     xfail("diagonal_scatter"),
     xfail("diff"),
     xfail("dist"),
@@ -216,6 +218,7 @@ dtensor_fails = {
     xfail("fmax"),
     xfail("fmin"),
     xfail("frexp"),
+    xfail("full"),
     xfail("gather"),
     xfail("geqrf"),
     xfail("gradient"),
@@ -309,6 +312,7 @@ dtensor_fails = {
     xfail("msort"),
     xfail("multinomial"),
     xfail("mv"),
+    xfail("max_pool2d_with_indices_backward", ""),
     xfail("nanmean"),
     xfail("nanmedian"),
     xfail("nanquantile"),
@@ -326,10 +330,12 @@ dtensor_fails = {
     xfail("nn.functional.adaptive_max_pool1d"),
     xfail("nn.functional.adaptive_max_pool2d"),
     xfail("nn.functional.adaptive_max_pool3d"),
+    xfail("nn.functional.alpha_dropout"),
     xfail("nn.functional.avg_pool1d"),
     xfail("nn.functional.avg_pool2d"),
     xfail("nn.functional.avg_pool3d"),
     xfail("nn.functional.batch_norm"),
+    xfail("nn.functional.batch_norm", "without_cudnn"),
     xfail("nn.functional.bilinear"),
     xfail("nn.functional.binary_cross_entropy"),
     xfail("nn.functional.binary_cross_entropy_with_logits"),
@@ -438,6 +444,7 @@ dtensor_fails = {
     xfail("roll"),
     xfail("rot90"),
     xfail("rsub"),
+    xfail("scalar_tensor"),
     xfail("scatter_add"),
     xfail("scatter"),
     xfail("scatter_reduce", "amax"),
@@ -483,6 +490,7 @@ dtensor_fails = {
     xfail("signal.windows.cosine"),
     xfail("signal.windows.exponential"),
     xfail("signal.windows.gaussian"),
+    xfail("signal.windows.kaiser"),
     xfail("squeeze"),
     xfail("stack"),
     xfail("std"),
@@ -652,10 +660,10 @@ def check_dtensor_func(test_case, test_func, opinfo, dry_run=False):
         test_case.destroy_pg()
 
 
-class TestDTensorOps(DistTensorTestBase):
+class TestDTensorOps(DTensorTestBase):
     @property
     def world_size(self) -> int:
-        return NUM_DEVICES
+        return 4
 
     # only allow float dytpe for now, we can relax this constraint
     # when feel necessary later (i.e when adding quantization support).

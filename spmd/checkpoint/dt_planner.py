@@ -1,22 +1,22 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-import dataclasses
 import logging
 from typing import Any, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
-from torch.distributed._shard.checkpoint.default_planner import (
+from torch.distributed.checkpoint._dedup_tensors import dedup_tensors
+from torch.distributed.checkpoint.default_planner import (
     DefaultLoadPlanner,
     DefaultSavePlanner,
 )
-from torch.distributed._shard.checkpoint.metadata import (
+from torch.distributed.checkpoint.metadata import (
     STORAGE_TYPES,
     ChunkStorageMetadata,
     Metadata,
     MetadataIndex,
     TensorProperties,
 )
-from torch.distributed._shard.checkpoint.planner import (
+from torch.distributed.checkpoint.planner import (
     LoadPlan,
     ReadItem,
     SavePlan,
@@ -24,7 +24,7 @@ from torch.distributed._shard.checkpoint.planner import (
     WriteItem,
     WriteItemType,
 )
-from torch.distributed._shard.checkpoint.planner_helpers import (
+from torch.distributed.checkpoint.planner_helpers import (
     _create_read_items,
     _create_sharded_read_items,
     _create_write_items,
@@ -32,7 +32,7 @@ from torch.distributed._shard.checkpoint.planner_helpers import (
 from torch.distributed._shard.metadata import ShardMetadata
 from torch.distributed._shard.sharded_tensor.shard import Shard
 
-from spmd import DTensor
+from spmd.tensor import DTensor
 
 
 def init_logger() -> logging.Logger:
@@ -121,17 +121,9 @@ def get_box_for(
     device_mesh = tensor.device_mesh
     assert device_mesh.ndim == 1, "Only 1D DeviceMeshes currently handled"
 
-    placement = tensor.placements[0]
-    offsets = [0] * len(tensor.size())
-    num_chunks = device_mesh.size(dim=0)
-
-    if tensor.placements[0].is_shard():
-        shard_dim = placement.dim  # type: ignore # pyre-ignore[16]
-        chunk_size = tensor.size(shard_dim) // num_chunks
-        offsets[shard_dim] = chunk_size
-
     size = tensor.to_local().size()
-    offsets = [val * idx for val in offsets]  # type: ignore
+    offsets = tensor._spec.local_offsets
+
     return (torch.Size(offsets), size)
 
 
@@ -151,33 +143,6 @@ def _create_write_items_for_dtensor(fqn: str, tensor: DTensor) -> WriteItem:
             size=tensor.size(),
         ),
     )
-
-
-def dedup_tensors(all_plans: List[SavePlan]) -> List[SavePlan]:
-    all_plans = list(all_plans)
-    key_to_plan = {}  # type: ignore
-    for plan_idx, plan in enumerate(all_plans):
-        for wi in plan.items:
-            key_to_plan.setdefault(wi.index, []).append(plan_idx)
-
-    replicated_items = {k: v for k, v in key_to_plan.items() if len(v) > 1}
-
-    plan_to_keys = {}  # type: ignore
-    for key, plans in replicated_items.items():
-        for plan_idx in plans[1:]:
-            plan_to_keys.setdefault(plan_idx, []).append(key)
-    dLogger.debug(f"Keys to remove: {plan_to_keys}")
-
-    for plan_idx, keys in plan_to_keys.items():
-        key_set = set(keys)
-        new_items = [
-            wi for wi in all_plans[plan_idx].items if wi.index not in key_set
-        ]
-        all_plans[plan_idx] = dataclasses.replace(
-            all_plans[plan_idx], items=new_items
-        )
-
-    return all_plans
 
 
 def _create_shard_from_dtensor(tensor: DTensor) -> Shard:

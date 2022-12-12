@@ -5,7 +5,7 @@ import copy
 import torch.distributed as dist
 from torch.distributed.remote_device import _remote_device
 
-from torch.distributed._shard.checkpoint.metadata import (
+from torch.distributed.checkpoint.metadata import (
     STATE_DICT_TYPE,
 )
 from torch.distributed._shard.sharded_tensor import (

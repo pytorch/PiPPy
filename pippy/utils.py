@@ -29,10 +29,16 @@ import torch.multiprocessing as mp
 import torch.distributed.rpc as rpc
 
 
-VERBOSE = bool(int(os.environ.get("VERBOSE", False)))
+PIPPY_VERBOSITY = os.environ.get("PIPPY_VERBOSITY", "OFF")
 
-if VERBOSE:
+if PIPPY_VERBOSITY == "DEBUG":
     logging.getLogger().setLevel(logging.DEBUG)
+elif PIPPY_VERBOSITY == "INFO":
+    logging.getLogger().setLevel(logging.INFO)
+elif PIPPY_VERBOSITY == "OFF":
+    pass
+else:
+    print(f"Unsupported PIPPY_VERBOSITY level: {PIPPY_VERBOSITY}")
 
 
 def has_efa() -> bool:
@@ -57,7 +63,7 @@ def tp_transports():
     return ["shm", "uv"] if has_efa() else None
 
 
-def run_pippy(run_master, args, *extra_args):
+def run_pippy(run_func, args, *extra_args):
     if not hasattr(args, "world_size"):
         assert hasattr(args, "pp_group_size")
         args.dp_group_size = (
@@ -93,17 +99,17 @@ def run_pippy(run_master, args, *extra_args):
     if args.rank == -1:
         mp.spawn(
             run_worker,
-            args=(run_master, args, *extra_args),
+            args=(run_func, args, *extra_args),
             nprocs=actual_world_size,
             join=True,
         )
     elif args.rank < actual_world_size:
-        run_worker(args.rank, run_master, args, *extra_args)
+        run_worker(args.rank, run_func, args, *extra_args)
     else:
         print("I'm unused, exiting")
 
 
-def run_worker(rank, run_master, args, *extra_args):
+def run_worker(rank, run_func, args, *extra_args):
     args.rank = rank
 
     os.environ["MASTER_ADDR"] = args.master_addr
@@ -165,7 +171,7 @@ def run_worker(rank, run_master, args, *extra_args):
         .reshape(args.pp_group_size, args.dp_group_size)
         .tolist()
     )
-    dp_pg_per_pp_rank = [
+    dp_pg_per_pp_rank = [  # type: ignore[name-defined]
         torch.distributed.new_group(ranks) for ranks in dp_ranks_per_pp_rank
     ]
 
@@ -174,17 +180,47 @@ def run_worker(rank, run_master, args, *extra_args):
         for rank in range(args.dp_group_size)
     ]
 
+    my_pp_ranks = pp_ranks_per_dp_group[rank % args.dp_group_size]
+
     args.driver_group = torch.distributed.new_group(
         list(range(args.dp_group_size))
     )
 
     global exclude_master
-    exclude_master = (
+    exclude_master = (  # type: ignore[name-defined]
         args.exclude_master if hasattr(args, "exclude_master") else 0
     )
+    gspmd = (  # type: ignore[name-defined]
+        args.gspmd if hasattr(args, "gspmd") else 0
+    )
+
+    # A barrier util for pipeline dimension
+    global pp_group_barrier
+
+    # ProcessGroupGloo cannot create group with strided ranks, e.g. [0, 2, 4, 6, ...]
+    # Skipping the `pp_group` and `pp_group_barrier` creation here
+    # TODO: unskip
+    if torch.distributed.get_backend() == "gloo" and args.dp_group_size > 1:
+
+        def pp_group_barrier():
+            logging.warning(
+                f"pp_group_barrier() does not support ProcessGroupGloo with strided ranks {my_pp_ranks}. This will be a no-op."
+            )
+
+    else:
+        pp_group = torch.distributed.new_group(my_pp_ranks)
+
+        def pp_group_barrier():
+            logging.debug(
+                f"Running pipeline group barrier on ranks {my_pp_ranks}"
+            )
+            torch.distributed.barrier(pp_group)
 
     if rank >= 0 and rank // args.dp_group_size == 0:
         args.driver_index = rank
         args.local_driver_index = os.getenv("LOCAL_RANK", rank)
-        run_master(pp_ranks_per_dp_group[rank], args, *extra_args)
+        run_func(my_pp_ranks, args, *extra_args)
+    elif gspmd == 1:
+        run_func(my_pp_ranks, args, *extra_args)
+
     rpc.shutdown()

@@ -1,7 +1,7 @@
 import copy
 import dataclasses
 from typing import Dict, List, Optional, Sequence, Tuple, Union, cast
-from torch.distributed._shard.checkpoint.planner import LoadPlan
+from torch.distributed.checkpoint.planner import LoadPlan
 
 import torch
 import torch.distributed as dist
@@ -12,22 +12,22 @@ from torch.distributed._shard.sharding_spec.chunk_sharding_spec import (
     ChunkShardingSpec,
 )
 
-import torch.distributed._shard.checkpoint as dist_cp
-from torch.distributed._shard.checkpoint.metadata import (
+import torch.distributed.checkpoint as dist_cp
+from torch.distributed.checkpoint.metadata import (
     BytesStorageMetadata,
     Metadata,
     MetadataIndex,
     STATE_DICT_TYPE,
     TensorStorageMetadata,
 )
-from torch.distributed._shard.checkpoint.planner_helpers import (
+from torch.distributed.checkpoint.planner_helpers import (
     _create_sharded_read_items,
     _create_read_items,
 )
 from torch.distributed.remote_device import _remote_device
 
 from spmd.tensor import DTensor as DT
-from torch.distributed._shard.checkpoint.default_planner import (
+from torch.distributed.checkpoint.default_planner import (
     DefaultLoadPlanner,
 )
 from torch.distributed._shard.api import _shard_tensor
@@ -54,7 +54,7 @@ def _create_colwise_spec(
         ]
     else:
         placements = [
-            f"rank:{idx}/{_gen_rank_device(dist.get_global_rank(cast(dist.distributed_c10d.ProcessGroup, pg), idx))}"
+            f"rank:{idx}/{_gen_rank_device(dist.get_global_rank(pg, idx))}"
             for idx in range(pg.size())  # type: ignore[16]
         ]
     return ChunkShardingSpec(  # pyre-ignore[28]
@@ -195,7 +195,7 @@ def load_sharded_optimizer_state_dict(
 
     This is the current recommended way to checkpoint is FSDP
 
-    >>> import torch.distributed._shard.checkpoint as dist_cp
+    >>> import torch.distributed.checkpoint as dist_cp
     >>> import spmd.checkpoint as sp_cp
     >>> # Save
     >>> model: torch.nn.Model
@@ -279,9 +279,7 @@ def load_sharded_optimizer_state_dict(
                 torch.Size(alloc_size), value.properties
             )
             local_shards = []
-            current_rank = dist.get_rank(
-                cast(dist.distributed_c10d.ProcessGroup, dp_pg)
-            )
+            current_rank = dist.get_rank(dp_pg)
             for shard_md in st_md.shards_metadata:
                 if (
                     cast(_remote_device, shard_md.placement).rank()

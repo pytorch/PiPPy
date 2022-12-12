@@ -1,6 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import argparse
-import logging
 import os
 from functools import reduce
 
@@ -29,10 +28,7 @@ schedules = {
     'Interleaved1F1B': PipelineDriverInterleaved1F1B,
 }
 
-VERBOSE = bool(int(os.environ.get('VERBOSE', False)))
-
-if VERBOSE:
-    logging.getLogger().setLevel(logging.DEBUG)
+LR_VERBOSE = 0
 
 pippy.fx.Tracer.proxy_buffer_attributes = True
 
@@ -108,7 +104,7 @@ def run_master(pp_ranks, args):
     pipe_driver.init_data_parallel(dp_group_size=args.dp_group_size, dp_pg_cb=resolve_pg_per_stage)
 
     optimizer = pipe_driver.instantiate_optimizer(optim.Adam, lr=1e-3, betas=(0.9, 0.999), eps=1e-8)
-    lr_sched = pipe_driver.instantiate_lr_scheduler(optim.lr_scheduler.LinearLR, verbose=VERBOSE)
+    lr_sched = pipe_driver.instantiate_lr_scheduler(optim.lr_scheduler.LinearLR, verbose=LR_VERBOSE)
 
     loaders = {
         "train": train_dataloader,
@@ -153,7 +149,7 @@ def run_master(pp_ranks, args):
 
             if k == "train":
                 lr_sched.step()
-                if VERBOSE:
+                if LR_VERBOSE:
                     print(f"Pipe {pp_ranks} last_lr: {lr_sched.get_last_lr()}")
                     print(f"Pipe {pp_ranks} state_dict: {lr_sched.state_dict()}")
 

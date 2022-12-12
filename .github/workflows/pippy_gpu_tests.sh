@@ -3,7 +3,6 @@
 set -x
 
 # Print test options
-echo "VERBOSE: ${VERBOSE}"
 echo "REPLICATE: ${REPLICATE}"
 echo "SCHEDULE: ${SCHEDULE}"
 
@@ -36,6 +35,7 @@ set -ex
 python3 test/local_test_forward.py --replicate ${REPLICATE} -s ${SCHEDULE}
 python3 test/local_test_forward_backward.py --replicate ${REPLICATE} -s ${SCHEDULE}
 python3 examples/hf/gpt2/pippy_gpt2.py --replicate ${REPLICATE} -s ${SCHEDULE}
+python3 examples/gspmd/pippy_gspmd.py --replicate ${REPLICATE} -s ${SCHEDULE}
 
 # Run flaky integration tests
 python3 test/local_test_ddp.py --replicate ${REPLICATE} -s ${SCHEDULE} || true

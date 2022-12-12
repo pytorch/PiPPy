@@ -5,15 +5,15 @@ from typing import Any, Dict, List
 import torch
 import torch.distributed.distributed_c10d as c10d
 from torch import distributed as dist
-from torch.distributed._shard.checkpoint.default_planner import (
+from torch.distributed.checkpoint.default_planner import (
     DefaultLoadPlanner,
     DefaultSavePlanner,
 )
-from torch.distributed._shard.checkpoint.metadata import (
+from torch.distributed.checkpoint.metadata import (
     STATE_DICT_TYPE,
     Metadata,
 )
-from torch.distributed._shard.checkpoint.planner import ReadItem
+from torch.distributed.checkpoint.planner import ReadItem
 from torch.distributed._shard.sharded_tensor.api import ShardedTensor
 
 
@@ -76,7 +76,7 @@ class ProcessGroupAwareLoadPlanner(DefaultLoadPlanner):
         Rename all keys of sharded tensors from sub-process groups by prefixing it
         with a PG specific string.
         """
-        self.original_state_dict: Dict[str, Any] = state_dict  # pyre-ignore[16]
+        self.original_state_dict = state_dict
         self.state_dict = create_state_dict_copy(state_dict)  # pyre-ignore[16]
         super().init(self.state_dict, metadata, is_coordinator)
 
@@ -86,4 +86,4 @@ class ProcessGroupAwareLoadPlanner(DefaultLoadPlanner):
         also gets loaded properly.
         """
         fqn: str = read_item.dest_index.fqn
-        self.original_state_dict[fqn] = torch.load(value)  # pyre-ignore[16]
+        self.original_state_dict[fqn] = torch.load(value)
