@@ -4,7 +4,6 @@ import inspect
 import logging
 import os
 from functools import reduce
-from typing import Dict
 import time
 
 import torch
@@ -12,23 +11,17 @@ from transformers import T5ForConditionalGeneration, T5Config
 
 import pippy.fx
 from pippy import run_pippy
-from pippy.IR import MultiUseParameterConfig, Pipe, PipeSplitWrapper, annotate_split_points
+from pippy.IR import MultiUseParameterConfig, Pipe
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverInterleaved1F1B, \
     PipelineDriverBase
-from pippy.events import EventsContext
 from pippy.hf import PiPPyHFTracer
-from pippy.microbatch import CustomReducer, TensorChunkSpec
-from pippy.visualizer import events_to_json
+from pippy.microbatch import TensorChunkSpec
 from pippy import split_on_size_threshold, split_into_equal_size
-from benchmark_utils.benchmark import get_enc_dec_batch, benchmark_cuda_event, benchmark_time_perfcounter, setup_logger
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-
-from transformers import T5Tokenizer, T5ForConditionalGeneration, T5Config
-from transformers import GPT2Tokenizer, OPTModel
+from transformers import OPTModel, BloomModel
 from PIL import Image
 import requests
-from transformers import AutoFeatureExtractor, RegNetModel, BloomConfig, BloomModel
-from datasets import load_dataset
+from transformers import AutoFeatureExtractor, RegNetModel 
 
 
 PROFILING_ENABLED = True
