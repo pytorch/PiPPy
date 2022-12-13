@@ -22,7 +22,7 @@ Unlike most of the available solutions that they need to know the model architec
 
 ## Setting you need to care about
 
-* pp_group_size configure the number of pipeline parallelism group, meaning essentially on how many gpus our model to need be splitted and form a pipeline.
+* pp_group_size configure the size of pipeline parallelism group, meaning essentially on how many gpus our model to need be splitted and form a pipeline.
 
 **Main difference between Pippy for training and inference is we dont need to call the init_data_parallel API in the inference. The reason is DDP init is only needed if we need backward pass which is not the case for inference.**
 
@@ -31,7 +31,7 @@ For example to serve two copies of the model with 8 gpus, assuming we can serve 
 ```
 model_pipe.defer_stage_init(args.device)
 torch.distributed.barrier(args.pp_group)
-if args.rank!=0 or args.rank!=4:
+if args.rank not in [0, 4]:
         return 
 ```
         
@@ -68,7 +68,7 @@ if args.auto_split == "threshold":
 elif args.auto_split == "equal_size":
         split_policy = split_into_equal_size(number_of_workers)
 ```
-* Make the concerete args, this is required for FX tracing by giving it concerete inputs, this will be used to run the input through the model to check if there any control flow. For now control flow is not supported in FX tracing, we are working on integrating Torch Dynamo to make this more flexible. 
+* Make the concerete args (optional), If the model has inside an if-else condition, the concrete args can help FX determine which path to trace. For now control flow is not supported in FX tracing, we are working on integrating Torch Dynamo to make this more flexible. 
 
 ```
 t5_input_dict = {'input_ids': inp, 'decoder_input_ids': inp}
