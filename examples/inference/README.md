@@ -10,8 +10,7 @@ rank0..rankN. Results are being returned to rank0 as its runing the PipelineDriv
 
 The flowchart below helps to visualize the process in high level as well.
 
-<img src="https://user-images.githubusercontent.com/9162336/206815839-60d43f93-ff4b-4a5e-99db-1e0c4a55a4ac.png" alt="drawing" width="400"/>
-
+<img src="https://user-images.githubusercontent.com/9162336/207237303-86dc02fe-dae0-4335-8d23-c56d31ecdb87.png" alt="drawing" width="400"/>
 
 ## PiPPY support arbitary checkpoint splitting 
 
@@ -37,10 +36,7 @@ if args.rank not in [0, 4]:
         
 Then the resulted models (2 copies) will look like:
 
-<img src="https://user-images.githubusercontent.com/9162336/206811740-1d5d4d7a-7018-4e9b-8ab7-cad030e2981a.png" alt="drawing" width="400"/>
-
-
-
+<img src="https://user-images.githubusercontent.com/9162336/207237562-8da91240-90ee-4537-95c5-9c37ddd1fb7b.png" alt="drawing" width="400"/>
 
 ## How to Use PiPPY for inference
 
