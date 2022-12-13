@@ -373,10 +373,10 @@ def _copy_fe_to_buffer(
 
     _update_new_copy_nodes_users(value_remap)
 
-    gm.recompile()
-    _debug(
-        f"381 =====after clone, tensor_constant and allreduce insert =====\n {gm.graph.print_tabular()}\n"
-    )
+    # gm.recompile()
+    # _debug(
+    #    f"381 =====after clone, tensor_constant and allreduce insert =====\n {gm.graph.print_tabular()}\n"
+    # )
 
 
 def _build_buffer_comm_graph(
@@ -601,7 +601,7 @@ def _finalize_output_node(
 
     # map out all updated nodes in our list
     # working in reverse for fusion, so undo for simple replacement
-    fe_list = fe_list[::-1]
+    # fe_list = fe_list[::-1]
     for item in fe_list:
         grad_node = item.grad_tensor_node
         wait_node = item.wait_node
@@ -672,7 +672,7 @@ def _teardown(gm: fx.GraphModule) -> None:
 def run_fuse_communication_ring(
     gm: fx.GraphModule,
     fusion_policy: int = 2,
-    ring_buffer_size: int = 2,
+    ring_buffer_size: int = 4,
 ) -> None:
     """rewrite to deal with out of order clone nodes"""
 
@@ -755,7 +755,7 @@ def run_fuse_communication_ring(
 
     _debug(f"Final output node args {new_output_args=}\n")
 
-    _debug(f"Final graph 757 {print(gm.graph)}")
+    # _debug(f"Final graph 757 {print(gm.graph.print_tabular())}")
 
     rebuild_graph(gm)
 
