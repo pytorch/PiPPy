@@ -352,15 +352,13 @@ def _copy_fe_to_buffer(
     ), f"failed to locate tensor constant node {constant_list[1]}"
 
     for item in constant_list:
-        if curr_node is not item:
-            curr_node.append(item)
+        curr_node.append(item)
         curr_node = curr_node.next
 
     # move all_reduce final node
     buffer_comm_node = copy_list[-1].comm_node
     buffer_comm_node.update_arg(0, [buffer_node])  # type: ignore
-    if curr_node is not buffer_comm_node:
-        buffer_comm_node.append(buffer_comm_node)
+    curr_node.append(buffer_comm_node)
     curr_node = curr_node.next
 
     nodes_inserted_count = 0
@@ -733,22 +731,20 @@ def run_fuse_communication_ring(
 
     # Main processing loop
     for start in range(0, len(graph_info.fe_list), fusion_policy):
-        to_fuse_fe_list = graph_info.fe_list[start : (start + fusion_policy)]
+        stop = start + fusion_policy
+        to_fuse_fe_list = graph_info.fe_list[start:stop]
 
         _copy_fe_to_buffer(graph_info, gm, to_fuse_fe_list)
 
-        grad_nodes = _scatter_results_from_buffer(
-            graph_info, gm, to_fuse_fe_list
-        )
+        _scatter_results_from_buffer(graph_info, gm, to_fuse_fe_list)
 
-        # fused_comm_node = _fuse_with_cat(graph_info, gm, to_fuse_fe_list)
-        # grad_nodes = _scatter_results(graph_info, gm, to_fuse_fe_list)
-        _update_output_args(
+        _finalize_output_node(
             graph_info,
             gm,
-            fe_list,
+            to_fuse_fe_list,
+            start,
+            stop,
             new_output_args,
-            grad_nodes,
         )
 
     # update output with the updated args
