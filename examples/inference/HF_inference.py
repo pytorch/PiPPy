@@ -80,9 +80,6 @@ def run_master(pp_ranks, args):
     number_of_workers = len(pp_ranks) - pippy.utils.exclude_master
     print(f"number_of_workers = {number_of_workers}")
 
-    #if need to do spliting manually make use of
-    # add_split_points(model, number_of_workers)
-
     if args.auto_split == "threshold":
         split_policy = split_on_size_threshold(490 * 1e6)
     elif args.auto_split == "equal_size":
