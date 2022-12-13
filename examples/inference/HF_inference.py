@@ -3,12 +3,9 @@ import argparse
 import inspect
 import logging
 import os
-from functools import reduce
 import time
 
 import torch
-from transformers import T5ForConditionalGeneration, T5Config
-
 import pippy.fx
 from pippy import run_pippy
 from pippy.IR import MultiUseParameterConfig, Pipe
@@ -17,7 +14,7 @@ from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, Pi
 from pippy.hf import PiPPyHFTracer
 from pippy.microbatch import TensorChunkSpec
 from pippy import split_on_size_threshold, split_into_equal_size
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+from transformers import  AutoModelForSeq2SeqLM
 from transformers import OPTModel, BloomModel
 from PIL import Image
 import requests
