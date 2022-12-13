@@ -25,7 +25,6 @@ from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
 from transformers import T5Tokenizer, T5ForConditionalGeneration, T5Config
 from transformers import GPT2Tokenizer, OPTModel
-from split_utils import add_split_points, _add_split_points
 from PIL import Image
 import requests
 from transformers import AutoFeatureExtractor, RegNetModel, BloomConfig, BloomModel
