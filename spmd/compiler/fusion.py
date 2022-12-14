@@ -336,7 +336,7 @@ def _copy_fe_to_buffer(
     # move clone nodes
     curr_node = source_node
     for item in all_grad_nodes:  # type: ignore
-        if curr_node is not item:
+        if curr_node.next is not item:
             curr_node.append(item)
         curr_node = curr_node.next
 
@@ -729,6 +729,7 @@ def run_fuse_communication_ring(
         if node in actual_gradients:
             graph_info.actual_grad_index_mapping[node] = idx
 
+    _debug(f"start main loop")
     # Main processing loop
     for start in range(0, len(graph_info.fe_list), fusion_length):
         stop = start + fusion_length
@@ -753,7 +754,7 @@ def run_fuse_communication_ring(
 
     _debug(f"\nRing Comm Fusion processed {len(fe_list)} fe items\n")
 
-    _debug(f"Final output node args {new_output_args=}\n")
+    # _debug(f"Final output node args {new_output_args=}\n")
 
     rebuild_graph(gm)
 
