@@ -16,6 +16,8 @@ from pippy.backward import (
     _null_coalesce_accumulate,
 )
 
+from torchdistx import deferred_init
+
 # Because split_module with 4 arguments is available only in PT 1.12+
 TORCH_FX_REQUIRED_VERSION = version.parse("1.12")
 
@@ -465,6 +467,22 @@ def _direct_serialization_reduce(self):
     )
 
 
+def _find_mod_device(mod):
+    # We assume that all parameters in the module are on the same device
+    # HACK: we assume the module has at least one parameter
+    param = next(mod.parameters(), None)
+    buffer = next(mod.buffers(), None)
+    if param is not None:
+        device = param.device
+    elif buffer is not None:
+        device = buffer.device
+    else:
+        logging.info(
+            f"cannot figure out device. Setting it to cpu"
+        )
+        device = torch.device("cpu")
+    return device
+
 class Pipe(torch.nn.Module):
     def __init__(
         self,
@@ -479,6 +497,7 @@ class Pipe(torch.nn.Module):
         self.num_stages: int = num_stages
         self.has_loss_and_backwards = has_loss_and_backward
         self.last_grads = None
+        self.submod = None
 
         for node in split_gm.graph.nodes:
             assert (
@@ -996,6 +1015,23 @@ class Pipe(torch.nn.Module):
         def materialize_stage(target: str) -> torch.nn.Module:
             logging.info(f"Materializing {target} on {device}")
             return self.split_gm.get_submodule(target).to(device)
+
+        setattr(Pipe, "materialize_stage", materialize_stage)
+
+    def distx_defer_stage_init(self, stage: int, device):
+        logging.info(f"Materializing stage {stage} on {device}")
+        split_gm_children = list(self.split_gm.children())
+        submod = split_gm_children[stage]
+        deferred_init.materialize_module(submod)
+        submod = submod.to(device)
+        print(f"Stage {stage} is on {_find_mod_device(submod)} after materialization")
+        # If we do materialize_module() first, then forward pass sees meta
+        # If we do to(device) first, then forward pass sees cpu
+        self.submod = submod
+
+        def materialize_stage(target: str) -> torch.nn.Module:
+            logging.info(f"Returning {target}")
+            return self.submod
 
         setattr(Pipe, "materialize_stage", materialize_stage)
 

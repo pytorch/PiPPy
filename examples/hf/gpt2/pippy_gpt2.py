@@ -18,6 +18,10 @@ from pippy.hf import PiPPyHFTracer
 from pippy.microbatch import CustomReducer, TensorChunkSpec
 from pippy.visualizer import events_to_json
 
+from torchdistx import fake
+from torchdistx import deferred_init
+
+
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
 
@@ -89,7 +93,9 @@ def run_gspmd(pp_ranks, args):
     config.n_head = args.n_head or config.n_head
     print("GPT-2 model instantiation started")
     start = time.time()
-    gpt2 = GPT2LMHeadModel(config)
+    #with fake.fake_mode():
+    #    gpt2 = GPT2LMHeadModel(config)
+    gpt2 = deferred_init.deferred_init(GPT2LMHeadModel, config)
     finish = time.time()
     print(f"GPT-2 model instantiation finished in {(finish - start) / 60:1.2f} minutes")
     gpt2.eval()
@@ -139,8 +145,10 @@ def run_gspmd(pp_ranks, args):
 
     # Materialize model differently depending on run mode
     if args.gspmd == 1:
-        print(f"Deferring stage init on device {device}")
-        gpt2_pipe.defer_stage_init(device)
+        stage = args.rank
+        print(f"Deferring stage {stage} init on device {device}")
+        #gpt2_pipe.defer_stage_init(device)
+        gpt2_pipe.distx_defer_stage_init(stage, device)
         # Make sure every rank has deferred its stage init before master creates the driver
         pippy.utils.pp_group_barrier()
     else:
