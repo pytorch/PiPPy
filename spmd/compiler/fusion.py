@@ -76,7 +76,7 @@ class GraphInfo:
     _ring_buffer: Optional[List[fx.Node]] = None
     # size of the global buffer
     global_buffer_size: int = 0
-    _ring_size: int = 0
+    _ring_num_buffers: int = 0
     _ring_index: int = 0
     _current_ring_index: int = 0
     # real buffer (not node) used for tracing fusion subgraphs
@@ -100,7 +100,7 @@ class GraphInfo:
     ) -> None:
         """init ring buffer for sequential allocation"""
         self._ring_buffer = buffer_node_list
-        self._ring_size = len(self._ring_buffer)
+        self._ring_num_buffers = len(self._ring_buffer)
         self._ring_index = 0
 
         self.global_buffer_size = buffer_size
@@ -117,7 +117,7 @@ class GraphInfo:
             buffer_node is not None
         ), f"failed to get ring buffer for index {self._ring_index}\n"
         self._ring_index += 1
-        if self._ring_index >= self._ring_size:
+        if self._ring_index >= self._ring_num_buffers:
             self._ring_index = 0
         return buffer_node
 
@@ -623,7 +623,7 @@ def _finalize_output_node(
     # _debug(f"537 - updated output args = {new_output_args}\n")
 
 
-def _determine_peak_memory(gi: GraphInfo, fusion_policy: int) -> int:
+def _determine_peak_memory(gi: GraphInfo, fusion_length: int) -> int:
     """
     Scans fe list to determine max memory required across all fusion instances.
     this result is used to allocate the global buffer for fusion, where we
@@ -637,7 +637,7 @@ def _determine_peak_memory(gi: GraphInfo, fusion_policy: int) -> int:
         curr_fe_index += 1
         curr_memory += item.size  # type: ignore
 
-        if curr_fe_index == fusion_policy:
+        if curr_fe_index == fusion_length:
             peak_memory = max(peak_memory, curr_memory)
             curr_fe_index = 0
             curr_memory = 0
@@ -672,18 +672,18 @@ def _teardown(gm: fx.GraphModule) -> None:
 
 def run_fuse_communication_ring(
     gm: fx.GraphModule,
-    fusion_policy: int = 2,
-    ring_buffer_size: int = 4,
+    fusion_length: int,
+    ring_buffer_size: int,
 ) -> None:
     """fusion using a ring buffer in order to avoid buffer overwriting"""
 
     assert (
-        fusion_policy > 1
-    ), f"fusion policy is {fusion_policy}, but requires > 1 for actual fusion. "
+        fusion_length > 1
+    ), f"fusion policy is {fusion_length}, but requires > 1 for actual fusion. "
 
     # _debug(f"\n Start of fusion pass graph {gm.graph.print_tabular()}\n")
     _debug(
-        f"Start of fusion_ring pass, fusion_policy = {fusion_policy}, buffers = {ring_buffer_size} \n"
+        f"Start of fusion_ring pass, fusion_length = {fusion_length}, buffers = {ring_buffer_size} \n"
     )
 
     graph_info = _setup(gm)
@@ -699,7 +699,7 @@ def run_fuse_communication_ring(
     graph_info.fe_list = fe_list
 
     # determine peak memory using fusion policy
-    peak_memory_required = _determine_peak_memory(graph_info, fusion_policy)
+    peak_memory_required = _determine_peak_memory(graph_info, fusion_length)
 
     assert (
         peak_memory_required > 0
@@ -730,8 +730,8 @@ def run_fuse_communication_ring(
             graph_info.actual_grad_index_mapping[node] = idx
 
     # Main processing loop
-    for start in range(0, len(graph_info.fe_list), fusion_policy):
-        stop = start + fusion_policy
+    for start in range(0, len(graph_info.fe_list), fusion_length):
+        stop = start + fusion_length
         to_fuse_fe_list = graph_info.fe_list[start:stop]
 
         _copy_fe_to_buffer(graph_info, gm, to_fuse_fe_list)
