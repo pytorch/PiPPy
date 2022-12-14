@@ -97,7 +97,7 @@ class GraphInfo:
 
     def setup_ring_buffer(
         self, buffer_node_list: List[fx.Node], buffer_size: int
-    ):
+    ) -> None:
         """init ring buffer for sequential allocation"""
         self._ring_buffer = buffer_node_list
         self._ring_size = len(self._ring_buffer)
@@ -111,7 +111,7 @@ class GraphInfo:
         self,
     ) -> fx.Node:
         """get the next buffer node in the ring"""
-        buffer_node = self._ring_buffer[self._ring_index]
+        buffer_node = self._ring_buffer[self._ring_index]  # type: ignore
         self._current_ring_index = self._ring_index
         assert (
             buffer_node is not None
@@ -123,9 +123,9 @@ class GraphInfo:
 
     def get_current_ring_buffer(
         self,
-    ):
+    ) -> fx.Node:
         """used to retrieve the current one (for remapping)"""
-        return self._ring_buffer[self._current_ring_index]
+        return self._ring_buffer[self._current_ring_index]  # type: ignore
 
     def update_info(self, gm: fx.GraphModule) -> "GraphInfo":
         """Get the len, input and output nodes"""
@@ -165,7 +165,7 @@ def _insert_fusion_buffer_node(
     buffer_size: int,
     gi: Optional[GraphInfo],
     ring_size: int = 2,
-) -> fx.Node:
+) -> List[fx.Node]:
     """Insert a torch.empty node for the global buffer.
     defaults to first node after placeholder nodes.
     appends to GlobalInfo if passed in"""
@@ -185,6 +185,7 @@ def _insert_fusion_buffer_node(
     rank_device = torch.cuda.current_device()
 
     ring_buffer = []
+    new_buffer_node = None
     with gm.graph.inserting_before(insert_before_node):
         for i in range(ring_size):
             new_buffer_node = gm.graph.create_node(
@@ -674,7 +675,7 @@ def run_fuse_communication_ring(
     fusion_policy: int = 2,
     ring_buffer_size: int = 4,
 ) -> None:
-    """rewrite to deal with out of order clone nodes"""
+    """fusion using a ring buffer in order to avoid buffer overwriting"""
 
     assert (
         fusion_policy > 1
