@@ -729,7 +729,6 @@ def run_fuse_communication_ring(
         if node in actual_gradients:
             graph_info.actual_grad_index_mapping[node] = idx
 
-    _debug(f"start main loop")
     # Main processing loop
     for start in range(0, len(graph_info.fe_list), fusion_length):
         stop = start + fusion_length
