@@ -202,7 +202,7 @@ def _insert_fusion_buffer_node(
     ), f"failed to create buffer node, size={buffer_size}"
 
     # init ring buffer
-    gi.setup_ring_buffer(ring_buffer, buffer_size)
+    gi.setup_ring_buffer(ring_buffer, buffer_size)  # type: ignore
 
     return ring_buffer
 
@@ -335,7 +335,7 @@ def _copy_fe_to_buffer(
 
     # move clone nodes
     curr_node = source_node
-    for item in all_grad_nodes:
+    for item in all_grad_nodes:  # type: ignore
         if curr_node is not item:
             curr_node.append(item)
         curr_node = curr_node.next
@@ -352,7 +352,7 @@ def _copy_fe_to_buffer(
         "_tensor_constant"
     ), f"failed to locate tensor constant node {constant_list[1]}"
 
-    for item in constant_list:
+    for item in constant_list:  # type: ignore
         curr_node.append(item)
         curr_node = curr_node.next
 
