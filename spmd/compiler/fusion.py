@@ -18,11 +18,11 @@ from .graph_utils import (
     OP,
     rebuild_graph,
 )
-from .log_utils import rank0_debug, rank0_warning
+from .log_utils import rank0_debug
 
 
 logger: logging.Logger = logging.getLogger(__name__)
-_debug = partial(rank0_warning, logger)  # type: ignore
+_debug = partial(rank0_debug, logger)  # type: ignore
 
 
 @dataclass
@@ -160,13 +160,13 @@ class GraphInfo:
         return self
 
 
-def _insert_fusion_buffer_node(
+def _create_fusion_buffers(
     gm: fx.GraphModule,
     buffer_size: int,
     gi: Optional[GraphInfo],
-    ring_size: int = 2,
+    ring_size: int,
 ) -> List[fx.Node]:
-    """Insert a torch.empty node for the global buffer.
+    """Insert torch.empty node(s) for the global buffer.
     defaults to first node after placeholder nodes.
     appends to GlobalInfo if passed in"""
 
@@ -673,7 +673,7 @@ def _teardown(gm: fx.GraphModule) -> None:
 def run_fuse_communication_ring(
     gm: fx.GraphModule,
     fusion_length: int,
-    ring_buffer_size: int,
+    ring_num_buffers: int,
 ) -> None:
     """fusion using a ring buffer in order to avoid buffer overwriting"""
 
@@ -683,7 +683,7 @@ def run_fuse_communication_ring(
 
     # _debug(f"\n Start of fusion pass graph {gm.graph.print_tabular()}\n")
     _debug(
-        f"Start of fusion_ring pass, fusion_length = {fusion_length}, buffers = {ring_buffer_size} \n"
+        f"Start of fusion_ring pass, fusion_length = {fusion_length}, buffers = {ring_num_buffers} \n"
     )
 
     graph_info = _setup(gm)
@@ -705,8 +705,8 @@ def run_fuse_communication_ring(
         peak_memory_required > 0
     ), f"failed to compute effective peak memory - determined {peak_memory_required} as buffer size\n"
 
-    ring_buffer = _insert_fusion_buffer_node(
-        gm, peak_memory_required, graph_info, ring_buffer_size
+    ring_buffer = _create_fusion_buffers(
+        gm, peak_memory_required, graph_info, ring_num_buffers
     )
 
     _debug(f"ring buffer constructed: {ring_buffer=}\n")
