@@ -55,8 +55,7 @@ dLogger: logging.Logger = init_logger()
 
 class DistributedTensorSavePlanner(DefaultSavePlanner):
     def __init__(self, dedup_replicated_tensors: bool = True):  # pyre-ignore[3]
-        self.dedup_replicated_tensors: bool = dedup_replicated_tensors
-        super().__init__()
+        super().__init__(dedup_replicated_tensors=dedup_replicated_tensors)
 
     def create_local_plan(self) -> SavePlan:
         requests = []
