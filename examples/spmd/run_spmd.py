@@ -11,40 +11,42 @@ import torch.multiprocessing as mp
 import torch.nn as nn
 from spmd import Schema, SPMD
 from spmd.compiler.graph_optimization import GraphOptimization
-from spmd.compiler.log_utils import rank0_debug
+# from spmd.compiler.log_utils import rank0_debug
 from spmd.tensor import DeviceMesh, Replicate
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-logger: logging.Logger = logging.getLogger(__name__)
-_debug = partial(rank0_debug, logger)  # type: ignore
+
+# log = None
+
+# logger: logging.Logger = logging.getLogger(__name__)
+# _debug = partial(rank0_debug, logger)  # type: ignore
 
 # globals --------------
-
 DEVICE_TYPE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 def setup(rank: int, world_size: int, use_cuda: bool = True) -> None:
-    logging.getLogger().setLevel(
-        logging.DEBUG if rank == 0 else logging.CRITICAL
-    )
+    # logging.getLogger().setLevel(
+    #     logging.DEBUG if rank == 0 else logging.CRITICAL
+    # )
 
     if use_cuda:
-        _debug("--> init process group using nccl")
+        # _debug("--> init process group using nccl")
         dist.init_process_group("nccl", rank=rank, world_size=world_size)
         torch.cuda.set_device(rank)
-        print(f"--> device set for rank {rank}")
+        # print(f"--> device set for rank {rank}")
     else:
-        _debug("--> init process group using gloo")
+        # _debug("--> init process group using gloo")
         dist.init_process_group("gloo", rank=rank, world_size=world_size)
 
 
 def teardown(rank: int) -> None:
 
     # Wait for all ranks to reach here before starting shutdown.
-    _debug(f"rank {rank} entering teardown")
+    # _debug(f"rank {rank} entering teardown")
     dist.barrier()
     dist.destroy_process_group()
-    _debug(f"shut down process group on rank {rank}")
+    # _debug(f"shut down process group on rank {rank}")
 
 
 def formatted_print(
@@ -52,7 +54,7 @@ def formatted_print(
 ) -> None:
     if rank_only and not rank == 0:
         return
-    print(f"{rank} --> {name} = {val}")
+    # print(f"{rank} --> {name} = {val}")
 
 
 # --- model
@@ -113,10 +115,11 @@ def work_main(rank: int, world_size: int) -> None:
     gpu_placement = torch.arange(
         world_size
     )  # .reshape(2, 2) for world_size = 4
-    _debug(f"updated gpu placement = {gpu_placement}")
 
+
+    # _debug(f"updated gpu placement = {gpu_placement}")
     mesh = DeviceMesh(device_type=_device_type, mesh=gpu_placement)
-    _debug(f"mesh set to {mesh}\n")
+    # _debug(f"mesh set to {mesh}\n")
 
     # control depth of ReplicaModel
     layers = 21
@@ -139,7 +142,7 @@ def work_main(rank: int, world_size: int) -> None:
             deepcopy(model),
             schema=Schema(
                 mesh=DeviceMesh(
-                    _device_type, gpu_placement  # torch.arange(world_size)
+                    _device_type, gpu_placement
                 ),
                 placements=[Replicate()],
             ),
@@ -151,7 +154,7 @@ def work_main(rank: int, world_size: int) -> None:
     # model input - need to adjust to match models
     # permute_input = x = torch.randn(2, 10, 40).to("cuda")
     x = torch.randn(2, 10).to(_device_type)
-    _debug(f"\ninput tensor, first item = {x[0][0]:.4f}")
+    # _debug(f"\ninput tensor, first item = {x[0][0]:.4f}")
 
     # fire off comms
     for spmd in all_spmd:
@@ -159,9 +162,9 @@ def work_main(rank: int, world_size: int) -> None:
     ddp(x).sum().backward()
 
     if rank == 0:
-        _debug(f" --> backwards run complete, rank {rank}")
+        # _debug(f" --> backwards run complete, rank {rank}")
 
-        print("Visual of resulting grads:\n")
+        # print("Visual of resulting grads:\n")
         for spmd in all_spmd:
             for i, (p1, p2) in enumerate(
                 zip(ddp.parameters(), spmd.parameters())
@@ -171,12 +174,12 @@ def work_main(rank: int, world_size: int) -> None:
                     # visual display of initial grads
                     div_grad = p2.grad[0] / world_size
 
-                    print(f"DDP:\n {p1.grad[0]}\nSPMD:\n {div_grad}\n")  # type: ignore
+                    # print(f"DDP:\n {p1.grad[0]}\nSPMD:\n {div_grad}\n")  # type: ignore
 
                 assert p1.grad.allclose(  # type: ignore
                     p2.grad / world_size
                 ), "Mismatch in resulting grads between DDP and SPMD."
-    _debug("--> run completed, all grads matching!")
+    # _debug("--> run completed, all grads matching!")
 
 
 # --------- main above -------------------------
@@ -185,11 +188,10 @@ def work_main(rank: int, world_size: int) -> None:
 def main(rank: int, world_size: int, use_cuda: bool = True) -> None:
 
     # init
+   
     setup(rank, world_size, use_cuda)
-
     _world_size = dist.get_world_size()
-    logging.info(f"--> World size = {_world_size}")
-
+    
     # main work
     work_main(rank, world_size)
 
@@ -206,5 +208,5 @@ if __name__ == "__main__":
     world_size = 2
     use_cuda: bool = DEVICE_TYPE == "cuda"
 
-    print(f"use_cuda == {use_cuda}, starting run_SPMD...\n")
+    # print(f"use_cuda == {use_cuda}, starting run_SPMD...\n")
     mp.spawn(main, args=(world_size,), nprocs=world_size, join=True)

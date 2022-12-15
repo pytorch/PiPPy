@@ -6,10 +6,10 @@ from types import ModuleType
 
 # log level (levels print what it says + all levels listed below it)
 # DEBUG print full traces <-- lowest level + print tracing of every instruction
-# INFO print compiled functions + graphs
-# WARN print warnings (including graph breaks)
-# ERROR print exceptions (and what user code was being processed when it occurred)
-log_level = logging.DEBUG
+# INFO print compiler functions + distributed graphs
+# WARN print warnings 
+# ERROR print exceptions 
+log_level = logging.ERROR
 # Verbose will print full stack traces on warnings and errors
 verbose = False
 

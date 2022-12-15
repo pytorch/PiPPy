@@ -8,6 +8,7 @@ import torch
 import torch.fx as fx
 import torch.nn as nn
 from functorch.compile import aot_module, make_boxed_func
+from spmd.compiler.log_utils import get_logger
 
 from spmd.tensor import (
     _CURRENT_DECOMPOSITION_TABLE,
@@ -32,15 +33,10 @@ from torch.utils._pytree import tree_flatten, tree_map, tree_unflatten
 from .aot_function_patch import patched_aot_function
 from .distributed_graph import DistributedGraph
 from .graph_utils import CommType, get_comm_block_nodes, OP
-from .log_utils import rank0_info
 
 # patch aot_function so that we can pass the full (non-sharded) input to capture the graph
 # pyre-fixme
 torch._functorch.aot_autograd.aot_function = patched_aot_function
-
-
-logger: logging.Logger = logging.getLogger(__name__)
-
 
 class TrainingPhase(Enum):
     FORWARD = auto()
@@ -271,11 +267,11 @@ def _convert_output(
                         dtn, lambda n: value_remap[n]
                     )
     if has_partial:
-        rank0_info(logger, "The output has partial arguments.")
+        logger.info("The output has partial arguments.")
         gm.graph.erase_node(node)
         return gm.graph.output(new_args)
     else:
-        rank0_info(logger, "The output does not have partial arguments.")
+        logger.info("The output does not have partial arguments.")
         return node
 
 
@@ -350,7 +346,7 @@ def _rebuild_graph(
     gm.recompile()
 
 
-def get_user_to_last_uses(
+def _get_user_to_last_uses(
     graph: fx.Graph,
 ) -> Dict[fx.Node, List[fx.Node]]:
     # Run through reverse nodes and record the first instance of a use
@@ -389,12 +385,12 @@ def _convert_to_distributed(
     # DTensor ops.
     node_replacements: Dict[torch.fx.Node, torch.fx.GraphModule] = {}
 
-    user_to_last_uses = get_user_to_last_uses(gm.graph)
+    user_to_last_uses = _get_user_to_last_uses(gm.graph)
 
-    rank0_info(logger, f"Training phase: {training_phase}")
+    logger.info(f"Training phase: {training_phase}")
     output_schemas: Dict[str, Schema] = {}
     for i, node in enumerate(gm.graph.nodes):
-        rank0_info(logger, f"node{i}: op={node.op} target={node.target}")
+        logger.info(f"node{i}: op={node.op} target={node.target}")
         if node.op == OP.PLACEHOLDER:
             assert i < len(
                 inps
@@ -538,6 +534,9 @@ class _SPMD:
         gm: fx.GraphModule,
         inps: List[torch.Tensor],
     ) -> fx.GraphModule:
+        # Initialize logger
+        global logger
+        logger = get_logger("spmd_exp")
         shard_schema: Schema = Schema(
             mesh=self._param_schema.mesh, placements=[Shard(0)]
         )
@@ -612,6 +611,10 @@ def distribute(
     *args: Tuple[object],
     **kwargs: Dict[str, object],
 ) -> nn.Module:
+    # Initialize logger
+    global logger
+    logger = get_logger("spmd_exp")
+
     flat_args, _ = tree_flatten(args)
     flat_kwargs, _ = tree_flatten(kwargs)
     input_set: Set[object] = set(flat_args + flat_kwargs)

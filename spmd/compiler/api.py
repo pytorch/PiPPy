@@ -12,10 +12,9 @@ from .graph_optimization import (
     GraphOptimization,
     GraphOptimizationType,
 )
-from .log_utils import rank0_info
+from spmd.compiler.log_utils import get_logger
 
-
-logger: logging.Logger = logging.getLogger(__name__)
+global logger
 
 
 class SPMD(nn.Module):
@@ -65,6 +64,7 @@ class SPMD(nn.Module):
         self._optimizations = optimizations
         self._map_param_and_grad = False
         self._print_graph = print_graph
+        logger = get_logger("spmd_exp")
 
     def forward(
         self, *args: Tuple[object], **kwargs: Dict[str, object]
@@ -106,14 +106,8 @@ class SPMD(nn.Module):
                 # apply any optimization, we still need to print out the graph.
                 fwd_gm = self._dist_graph.fwd_graph_modules[0]
                 bwd_gm = self._dist_graph.bwd_graph_modules[0]
-                rank0_info(logger, "The forward graph.")
-                rank0_info(
-                    logger, f"\n {fwd_gm.print_readable(print_output=False)}"
-                )
-                rank0_info(logger, "The backward graph.")
-                rank0_info(
-                    logger, f"\n {bwd_gm.print_readable(print_output=False)}"
-                )
+                logger.info(fwd_gm.print_readable(print_output=False))
+                logger.info(bwd_gm.print_readable(print_output=False))
 
             # We only print out the graph once.
             self._print_graph = False

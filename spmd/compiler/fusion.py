@@ -9,6 +9,7 @@ import torch.distributed as dist
 import torch.fx as fx
 from torch.fx.experimental.proxy_tensor import make_fx
 from torch.fx.passes.shape_prop import TensorMetadata
+from torch.distributed.distributed_c10d import _get_default_group, ReduceOp
 
 from .graph_utils import (
     CommType,
@@ -18,11 +19,9 @@ from .graph_utils import (
     OP,
     rebuild_graph,
 )
-from .log_utils import rank0_debug
+from spmd.compiler.log_utils import get_logger
 
-
-logger: logging.Logger = logging.getLogger(__name__)
-_debug = partial(rank0_debug, logger)  # type: ignore
+global logger
 
 
 @dataclass
@@ -91,6 +90,10 @@ class GraphInfo:
     actual_grad_index_mapping: Dict[fx.Node, int] = field(
         default_factory=lambda: {}
     )
+    # Initialize logger
+    global logger
+    logger = get_logger("graph_opt")
+    
 
     def update_info(self, gm: fx.GraphModule) -> "GraphInfo":
         """Get the len, input and output nodes"""
@@ -117,11 +120,9 @@ class GraphInfo:
             self.output is not None
         ), f"Unable to locate output node in gm {gm.graph}"
 
-        rank0_debug(
-            logger,
+        logger.debug(
             f"Updated graph_info - len = {self.len} input = {self.first}, output = {self.output}",
         )
-
         return self
 
 
@@ -142,7 +143,6 @@ def _insert_fusion_buffer_node(
         break
 
     # TODO - fix with correct rank - needs to match with higher DTensor device
-
     rank = dist.get_rank()
     if torch.distributed.is_initialized():
         torch.cuda.set_device(rank)
@@ -200,7 +200,7 @@ def _scan_graph_for_fusion_elements(
             if not gi.fe_offset_to_comm_node:
                 len_comm_section = len(fe.node_list)
                 gi.fe_offset_to_comm_node = len_comm_section - comm_idx - 1
-                _debug(f"global comm index set {gi.fe_offset_to_comm_node}\n")
+                logger.debug(f"global comm index set {gi.fe_offset_to_comm_node}\n")
     return element_list
 
 
@@ -278,8 +278,6 @@ def _copy_fe_to_buffer(
     # update allreduce to use buffer
     # (we currently don't) have to make our own all_reduce/comm_wait section
     # # TODO - pg group matching
-    # _build_buffer_comm_graph(gm, gi)
-
     buffer_comm_node = copy_list[-1].comm_node
     buffer_comm_node.update_arg(0, [buffer_node])  # type: ignore
 
@@ -291,9 +289,6 @@ def _build_buffer_comm_graph(
     to make our own all_reduce and wait subgraph for buffer. Wrapping with
     CommTensor is required to complete.
     """
-    # from torch.distributed._spmd.comm_tensor import CommTensor
-    from torch.distributed.distributed_c10d import _get_default_group, ReduceOp
-
     buffer_size = gi.global_buffer_size
 
     def dummy_add(
@@ -312,7 +307,6 @@ def _build_buffer_comm_graph(
     op: ReduceOp = ReduceOp.SUM  # type: ignore[assignment]
     async_op: bool = False
 
-    # work_handle = all_reduce(grad_buffer, op=op, group=pg, async_op=async_op)
     return traced_add
 
 
@@ -431,10 +425,6 @@ def _update_new_copy_nodes_users(value_remap: Dict[fx.Node, fx.Node]) -> None:
     """
     for subnode, node in value_remap.items():
         if node.name.startswith("copy"):
-            # _debug(
-            #    f"426 copy or wait node pre user update len {len(node.users)}, {node.name=}, {node.users=}, {node.args=}"
-            # )
-            # if len(node.users) == 0:
             user = node.args[0]
             node.users[user] = ""  # type: ignore
             node_user_len = len(node.users)
@@ -467,9 +457,6 @@ def _update_node_tensor_metadata(
         in_memory_format if in_memory_format is not None else curr_memory_format
     )
 
-    # tempt = torch.empty(new_shape)
-    # new_shape = tempt.shape
-
     new_metadata = TensorMetadata(
         new_shape,
         updated_dtype,
@@ -497,11 +484,6 @@ def _finalize_output_node(
 ) -> None:
     """Reworks output node args to original grad tensors, replacing the wait_comms
     we update a copy of the output args, then finalized after all fusion is done."""
-
-    # output_node = gi.output
-    # new_output_args = []
-
-    # curr_output_args = list(gi.output.args[0])
     replacement_mapping: Dict[fx.Node, fx.Node] = {}
 
     # map out all updated nodes in our list
@@ -522,7 +504,7 @@ def _finalize_output_node(
             ), f"Non comm gradient output tensor incorrectly handled...needs fix. {new_output_args[start+i]}"
             new_output_args[start + i] = replacement_mapping[curr_node]
 
-    _debug(f"537 - updated output args = {new_output_args}\n")
+    logger.debug(f"Updated output args = {new_output_args}\n")
 
 
 def _determine_peak_memory(gi: GraphInfo, fusion_policy: int) -> int:
@@ -543,7 +525,7 @@ def _determine_peak_memory(gi: GraphInfo, fusion_policy: int) -> int:
             curr_fe_index = 0
             curr_memory = 0
 
-    _debug(f"574, peak memory determined to be {peak_memory}")
+    logger.debug(f"Peak memory determined to be {peak_memory}")
     gi.peak_memory_required = peak_memory
 
     return peak_memory
@@ -564,21 +546,16 @@ def _setup(gm: fx.GraphModule) -> GraphInfo:
 
 def _teardown(gm: fx.GraphModule) -> None:
     """final steps before exiting optimization phase"""
-
-    # final review print
     rebuild_graph(gm)
-    _debug("final graph cleanup, ready to exit\n")
-    # _debug(f"\n Final Graph ===== \n {gm.graph.print_tabular()}\n")
-
 
 def run_fuse_communication(gm: fx.GraphModule, fusion_policy: int = 4) -> None:
     """Main entry into remapping graph for all_reduce fusion.
     Modifications are in place to the graph.  Errors will result in stoppage
     to alert user rather than handling and returning error codes."""
+    # Initialize logger
+    logger = get_logger("graph_opt")
 
     graph_info = _setup(gm)
-
-    # _debug(f"\n Start of fusion pass graph {gm.graph.print_tabular()}\n")
 
     # scan graph for all comm sections (fusion elements)
     fe_list = _scan_graph_for_fusion_elements(
@@ -602,14 +579,11 @@ def run_fuse_communication(gm: fx.GraphModule, fusion_policy: int = 4) -> None:
     )
 
     # Main process loop - iterate all fusion elements, apply fusion to subsets
-
     offset = 0
     count = 0
 
     start_output_args: List[fx.Node] = graph_info.output.args[0]  # type: ignore
     new_output_args: List[fx.Node] = list(start_output_args)  # type: ignore
-
-    # ----------- main fusion loop ------------------------
 
     for index, item in enumerate(graph_info.fe_list):  # type: ignore
         count += 1
@@ -641,14 +615,12 @@ def run_fuse_communication(gm: fx.GraphModule, fusion_policy: int = 4) -> None:
     gm.graph.erase_node(graph_info.output)
     gm.graph.output(new_output_args)
 
-    _debug(f"\nComm Fusion processed {index+1} fe items\n")
-
-    _debug(f"Final output node args {new_output_args=}\n")
+    logger.debug(f"\nComm Fusion processed {index+1} fe items\n")
 
     _teardown(gm)
 
 
-def get_source_node_next(comm_node: fx.Node) -> fx.Node:
+def _get_source_node_next(comm_node: fx.Node) -> fx.Node:
     """determine source gradient node from a given comm node.
     Returns the next (prepend) node in the graph to prepare for insert.
     """
@@ -674,7 +646,7 @@ def _move_comm_section(
 ) -> Optional[List[fx.Node]]:
     """find source node for comm node"""
 
-    prepend_node = get_source_node_next(fe.comm_node)  # type: ignore
+    prepend_node = _get_source_node_next(fe.comm_node)  # type: ignore
     # we are moving the uppper section (comm node and support nodes) only
     nodes_to_move = fe.node_list[0 : gi.fe_offset_to_comm_node]  # type: ignore
 
@@ -688,6 +660,8 @@ def run_overlap_communication(gm: fx.GraphModule) -> None:
     """spreads the all_reduce to maximum dispersion by moving
     comm calls next to source nodes.
     """
+    # Initialize logger
+    logger = get_logger("graph_opt")
 
     graph_info = _setup(gm)
 
@@ -696,7 +670,7 @@ def run_overlap_communication(gm: fx.GraphModule) -> None:
         graph_info, gm, comm_type=CommType.ALLREDUCE
     )  # type:ignore[arg-type]
 
-    _debug(f"length of fe_list {len(fe_list)}")  # type: ignore
+    logger.debug(f"length of fe_list {len(fe_list)}")  # type: ignore
 
     # -- distribute comm nodes to source nodes for overlap
     # the first (which is last) is not moved b/c it is already
@@ -704,20 +678,15 @@ def run_overlap_communication(gm: fx.GraphModule) -> None:
     index = -1
     for index, item in enumerate(fe_list[1:]):  # type: ignore
         moved_nodes = _move_comm_section(graph_info, gm, item)  # type: ignore
-        # _debug(f"{moved_nodes=}\n")
 
     assert (
         index > 0
     ), f"comm_overlap did not find move any communication nodes...{index=}"
 
-    _debug(
-        f"\nOptimization stats:\nOverlap communication pass has moved -* {index+1} *- communication calls\n"
+    logger.debug(
+        f"Optimization stats: Overlap communication pass has moved -* {index+1} *- communication calls\n"
     )
     gm.recompile()
-
-    _debug(" ------ finish, run communication overlap pass -----\n")
-    _debug(f"graph = {print(gm.graph)}\n")
-    # _debug(f"{gm.graph.print_tabular()}\n")
 
     _teardown(gm)
 
@@ -823,6 +792,9 @@ def run_fuse_communication_cat(gm: fx.GraphModule, fusion_length: int) -> None:
     Run fuse communication with concat.
     This implementation use concat to concat the bucketed gradients.
     """
+    # Initialize logger
+    logger = get_logger("graph_opt")
+
     # First recompile to make sure we have coherent graph
     gm.recompile()
     graph_info = GraphInfo().update_info(gm)
