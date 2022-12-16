@@ -42,11 +42,13 @@ def get_number_of_params(model):
 #     (ii) k * a + (k - 1) * b = n
 # Solve:
 # a = n + m - m * k
-def add_split_points(gpt2, decoders_per_rank, decoder_workers):
-    # First, split between embed and decoder layers
+def add_split_points(gpt2, decoders_per_rank, decoder_workers, split_emb):
     split_point = 0
-    annotate_split_points(gpt2, {f'transformer.h.0': PipeSplitWrapper.SplitPoint.BEGINNING})
-    splits = 1
+    splits = 0
+    # First, split between embed and decoder layers
+    if split_emb:
+        annotate_split_points(gpt2, {f'transformer.h.0': PipeSplitWrapper.SplitPoint.BEGINNING})
+        splits += 1
     # Second, split decoder layers using `decoders_per_rank`
     a = gpt2.config.n_layer + decoder_workers - decoder_workers * decoders_per_rank
     for _ in range(0, a):
@@ -62,8 +64,9 @@ def add_split_points(gpt2, decoders_per_rank, decoder_workers):
         annotate_split_points(gpt2, {f'transformer.h.{split_point}': PipeSplitWrapper.SplitPoint.BEGINNING})
         splits += 1
     # Last, split between decoder layers and ln_f
-    annotate_split_points(gpt2, {f'transformer.ln_f': PipeSplitWrapper.SplitPoint.BEGINNING})
-    splits += 1
+    if split_emb:
+        annotate_split_points(gpt2, {f'transformer.ln_f': PipeSplitWrapper.SplitPoint.BEGINNING})
+        splits += 1
     # Total workers = splits + 1
     return splits + 1
 
@@ -96,7 +99,7 @@ def run_gspmd(pp_ranks, args):
     print(gpt2.config)
     print(f"GPT-2 total number of params = {get_number_of_params(gpt2) // 10 ** 6}M")
 
-    emb_head = 2  # embeddings + head
+    emb_head = 2 if args.emb_worker == 1 else 0 # embeddings + head
     master_emb_head = pippy.utils.exclude_master + emb_head  # master + embeddings + head
     decoder_workers = args.world_size - master_emb_head
     decoders_per_rank = (gpt2.config.n_layer + decoder_workers - 1) // decoder_workers  # a divider of gpt2.config.n_layer: [1, 2, 3, 4, 6, 12]
@@ -121,7 +124,7 @@ def run_gspmd(pp_ranks, args):
         'labels': torch.empty(batch_size, seq_length, dtype=torch.long, device=device).random_(vocab_size),
         'position_ids': torch.arange(0, seq_length, dtype=torch.long, device=device)}
 
-    sm_cnt = add_split_points(gpt2, decoders_per_rank, decoder_workers)
+    sm_cnt = add_split_points(gpt2, decoders_per_rank, decoder_workers, args.emb_worker)
     assert sm_cnt == len(all_worker_ranks), f"sm_cnt = {sm_cnt} all_worker_ranks = {all_worker_ranks}"
 
     # print(gpt2)
@@ -226,6 +229,7 @@ if __name__ == "__main__":
     parser.add_argument('--n_head', type=int, default=None)
 
     parser.add_argument('--gspmd', type=int, default=0, choices=[0, 1])
+    parser.add_argument('--emb_worker', type=int, default=0, choices=[0, 1])
 
     args = parser.parse_args()
 
