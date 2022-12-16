@@ -5,7 +5,6 @@ from functools import partial
 from typing import cast, Dict, List, Optional, Tuple
 
 import torch
-import torch.distributed as dist
 import torch.fx as fx
 from torch.fx.experimental.proxy_tensor import make_fx
 from torch.fx.passes.shape_prop import TensorMetadata
