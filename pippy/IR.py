@@ -483,6 +483,7 @@ def _find_mod_device(mod):
         device = torch.device("cpu")
     return device
 
+
 class Pipe(torch.nn.Module):
     def __init__(
         self,
@@ -1018,15 +1019,12 @@ class Pipe(torch.nn.Module):
 
         setattr(Pipe, "materialize_stage", materialize_stage)
 
-    def distx_defer_stage_init(self, stage: int, device):
+    def distx_materialize_stage(self, stage: int, device):
         logging.info(f"Materializing stage {stage} on {device}")
         split_gm_children = list(self.split_gm.children())
         submod = split_gm_children[stage]
         deferred_init.materialize_module(submod)
-        submod = submod.to(device)
-        print(f"Stage {stage} is on {_find_mod_device(submod)} after materialization")
-        # If we do materialize_module() first, then forward pass sees meta
-        # If we do to(device) first, then forward pass sees cpu
+        #print(f"Stage {stage} is on {_find_mod_device(submod)} after materialization")
         self.submod = submod
 
         def materialize_stage(target: str) -> torch.nn.Module:
@@ -1034,6 +1032,7 @@ class Pipe(torch.nn.Module):
             return self.submod
 
         setattr(Pipe, "materialize_stage", materialize_stage)
+        return submod
 
     @staticmethod
     def is_stage_init_deferred():

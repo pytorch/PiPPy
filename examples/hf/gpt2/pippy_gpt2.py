@@ -82,10 +82,19 @@ def calc_flop(args, conf):
     return 96 * B * s * l * h * h * (1 + s/6/h + V/16/l/h)
 
 
+def build_my_model(config, device: torch.device):
+   mod = GPT2LMHeadModel(config)
+   mod.to(device)
+   return mod
+
+
 def run_gspmd(pp_ranks, args):
     print(args)
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if args.replicate else MultiUseParameterConfig.TRANSMIT
     assert args.world_size >= 4, "This program requires at least 3 workers + 1 master"
+
+    device = args.device
+    print("Using device:", device)
 
     config = GPT2Config()
     config.n_embd = args.n_embd or config.n_embd
@@ -93,9 +102,7 @@ def run_gspmd(pp_ranks, args):
     config.n_head = args.n_head or config.n_head
     print("GPT-2 model instantiation started")
     start = time.time()
-    #with fake.fake_mode():
-    #    gpt2 = GPT2LMHeadModel(config)
-    gpt2 = deferred_init.deferred_init(GPT2LMHeadModel, config)
+    gpt2 = deferred_init.deferred_init(build_my_model, config, device)
     finish = time.time()
     print(f"GPT-2 model instantiation finished in {(finish - start) / 60:1.2f} minutes")
     gpt2.eval()
@@ -118,9 +125,6 @@ def run_gspmd(pp_ranks, args):
     seq_length = args.seq_length
     batch_size = args.batch_size * chunks
     vocab_size = gpt2.config.vocab_size
-
-    device = args.device
-    print("Using device:", device)
 
     gpt2_input_dict = {
         'input_ids': torch.empty(batch_size, seq_length, dtype=torch.long, device=device).random_(vocab_size),
@@ -146,9 +150,21 @@ def run_gspmd(pp_ranks, args):
     # Materialize model differently depending on run mode
     if args.gspmd == 1:
         stage = args.rank
-        print(f"Deferring stage {stage} init on device {device}")
         #gpt2_pipe.defer_stage_init(device)
-        gpt2_pipe.distx_defer_stage_init(stage, device)
+        submod = gpt2_pipe.distx_materialize_stage(stage, device)
+        print(f"Deferring stage {stage} init on device {device}: {submod}")
+
+        """
+        def check_mod_device(mod, expected_device):
+            for name, param in mod.named_parameters():
+                if param.device != expected_device:
+                    print(
+                        f"===== Stage {stage}: {name} has device {param.device} instead of {expected_device} ====="
+                    )
+
+        check_mod_device(submod, device)
+        """
+
         # Make sure every rank has deferred its stage init before master creates the driver
         pippy.utils.pp_group_barrier()
     else:
