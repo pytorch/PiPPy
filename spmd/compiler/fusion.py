@@ -171,17 +171,14 @@ def _create_fusion_buffers(
     appends to GlobalInfo if passed in"""
 
     # default to inserting just after last placeholder node
+    # TODO - more efficient if we drop the buffer right before first use
+    # to reduce memory pressure.
     for node in gm.graph.nodes:
         if node.op == OP.PLACEHOLDER:
             continue
         insert_before_node = node
         break
 
-    """rank = dist.get_rank()
-    if torch.distributed.is_initialized():
-        torch.cuda.set_device(rank)
-    rank_device = torch.cuda.current_device()
-    """
     ring_buffer = []
     new_buffer_node = None
     with gm.graph.inserting_before(insert_before_node):
