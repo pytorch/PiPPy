@@ -177,13 +177,11 @@ def _create_fusion_buffers(
         insert_before_node = node
         break
 
-    # TODO - fix with correct rank - needs to match with higher DTensor device
-
-    rank = dist.get_rank()
+    """rank = dist.get_rank()
     if torch.distributed.is_initialized():
         torch.cuda.set_device(rank)
     rank_device = torch.cuda.current_device()
-
+    """
     ring_buffer = []
     new_buffer_node = None
     with gm.graph.inserting_before(insert_before_node):
@@ -191,9 +189,8 @@ def _create_fusion_buffers(
             new_buffer_node = gm.graph.create_node(
                 OP.CALL_FUNCTION,
                 target=torch.empty,
-                # TODO - need device from DTensor to put buffer on gpu
                 args=(buffer_size,),
-                kwargs={"device": rank_device},
+                kwargs={"device": "cuda"},
             )
             ring_buffer.append(new_buffer_node)
 
