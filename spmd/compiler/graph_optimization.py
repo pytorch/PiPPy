@@ -171,7 +171,7 @@ class DistGraphOptimization:
         bucketing_strategy: BucketingStrategy = BucketingStrategy.FIXED,
         scheduling_policy: SchedulingPolicy = SchedulingPolicy.FCFS,
         fusion_length: int = 2,
-        ring_buffer_size: int = 2,
+        ring_num_buffers: int = 2,
     ) -> "DistGraphOptimization":
 
         assert len(
@@ -181,7 +181,7 @@ class DistGraphOptimization:
         run_fuse_communication_ring(
             self._graph.bwd_graph_modules[0],
             fusion_length,
-            ring_buffer_size,
+            ring_num_buffers,
         )
         return self
 

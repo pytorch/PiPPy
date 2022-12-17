@@ -94,7 +94,7 @@ def _get_dtensor_dispatch_graph(
     def remap_arg(arg: object) -> object:
         if isinstance(arg, torch.fx.Node):
             obj = node_to_obj[arg]
-            if _get_tracer(obj):
+            if _get_tracer():
                 # This is a shared arg, already has a tracer from previous
                 # tracing. Delete the tracer.
                 del cast(Dict[object, object], obj.__dict__)[proxy_slot]
@@ -435,7 +435,7 @@ def _convert_to_distributed(
                     # TODO(anj): we need this for getitem but can we be more generic?
                     if isinstance(obj, tuple):
                         return obj
-                    if _get_tracer(obj):
+                    if _get_tracer():
                         # This is a shared arg, already has a tracer from previous
                         # tracing. Delete the tracer.
                         del cast(Dict[object, object], obj.__dict__)[proxy_slot]

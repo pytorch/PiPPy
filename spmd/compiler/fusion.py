@@ -5,7 +5,6 @@ from functools import partial
 from typing import cast, Dict, List, Optional, Tuple
 
 import torch
-import torch.distributed as dist
 import torch.fx as fx
 from torch.fx.experimental.proxy_tensor import make_fx
 from torch.fx.passes.shape_prop import TensorMetadata
@@ -171,29 +170,26 @@ def _create_fusion_buffers(
     appends to GlobalInfo if passed in"""
 
     # default to inserting just after last placeholder node
+    # TODO - more efficient if we drop the buffer right before first use
+    # to reduce memory pressure.
     for node in gm.graph.nodes:
         if node.op == OP.PLACEHOLDER:
             continue
         insert_before_node = node
         break
 
-    # TODO - fix with correct rank - needs to match with higher DTensor device
-
-    rank = dist.get_rank()
-    if torch.distributed.is_initialized():
-        torch.cuda.set_device(rank)
-    rank_device = torch.cuda.current_device()
-
     ring_buffer = []
     new_buffer_node = None
+    # there is an assumption below that torch.set_device has been setup by
+    # DTensor.  We thus ride on that by passing "cuda" for device, which
+    # should expand internally to "cuda:index".
     with gm.graph.inserting_before(insert_before_node):
         for i in range(ring_size):
             new_buffer_node = gm.graph.create_node(
                 OP.CALL_FUNCTION,
                 target=torch.empty,
-                # TODO - need device from DTensor to put buffer on gpu
                 args=(buffer_size,),
-                kwargs={"device": rank_device},
+                kwargs={"device": "cuda"},
             )
             ring_buffer.append(new_buffer_node)
 
