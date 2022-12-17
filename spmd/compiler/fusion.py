@@ -180,6 +180,9 @@ def _create_fusion_buffers(
 
     ring_buffer = []
     new_buffer_node = None
+    # there is an assumption below that torch.set_device has been setup by
+    # DTensor.  We thus ride on that by passing "cuda" for device, which
+    # should expand internally to "cuda:index".
     with gm.graph.inserting_before(insert_before_node):
         for i in range(ring_size):
             new_buffer_node = gm.graph.create_node(
