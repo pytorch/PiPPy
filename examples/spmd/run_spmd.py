@@ -131,7 +131,7 @@ def work_main(rank: int, world_size: int) -> None:
     all_spmd = []
     optimizations = [
         # [GraphOptimization("fuse_communication_ring")],
-        [GraphOptimization("fuse_communication_cat")],
+        [GraphOptimization("fuse_communication_jit")],
         # [GraphOptimization("overlap_communication")],
     ]
     for optim in optimizations:

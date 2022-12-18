@@ -937,12 +937,9 @@ def run_fuse_communication_cat(gm: fx.GraphModule, fusion_length: int) -> None:
     Run fuse communication with concat.
     This implementation use concat to concat the bucketed gradients.
     """
-
-    run_fuse_communication_jit(gm, fusion_length)
-    return
     # First recompile to make sure we have coherent graph
     gm.recompile()
-    _debug(f"942 cat {gm.graph.print_tabular()}")
+
     graph_info = GraphInfo().update_info(gm)
 
     fe_list = _scan_graph_for_fusion_elements(
@@ -1001,29 +998,119 @@ def _map_local_gradients(
             graph_info.actual_grad_index_mapping[node] = idx
 
 
+def _fuse_with_jit(
+    gi: GraphInfo, gm: fx.GraphModule, copy_list: List[FusionElement]
+) -> fx.Node:
+    # Find the actual last gradient.
+    all_grad_tensor_nodes = []
+    for fe in copy_list:
+        assert fe.grad_tensor_node is not None
+        assert fe.grad_tensor_node.name.startswith("clone")
+        all_grad_tensor_nodes.append(fe.grad_tensor_node)
+    grad_indices_mapping = [
+        gi.actual_grad_index_mapping[
+            cast(Tuple[fx.Node], grad_tensor_node.args)[0]
+        ]
+        for grad_tensor_node in all_grad_tensor_nodes
+    ]
+    last_grad_fe_index = grad_indices_mapping.index(max(grad_indices_mapping))
+    assert copy_list[last_grad_fe_index].grad_tensor_node is not None
+    last_grad_tensor_node = cast(
+        fx.Node,
+        cast(fx.Node, copy_list[last_grad_fe_index].grad_tensor_node).args[0],
+    )
+
+    # ff. flat_grads = [torch.flatten(grad) for grad in fusion_gradients]
+    jit_inputs = []
+    offset = 0
+    size = 0
+
+    buffer_size_needed = sum([item.size for item in copy_list])
+    _debug(f"1032 {buffer_size_needed=}\n")
+    device = torch.cuda.current_device()
+    _debug(f"device = {device=}\n")
+    gpu = "cuda:" + str(device)
+    # with gm.graph.inserting_before(last_grad_tensor_node.next):
+    jit_buffer_node = gm.graph.create_node(
+        OP.CALL_FUNCTION,
+        target=torch.empty,
+        args=(buffer_size_needed,),
+        kwargs={"device": gpu},
+    )
+    jit_inputs.append(jit_buffer_node)
+
+    for fe in copy_list:
+        start = offset
+        stop = offset + fe.size
+        view_node = gm.graph.call_function(
+            torch.ops.aten.view.default,
+            (fe.grad_tensor_node.args[0], [-1]),
+        )
+        slice_node = gm.graph.call_function(
+            torch.ops.aten.slice.Tensor,
+            (jit_buffer_node, 0, start, stop),
+        )
+        copy_node = gm.graph.call_function(
+            # torch.Tensor.copy_,
+            torch.ops.aten.copy_.default,
+            (slice_node, view_node),
+        )
+        offset += fe.size
+        jit_inputs.extend([view_node, slice_node, copy_node])
+
+    # ff. allreduce(cat_node)
+    assert copy_list[-1].comm_node is not None
+    fused_comm_node = copy_list[-1].comm_node
+    assert fused_comm_node is not None, "Pyre is not as smart as Mypy."
+    fused_comm_node.update_arg(0, [jit_buffer_node])
+
+    # Move the fused_comm_node and its args to right after the source node
+    nodes_to_move = jit_inputs + [
+        fused_comm_node.args[1],
+        fused_comm_node.args[2],
+        fused_comm_node,
+    ]
+
+    insert_node = last_grad_tensor_node.next
+    for node in nodes_to_move:
+        insert_node.prepend(node)
+
+    _debug(f"1071 {gm.graph.print_tabular()}\n")
+
+    return fused_comm_node
+
+
 def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
 
     gm.recompile()
-    _debug(f"992 cat {gm.graph.print_tabular()}")
+    # _debug(f"992 cat {gm.graph.print_tabular()}")
     graph_info = GraphInfo().update_info(gm)
 
     fe_list = _scan_graph_for_fusion_elements(
         graph_info, gm, comm_type=CommType.ALLREDUCE
     )
 
+    _debug(f"1083 len fe list = {len(fe_list)}\n")
+
+    graph_info.fe_list = fe_list
+
+    assert len(graph_info.wait_node_idx) == len(fe_list), (
+        "The expected wait_nodes in graph_info is different from fe_list "
+        f"{len(graph_info.wait_node_idx)} {len(fe_list)}."
+    )
+
     assert graph_info.output is not None
     new_output_args = list(cast(Tuple[fx.Node], graph_info.output.args[0]))
 
-    
-
     _map_local_gradients(gm, graph_info, fe_list)
+    _debug(f"1090 local gradients")
 
     # Fuse every ``fusion_length`` FusionElement.
     for start in range(0, len(graph_info.fe_list), fusion_length):
         _debug(f"fusion indexes = {start=},{start+fusion_length=}")
         fe_list = graph_info.fe_list[start : (start + fusion_length)]
         _debug(f"len of fe_list = {len(fe_list)}\n")
-        fused_comm_node = _fuse_with_cat(graph_info, gm, fe_list)
+        fused_comm_node = _fuse_with_jit(graph_info, gm, fe_list)
         grad_nodes = _scatter_results(graph_info, gm, fe_list)
         _update_output_args(
             graph_info,
