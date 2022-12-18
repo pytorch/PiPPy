@@ -190,7 +190,7 @@ class DistGraphOptimization:
         self,
         bucketing_strategy: BucketingStrategy = BucketingStrategy.FIXED,
         scheduling_policy: SchedulingPolicy = SchedulingPolicy.FCFS,
-        fusion_length: int = 10,
+        fusion_length: int = 2,
     ) -> "DistGraphOptimization":
         assert len(
             self._graph.bwd_graph_modules

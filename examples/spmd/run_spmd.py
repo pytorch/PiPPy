@@ -32,7 +32,7 @@ def setup(rank: int, world_size: int, use_cuda: bool = True) -> None:
         _debug("--> init process group using nccl")
         dist.init_process_group("nccl", rank=rank, world_size=world_size)
         torch.cuda.set_device(rank)
-        print(f"--> device set for rank {rank}")
+        # print(f"--> device set for rank {rank}")
     else:
         _debug("--> init process group using gloo")
         dist.init_process_group("gloo", rank=rank, world_size=world_size)
@@ -119,7 +119,7 @@ def work_main(rank: int, world_size: int) -> None:
     _debug(f"mesh set to {mesh}\n")
 
     # control depth of ReplicaModel
-    layers = 4
+    layers = 5
 
     # model = Permute().to(rank)  #
     model = ReplicaModel(layer_count=layers).to(_device_type)
@@ -130,8 +130,8 @@ def work_main(rank: int, world_size: int) -> None:
     run_backward = True
     all_spmd = []
     optimizations = [
-        [GraphOptimization("fuse_communication_ring")],
-        # [GraphOptimization("fuse_communication_cat")],
+        # [GraphOptimization("fuse_communication_ring")],
+        [GraphOptimization("fuse_communication_cat")],
         # [GraphOptimization("overlap_communication")],
     ]
     for optim in optimizations:

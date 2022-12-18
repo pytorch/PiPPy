@@ -923,6 +923,15 @@ def _update_output_args(
         output_args[gi.wait_node_idx[fe.wait_node]] = grad_node
 
 
+def run_fuse_comm_cat(gm, fusion_length) -> None:
+    gm.recompile()
+    graph_info = GraphInfo().update_info(gm)
+    fe_list = _scan_graph_for_fusion_elements(
+        graph_info, gm, comm_type=CommType.ALLREDUCE
+    )
+    graph_info.fe_list = fe_list
+
+
 def run_fuse_communication_cat(gm: fx.GraphModule, fusion_length: int) -> None:
     """
     Run fuse communication with concat.
@@ -930,6 +939,7 @@ def run_fuse_communication_cat(gm: fx.GraphModule, fusion_length: int) -> None:
     """
     # First recompile to make sure we have coherent graph
     gm.recompile()
+    _debug(f"942 cat {gm.graph.print_tabular()}")
     graph_info = GraphInfo().update_info(gm)
 
     fe_list = _scan_graph_for_fusion_elements(
@@ -955,7 +965,9 @@ def run_fuse_communication_cat(gm: fx.GraphModule, fusion_length: int) -> None:
 
     # Fuse every ``fusion_length`` FusionElement.
     for start in range(0, len(graph_info.fe_list), fusion_length):
+        _debug(f"fusion indexes = {start=},{start+fusion_length=}")
         fe_list = graph_info.fe_list[start : (start + fusion_length)]
+        _debug(f"len of fe_list = {len(fe_list)}\n")
         fused_comm_node = _fuse_with_cat(graph_info, gm, fe_list)
         grad_nodes = _scatter_results(graph_info, gm, fe_list)
         _update_output_args(
@@ -965,6 +977,38 @@ def run_fuse_communication_cat(gm: fx.GraphModule, fusion_length: int) -> None:
             new_output_args,
             grad_nodes,
         )
+
+    # update output with the updated args
+    gm.graph.erase_node(graph_info.output)
+    gm.graph.output(new_output_args)
+    rebuild_graph(gm)
+    _debug(f"973 cat {gm.graph.print_tabular()}")
+
+
+def _map_local_gradients(
+    gm: fx.GraphModule, graph_info: fx.GraphInfo, fe_list: list[FusionElement]
+) -> None:
+
+    actual_gradients = set(
+        cast(Tuple[fx.Node], cast(fx.Node, fe.grad_tensor_node).args)[0]
+        for fe in fe_list
+    )
+    for idx, node in enumerate(gm.graph.nodes):
+        if node in actual_gradients:
+            graph_info.actual_grad_index_mapping[node] = idx
+
+
+def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
+
+    gm.recompile()
+    _debug(f"992 cat {gm.graph.print_tabular()}")
+    graph_info = GraphInfo().update_info(gm)
+
+    fe_list = _scan_graph_for_fusion_elements(
+        graph_info, gm, comm_type=CommType.ALLREDUCE
+    )
+
+    _map_local_gradients(gm, graph_info, fe_list)
 
     # update output with the updated args
     gm.graph.erase_node(graph_info.output)
