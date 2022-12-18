@@ -1014,6 +1014,10 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
     assert graph_info.output is not None
     new_output_args = list(cast(Tuple[fx.Node], graph_info.output.args[0]))
 
+    
+
+    _map_local_gradients(gm, graph_info, fe_list)
+
     # Fuse every ``fusion_length`` FusionElement.
     for start in range(0, len(graph_info.fe_list), fusion_length):
         _debug(f"fusion indexes = {start=},{start+fusion_length=}")
@@ -1028,8 +1032,6 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
             new_output_args,
             grad_nodes,
         )
-
-    _map_local_gradients(gm, graph_info, fe_list)
 
     # update output with the updated args
     gm.graph.erase_node(graph_info.output)
