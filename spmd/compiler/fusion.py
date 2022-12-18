@@ -937,6 +937,9 @@ def run_fuse_communication_cat(gm: fx.GraphModule, fusion_length: int) -> None:
     Run fuse communication with concat.
     This implementation use concat to concat the bucketed gradients.
     """
+
+    run_fuse_communication_jit(gm, fusion_length)
+    return
     # First recompile to make sure we have coherent graph
     gm.recompile()
     _debug(f"942 cat {gm.graph.print_tabular()}")
@@ -986,7 +989,7 @@ def run_fuse_communication_cat(gm: fx.GraphModule, fusion_length: int) -> None:
 
 
 def _map_local_gradients(
-    gm: fx.GraphModule, graph_info: fx.GraphInfo, fe_list: list[FusionElement]
+    gm: fx.GraphModule, graph_info: GraphInfo, fe_list: list[FusionElement]
 ) -> None:
 
     actual_gradients = set(
@@ -1007,6 +1010,24 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
     fe_list = _scan_graph_for_fusion_elements(
         graph_info, gm, comm_type=CommType.ALLREDUCE
     )
+
+    assert graph_info.output is not None
+    new_output_args = list(cast(Tuple[fx.Node], graph_info.output.args[0]))
+
+    # Fuse every ``fusion_length`` FusionElement.
+    for start in range(0, len(graph_info.fe_list), fusion_length):
+        _debug(f"fusion indexes = {start=},{start+fusion_length=}")
+        fe_list = graph_info.fe_list[start : (start + fusion_length)]
+        _debug(f"len of fe_list = {len(fe_list)}\n")
+        fused_comm_node = _fuse_with_cat(graph_info, gm, fe_list)
+        grad_nodes = _scatter_results(graph_info, gm, fe_list)
+        _update_output_args(
+            graph_info,
+            gm,
+            fe_list,
+            new_output_args,
+            grad_nodes,
+        )
 
     _map_local_gradients(gm, graph_info, fe_list)
 
