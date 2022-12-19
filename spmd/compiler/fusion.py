@@ -980,6 +980,7 @@ def run_fuse_communication_cat(gm: fx.GraphModule, fusion_length: int) -> None:
 
     # update output with the updated args
     gm.graph.erase_node(graph_info.output)
+    _debug(f"983, {new_output_args=}\n")
     gm.graph.output(new_output_args)
     rebuild_graph(gm)
     _debug(f"973 cat {gm.graph.print_tabular()}")
@@ -1024,6 +1025,7 @@ def _fuse_with_jit(
     jit_inputs = []
     offset = 0
     size = 0
+    copy_nodes = []
 
     buffer_size_needed = sum([item.size for item in copy_list])
     _debug(f"1032 {buffer_size_needed=}\n")
@@ -1057,6 +1059,7 @@ def _fuse_with_jit(
         )
         offset += fe.size
         jit_inputs.extend([view_node, slice_node, copy_node])
+        copy_nodes.append(copy_node)
 
     # ff. allreduce(cat_node)
     assert copy_list[-1].comm_node is not None
@@ -1077,7 +1080,59 @@ def _fuse_with_jit(
 
     _debug(f"1071 {gm.graph.print_tabular()}\n")
 
-    return fused_comm_node
+    # enforce users count
+    for node in copy_nodes:
+        user = node.args[0]
+        node.users[user] = ""  # type: ignore
+        node_user_len = len(node.users)
+        assert node_user_len, f"failed to update users for node {node.name}"
+
+    return jit_buffer_node
+
+
+def _scatter_results_jit(
+    gi: GraphInfo,
+    gm: fx.GraphModule,
+    scatter_list: List[FusionElement],
+    jit_buffer_node: fx.Node,
+) -> List[fx.Node]:
+    # scatter_sizes = [fe.size for fe in scatter_list]
+    assert scatter_list[-1].wait_node is not None
+    wait_node = scatter_list[-1].wait_node
+
+    scatter_nodes = []
+
+    grad_nodes = []
+
+    offset = 0
+    start, stop = 0, 0
+    shape = 0
+
+    for fe in scatter_list:
+        start = offset
+        stop = start + fe.size
+        shape = fe.shape
+
+        slice_node = gm.graph.call_function(
+            torch.ops.aten.slice.Tensor,
+            (jit_buffer_node, 0, start, stop),
+        )
+
+        view_node = gm.graph.call_function(
+            torch.ops.aten.view.default,
+            (slice_node, shape),
+        )
+
+        scatter_nodes.extend([slice_node, view_node])
+
+        grad_nodes.append(view_node)
+
+    # move nodes
+    insert_node = wait_node.next
+    for node in scatter_nodes:
+        insert_node.prepend(node)
+
+    return grad_nodes
 
 
 def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
@@ -1107,11 +1162,17 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
 
     # Fuse every ``fusion_length`` FusionElement.
     for start in range(0, len(graph_info.fe_list), fusion_length):
+
         _debug(f"fusion indexes = {start=},{start+fusion_length=}")
         fe_list = graph_info.fe_list[start : (start + fusion_length)]
         _debug(f"len of fe_list = {len(fe_list)}\n")
-        fused_comm_node = _fuse_with_jit(graph_info, gm, fe_list)
-        grad_nodes = _scatter_results(graph_info, gm, fe_list)
+        wait_node, jit_buffer_node = _fuse_with_jit(graph_info, gm, fe_list)
+        grad_nodes = _scatter_results_jit(
+            graph_info, gm, fe_list, jit_buffer_node, wait_node
+        )
+
+        _debug(f"1142, {grad_nodes=}")
+
         _update_output_args(
             graph_info,
             gm,
@@ -1121,6 +1182,8 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
         )
 
     # update output with the updated args
+    _debug(f"1153, {new_output_args=}\n")
     gm.graph.erase_node(graph_info.output)
     gm.graph.output(new_output_args)
     rebuild_graph(gm)
+    _debug(f"{gm.graph.print_tabular()}\n")
