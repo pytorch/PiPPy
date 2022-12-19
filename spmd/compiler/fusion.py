@@ -1128,21 +1128,21 @@ def _scatter_results_jit(
             (slice_node, shape),
         )
 
-        copy_out_node = gm.graph.call_function(
+        """copy_out_node = gm.graph.call_function(
             torch.ops.aten.copy_.default,
             (fe.grad_tensor_node.args[0], view_node),
         )
+        """
         offset += fe.size
-        # gm.graph.erase_node(fe.grad_tensor_node)
 
         # ensure user for view node
         user = slice_node
         view_node.users[user] = ""  # type: ignore
         # ensure for copy_node
-        user = copy_out_node.args[0]
-        copy_out_node.users[user] = ""
+        # user = copy_out_node.args[0]
+        # copy_out_node.users[user] = ""
 
-        scatter_nodes.extend([slice_node, view_node, copy_out_node])
+        scatter_nodes.extend([slice_node, view_node])
 
         grad_nodes.append(view_node)
 
@@ -1206,7 +1206,7 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
     _debug(f"1153, {new_output_args=}\n")
     gm.graph.erase_node(graph_info.output)
     gm.graph.output(new_output_args)
-    _debug(f"1205 , {print(gm.graph)}\n")
+    # _debug(f"1205 , {print(gm.graph)}\n")
     rebuild_graph(gm, remove_dead_code=True)
     # gm.recompile()
     _debug(f"{print(gm.graph)}\n")
