@@ -1156,6 +1156,7 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
     need to copy back to the original tensor.
     We can thus del the gradient tensors as fused, and by only creating buffers as
     needed, minimize overhead memory pressure."""
+    MBFACTOR = float(1 << 20)
 
     gm.recompile()
     # _debug(f"992 cat {gm.graph.print_tabular()}")
@@ -1180,6 +1181,58 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
     _map_local_gradients(gm, graph_info, fe_list)
     _debug(f"1090 local gradients")
 
+    # use fusion length as mb instead of count
+    start = 0
+    stop = 0
+
+    bucket_size = fusion_length * 1024 * 1024
+    curr_size = 0
+
+    for i, fe in enumerate(graph_info.fe_list):
+        curr_size += fe.size
+        if curr_size >= bucket_size:
+            stop = i + 1
+            fe_list = graph_info.fe_list[start:stop]
+            jit_buffer_node = _fuse_with_jit(graph_info, gm, fe_list)
+            grad_nodes = _scatter_results_jit(
+                graph_info, gm, fe_list, jit_buffer_node
+            )
+
+            _debug(f"1142, {grad_nodes=}")
+
+            _update_output_args(
+                graph_info,
+                gm,
+                fe_list,
+                new_output_args,
+                grad_nodes,
+            )
+
+            # fusion done for this mb size
+            curr_size = 0
+            start = stop
+
+    # fuse any leftovers
+    if start < len(graph_info.fe_list):
+        _debug(
+            f"remaining fusion: {len(graph_info.fe_list)-start} items left over"
+        )
+        fe_list = graph_info.fe_list[start:]
+        jit_buffer_node = _fuse_with_jit(graph_info, gm, fe_list)
+        grad_nodes = _scatter_results_jit(
+            graph_info, gm, fe_list, jit_buffer_node
+        )
+
+        _debug(f"1142, {grad_nodes=}")
+
+        _update_output_args(
+            graph_info,
+            gm,
+            fe_list,
+            new_output_args,
+            grad_nodes,
+        )
+    """
     # Fuse every ``fusion_length`` FusionElement.
     for start in range(0, len(graph_info.fe_list), fusion_length):
 
@@ -1198,7 +1251,7 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
             new_output_args,
             grad_nodes,
         )
-
+    """
     # update output with the updated args
     _debug(f"1153, {new_output_args=}\n")
     gm.graph.erase_node(graph_info.output)
@@ -1206,4 +1259,4 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
     # _debug(f"1205 , {print(gm.graph)}\n")
     rebuild_graph(gm, remove_dead_code=True)
     # gm.recompile()
-    _debug(f"{print(gm.graph)}\n")
+    # _debug(f"{print(gm.graph)}\n")
