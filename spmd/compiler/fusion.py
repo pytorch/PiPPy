@@ -1101,6 +1101,10 @@ def _scatter_results_jit(
     assert scatter_list[-1].wait_node is not None
     wait_node = scatter_list[-1].wait_node
 
+    # ensure user
+    wait_user = wait_node.args[0]
+    wait_node.users[wait_user] = ""
+
     scatter_nodes = []
 
     grad_nodes = []
@@ -1128,7 +1132,7 @@ def _scatter_results_jit(
             torch.ops.aten.copy_.default,
             (fe.grad_tensor_node.args[0], view_node),
         )
-
+        offset += fe.size
         # gm.graph.erase_node(fe.grad_tensor_node)
 
         # ensure user for view node
@@ -1140,7 +1144,7 @@ def _scatter_results_jit(
 
         scatter_nodes.extend([slice_node, view_node, copy_out_node])
 
-        grad_nodes.append(copy_out_node)
+        grad_nodes.append(view_node)
 
     # move nodes
     insert_node = wait_node.next
@@ -1202,6 +1206,7 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
     _debug(f"1153, {new_output_args=}\n")
     gm.graph.erase_node(graph_info.output)
     gm.graph.output(new_output_args)
+    _debug(f"1205 , {print(gm.graph)}\n")
     rebuild_graph(gm, remove_dead_code=True)
     # gm.recompile()
-    _debug(f"{gm.graph.print_tabular()}\n")
+    _debug(f"{print(gm.graph)}\n")
