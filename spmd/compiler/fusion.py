@@ -987,7 +987,7 @@ def run_fuse_communication_cat(gm: fx.GraphModule, fusion_length: int) -> None:
 
 
 def _map_local_gradients(
-    gm: fx.GraphModule, graph_info: GraphInfo, fe_list: list[FusionElement]
+    gm: fx.GraphModule, graph_info: GraphInfo, fe_list: List[FusionElement]
 ) -> None:
 
     actual_gradients = set(
