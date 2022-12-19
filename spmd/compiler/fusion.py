@@ -989,7 +989,9 @@ def run_fuse_communication_cat(gm: fx.GraphModule, fusion_length: int) -> None:
 def _map_local_gradients(
     gm: fx.GraphModule, graph_info: GraphInfo, fe_list: List[FusionElement]
 ) -> None:
-
+    """map gradient tensors to index within the graph.  This is needed b/c
+    sometimes clones are out of order and we want to use the actual 'last'
+    gradient tensor within a set for fusion"""
     actual_gradients = set(
         cast(Tuple[fx.Node], cast(fx.Node, fe.grad_tensor_node).args)[0]
         for fe in fe_list
@@ -1021,18 +1023,16 @@ def _fuse_with_jit(
         cast(fx.Node, copy_list[last_grad_fe_index].grad_tensor_node).args[0],
     )
 
-    # ff. flat_grads = [torch.flatten(grad) for grad in fusion_gradients]
     jit_inputs = []
     offset = 0
     size = 0
     copy_nodes = []
 
     buffer_size_needed = sum([item.size for item in copy_list])
-    _debug(f"1032 {buffer_size_needed=}\n")
+
     device = torch.cuda.current_device()
-    _debug(f"device = {device=}\n")
     gpu = "cuda:" + str(device)
-    # with gm.graph.inserting_before(last_grad_tensor_node.next):
+
     jit_buffer_node = gm.graph.create_node(
         OP.CALL_FUNCTION,
         target=torch.empty,
@@ -1061,10 +1061,8 @@ def _fuse_with_jit(
         jit_inputs.extend([view_node, slice_node, copy_node])
         copy_nodes.append(copy_node)
 
-    # ff. allreduce(cat_node)
     assert copy_list[-1].comm_node is not None
     fused_comm_node = copy_list[-1].comm_node
-    assert fused_comm_node is not None, "Pyre is not as smart as Mypy."
     fused_comm_node.update_arg(0, [jit_buffer_node])
     fused_comm_node.users[jit_buffer_node] = ""
 
@@ -1078,8 +1076,6 @@ def _fuse_with_jit(
     insert_node = last_grad_tensor_node.next
     for node in nodes_to_move:
         insert_node.prepend(node)
-
-    # _debug(f"1071 {gm.graph.print_tabular()}\n")
 
     # enforce users count
     for node in copy_nodes:
@@ -1151,12 +1147,15 @@ def _scatter_results_jit(
     for node in scatter_nodes:
         insert_node.prepend(node)
 
-    _debug(f"1135, {print(gm.graph)}\n")
-
     return grad_nodes
 
 
 def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
+    """runs fusion by creating a Just in Time buffer to use for each fusion.
+    It then returns views to the buffer for the gradient outputs, avoiding the
+    need to copy back to the original tensor.
+    We can thus del the gradient tensors as fused, and by only creating buffers as
+    needed, minimize overhead memory pressure."""
 
     gm.recompile()
     # _debug(f"992 cat {gm.graph.print_tabular()}")
@@ -1171,7 +1170,7 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
     graph_info.fe_list = fe_list
 
     assert len(graph_info.wait_node_idx) == len(fe_list), (
-        "The expected wait_nodes in graph_info is different from fe_list "
+        "The expected wait_nodes in graph_info is different from the fe_list "
         f"{len(graph_info.wait_node_idx)} {len(fe_list)}."
     )
 
@@ -1184,9 +1183,7 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
     # Fuse every ``fusion_length`` FusionElement.
     for start in range(0, len(graph_info.fe_list), fusion_length):
 
-        _debug(f"fusion indexes = {start=},{start+fusion_length=}")
         fe_list = graph_info.fe_list[start : (start + fusion_length)]
-        _debug(f"len of fe_list = {len(fe_list)}\n")
         jit_buffer_node = _fuse_with_jit(graph_info, gm, fe_list)
         grad_nodes = _scatter_results_jit(
             graph_info, gm, fe_list, jit_buffer_node
