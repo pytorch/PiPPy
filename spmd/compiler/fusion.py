@@ -1066,6 +1066,7 @@ def _fuse_with_jit(
     fused_comm_node = copy_list[-1].comm_node
     assert fused_comm_node is not None, "Pyre is not as smart as Mypy."
     fused_comm_node.update_arg(0, [jit_buffer_node])
+    fused_comm_node.users[jit_buffer_node] = ""
 
     # Move the fused_comm_node and its args to right after the source node
     nodes_to_move = jit_inputs + [
@@ -1078,7 +1079,7 @@ def _fuse_with_jit(
     for node in nodes_to_move:
         insert_node.prepend(node)
 
-    _debug(f"1071 {gm.graph.print_tabular()}\n")
+    # _debug(f"1071 {gm.graph.print_tabular()}\n")
 
     # enforce users count
     for node in copy_nodes:
@@ -1123,14 +1124,30 @@ def _scatter_results_jit(
             (slice_node, shape),
         )
 
-        scatter_nodes.extend([slice_node, view_node])
+        copy_out_node = gm.graph.call_function(
+            torch.ops.aten.copy_.default,
+            (fe.grad_tensor_node.args[0], view_node),
+        )
 
-        grad_nodes.append(view_node)
+        # gm.graph.erase_node(fe.grad_tensor_node)
+
+        # ensure user for view node
+        user = slice_node
+        view_node.users[user] = ""  # type: ignore
+        # ensure for copy_node
+        user = copy_out_node.args[0]
+        copy_out_node.users[user] = ""
+
+        scatter_nodes.extend([slice_node, view_node, copy_out_node])
+
+        grad_nodes.append(copy_out_node)
 
     # move nodes
     insert_node = wait_node.next
     for node in scatter_nodes:
         insert_node.prepend(node)
+
+    _debug(f"1135, {print(gm.graph)}\n")
 
     return grad_nodes
 
@@ -1166,9 +1183,9 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
         _debug(f"fusion indexes = {start=},{start+fusion_length=}")
         fe_list = graph_info.fe_list[start : (start + fusion_length)]
         _debug(f"len of fe_list = {len(fe_list)}\n")
-        wait_node, jit_buffer_node = _fuse_with_jit(graph_info, gm, fe_list)
+        jit_buffer_node = _fuse_with_jit(graph_info, gm, fe_list)
         grad_nodes = _scatter_results_jit(
-            graph_info, gm, fe_list, jit_buffer_node, wait_node
+            graph_info, gm, fe_list, jit_buffer_node
         )
 
         _debug(f"1142, {grad_nodes=}")
@@ -1185,5 +1202,6 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
     _debug(f"1153, {new_output_args=}\n")
     gm.graph.erase_node(graph_info.output)
     gm.graph.output(new_output_args)
-    rebuild_graph(gm)
+    rebuild_graph(gm, remove_dead_code=True)
+    # gm.recompile()
     _debug(f"{gm.graph.print_tabular()}\n")

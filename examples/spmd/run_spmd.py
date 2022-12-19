@@ -119,7 +119,7 @@ def work_main(rank: int, world_size: int) -> None:
     _debug(f"mesh set to {mesh}\n")
 
     # control depth of ReplicaModel
-    layers = 5
+    layers = 2
 
     # model = Permute().to(rank)  #
     model = ReplicaModel(layer_count=layers).to(_device_type)
