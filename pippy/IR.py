@@ -90,15 +90,16 @@ def _find_loss_from_output_and_spec(output_val, spec_val):
             "loss" in output_val.keys()
         ):
             return output_val["loss"]
-        else:
-            return None
+        raise RuntimeError(
+            f"Did not find 'loss' in output dict"
+        )
 
     raise RuntimeError(
         f"Unsupported type {type(spec_val)} in loss specification"
     )
 
 
-def _check_for_loss_output(mod: torch.nn.Module, g: pippy.fx.Graph, output_loss_value_spec):
+def _find_loss_output(mod: torch.nn.Module, g: pippy.fx.Graph, output_loss_value_spec):
     output_nodes = [n for n in g.nodes if n.op == "output"]
     assert len(output_nodes) == 1
     output_node = output_nodes[0]
@@ -935,14 +936,13 @@ class Pipe(torch.nn.Module):
 
         num_stages = Pipe._number_and_count_forward_stages(split)
 
-        loss_node, output_node = _check_for_loss_output(mod, split.graph, output_loss_value_spec)
+        has_loss_and_backward = False
 
-        if loss_node is not None:
+        if mod.training:
+            loss_node, output_node = _find_loss_output(mod, split.graph, output_loss_value_spec)
             _insert_stage_symbolic_backward(split.graph, loss_node, output_node)
             split.recompile()
             has_loss_and_backward = True
-        else:
-            has_loss_and_backward = False
 
         return Pipe(split, qualname_map, num_stages, has_loss_and_backward)
 
