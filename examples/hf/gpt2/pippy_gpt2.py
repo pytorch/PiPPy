@@ -30,6 +30,11 @@ schedules = {
 pippy.fx.Tracer.proxy_buffer_attributes = True
 
 
+def inspect_mem_usage(location: str):
+    memory_allocated = torch.cuda.memory_allocated() >> 30  # B to GB
+    print(f"Memory allocated {location}: {memory_allocated} GB")
+
+
 def get_number_of_params(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
@@ -170,6 +175,8 @@ def run_gspmd(pp_ranks, args):
                                                                checkpoint=bool(args.checkpoint),
                                                               )
 
+    inspect_mem_usage("after pipeline creation")
+
     this_file_name = os.path.splitext(os.path.basename(__file__))[0]
 
     if args.warmup_batches > 0:
@@ -187,6 +194,8 @@ def run_gspmd(pp_ranks, args):
     finish = time.time()
     total_latency = finish - start
     print(f"TFLOP/s/GPU: {FLOP/1e12/total_latency}")
+
+    inspect_mem_usage("after training")
 
     print(f'Running GPT-2 pipeline {args.batches} batches for visualization.')
     batches_events_contexts = []
