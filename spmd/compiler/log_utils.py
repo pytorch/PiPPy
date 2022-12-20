@@ -1,14 +1,12 @@
 import logging
+import logging.config
+import os
 from typing import Any
 
+import torch
 import torch.distributed as dist
 
-import os
-import logging
-
 from . import config
-import logging.config
-import torch
 
 
 def rank0_debug(logger: logging.Logger, *args: Any, **kwargs: Any) -> None:
@@ -69,15 +67,18 @@ LOGGING_CONFIG = {
     "disable_existing_loggers": False,
 }
 
+
 def get_logger(log_type):
     if "PYTEST_CURRENT_TEST" not in os.environ:
         logging.config.dictConfig(LOGGING_CONFIG)
         avail_loggers = list(LOGGING_CONFIG["loggers"].keys())
-        assert log_type in avail_loggers, f"Unable to find {log_type} in the available list of loggers {avail_loggers}"
+        assert (
+            log_type in avail_loggers
+        ), f"Unable to find {log_type} in the available list of loggers {avail_loggers}"
 
         if not torch.distributed.is_initialized():
             return logging.getLogger(log_type)
-        
+
         if torch.distributed.get_rank() == 0:
             logger = logging.getLogger(log_type)
             logger.setLevel(config.log_level)

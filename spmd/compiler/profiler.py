@@ -2,7 +2,7 @@
 # pyre-ignore-all-errors
 import logging
 from dataclasses import fields
-from typing import Any, Callable, cast, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, cast
 
 import torch
 import torch.distributed as dist
@@ -11,18 +11,11 @@ from functorch.compile import aot_module, make_boxed_func
 from torch import fx
 from torch.autograd.profiler_util import EventList
 from torch.fx.node import map_arg
-from torch.profiler import profile, ProfilerActivity, record_function, schedule
+from torch.profiler import ProfilerActivity, profile, record_function, schedule
 
 from .graph_utils import OP
-from .profiler_utils import (
-    BiDict,
-    get_tensor_stats,
-    GraphType,
-    IntermediateNodeInfo,
-    NodeInfo,
-    ProfileMode,
-    TensorStatus,
-)
+from .profiler_utils import (BiDict, GraphType, IntermediateNodeInfo, NodeInfo,
+                             ProfileMode, TensorStatus, get_tensor_stats)
 
 MEM_LIMIT = 0
 

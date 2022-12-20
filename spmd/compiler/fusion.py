@@ -1,24 +1,18 @@
-import logging
 import operator
 from dataclasses import dataclass, field
-from functools import partial
-from typing import cast, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, cast
 
 import torch
 import torch.fx as fx
+from torch.distributed.distributed_c10d import ReduceOp, _get_default_group
 from torch.fx.experimental.proxy_tensor import make_fx
 from torch.fx.passes.shape_prop import TensorMetadata
-from torch.distributed.distributed_c10d import _get_default_group, ReduceOp
 
-from .graph_utils import (
-    CommType,
-    get_comm_block_nodes,
-    get_node_tensor_metadata,
-    get_output_node,
-    OP,
-    rebuild_graph,
-)
 from spmd.compiler.log_utils import get_logger
+
+from .graph_utils import (OP, CommType, get_comm_block_nodes,
+                          get_node_tensor_metadata, get_output_node,
+                          rebuild_graph)
 
 global logger
 

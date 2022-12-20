@@ -1,42 +1,32 @@
-import logging
 from dataclasses import dataclass
-from enum import auto, Enum
+from enum import Enum, auto
 from functools import partial
-from typing import cast, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple, cast
 
 import torch
 import torch.fx as fx
 import torch.nn as nn
 from functorch.compile import aot_module, make_boxed_func
-from spmd.compiler.log_utils import get_logger
-
-from spmd.tensor import (
-    _CURRENT_DECOMPOSITION_TABLE,
-    _Partial,
-    _redistribute_with_local_tensor,
-    DeviceMesh,
-    DTensor,
-    operator_dispatch,
-    Placement,
-    propagate_input_sharding,
-    Replicate,
-    Shard,
-)
 from torch.distributed._spmd.comm_tensor import _get_tracer
-from torch.fx.experimental.proxy_tensor import (
-    make_fx,
-    proxy_slot,
-    maybe_disable_fake_tensor_mode,
-)
+from torch.fx.experimental.proxy_tensor import (make_fx,
+                                                maybe_disable_fake_tensor_mode,
+                                                proxy_slot)
 from torch.utils._pytree import tree_flatten, tree_map, tree_unflatten
+
+from spmd.compiler.log_utils import get_logger
+from spmd.tensor import (_CURRENT_DECOMPOSITION_TABLE, DeviceMesh, DTensor,
+                         Placement, Replicate, Shard, _Partial,
+                         _redistribute_with_local_tensor, operator_dispatch,
+                         propagate_input_sharding)
 
 from .aot_function_patch import patched_aot_function
 from .distributed_graph import DistributedGraph
-from .graph_utils import CommType, get_comm_block_nodes, OP
+from .graph_utils import OP, CommType, get_comm_block_nodes
 
 # patch aot_function so that we can pass the full (non-sharded) input to capture the graph
 # pyre-fixme
 torch._functorch.aot_autograd.aot_function = patched_aot_function
+
 
 class TrainingPhase(Enum):
     FORWARD = auto()

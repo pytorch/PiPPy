@@ -1,14 +1,12 @@
 import logging
-import os
 import sys
 from types import ModuleType
-
 
 # log level (levels print what it says + all levels listed below it)
 # DEBUG print full traces <-- lowest level + print tracing of every instruction
 # INFO print compiler functions + distributed graphs
-# WARN print warnings 
-# ERROR print exceptions 
+# WARN print warnings
+# ERROR print exceptions
 log_level = logging.ERROR
 # Verbose will print full stack traces on warnings and errors
 verbose = False
