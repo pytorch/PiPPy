@@ -86,20 +86,18 @@ def _find_loss_from_output_and_spec(output_val, spec_val):
 
     if spec_val is None:
         # Use default spec, i.e. search for "loss" in output values
-        if (isinstance(output_val, dict) and
-            "loss" in output_val.keys()
-        ):
+        if isinstance(output_val, dict) and "loss" in output_val.keys():
             return output_val["loss"]
-        raise RuntimeError(
-            f"Did not find 'loss' in output dict"
-        )
+        raise RuntimeError(f"Did not find 'loss' in output dict")
 
     raise RuntimeError(
         f"Unsupported type {type(spec_val)} in loss specification"
     )
 
 
-def _find_loss_output(mod: torch.nn.Module, g: pippy.fx.Graph, output_loss_value_spec):
+def _find_loss_output(
+    mod: torch.nn.Module, g: pippy.fx.Graph, output_loss_value_spec
+):
     output_nodes = [n for n in g.nodes if n.op == "output"]
     assert len(output_nodes) == 1
     output_node = output_nodes[0]
@@ -115,7 +113,9 @@ def _find_loss_output(mod: torch.nn.Module, g: pippy.fx.Graph, output_loss_value
     return loss_node, output_node
 
 
-def _insert_stage_symbolic_backward(g: pippy.fx.Graph, loss_node: pippy.fx.Node, output_node: pippy.fx.Node):
+def _insert_stage_symbolic_backward(
+    g: pippy.fx.Graph, loss_node: pippy.fx.Node, output_node: pippy.fx.Node
+):
     # Collect metadata about tuple output values. TODO: move this to split_module or FX IR
     tuples: Dict[pippy.fx.Node, Tuple] = {}
     for node in reversed(g.nodes):
@@ -939,7 +939,9 @@ class Pipe(torch.nn.Module):
         has_loss_and_backward = False
 
         if mod.training:
-            loss_node, output_node = _find_loss_output(mod, split.graph, output_loss_value_spec)
+            loss_node, output_node = _find_loss_output(
+                mod, split.graph, output_loss_value_spec
+            )
             _insert_stage_symbolic_backward(split.graph, loss_node, output_node)
             split.recompile()
             has_loss_and_backward = True
