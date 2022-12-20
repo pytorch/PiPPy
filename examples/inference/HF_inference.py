@@ -57,8 +57,6 @@ def get_number_of_params(model):
 
 def run_master(pp_ranks, args):
 
-    logger = setup_logger()
-
     torch.manual_seed(42)
 
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.REPLICATE if args.replicate else MultiUseParameterConfig.TRANSMIT
@@ -114,13 +112,14 @@ def run_master(pp_ranks, args):
 
     print('Instantiating model Pipeline')
     model_init_start = time.time()
+    
     model_pipe = Pipe.from_tracing(model, MULTI_USE_PARAM_CONFIG, tracer=PiPPyHFTracer(), concrete_args=concrete_args,
-                                output_loss_value_spec=None, split_policy=split_policy
+                                 split_policy=split_policy
                                 )
    
     model_pipe.defer_stage_init(args.device)
 
-    torch.distributed.barrier(args.pp_group)
+    pippy.utils.pp_group_barrier()
 
     if args.rank!=0:
         return 
