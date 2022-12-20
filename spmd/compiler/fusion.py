@@ -5,7 +5,6 @@ from functools import partial
 from typing import cast, Dict, List, Optional, Tuple
 
 import torch
-import torch.distributed as dist
 import torch.fx as fx
 from torch.fx.experimental.proxy_tensor import make_fx
 from torch.fx.passes.shape_prop import TensorMetadata
@@ -71,10 +70,13 @@ class GraphInfo:
     fe_list: List[FusionElement] = field(default_factory=lambda: [])
     # max memory needed for fusion buffer
     peak_memory_required: int = 0
-    # node housing global buffer for fusion comms
-    global_buffer_node: Optional[fx.Node] = None
+    # list housing global buffers for fusion comms
+    _ring_buffer: Optional[List[fx.Node]] = None
     # size of the global buffer
     global_buffer_size: int = 0
+    _ring_num_buffers: int = 0
+    _ring_index: int = 0
+    _current_ring_index: int = 0
     # real buffer (not node) used for tracing fusion subgraphs
     tracing_buffer: Optional[torch.Tensor] = None
     # first node in graph (head)
@@ -93,7 +95,38 @@ class GraphInfo:
     # Initialize logger
     global logger
     logger = get_logger("graph_opt")
-    
+
+    def setup_ring_buffer(
+        self, buffer_node_list: List[fx.Node], buffer_size: int
+    ) -> None:
+        """init ring buffer for sequential allocation"""
+        self._ring_buffer = buffer_node_list
+        self._ring_num_buffers = len(self._ring_buffer)
+        self._ring_index = 0
+
+        self.global_buffer_size = buffer_size
+
+        _debug(f"107, ring buffer setup: {self._ring_buffer=}")
+
+    def get_next_ring_buffer(
+        self,
+    ) -> fx.Node:
+        """get the next buffer node in the ring"""
+        buffer_node = self._ring_buffer[self._ring_index]  # type: ignore
+        self._current_ring_index = self._ring_index
+        assert (
+            buffer_node is not None
+        ), f"failed to get ring buffer for index {self._ring_index}\n"
+        self._ring_index += 1
+        if self._ring_index >= self._ring_num_buffers:
+            self._ring_index = 0
+        return buffer_node
+
+    def get_current_ring_buffer(
+        self,
+    ) -> fx.Node:
+        """used to retrieve the current one (for remapping)"""
+        return self._ring_buffer[self._current_ring_index]  # type: ignore
 
     def update_info(self, gm: fx.GraphModule) -> "GraphInfo":
         """Get the len, input and output nodes"""
@@ -126,45 +159,48 @@ class GraphInfo:
         return self
 
 
-def _insert_fusion_buffer_node(
+def _create_fusion_buffers(
     gm: fx.GraphModule,
     buffer_size: int,
-    gi: Optional[GraphInfo] = None,
-) -> fx.Node:
-    """Insert a torch.empty node for the global buffer.
+    gi: Optional[GraphInfo],
+    ring_size: int,
+) -> List[fx.Node]:
+    """Insert torch.empty node(s) for the global buffer.
     defaults to first node after placeholder nodes.
     appends to GlobalInfo if passed in"""
 
     # default to inserting just after last placeholder node
+    # TODO - more efficient if we drop the buffer right before first use
+    # to reduce memory pressure.
     for node in gm.graph.nodes:
         if node.op == OP.PLACEHOLDER:
             continue
         insert_before_node = node
         break
 
-    # TODO - fix with correct rank - needs to match with higher DTensor device
-    rank = dist.get_rank()
-    if torch.distributed.is_initialized():
-        torch.cuda.set_device(rank)
-    rank_device = torch.cuda.current_device()
-
+    ring_buffer = []
+    new_buffer_node = None
+    # there is an assumption below that torch.set_device has been setup by
+    # DTensor.  We thus ride on that by passing "cuda" for device, which
+    # should expand internally to "cuda:index".
     with gm.graph.inserting_before(insert_before_node):
-        new_buffer_node = gm.graph.create_node(
-            OP.CALL_FUNCTION,
-            target=torch.empty,
-            # TODO - need device from DTensor to put buffer on gpu
-            args=(buffer_size,),
-            kwargs={"device": rank_device},
-        )
+        for i in range(ring_size):
+            new_buffer_node = gm.graph.create_node(
+                OP.CALL_FUNCTION,
+                target=torch.empty,
+                args=(buffer_size,),
+                kwargs={"device": "cuda"},
+            )
+            ring_buffer.append(new_buffer_node)
+
     assert (
         new_buffer_node is not None
     ), f"failed to create buffer node, size={buffer_size}"
 
-    if gi is not None:
-        gi.global_buffer_node = new_buffer_node
-        gi.global_buffer_size = buffer_size
+    # init ring buffer
+    gi.setup_ring_buffer(ring_buffer, buffer_size)  # type: ignore
 
-    return new_buffer_node
+    return ring_buffer
 
 
 def _scan_graph_for_fusion_elements(
@@ -200,7 +236,9 @@ def _scan_graph_for_fusion_elements(
             if not gi.fe_offset_to_comm_node:
                 len_comm_section = len(fe.node_list)
                 gi.fe_offset_to_comm_node = len_comm_section - comm_idx - 1
-                logger.debug(f"global comm index set {gi.fe_offset_to_comm_node}\n")
+                logger.debug(
+                    f"global comm index set {gi.fe_offset_to_comm_node}\n"
+                )
     return element_list
 
 
@@ -208,10 +246,12 @@ def _copy_fe_to_buffer(
     gi: GraphInfo, gm: fx.GraphModule, copy_list: List[FusionElement]
 ) -> None:
     """First half of fusion - move desired items to buffer and create graph"""
-    buffer_node = gi.global_buffer_node
+    buffer_node = gi.get_next_ring_buffer()
     buffer_size = gi.global_buffer_size
 
     num_fusion_elements = len(copy_list)
+
+    _debug(f"255, copy fe to buffer, {num_fusion_elements=}\n")
 
     def copy_to_buffer(
         concat_buffer: torch.Tensor, tensor_list: List[torch.Tensor]
@@ -248,7 +288,7 @@ def _copy_fe_to_buffer(
 
     # create placeholder remapping
     pl_map: Dict[fx.Node, fx.Node] = {}
-    pl_map[pl_list[0]] = gi.global_buffer_node  # type: ignore
+    pl_map[pl_list[0]] = buffer_node  # type: ignore
 
     for i in range(num_fusion_elements):
         # pl map remaps traced placeholders used in copy graph to main graph grad tensors
@@ -265,8 +305,65 @@ def _copy_fe_to_buffer(
             out_node = value_remap[in_node]
         return out_node
 
-    with gm.graph.inserting_before(insert_node):
+    # overlap - move the new gather section to the source node
+    all_grad_nodes = []
+    for fe in copy_list:
+        assert fe.grad_tensor_node is not None
+        assert fe.grad_tensor_node.name.startswith("clone")
+        all_grad_nodes.append(fe.grad_tensor_node)
+
+    grad_indices_mapping = [
+        gi.actual_grad_index_mapping[
+            cast(Tuple[fx.Node], grad_tensor_node.args)[0]
+        ]
+        for grad_tensor_node in all_grad_nodes
+    ]
+
+    last_grad_fe_index = grad_indices_mapping.index(max(grad_indices_mapping))
+    assert copy_list[last_grad_fe_index].grad_tensor_node is not None
+    last_grad_tensor_node = cast(
+        fx.Node,
+        cast(fx.Node, copy_list[last_grad_fe_index].grad_tensor_node).args[0],
+    )
+    source_node = last_grad_tensor_node  # get_source_node_next(insert_node)
+
+    _debug(
+        f"270 copy buffer to start =  {source_node.name}\n {all_grad_nodes=}\n"
+    )
+
+    # move clone nodes
+    curr_node = source_node
+    for item in all_grad_nodes:  # type: ignore
+        if curr_node.next is not item:
+            curr_node.append(item)
+        curr_node = curr_node.next
+
+    # _debug(f"279 =====after clone node  =====\n {gm.graph.print_tabular()}\n")
+
+    # move final tensor_constants
+    constant_list = [copy_list[-1].node_list[1], copy_list[-1].node_list[2]]
+
+    assert constant_list[0].name.startswith(
+        "_tensor_constant"
+    ), f"failed to locate tensor constant node {constant_list[0]}"
+    assert constant_list[1].name.startswith(
+        "_tensor_constant"
+    ), f"failed to locate tensor constant node {constant_list[1]}"
+
+    for item in constant_list:  # type: ignore
+        curr_node.append(item)
+        curr_node = curr_node.next
+
+    # move all_reduce final node
+    buffer_comm_node = copy_list[-1].comm_node
+    buffer_comm_node.update_arg(0, [buffer_node])  # type: ignore
+    curr_node.append(buffer_comm_node)
+    curr_node = curr_node.next
+
+    nodes_inserted_count = 0
+    with gm.graph.inserting_before(curr_node):
         for innernode in load_gm.graph.nodes:
+            nodes_inserted_count += 1
             if innernode.op in [OP.PLACEHOLDER, OP.OUTPUT]:
                 continue
             value_remap[innernode] = gm.graph.node_copy(
@@ -275,11 +372,10 @@ def _copy_fe_to_buffer(
 
     _update_new_copy_nodes_users(value_remap)
 
-    # update allreduce to use buffer
-    # (we currently don't) have to make our own all_reduce/comm_wait section
-    # # TODO - pg group matching
-    buffer_comm_node = copy_list[-1].comm_node
-    buffer_comm_node.update_arg(0, [buffer_node])  # type: ignore
+    # gm.recompile()
+    # _debug(
+    #    f"381 =====after clone, tensor_constant and allreduce insert =====\n {gm.graph.print_tabular()}\n"
+    # )
 
 
 def _build_buffer_comm_graph(
@@ -315,7 +411,7 @@ def _scatter_results_from_buffer(
 ) -> None:
     """After comm event with buffer, scatter results back to original fe grad tensors"""
 
-    buffer_node = gi.global_buffer_node
+    buffer_node = gi.get_current_ring_buffer()
     buffer_size = gi.global_buffer_size
 
     scatter_list = fe_list
@@ -356,7 +452,7 @@ def _scatter_results_from_buffer(
 
     # create placeholder remapping
     pl_map: Dict[fx.Node, fx.Node] = {}
-    pl_map[pl_list[0]] = gi.global_buffer_node  # type: ignore
+    pl_map[pl_list[0]] = buffer_node  # type: ignore
     for i in range(num_fe_items):
         pl_map[pl_list[i + 1]] = fe_list[i].grad_tensor_node  # type: ignore
 
@@ -409,7 +505,7 @@ def _scatter_results_from_buffer(
     ), f"failed to get tensor metadata for last getitem node {last_get_item_node=}"
 
     # replace with buffer metadata
-    buffer_meta = gi.global_buffer_node.meta.get("tensor_meta", None)  # type: ignore
+    buffer_meta = buffer_node.meta.get("tensor_meta", None)  # type: ignore
 
     new_tensor_meta = _update_node_tensor_metadata(
         last_get_item_node, new_shape=buffer_shape  # type: ignore
@@ -487,6 +583,8 @@ def _finalize_output_node(
     replacement_mapping: Dict[fx.Node, fx.Node] = {}
 
     # map out all updated nodes in our list
+    # working in reverse for fusion, so undo for simple replacement
+    # fe_list = fe_list[::-1]
     for item in fe_list:
         grad_node = item.grad_tensor_node
         wait_node = item.wait_node
@@ -504,10 +602,10 @@ def _finalize_output_node(
             ), f"Non comm gradient output tensor incorrectly handled...needs fix. {new_output_args[start+i]}"
             new_output_args[start + i] = replacement_mapping[curr_node]
 
-    logger.debug(f"Updated output args = {new_output_args}\n")
+    # _debug(f"537 - updated output args = {new_output_args}\n")
 
 
-def _determine_peak_memory(gi: GraphInfo, fusion_policy: int) -> int:
+def _determine_peak_memory(gi: GraphInfo, fusion_length: int) -> int:
     """
     Scans fe list to determine max memory required across all fusion instances.
     this result is used to allocate the global buffer for fusion, where we
@@ -516,16 +614,17 @@ def _determine_peak_memory(gi: GraphInfo, fusion_policy: int) -> int:
     peak_memory = 0  # currently measured in numel
     curr_memory = 0
     curr_fe_index = 0
-    for i, item in enumerate(gi.fe_list):  # type: ignore
+
+    for item in gi.fe_list:  # type: ignore
         curr_fe_index += 1
         curr_memory += item.size  # type: ignore
 
-        if curr_fe_index == fusion_policy:
+        if curr_fe_index == fusion_length:
             peak_memory = max(peak_memory, curr_memory)
             curr_fe_index = 0
             curr_memory = 0
 
-    logger.debug(f"Peak memory determined to be {peak_memory}")
+    _debug(f"peak memory determined to be {peak_memory}")
     gi.peak_memory_required = peak_memory
 
     return peak_memory
@@ -547,13 +646,25 @@ def _setup(gm: fx.GraphModule) -> GraphInfo:
 def _teardown(gm: fx.GraphModule) -> None:
     """final steps before exiting optimization phase"""
     rebuild_graph(gm)
+    # _debug("final graph cleanup, ready to exit\n")
+    # _debug(f"\n Final Graph ===== \n {gm.graph.print_tabular()}\n")
 
-def run_fuse_communication(gm: fx.GraphModule, fusion_policy: int = 4) -> None:
-    """Main entry into remapping graph for all_reduce fusion.
-    Modifications are in place to the graph.  Errors will result in stoppage
-    to alert user rather than handling and returning error codes."""
-    # Initialize logger
-    logger = get_logger("graph_opt")
+
+def run_fuse_communication_ring(
+    gm: fx.GraphModule,
+    fusion_length: int,
+    ring_num_buffers: int,
+) -> None:
+    """fusion using a ring buffer in order to avoid buffer overwriting"""
+
+    assert (
+        fusion_length > 1
+    ), f"fusion policy is {fusion_length}, but requires > 1 for actual fusion. "
+
+    # _debug(f"\n Start of fusion pass graph {gm.graph.print_tabular()}\n")
+    _debug(
+        f"Start of fusion_ring pass, fusion_length = {fusion_length}, buffers = {ring_num_buffers} \n"
+    )
 
     graph_info = _setup(gm)
 
@@ -563,61 +674,68 @@ def run_fuse_communication(gm: fx.GraphModule, fusion_policy: int = 4) -> None:
     )
 
     graph_info.num_starting_fe = len(fe_list)  # type: ignore
+    _debug(f"len of fe_list = {len(fe_list)}\n")
+
     graph_info.fe_list = fe_list
 
-    # simple fusion policy where int = num buckets to fuse...start with 2,
-    # meaning every 2 comms are fused into 1
-    assert (
-        fusion_policy > 1
-    ), f"fusion policy is {fusion_policy}, but requires > 1 for actual fusion. "
-
     # determine peak memory using fusion policy
-    peak_memory_required = _determine_peak_memory(graph_info, fusion_policy)
+    peak_memory_required = _determine_peak_memory(graph_info, fusion_length)
 
-    buffer_node = _insert_fusion_buffer_node(
-        gm, peak_memory_required, graph_info
+    assert (
+        peak_memory_required > 0
+    ), f"failed to compute effective peak memory - determined {peak_memory_required} as buffer size\n"
+
+    ring_buffer = _create_fusion_buffers(
+        gm, peak_memory_required, graph_info, ring_num_buffers
     )
 
-    # Main process loop - iterate all fusion elements, apply fusion to subsets
-    offset = 0
-    count = 0
+    _debug(f"ring buffer constructed: {ring_buffer=}\n")
 
-    start_output_args: List[fx.Node] = graph_info.output.args[0]  # type: ignore
-    new_output_args: List[fx.Node] = list(start_output_args)  # type: ignore
+    assert len(graph_info.wait_node_idx) == len(fe_list), (
+        "The expected wait_nodes in graph_info are different from fe_list "
+        f"{len(graph_info.wait_node_idx)} {len(fe_list)}."
+    )
+    assert graph_info.output is not None
+    new_output_args = list(cast(Tuple[fx.Node], graph_info.output.args[0]))
 
-    for index, item in enumerate(graph_info.fe_list):  # type: ignore
-        count += 1
-        if count == fusion_policy:
-            start_index = offset
-            stop_index = offset + count
+    # track the index of the grad nodes in the graph so we can pull the
+    # correct "last" gradient node from any given fusion set.
+    # TODO - shared function here
+    actual_gradients = set(
+        cast(Tuple[fx.Node], cast(fx.Node, fe.grad_tensor_node).args)[0]
+        for fe in fe_list
+    )
+    for idx, node in enumerate(gm.graph.nodes):
+        if node in actual_gradients:
+            graph_info.actual_grad_index_mapping[node] = idx
 
-            curr_fe_list = graph_info.fe_list[start_index:stop_index]  # type: ignore
+    # Main processing loop
+    for start in range(0, len(graph_info.fe_list), fusion_length):
+        stop = start + fusion_length
+        to_fuse_fe_list = graph_info.fe_list[start:stop]
 
-            _copy_fe_to_buffer(graph_info, gm, curr_fe_list)
+        _copy_fe_to_buffer(graph_info, gm, to_fuse_fe_list)
 
-            _scatter_results_from_buffer(graph_info, gm, curr_fe_list)
+        _scatter_results_from_buffer(graph_info, gm, to_fuse_fe_list)
 
-            # switch wait_comms to output gradient nodes in output directly
-            # fusion will have removed and reworked existing wait_comms
+        _finalize_output_node(
+            graph_info,
+            gm,
+            to_fuse_fe_list,
+            start,
+            stop,
+            new_output_args,
+        )
 
-            _finalize_output_node(
-                graph_info,
-                gm,
-                curr_fe_list,
-                start_index,
-                stop_index,
-                new_output_args,
-            )
-
-            offset += count
-            count = 0
     # update output with the updated args
     gm.graph.erase_node(graph_info.output)
     gm.graph.output(new_output_args)
 
-    logger.debug(f"\nComm Fusion processed {index+1} fe items\n")
+    _debug(f"\nRing Comm Fusion processed {len(fe_list)} fe items\n")
 
-    _teardown(gm)
+    # _debug(f"Final output node args {new_output_args=}\n")
+
+    rebuild_graph(gm)
 
 
 def _get_source_node_next(comm_node: fx.Node) -> fx.Node:
@@ -688,6 +806,10 @@ def run_overlap_communication(gm: fx.GraphModule) -> None:
     )
     gm.recompile()
 
+    _debug(" ------ finish, run communication overlap pass -----\n")
+    # _debug(f"graph = {print(gm.graph)}\n")
+    # _debug(f"{gm.graph.print_tabular()}\n")
+
     _teardown(gm)
 
 
@@ -716,7 +838,10 @@ def _fuse_with_cat(
     # ff. flat_grads = [torch.flatten(grad) for grad in fusion_gradients]
     with gm.graph.inserting_after(last_grad_tensor_node):
         cat_inputs = [
-            gm.graph.call_function(torch.flatten, (fe.grad_tensor_node,))
+            gm.graph.call_function(
+                torch.flatten,
+                (cast(fx.Node, cast(fx.Node, fe.grad_tensor_node).args[0]),),
+            )
             for fe in copy_list
         ]
 
@@ -731,16 +856,12 @@ def _fuse_with_cat(
     fused_comm_node.update_arg(0, [cat_node])
 
     # Move the fused_comm_node and its args to right after the source node
-    nodes_to_move = (
-        [
-            fused_comm_node,
-            fused_comm_node.args[1],
-            fused_comm_node.args[2],
-            cat_node,
-        ]
-        + cat_inputs
-        + all_grad_tensor_nodes
-    )
+    nodes_to_move = [
+        fused_comm_node,
+        fused_comm_node.args[1],
+        fused_comm_node.args[2],
+        cat_node,
+    ] + cat_inputs
     for node in nodes_to_move:
         last_grad_tensor_node.append(node)
 
