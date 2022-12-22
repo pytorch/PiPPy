@@ -8,8 +8,11 @@ from spmd.tensor import Placement, Replicate
 
 from .distribute import Schema, distribute
 from .distributed_graph import DistributedGraph
-from .graph_optimization import (DistGraphOptimization, GraphOptimization,
-                                 GraphOptimizationType)
+from .graph_optimization import (
+    DistGraphOptimization,
+    GraphOptimization,
+    GraphOptimizationType,
+)
 
 global logger
 

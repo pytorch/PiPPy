@@ -6,8 +6,11 @@ from typing import Any, Callable, DefaultDict, Dict, Iterable, Sequence, Set
 
 from .bucketing_strategies import BucketingStrategy
 from .distributed_graph import DistributedGraph
-from .fusion import (run_fuse_communication_cat, run_fuse_communication_ring,
-                     run_overlap_communication)
+from .fusion import (
+    run_fuse_communication_cat,
+    run_fuse_communication_ring,
+    run_overlap_communication,
+)
 from .log_utils import rank0_info
 from .scheduling_policies import SchedulingPolicy
 

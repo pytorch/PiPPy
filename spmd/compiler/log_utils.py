@@ -6,7 +6,7 @@ from typing import Any
 import torch
 import torch.distributed as dist
 
-from . import config
+from spmd.compiler.log_utils import config
 
 
 def rank0_debug(logger: logging.Logger, *args: Any, **kwargs: Any) -> None:

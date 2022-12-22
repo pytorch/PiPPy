@@ -14,8 +14,15 @@ from torch.fx.node import map_arg
 from torch.profiler import ProfilerActivity, profile, record_function, schedule
 
 from .graph_utils import OP
-from .profiler_utils import (BiDict, GraphType, IntermediateNodeInfo, NodeInfo,
-                             ProfileMode, TensorStatus, get_tensor_stats)
+from .profiler_utils import (
+    BiDict,
+    GraphType,
+    IntermediateNodeInfo,
+    NodeInfo,
+    ProfileMode,
+    TensorStatus,
+    get_tensor_stats,
+)
 
 MEM_LIMIT = 0
 

@@ -10,9 +10,14 @@ from torch.fx.passes.shape_prop import TensorMetadata
 
 from spmd.compiler.log_utils import get_logger
 
-from .graph_utils import (OP, CommType, get_comm_block_nodes,
-                          get_node_tensor_metadata, get_output_node,
-                          rebuild_graph)
+from .graph_utils import (
+    OP,
+    CommType,
+    get_comm_block_nodes,
+    get_node_tensor_metadata,
+    get_output_node,
+    rebuild_graph,
+)
 
 global logger
 
@@ -100,7 +105,7 @@ class GraphInfo:
 
         self.global_buffer_size = buffer_size
 
-        _debug(f"107, ring buffer setup: {self._ring_buffer=}")
+        logger.info(f"107, ring buffer setup: {self._ring_buffer=}")
 
     def get_next_ring_buffer(
         self,
@@ -245,7 +250,7 @@ def _copy_fe_to_buffer(
 
     num_fusion_elements = len(copy_list)
 
-    _debug(f"255, copy fe to buffer, {num_fusion_elements=}\n")
+    logger.info(f"_copy_fe_to_buffer {num_fusion_elements=}")
 
     def copy_to_buffer(
         concat_buffer: torch.Tensor, tensor_list: List[torch.Tensor]
@@ -321,8 +326,8 @@ def _copy_fe_to_buffer(
     )
     source_node = last_grad_tensor_node  # get_source_node_next(insert_node)
 
-    _debug(
-        f"270 copy buffer to start =  {source_node.name}\n {all_grad_nodes=}\n"
+    logger.info(
+        f"copy buffer to start =  {source_node.name}\n {all_grad_nodes=}"
     )
 
     # move clone nodes
@@ -332,7 +337,7 @@ def _copy_fe_to_buffer(
             curr_node.append(item)
         curr_node = curr_node.next
 
-    # _debug(f"279 =====after clone node  =====\n {gm.graph.print_tabular()}\n")
+    logger.info(f"After clone node {gm.graph.print_tabular()}")
 
     # move final tensor_constants
     constant_list = [copy_list[-1].node_list[1], copy_list[-1].node_list[2]]
@@ -366,10 +371,10 @@ def _copy_fe_to_buffer(
 
     _update_new_copy_nodes_users(value_remap)
 
-    # gm.recompile()
-    # _debug(
-    #    f"381 =====after clone, tensor_constant and allreduce insert =====\n {gm.graph.print_tabular()}\n"
-    # )
+    gm.recompile()
+    logger.info(
+        f"After clone, tensor_constant and allreduce insert {gm.graph.print_tabular()}"
+    )
 
 
 def _build_buffer_comm_graph(
@@ -418,7 +423,7 @@ def _scatter_results_from_buffer(
         for t in scatter_list:
             numel = t.numel()
             shaper = buffer[offset : offset + numel].view(t.shape)
-            t.copy_(shaper)  # buffer[offset : offset + numel].view(t.shape() ))
+            t.copy_(shaper)
             offset += numel
         return buffer
 
@@ -428,20 +433,16 @@ def _scatter_results_from_buffer(
 
     tlist = []
     for item in scatter_list:
-
         a = torch.zeros(item.shape)  # type: ignore
-
-        tlist.append(a)  # clone().detach())
+        tlist.append(a)
 
     scatter_sg = make_fx(scatter_from_buffer)(buffer, tlist)
-
     pl_list = []
 
     for node in scatter_sg.graph.nodes:
         if node.op == OP.PLACEHOLDER:
             pl_list.append(node)
 
-    #
     insert_node = fe_list[-1]._get_next_node()  # before last node of FE section
 
     # create placeholder remapping
@@ -476,7 +477,7 @@ def _scatter_results_from_buffer(
     # force copies and waits to have a user
     # copies and waits do not have users by default, and will be
     # removed at recompile (can lead to lots of surprise/frustration)
-    # # TODO this does not account for nodes beyond our own...remove/fix this
+    # TODO this does not account for nodes beyond our own...remove/fix this
 
     _update_new_copy_nodes_users(value_remap)
 
@@ -596,7 +597,7 @@ def _finalize_output_node(
             ), f"Non comm gradient output tensor incorrectly handled...needs fix. {new_output_args[start+i]}"
             new_output_args[start + i] = replacement_mapping[curr_node]
 
-    # _debug(f"537 - updated output args = {new_output_args}\n")
+    logger.info(f"Updated output args = {new_output_args}")
 
 
 def _determine_peak_memory(gi: GraphInfo, fusion_length: int) -> int:
@@ -618,7 +619,7 @@ def _determine_peak_memory(gi: GraphInfo, fusion_length: int) -> int:
             curr_fe_index = 0
             curr_memory = 0
 
-    _debug(f"peak memory determined to be {peak_memory}")
+    logger.info(f"peak memory determined to be {peak_memory}")
     gi.peak_memory_required = peak_memory
 
     return peak_memory
@@ -640,8 +641,7 @@ def _setup(gm: fx.GraphModule) -> GraphInfo:
 def _teardown(gm: fx.GraphModule) -> None:
     """final steps before exiting optimization phase"""
     rebuild_graph(gm)
-    # _debug("final graph cleanup, ready to exit\n")
-    # _debug(f"\n Final Graph ===== \n {gm.graph.print_tabular()}\n")
+    logger.info(f"Final Graph {gm.graph.print_tabular()}")
 
 
 def run_fuse_communication_ring(
@@ -655,9 +655,8 @@ def run_fuse_communication_ring(
         fusion_length > 1
     ), f"fusion policy is {fusion_length}, but requires > 1 for actual fusion. "
 
-    # _debug(f"\n Start of fusion pass graph {gm.graph.print_tabular()}\n")
-    _debug(
-        f"Start of fusion_ring pass, fusion_length = {fusion_length}, buffers = {ring_num_buffers} \n"
+    logger.info(
+        f"Start of fusion_ring pass, fusion_length = {fusion_length}, buffers = {ring_num_buffers}"
     )
 
     graph_info = _setup(gm)
@@ -668,7 +667,7 @@ def run_fuse_communication_ring(
     )
 
     graph_info.num_starting_fe = len(fe_list)  # type: ignore
-    _debug(f"len of fe_list = {len(fe_list)}\n")
+    logger.info(f"len of fe_list = {len(fe_list)}")
 
     graph_info.fe_list = fe_list
 
@@ -682,9 +681,6 @@ def run_fuse_communication_ring(
     ring_buffer = _create_fusion_buffers(
         gm, peak_memory_required, graph_info, ring_num_buffers
     )
-
-    _debug(f"ring buffer constructed: {ring_buffer=}\n")
-
     assert len(graph_info.wait_node_idx) == len(fe_list), (
         "The expected wait_nodes in graph_info are different from fe_list "
         f"{len(graph_info.wait_node_idx)} {len(fe_list)}."
@@ -725,9 +721,7 @@ def run_fuse_communication_ring(
     gm.graph.erase_node(graph_info.output)
     gm.graph.output(new_output_args)
 
-    _debug(f"\nRing Comm Fusion processed {len(fe_list)} fe items\n")
-
-    # _debug(f"Final output node args {new_output_args=}\n")
+    logger.info(f"Ring Comm Fusion processed {len(fe_list)} fe items")
 
     rebuild_graph(gm)
 
@@ -799,11 +793,6 @@ def run_overlap_communication(gm: fx.GraphModule) -> None:
         f"Optimization stats: Overlap communication pass has moved -* {index+1} *- communication calls\n"
     )
     gm.recompile()
-
-    _debug(" ------ finish, run communication overlap pass -----\n")
-    # _debug(f"graph = {print(gm.graph)}\n")
-    # _debug(f"{gm.graph.print_tabular()}\n")
-
     _teardown(gm)
 
 
@@ -829,7 +818,6 @@ def _fuse_with_cat(
         cast(fx.Node, copy_list[last_grad_fe_index].grad_tensor_node).args[0],
     )
 
-    # ff. flat_grads = [torch.flatten(grad) for grad in fusion_gradients]
     with gm.graph.inserting_after(last_grad_tensor_node):
         cat_inputs = [
             gm.graph.call_function(
@@ -839,11 +827,9 @@ def _fuse_with_cat(
             for fe in copy_list
         ]
 
-    # ff. cat_node = torch.cat(flat_grads)
     with gm.graph.inserting_after(cat_inputs[0]):
         cat_node = gm.graph.call_function(torch.cat, (cat_inputs,))
 
-    # ff. allreduce(cat_node)
     assert copy_list[-1].comm_node is not None
     fused_comm_node = copy_list[-1].comm_node
     assert fused_comm_node is not None, "Pyre is not as smart as Mypy."
@@ -865,7 +851,6 @@ def _fuse_with_cat(
 def _scatter_results(
     gi: GraphInfo, gm: fx.GraphModule, scatter_list: List[FusionElement]
 ) -> List[fx.Node]:
-    # ff. split = torch.split(allreduce_result)
     scatter_sizes = [fe.size for fe in scatter_list]
     assert scatter_list[-1].wait_node is not None
     wait_node = scatter_list[-1].wait_node
@@ -875,7 +860,6 @@ def _scatter_results(
             (wait_node, scatter_sizes),
         )
 
-    # ff. grad_nodes = [grad.reshape(shapes[i]) for grad in enumerate(split)]
     grad_nodes = []
     with gm.graph.inserting_after(scatter_node):
         for idx, fe in enumerate(scatter_list):

@@ -1,8 +1,19 @@
 import math
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import (Any, Dict, ItemsView, Iterator, KeysView, List,
-                    MutableMapping, Optional, Tuple, TypeVar, ValuesView)
+from typing import (
+    Any,
+    Dict,
+    ItemsView,
+    Iterator,
+    KeysView,
+    List,
+    MutableMapping,
+    Optional,
+    Tuple,
+    TypeVar,
+    ValuesView,
+)
 
 import torch
 import torch.fx as fx
