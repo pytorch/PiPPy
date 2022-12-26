@@ -120,7 +120,7 @@ def run_master(pp_ranks, args):
    
     model_pipe.defer_stage_init(args.device)
 
-    torch.distributed.barrier(args.pp_group)
+    torch.distributed.barrier()
 
     if args.rank!=0:
         return 
