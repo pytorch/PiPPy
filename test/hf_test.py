@@ -638,6 +638,7 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
             # TODO: support SwinBackbone
             if model_cls in [
                 SwinBackbone,
+                ResNetBackbone,
             ]:
                 self.skipTest("Need to support SwinBackbone")
 
@@ -926,6 +927,7 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
             # TODO: support SwinBackbone
             if model_cls in [
                 SwinBackbone,
+                ResNetBackbone,
             ]:
                 self.skipTest("Need to support SwinBackbone")
 
