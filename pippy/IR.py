@@ -944,11 +944,17 @@ class Pipe(torch.nn.Module):
                 mod, split.graph, output_loss_value_spec
             )
             if loss_node is not None:
-                _insert_stage_symbolic_backward(split.graph, loss_node, output_node)
+                _insert_stage_symbolic_backward(
+                    split.graph, loss_node, output_node
+                )
                 split.recompile()
                 has_loss_and_backward = True
             else:
-                logging.info("Did not find any loss value, thus not creating backward pass.")
+                logging.warning(
+                    "Did not find any loss value from model output, your pipeline will be in inference mode. "
+                    "If you want your pipeline to be in training mode, please specify a loss value via "
+                    "`output_loss_value_spec`."
+                )
 
         return Pipe(split, qualname_map, num_stages, has_loss_and_backward)
 
