@@ -308,7 +308,6 @@ def generate_hf_model(model_cls):
     ):
         config.pad_token_id = 0
     model = model_cls(config)
-    model.eval()
 
     return model, splitter
 
@@ -643,6 +642,7 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
                 self.skipTest("Need to support SwinBackbone")
 
             model, splitter = generate_hf_model(model_cls)
+            model.eval() # Forward only
 
             submodules_cnt = splitter(model)
 
@@ -932,7 +932,6 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
                 self.skipTest("Need to support SwinBackbone")
 
             model, splitter = generate_hf_model(model_cls)
-            model.eval()  # Disable nondeterminism for testing
             submodules_cnt = splitter(model)
 
             try:
