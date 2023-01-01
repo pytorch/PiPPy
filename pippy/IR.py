@@ -84,24 +84,39 @@ def _find_loss_from_output_and_spec(output_val, spec_val):
             f"Did not find loss value in specification {spec_val}"
         )
 
+    if spec_val is None:
+        # Use default spec, i.e. search for "loss" in output values
+        if isinstance(output_val, dict) and "loss" in output_val.keys():
+            return output_val["loss"]
+        else:
+            return None
+
     raise RuntimeError(
         f"Unsupported type {type(spec_val)} in loss specification"
     )
 
 
-def _insert_stage_symbolic_backward(g: pippy.fx.Graph, output_loss_value_spec):
+def _find_loss_output(
+    mod: torch.nn.Module, g: pippy.fx.Graph, output_loss_value_spec
+):
     output_nodes = [n for n in g.nodes if n.op == "output"]
     assert len(output_nodes) == 1
     output_node = output_nodes[0]
 
-    if output_loss_value_spec:
+    if isinstance(mod, LossWrapper):
+        assert len(output_node.args) == 1
+        loss_node = output_node.args[0]
+    else:
         loss_node = _find_loss_from_output_and_spec(
             output_node.args[0], output_loss_value_spec
         )
-    else:
-        assert len(output_node.args) == 1
-        loss_node = output_node.args[0]
 
+    return loss_node, output_node
+
+
+def _insert_stage_symbolic_backward(
+    g: pippy.fx.Graph, loss_node: pippy.fx.Node, output_node: pippy.fx.Node
+):
     # Collect metadata about tuple output values. TODO: move this to split_module or FX IR
     tuples: Dict[pippy.fx.Node, Tuple] = {}
     for node in reversed(g.nodes):
@@ -922,12 +937,24 @@ class Pipe(torch.nn.Module):
 
         num_stages = Pipe._number_and_count_forward_stages(split)
 
-        if isinstance(mod, LossWrapper) or output_loss_value_spec:
-            _insert_stage_symbolic_backward(split.graph, output_loss_value_spec)
-            split.recompile()
-            has_loss_and_backward = True
-        else:
-            has_loss_and_backward = False
+        has_loss_and_backward = False
+
+        if mod.training:
+            loss_node, output_node = _find_loss_output(
+                mod, split.graph, output_loss_value_spec
+            )
+            if loss_node is not None:
+                _insert_stage_symbolic_backward(
+                    split.graph, loss_node, output_node
+                )
+                split.recompile()
+                has_loss_and_backward = True
+            else:
+                logging.warning(
+                    "Did not find any loss value from model output, your pipeline will be in inference mode. "
+                    "If you want your pipeline to be in training mode, please specify a loss value via "
+                    "`output_loss_value_spec`."
+                )
 
         return Pipe(split, qualname_map, num_stages, has_loss_and_backward)
 

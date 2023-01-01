@@ -165,18 +165,14 @@ def transform_into_pipeline(
     chunks: int = 1,
     all_worker_ranks: List[int] = None,
 ):
-    output_loss_value_spec = {
-        "loss": True,
-        "logits": False,
-        "encoder_last_hidden_state": False,
-    }
+    if not args.train:
+        model.eval()
 
     t5_pipe = Pipe.from_tracing(
         model,
         multi_use_param_spec,
         tracer=PiPPyHFTracer(),
         concrete_args=concrete_args,
-        output_loss_value_spec=output_loss_value_spec if args.train else None,
         split_policy=split_policy,
     )
 
