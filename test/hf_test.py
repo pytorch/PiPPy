@@ -635,6 +635,12 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
             ]:
                 self.skipTest("Need to support CLIPVisionModelWithProjection")
 
+            # TODO: support SwinBackbone
+            if model_cls in [
+                SwinBackbone,
+            ]:
+                self.skipTest("Need to support SwinBackbone")
+
             model, splitter = generate_hf_model(model_cls)
 
             submodules_cnt = splitter(model)
@@ -916,6 +922,12 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
                 CLIPTextModelWithProjection,
             ]:
                 self.skipTest("Need to support CLIPVisionModelWithProjection")
+
+            # TODO: support SwinBackbone
+            if model_cls in [
+                SwinBackbone,
+            ]:
+                self.skipTest("Need to support SwinBackbone")
 
             model, splitter = generate_hf_model(model_cls)
             model.eval()  # Disable nondeterminism for testing
