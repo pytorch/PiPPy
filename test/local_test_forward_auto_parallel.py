@@ -1,5 +1,4 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-import argparse
 import os
 import unittest
 from typing import Dict
@@ -18,6 +17,7 @@ from pippy.PipelineDriver import (
 )
 from pippy.auto_parallelization import AutoParallelConfig, dp_auto_parallel
 from pippy.microbatch import TensorChunkSpec
+from pippy.utils import get_argparser
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
@@ -129,34 +129,7 @@ def run_master(_, args):
 
 
 def main(args=None):
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--world_size", type=int, default=int(os.getenv("WORLD_SIZE", 4))
-    )
-    parser.add_argument("--rank", type=int, default=int(os.getenv("RANK", -1)))
-    parser.add_argument(
-        "--master_addr", type=str, default=os.getenv("MASTER_ADDR", "localhost")
-    )
-    parser.add_argument(
-        "--master_port", type=str, default=os.getenv("MASTER_PORT", "29500")
-    )
-    parser.add_argument(
-        "-s",
-        "--schedule",
-        type=str,
-        default=list(schedules.keys())[0],
-        choices=schedules.keys(),
-    )
-    parser.add_argument(
-        "--replicate", type=int, default=int(os.getenv("REPLICATE", "0"))
-    )
-    parser.add_argument(
-        "--cuda", type=int, default=int(torch.cuda.is_available())
-    )
-    parser.add_argument(
-        "--record_mem_dumps", type=int, default=0, choices=[0, 1]
-    )
-    parser.add_argument("--checkpoint", type=int, default=0, choices=[0, 1])
+    parser = get_argparser(default_schedule=schedules.keys(), default_world_size=4)
     args = parser.parse_args(args)
 
     # Interleaved 1F1B uses less ranks than number of stages

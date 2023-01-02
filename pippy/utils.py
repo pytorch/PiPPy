@@ -2,6 +2,7 @@
 import os
 import socket
 import logging
+import argparse
 
 # Pinning process to a separate GPU if not yet done by launch script
 # Notes:
@@ -224,3 +225,53 @@ def run_worker(rank, run_func, args, *extra_args):
         run_func(my_pp_ranks, args, *extra_args)
 
     rpc.shutdown()
+
+
+def get_argparser(
+    default_schedule=None,
+    default_world_size=5,
+    default_rank=-1,
+    default_addr="localhost",
+    default_port="29500",
+    default_replicate="0",
+):
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--world_size",
+        type=int,
+        default=int(os.getenv("WORLD_SIZE", default_world_size)),
+    )
+    parser.add_argument(
+        "--rank", type=int, default=int(os.getenv("RANK", default_rank))
+    )
+    parser.add_argument(
+        "--master_addr",
+        type=str,
+        default=os.getenv("MASTER_ADDR", default_addr),
+    )
+    parser.add_argument(
+        "--master_port",
+        type=str,
+        default=os.getenv("MASTER_PORT", default_port),
+    )
+    if default_schedule is not None:
+        parser.add_argument(
+            "-s",
+            "--schedule",
+            type=str,
+            default=list(default_schedule)[0],
+            choices=default_schedule,
+        )
+    parser.add_argument(
+        "--replicate",
+        type=int,
+        default=int(os.getenv("REPLICATE", default_replicate)),
+    )
+    parser.add_argument(
+        "--cuda", type=int, default=int(torch.cuda.is_available())
+    )
+    parser.add_argument(
+        "--record_mem_dumps", type=int, default=0, choices=[0, 1]
+    )
+    parser.add_argument("--checkpoint", type=int, default=0, choices=[0, 1])
+    return parser
