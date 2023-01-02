@@ -9,8 +9,8 @@ import torch.autograd.profiler_legacy
 import torch.fx
 # TorchDynamo is moved into PyTorch for PyTorch > 1.13
 # One can use TorchDynamo without installing it separately by:
-# import torch._dynamo as dynamo
-import torchdynamo as dynamo
+import torch._dynamo as dynamo
+# import torchdynamo as dynamo
 
 import pippy.fx
 from pippy import run_pippy
@@ -55,10 +55,6 @@ def inspect_split_module(
         print(submod)
 
 
-# For storing reference output from inside compiler
-ref_out = ()
-
-
 def run_master(_, args):
     # PiPPy parameters
     MULTI_USE_PARAM_CONFIG = (
@@ -91,12 +87,6 @@ def run_master(_, args):
         print("\n============= my_pippy_compiler() called with FX graph =============")
         gm.graph.print_tabular()
 
-        # Run example input
-        input = example_inputs[0]
-        # Make global for equivalence comparison later
-        global ref_out
-        ref_out = gm(input)
-
         # PiPPy Pipe creation
         # Here we split the graph
         pipe = Pipe.from_tracing(gm, MULTI_USE_PARAM_CONFIG)
@@ -110,8 +100,6 @@ def run_master(_, args):
             kwargs_chunk_spec,
             output_chunk_spec,
             args.world_size,
-            _debug_mask_minibatches=True,
-            _record_mem_dumps=bool(args.record_mem_dumps),
             checkpoint=bool(args.checkpoint),
             use_c10d=True,
         )
@@ -151,30 +139,32 @@ def run_master(_, args):
     # Create model as usual
     ec = ExampleCode()
     ec.to(args.device)
+    ec_input = torch.randn(bs, d_hid, device=args.device)
+    ref_out = ec(ec_input)
+
     # Optimize and distribute model using Dynamo + PiPPy
-    ec = dynamo.optimize(my_pippy_compiler)(ec)
+    ec_pipe = dynamo.optimize(my_pippy_compiler)(ec)
 
     print(f"\n======= Runtime tests =======")
-    ec_input = torch.randn(bs, d_hid, device=args.device)
     # This would already be output returned by PiPPy's distributed pipeline
-    pipe_out = ec(ec_input)
+    pipe_out = ec_pipe(ec_input)
 
     # Check correctness
-    torch.testing.assert_close(pipe_out, ref_out[0])
+    torch.testing.assert_close(pipe_out, ref_out)
     print(
-        f'equivalence test passed {torch.sum(pipe_out)} ref {torch.sum(ref_out[0])}'
+        f'equivalence test passed {torch.sum(pipe_out)} ref {torch.sum(ref_out)}'
     )
 
     # Profiling run
     # This run would not trigger compilation
-    # Change the size to test dynamic shape support
-    ec_input = torch.randn(bs + 10, d_hid, device=args.device)
+    # We can also change the size to test dynamic shape support
+    # ec_input = torch.randn(bs + 10, d_hid, device=args.device)
     with torch.autograd.profiler_legacy.profile(
             enabled=PROFILING_ENABLED
     ) as prof:
-        pipe_out = ec(ec_input)
+        pipe_out = ec_pipe(ec_input)
         print(
-            f'profiling run completed {torch.sum(pipe_out)} ref {torch.sum(ref_out[0])}'
+            f'profiling run completed {torch.sum(pipe_out)} ref {torch.sum(ref_out)}'
         )
     if PROFILING_ENABLED:
         prof.export_chrome_trace(
@@ -206,9 +196,6 @@ def main(args=None):
     )
     parser.add_argument(
         "--cuda", type=int, default=int(torch.cuda.is_available())
-    )
-    parser.add_argument(
-        "--record_mem_dumps", type=int, default=0, choices=[0, 1]
     )
     parser.add_argument("--checkpoint", type=int, default=0, choices=[0, 1])
     args = parser.parse_args(args)
