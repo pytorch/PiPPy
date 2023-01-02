@@ -10,6 +10,7 @@ import torch.fx
 # TorchDynamo is moved into PyTorch for PyTorch > 1.13
 # One can use TorchDynamo without installing it separately by:
 import torch._dynamo as dynamo
+# If your PyTorch version is <= 1.13.0, please install torchdynamo separately
 # import torchdynamo as dynamo
 
 import pippy.fx
