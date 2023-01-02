@@ -642,7 +642,7 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
                 self.skipTest("Need to support SwinBackbone")
 
             model, splitter = generate_hf_model(model_cls)
-            model.eval() # Forward only
+            model.eval()  # Forward only
 
             submodules_cnt = splitter(model)
 
@@ -1067,7 +1067,7 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
             # Disable numerical check due to randomness in training mode
             # Setting model.eval() may avoid such randomness but would cause PiPPy to skip backward pass
             # Plus, we have tested numerical correctness in forward-only tests
-            #recursive_value_check(pipe_loss, ref_loss)
+            # recursive_value_check(pipe_loss, ref_loss)
 
             for k_test, v_test in test_grads.items():
                 k_ref = model_pipe.remap_qualname(k_test)
