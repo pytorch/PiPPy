@@ -2,8 +2,7 @@ import logging
 import os
 import random
 from copy import deepcopy
-from functools import partial
-from typing import List, Literal, Union
+from typing import Literal, Union
 
 import torch
 import torch.distributed as dist
@@ -67,7 +66,6 @@ def work_main(rank: int, world_size: int) -> None:
     optimizations = [
         [GraphOptimization("fuse_communication_ring")],
         [GraphOptimization("fuse_communication_cat")],
-        [GraphOptimization("fuse_communication_jit")],
     ]
     for optim in optimizations:
         spmd = SPMD(
