@@ -66,7 +66,7 @@ LOGGING_CONFIG = {
 }
 
 
-def get_logger(log_type):
+def get_logger(log_type: str) -> Optional[logging.Logger]:
     from spmd.compiler import config
 
     if "PYTEST_CURRENT_TEST" not in os.environ:

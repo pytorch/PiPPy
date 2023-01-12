@@ -35,8 +35,6 @@ from .graph_utils import OP, CommType, get_comm_block_nodes
 
 from torch._subclasses.fake_tensor import FakeTensorMode
 
-logger = None
-
 # patch aot_function so that we can pass the full (non-sharded) input to capture the graph
 # pyre-fixme
 torch._functorch.aot_autograd.aot_function = patched_aot_function
