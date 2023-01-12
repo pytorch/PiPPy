@@ -21,7 +21,7 @@ from transformers.modeling_utils import ModuleUtilsMixin
 from transformers.utils import (
     is_torch_available,
 )
-from transformers.utils import torch_required, cached_property
+from transformers.utils import cached_property
 
 import pippy.hf.bart as bart
 import pippy.hf.bert as bert
@@ -120,7 +120,6 @@ class PiPPyTrainingArguments(TrainingArguments):
         self._driver_group = value
 
     @cached_property
-    @torch_required
     def _setup_devices(self) -> "torch.device":
         if self.cuda:
             n_devs = torch.cuda.device_count()
