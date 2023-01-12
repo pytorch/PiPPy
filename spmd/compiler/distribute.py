@@ -35,8 +35,7 @@ from .graph_utils import OP, CommType, get_comm_block_nodes
 
 from torch._subclasses.fake_tensor import FakeTensorMode
 
-global logger
-
+logger = None
 
 # patch aot_function so that we can pass the full (non-sharded) input to capture the graph
 # pyre-fixme
@@ -211,6 +210,7 @@ def _convert_output(
     gm: fx.GraphModule,
     node: fx.Node,
     node_to_obj: Dict[fx.Node, object],
+    logger=None,
 ) -> fx.Node:
     new_args = []
     has_partial = False
@@ -385,6 +385,8 @@ def _convert_to_distributed(
         - transformed graph module
         - map from output name to DTensorSpec
     """
+    global logger
+    logger = get_logger("spmd_exp")
     node_to_obj: Dict[fx.Node, object] = {}
     # map local op node in traced_f to its corresponding subgraph of
     # DTensor ops.
@@ -417,7 +419,7 @@ def _convert_to_distributed(
         elif node.op == OP.OUTPUT:
             if not _allow_partial:
                 # returns the possibly modified output node
-                node = _convert_output(gm, node, node_to_obj)
+                node = _convert_output(gm, node, node_to_obj, logger=logger)
 
             # save output sharding for the inputs to backward pass
             for a in node.args[0]:
@@ -539,9 +541,6 @@ class _SPMD:
         gm: fx.GraphModule,
         inps: List[torch.Tensor],
     ) -> fx.GraphModule:
-        # Initialize logger
-        global logger
-        logger = get_logger("spmd_exp")
         shard_schema: Schema = Schema(
             mesh=self._param_schema.mesh, placements=[Shard(0)]
         )
@@ -614,7 +613,6 @@ def distribute(
     **kwargs: Dict[str, object],
 ) -> nn.Module:
     # Initialize logger
-
     logger = get_logger("spmd_exp")
 
     flat_args, _ = tree_flatten(args)

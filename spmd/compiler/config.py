@@ -7,7 +7,7 @@ from types import ModuleType
 # INFO print compiler functions + distributed graphs
 # WARN print warnings
 # ERROR print exceptions
-log_level = logging.ERROR
+log_level = logging.DEBUG
 # Verbose will print full stack traces on warnings and errors
 verbose = False
 

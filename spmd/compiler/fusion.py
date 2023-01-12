@@ -19,8 +19,6 @@ from .graph_utils import (
     rebuild_graph,
 )
 
-global logger
-
 
 @dataclass
 class FusionElement:
@@ -91,7 +89,6 @@ class GraphInfo:
     actual_grad_index_mapping: Dict[fx.Node, int] = field(
         default_factory=lambda: {}
     )
-    # Initialize logger
     global logger
     logger = get_logger("graph_opt")
 
@@ -102,10 +99,7 @@ class GraphInfo:
         self._ring_buffer = buffer_node_list
         self._ring_num_buffers = len(self._ring_buffer)
         self._ring_index = 0
-
         self.global_buffer_size = buffer_size
-
-        logger.info(f"107, ring buffer setup: {self._ring_buffer=}")
 
     def get_next_ring_buffer(
         self,
@@ -152,7 +146,7 @@ class GraphInfo:
             self.output is not None
         ), f"Unable to locate output node in gm {gm.graph}"
 
-        logger.debug(
+        logger.debug(  # type: ignore
             f"Updated graph_info - len = {self.len} input = {self.first}, output = {self.output}",
         )
         return self
@@ -209,6 +203,7 @@ def _scan_graph_for_fusion_elements(
 ) -> List[FusionElement]:
     """Scan entire graph for matching sections of CommTensor style expansions
     returns list of FusionElements that match CommType"""
+    logger = get_logger("graph_opt")
 
     element_list = []
     for node in gm.graph.nodes:
@@ -245,6 +240,8 @@ def _copy_fe_to_buffer(
     gi: GraphInfo, gm: fx.GraphModule, copy_list: List[FusionElement]
 ) -> None:
     """First half of fusion - move desired items to buffer and create graph"""
+    logger = get_logger("graph_opt")
+
     buffer_node = gi.get_next_ring_buffer()
     buffer_size = gi.global_buffer_size
 
@@ -597,7 +594,7 @@ def _finalize_output_node(
             ), f"Non comm gradient output tensor incorrectly handled...needs fix. {new_output_args[start+i]}"
             new_output_args[start + i] = replacement_mapping[curr_node]
 
-    logger.info(f"Updated output args = {new_output_args}")
+    logger.info(f"Updated output args = {new_output_args}")  # type: ignore
 
 
 def _determine_peak_memory(gi: GraphInfo, fusion_length: int) -> int:
@@ -619,7 +616,7 @@ def _determine_peak_memory(gi: GraphInfo, fusion_length: int) -> int:
             curr_fe_index = 0
             curr_memory = 0
 
-    logger.info(f"peak memory determined to be {peak_memory}")
+    logger.info(f"peak memory determined to be {peak_memory}")  # type: ignore
     gi.peak_memory_required = peak_memory
 
     return peak_memory
@@ -641,7 +638,7 @@ def _setup(gm: fx.GraphModule) -> GraphInfo:
 def _teardown(gm: fx.GraphModule) -> None:
     """final steps before exiting optimization phase"""
     rebuild_graph(gm)
-    logger.info(f"Final Graph {gm.graph.print_tabular()}")
+    logger.info(f"Final Graph {gm.graph.print_tabular()}")  # type: ignore
 
 
 def run_fuse_communication_ring(
@@ -650,6 +647,7 @@ def run_fuse_communication_ring(
     ring_num_buffers: int,
 ) -> None:
     """fusion using a ring buffer in order to avoid buffer overwriting"""
+    logger = get_logger("graph_opt")
 
     assert (
         fusion_length > 1
@@ -767,7 +765,8 @@ def run_overlap_communication(gm: fx.GraphModule) -> None:
     comm calls next to source nodes.
     """
     # Initialize logger
-    logger = get_logger("graph_opt")
+    global logger
+    logger = get_logger("graph_opt")  # type: ignore
 
     graph_info = _setup(gm)
 
@@ -789,7 +788,7 @@ def run_overlap_communication(gm: fx.GraphModule) -> None:
         index > 0
     ), f"comm_overlap did not find move any communication nodes...{index=}"
 
-    logger.debug(
+    logger.debug(  # type: ignore
         f"Optimization stats: Overlap communication pass has moved -* {index+1} *- communication calls\n"
     )
     gm.recompile()
@@ -891,9 +890,6 @@ def run_fuse_communication_cat(gm: fx.GraphModule, fusion_length: int) -> None:
     Run fuse communication with concat.
     This implementation use concat to concat the bucketed gradients.
     """
-    # Initialize logger
-    logger = get_logger("graph_opt")
-
     # First recompile to make sure we have coherent graph
     gm.recompile()
     graph_info = GraphInfo().update_info(gm)

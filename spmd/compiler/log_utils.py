@@ -6,8 +6,6 @@ from typing import Any
 import torch
 import torch.distributed as dist
 
-from spmd.compiler.log_utils import config
-
 
 def rank0_debug(logger: logging.Logger, *args: Any, **kwargs: Any) -> None:
     if dist.is_initialized() and dist.get_rank() == 0:
@@ -69,9 +67,11 @@ LOGGING_CONFIG = {
 
 
 def get_logger(log_type):
+    from spmd.compiler import config
+
     if "PYTEST_CURRENT_TEST" not in os.environ:
         logging.config.dictConfig(LOGGING_CONFIG)
-        avail_loggers = list(LOGGING_CONFIG["loggers"].keys())
+        avail_loggers = list(LOGGING_CONFIG["loggers"].keys())  # type: ignore
         assert (
             log_type in avail_loggers
         ), f"Unable to find {log_type} in the available list of loggers {avail_loggers}"
