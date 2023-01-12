@@ -230,7 +230,7 @@ def _scan_graph_for_fusion_elements(
             if not gi.fe_offset_to_comm_node:
                 len_comm_section = len(fe.node_list)
                 gi.fe_offset_to_comm_node = len_comm_section - comm_idx - 1
-                logger.debug(
+                logger.debug(  # type: ignore
                     f"global comm index set {gi.fe_offset_to_comm_node}\n"
                 )
     return element_list
@@ -247,7 +247,7 @@ def _copy_fe_to_buffer(
 
     num_fusion_elements = len(copy_list)
 
-    logger.info(f"_copy_fe_to_buffer {num_fusion_elements=}")
+    logger.info(f"_copy_fe_to_buffer {num_fusion_elements=}")  # type: ignore
 
     def copy_to_buffer(
         concat_buffer: torch.Tensor, tensor_list: List[torch.Tensor]
@@ -653,7 +653,7 @@ def run_fuse_communication_ring(
         fusion_length > 1
     ), f"fusion policy is {fusion_length}, but requires > 1 for actual fusion. "
 
-    logger.info(
+    logger.info(  # type: ignore
         f"Start of fusion_ring pass, fusion_length = {fusion_length}, buffers = {ring_num_buffers}"
     )
 

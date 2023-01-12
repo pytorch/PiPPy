@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from functools import partial
 from typing import Dict, List, Optional, Sequence, Set, Tuple, cast
+import logging
 
 import torch
 import torch.fx as fx
@@ -39,7 +40,7 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 # pyre-fixme
 torch._functorch.aot_autograd.aot_function = patched_aot_function
 
-logger: None = None
+logger: Optional[logging.Logger] = None
 
 
 class TrainingPhase(Enum):
@@ -210,7 +211,7 @@ def _convert_output(
     gm: fx.GraphModule,
     node: fx.Node,
     node_to_obj: Dict[fx.Node, object],
-    logger=None,
+    logger: Optional[logging.Logger] = None,
 ) -> fx.Node:
     new_args = []
     has_partial = False
@@ -272,11 +273,11 @@ def _convert_output(
                         dtn, lambda n: value_remap[n]
                     )
     if has_partial:
-        logger.info("The output has partial arguments.")
+        logger.info("The output has partial arguments.")  # type: ignore
         gm.graph.erase_node(node)
         return gm.graph.output(new_args)
     else:
-        logger.info("The output does not have partial arguments.")
+        logger.info("The output does not have partial arguments.")  # type: ignore
         return node
 
 

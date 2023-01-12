@@ -1,4 +1,5 @@
 from typing import Dict, Optional, Sequence, Tuple
+import logging
 
 import torch.distributed as dist
 import torch.nn as nn
@@ -62,7 +63,7 @@ class SPMD(nn.Module):
         self._optimizations = optimizations
         self._map_param_and_grad = False
         self._print_graph = print_graph
-        self.logger: None = get_logger("spmd_exp")
+        self.logger: Optional[logging.Logger] = get_logger("spmd_exp")
 
     def forward(
         self, *args: Tuple[object], **kwargs: Dict[str, object]
