@@ -1,7 +1,7 @@
 import logging
 import sys
 from types import ModuleType
-from typing import Any
+from typing import Set
 
 # log level (levels print what it says + all levels listed below it)
 # DEBUG print full traces <-- lowest level + print tracing of every instruction
@@ -17,11 +17,11 @@ log_file_name: None = None
 
 
 class _AccessLimitingConfig(ModuleType):
-    def __setattr__(self, name: Any, value: Any) -> None:
+    def __setattr__(self, name, value) -> None:  # type: ignore
         if name not in _allowed_config_names:
             raise AttributeError(f"{__name__}.{name} does not exist")
         return object.__setattr__(self, name, value)
 
 
-_allowed_config_names: typing.Set[str] = {*globals().keys()}
+_allowed_config_names: Set[str] = {*globals().keys()}
 sys.modules[__name__].__class__ = _AccessLimitingConfig

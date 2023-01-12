@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Dict, Optional, Sequence, Tuple
 
 import torch.distributed as dist
 import torch.nn as nn
@@ -13,8 +13,6 @@ from .graph_optimization import (
     GraphOptimization,
     GraphOptimizationType,
 )
-
-global logger
 
 
 class SPMD(nn.Module):
@@ -106,8 +104,8 @@ class SPMD(nn.Module):
                 # apply any optimization, we still need to print out the graph.
                 fwd_gm = self._dist_graph.fwd_graph_modules[0]
                 bwd_gm = self._dist_graph.bwd_graph_modules[0]
-                self.logger.info(fwd_gm.print_readable(print_output=False))
-                self.logger.info(bwd_gm.print_readable(print_output=False))
+                self.logger.info(fwd_gm.print_readable(print_output=False))  # type: ignore
+                self.logger.info(bwd_gm.print_readable(print_output=False))  # type: ignore
 
             # We only print out the graph once.
             self._print_graph = False

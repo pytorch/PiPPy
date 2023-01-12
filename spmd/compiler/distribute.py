@@ -39,6 +39,8 @@ from torch._subclasses.fake_tensor import FakeTensorMode
 # pyre-fixme
 torch._functorch.aot_autograd.aot_function = patched_aot_function
 
+logger: None = None
+
 
 class TrainingPhase(Enum):
     FORWARD = auto()
@@ -384,7 +386,7 @@ def _convert_to_distributed(
         - map from output name to DTensorSpec
     """
     global logger
-    logger = get_logger("spmd_exp")
+    logger = get_logger("spmd_exp")  # type: ignore
     node_to_obj: Dict[fx.Node, object] = {}
     # map local op node in traced_f to its corresponding subgraph of
     # DTensor ops.
@@ -392,10 +394,10 @@ def _convert_to_distributed(
 
     user_to_last_uses = _get_user_to_last_uses(gm.graph)
 
-    logger.info(f"Training phase: {training_phase}")
+    logger.info(f"Training phase: {training_phase}")  # type: ignore
     output_schemas: Dict[str, Schema] = {}
     for i, node in enumerate(gm.graph.nodes):
-        logger.info(f"node{i}: op={node.op} target={node.target}")
+        logger.info(f"node{i}: op={node.op} target={node.target}")  # type: ignore
         if node.op == OP.PLACEHOLDER:
             assert i < len(
                 inps

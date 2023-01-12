@@ -1,6 +1,6 @@
 import operator
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, cast, Any
+from typing import Dict, List, Optional, Tuple, cast
 
 import torch
 import torch.fx as fx
@@ -90,7 +90,7 @@ class GraphInfo:
         default_factory=lambda: {}
     )
     global logger
-    logger: None = get_logger("graph_opt")  # type: ignore
+    logger = get_logger("graph_opt")  # type: ignore
 
     def setup_ring_buffer(
         self, buffer_node_list: List[fx.Node], buffer_size: int

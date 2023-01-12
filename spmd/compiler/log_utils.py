@@ -1,7 +1,7 @@
 import logging
 import logging.config
 import os
-from typing import Any
+from typing import Any, Optional
 
 import torch
 import torch.distributed as dist
@@ -90,3 +90,5 @@ def get_logger(log_type: str) -> Optional[logging.Logger]:
             logger = logging.getLogger("null_logger")
 
         return logger
+
+    return logging.getLogger("null_logger")
