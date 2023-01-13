@@ -1009,7 +1009,7 @@ def _fuse_with_jit(
         view_node = gm.graph.call_function(
             torch.ops.aten.view.default,
             (fe.grad_tensor_node.args[0], [-1]),
-        )
+        )  # type: ignore
         slice_node = gm.graph.call_function(
             torch.ops.aten.slice.Tensor,
             (jit_buffer_node, 0, start, stop),
@@ -1025,8 +1025,8 @@ def _fuse_with_jit(
 
     assert copy_list[-1].comm_node is not None
     fused_comm_node = copy_list[-1].comm_node
-    fused_comm_node.update_arg(0, [jit_buffer_node])
-    fused_comm_node.users[jit_buffer_node] = ""
+    fused_comm_node.update_arg(0, [jit_buffer_node])  # type: ignore
+    fused_comm_node.users[jit_buffer_node] = ""  # type: ignore
 
     # Move the fused_comm_node and its args to right after the source node
     nodes_to_move = jit_inputs + [
@@ -1105,7 +1105,7 @@ def _scatter_results_jit(
         grad_nodes.append(view_node)
 
     # move nodes
-    insert_node = wait_node.next
+    insert_node = wait_node.next  # type: ignore
     for node in scatter_nodes:
         insert_node.prepend(node)
 
@@ -1113,6 +1113,7 @@ def _scatter_results_jit(
 
 
 def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
+
     """runs fusion by creating a Just in Time buffer to use for each fusion.
     It then returns views to the buffer for the gradient outputs, avoiding the
     need to copy back to the original tensor.
@@ -1121,7 +1122,6 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
     MBFACTOR = float(1 << 20)
 
     gm.recompile()
-    # _debug(f"992 cat {gm.graph.print_tabular()}")
     graph_info = GraphInfo().update_info(gm)
 
     fe_list = _scan_graph_for_fusion_elements(
@@ -1215,10 +1215,6 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
         )
     """
     # update output with the updated args
-    _debug(f"1153, {new_output_args=}\n")
     gm.graph.erase_node(graph_info.output)
     gm.graph.output(new_output_args)
-    # _debug(f"1205 , {print(gm.graph)}\n")
     rebuild_graph(gm, remove_dead_code=True)
-    # gm.recompile()
-    # _debug(f"{print(gm.graph)}\n")
