@@ -9,7 +9,6 @@ from .distributed_graph import DistributedGraph
 from .fusion import (
     run_fuse_communication_ring,
     run_fuse_communication_cat,
-    run_overlap_communication,
     run_fuse_communication_jit,
 )
 from .log_utils import rank0_info

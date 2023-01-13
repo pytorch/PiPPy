@@ -790,44 +790,6 @@ def _move_comm_section(
     return nodes_to_move
 
 
-def run_overlap_communication(gm: fx.GraphModule) -> None:
-    """spreads the all_reduce to maximum dispersion by moving
-    comm calls next to source nodes.
-    """
-
-    graph_info = _setup(gm)
-
-    # scan graph for all comm sections (fusion elements)
-    fe_list = _scan_graph_for_fusion_elements(
-        graph_info, gm, comm_type=CommType.ALLREDUCE
-    )  # type:ignore[arg-type]
-
-    _debug(f"length of fe_list {len(fe_list)}")  # type: ignore
-
-    # -- distribute comm nodes to source nodes for overlap
-    # the first (which is last) is not moved b/c it is already
-    # next to source node.
-    index = -1
-    for index, item in enumerate(fe_list[1:]):  # type: ignore
-        moved_nodes = _move_comm_section(graph_info, gm, item)  # type: ignore
-        # _debug(f"{moved_nodes=}\n")
-
-    assert (
-        index > 0
-    ), f"comm_overlap did not find move any communication nodes...{index=}"
-
-    _debug(
-        f"\nOptimization stats:\nOverlap communication pass has moved -* {index+1} *- communication calls\n"
-    )
-    gm.recompile()
-
-    _debug(" ------ finish, run communication overlap pass -----\n")
-    # _debug(f"graph = {print(gm.graph)}\n")
-    # _debug(f"{gm.graph.print_tabular()}\n")
-
-    _teardown(gm)
-
-
 def _fuse_with_cat(
     gi: GraphInfo, gm: fx.GraphModule, copy_list: List[FusionElement]
 ) -> fx.Node:
