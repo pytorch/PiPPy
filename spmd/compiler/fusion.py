@@ -885,15 +885,6 @@ def _update_output_args(
         output_args[gi.wait_node_idx[fe.wait_node]] = grad_node
 
 
-def run_fuse_comm_cat(gm, fusion_length) -> None:
-    gm.recompile()
-    graph_info = GraphInfo().update_info(gm)
-    fe_list = _scan_graph_for_fusion_elements(
-        graph_info, gm, comm_type=CommType.ALLREDUCE
-    )
-    graph_info.fe_list = fe_list
-
-
 def run_fuse_communication_cat(gm: fx.GraphModule, fusion_length: int) -> None:
     """
     Run fuse communication with concat.
@@ -942,10 +933,8 @@ def run_fuse_communication_cat(gm: fx.GraphModule, fusion_length: int) -> None:
 
     # update output with the updated args
     gm.graph.erase_node(graph_info.output)
-    _debug(f"983, {new_output_args=}\n")
     gm.graph.output(new_output_args)
     rebuild_graph(gm)
-    _debug(f"973 cat {gm.graph.print_tabular()}")
 
 
 def _map_local_gradients(
@@ -1055,7 +1044,7 @@ def _scatter_results_jit(
     scatter_list: List[FusionElement],
     jit_buffer_node: fx.Node,
 ) -> List[fx.Node]:
-    # scatter_sizes = [fe.size for fe in scatter_list]
+
     assert scatter_list[-1].wait_node is not None
     wait_node = scatter_list[-1].wait_node
 
