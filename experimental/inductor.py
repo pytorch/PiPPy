@@ -30,6 +30,20 @@ def prepare_args(attr_vals, unused_inputs_idx, args):
     return [a for i, a in enumerate(all_args) if i not in unused_inputs_idx]
 
 
+DEBUG = True
+
+def print_graph(name, graph):
+    if DEBUG:
+        print(f'===== {name} ====')
+        graph.print_readable()
+        print(f'===== end {name} ====')
+
+
+def print_value(name, value):
+    if DEBUG:
+        print(name, value)
+
+
 def make_functional_fx(fn):
     """
     Given a function, does make_fx(functionalize(make_fx(fn))).
@@ -37,10 +51,13 @@ def make_functional_fx(fn):
     Returns an GraphModule to be fed to inductor.
     """
     def call(*args, **kwargs):
+        # 0. hack: run one iteration to initialize optimizer states
+        fn(*args, **kwargs)
+
         # 1. call make_fx for the first time
         k1 = make_fx(fn)
         k2 = k1(*args, **kwargs)
-
+        print_graph('first_fx', k2)
 
         # 2. Turn getattr into inputs
         #    - This is needed for functionalize to work. Functionalize expects
@@ -71,6 +88,7 @@ def make_functional_fx(fn):
                     node.replace_all_uses_with(placeholder)
                     k2.graph.erase_node(node)
     
+        print_value('attr_vals', attr_vals)
 
         # 3. Remove unused inputs
         #    - This is needed in order to remove non-tensor inputs before passing this
@@ -92,7 +110,7 @@ def make_functional_fx(fn):
             k2.graph.erase_node(p)
 
         k2.recompile()
-
+        print_graph('before_functionalize', k2)
  
         # 4. call make_fx a second time with functionalization
         with torch.no_grad():
@@ -104,9 +122,13 @@ def make_functional_fx(fn):
             if p.target == torch.ops.aten.alias.default:
                 p.replace_all_uses_with(p.args[0])
 
+        print_graph('after functionalize before DCE', k4)
+
         torch.fx.node._side_effectful_functions.add(torch.ops.aten.copy_.default)
         k4.graph.eliminate_dead_code()
         k4.recompile()
+
+        print_graph('after functionalize after DCE', k4)
 
         return k4, attr_vals, unused_inputs_idx
 
@@ -180,11 +202,11 @@ def train_step(m, o, x, y):
     return (loss, )
 
 
-def main():
+def main(optim_cls):
     x = torch.ones(10, 4, device='cuda')
     y = torch.ones(10, 2, device='cuda')
     m = MyModule().to('cuda')
-    sgd = torch.optim.SGD(m.parameters(), lr=0.01)
+    sgd = optim_cls(m.parameters(), lr=0.01)
 
     from copy import deepcopy
     mc = deepcopy(m)
@@ -197,7 +219,7 @@ def main():
 
     print('==== Compiled ====')
 
-    sgd = torch.optim.SGD(mc.parameters(), lr=0.01)
+    sgd = optim_cls(mc.parameters(), lr=0.01)
 
     # warning: even though we'ree passing mc and sgd as "example" inputs,
     #    the tracer actually takes its tensor states and saves them as part of
@@ -215,4 +237,7 @@ def main():
 
 if __name__ == '__main__':
     main_simple()
-    main()
+    from functools import partial
+    # note we need capturable=True otherwise Adam implementation uses a scalar training step
+    # which doesn't work with make_fx
+    main(partial(torch.optim.Adam, capturable=True))
