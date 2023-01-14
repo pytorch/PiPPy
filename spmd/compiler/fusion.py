@@ -1021,8 +1021,10 @@ def _fuse_with_jit(
         copy_nodes.append(copy_node)
 
     assert copy_list[-1].comm_node is not None
-    fused_comm_node = copy_list[-1].comm_node
-    fused_comm_node.update_arg(0, [jit_buffer_node])  # type: ignore
+
+    fused_comm_node = cast(fx.Node, copy_list[-1].comm_node)
+    fused_comm_node.update_arg(0, [jit_buffer_node])
+
     fused_comm_node.users[jit_buffer_node] = ""  # type: ignore
 
     # Move the fused_comm_node and its args to right after the source node
@@ -1054,7 +1056,7 @@ def _scatter_results_jit(
 ) -> List[fx.Node]:
 
     assert scatter_list[-1].wait_node is not None
-    wait_node = cast(fx.Node, scatter_list[-1].wait_node)
+    wait_node = scatter_list[-1].wait_node
 
     # ensure user
     wait_user = cast(Tuple[fx.Node], wait_node.args)[0]
@@ -1138,7 +1140,6 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
     new_output_args = list(cast(Tuple[fx.Node], graph_info.output.args[0]))
 
     _map_local_gradients(gm, graph_info, fe_list)
-    _debug(f"1090 local gradients")
 
     # use fusion length as mb instead of count
     start = 0
