@@ -340,6 +340,9 @@ def _rebuild_graph(
                     value_remap[dtn] = gm.graph.node_copy(
                         dtn, lambda n: value_remap[n]
                     )
+            # this ensures that we removed this node even if something
+            # (like inplace ops) would prevent it from being deleted.
+            gm.graph.erase_node(node)
 
     gm.graph.lint()
     gm.graph.eliminate_dead_code()

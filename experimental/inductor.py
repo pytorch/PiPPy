@@ -158,7 +158,7 @@ def make_functional_fx(fn):
 
 DEFAULT_SCHEMA = 'default' 
 
-def make_inductor_fn(fn, example_inputs, shard_map=None):
+def make_inductor_fn(fn, example_inputs, shard_map=None, sharded_example_inputs=None):
     """
     Use inductor to compile the function fn. 
     Uses make_functional_fx to trace it passing example_inputs.
@@ -172,7 +172,10 @@ def make_inductor_fn(fn, example_inputs, shard_map=None):
         from spmd.compiler.distribute import _convert_to_distributed, TrainingPhase
         fnfx, output_schemas = _convert_to_distributed(TrainingPhase.FORWARD, fnfx, used_args, schemas, _allow_partial=True)
 
-    print_graph('after_spmd_expansion', fnfx)
+        print_graph('after_spmd_expansion', fnfx)
+
+        # pass the sharded inputs to inductor for final lowering
+        used_args = prepare_args(attr_vals, unused_input_idx, sharded_example_inputs)
 
     compiled_f = compile_fx_inner(fnfx, used_args)
 
@@ -193,8 +196,8 @@ def inplace_test(x, p):
     # pg, = torch.autograd.grad(loss, p)
     loss.backward()
     with torch.no_grad():
-        p -= 0.05 * p.grad
-    return (loss, p)
+        p -= 0.1 * p.grad
+    return (loss, )
 
 
 def main_simple(dist=False):
@@ -215,7 +218,7 @@ def main_simple(dist=False):
         DTensor._op_to_rules['aten.lift_fresh_copy.default'] = default_prop_rule
 
         from spmd.compiler.distribute import Schema
-        mesh = DeviceMesh('cuda', [0])
+        mesh = DeviceMesh('cuda', range(torch.distributed.get_world_size()))
         shard_map = {
             x: Schema(mesh, [Shard(0)]),
             p: Schema(mesh, [Replicate()]),
@@ -224,15 +227,17 @@ def main_simple(dist=False):
             # so assuming its safe to make them replicated.
             DEFAULT_SCHEMA: Schema(mesh, [Replicate()]),
         }
+        # we run the SPMD expanded with a sharded version of the input tensor
+        x_shard = torch.randn(10 // torch.distributed.get_world_size(), 2, device='cuda')
     else:
         shard_map = None
-    compiled_f = make_inductor_fn(inplace_test, [x, p], shard_map=shard_map)
+    compiled_f = make_inductor_fn(inplace_test, [x, p], shard_map=shard_map, sharded_example_inputs=[x_shard, p])
     print('after compile: ', (p*p).sum())
 
     with torch.no_grad():
         for _ in range(10):
-            compiled_f(x, p)
-            print('after iteration: ', (p*p).sum())
+            loss, = compiled_f(x_shard, p)
+            print('after iteration: ', (p*p).sum(), loss)
 
 
 
@@ -292,10 +297,11 @@ def main(optim_cls):
             print(loss)
 
 
-DIST = False
+DIST = True
 if __name__ == '__main__':
     if DIST:
         torch.distributed.init_process_group(backend='nccl')
+        torch.cuda.set_device(torch.distributed.get_rank() % 8)
         main_simple(dist=True)
     else:
         main_simple(dist=False)
