@@ -14,6 +14,13 @@ from torch._inductor.compile_fx import compile_fx_inner
 from torch._inductor.decomposition import select_decomp_table
 inductor_decomps = select_decomp_table()
 
+DIST = True
+
+if DIST:
+    from torch.distributed._tensor import DTensor, ops
+    DTensor._op_to_rules['aten.lift_fresh_copy.default'] = ops.tensor_ops.default_prop_rule
+
+
 
 
 from copy import copy
@@ -50,6 +57,13 @@ def print_graph(name, graph):
 def print_value(name, value):
     if DEBUG:
         print(name, value)
+
+
+def dprint(msg):
+    if DIST:
+        print(f'rank {torch.distributed.get_rank()}: {msg}')
+    else:
+        print(msg)
 
 
 def convert_getattrs_to_inputs(gm):
@@ -206,18 +220,13 @@ def main_simple(dist=False):
     x = torch.randn(10, 2, device='cuda')
     p = torch.randn(2, 1, requires_grad=True, device='cuda')
 
-    print('before copmile: ', (p*p).sum())
+    dprint('before copmile: ', (p*p).sum())
     if dist:
         from torch.distributed._tensor import (
             Replicate,
             Shard,
             DeviceMesh,
-            DTensor,
         )
-
-        # register rule for this op
-        from torch.distributed._tensor.ops.tensor_ops import default_prop_rule
-        DTensor._op_to_rules['aten.lift_fresh_copy.default'] = default_prop_rule
 
         from spmd.compiler.distribute import Schema
         mesh = DeviceMesh('cuda', range(torch.distributed.get_world_size()))
@@ -234,13 +243,19 @@ def main_simple(dist=False):
     else:
         shard_map = None
     compiled_f = make_inductor_fn(inplace_test, [x, p], shard_map=shard_map, sharded_example_inputs=[x_shard, p])
-    print('after compile: ', (p*p).sum())
+
+    if dist:
+        # make sure our parameter is the same across devices initially
+        # doing this after compile because during compilation we're running the training step a few times
+        # TODO: fix this. we should run compilation with fake tensors.
+        torch.distributed.all_reduce(p)
+
+    dprint(f'after compile, param norm = {(p*p).sum()}')
 
     with torch.no_grad():
         for _ in range(10):
             loss, = compiled_f(x_shard, p)
-            print('after iteration: ', (p*p).sum(), loss)
-
+            dprint(f'iteration: param_norm={(p*p).sum()}, local_loss={loss}')
 
 
 # =====================================
@@ -299,12 +314,12 @@ def main(optim_cls):
             print(loss)
 
 
-DIST = True
 if __name__ == '__main__':
     if DIST:
         torch.distributed.init_process_group(backend='nccl')
         torch.cuda.set_device(torch.distributed.get_rank() % 8)
         main_simple(dist=True)
+        # main(torch.optim.SGD)
     else:
         main_simple(dist=False)
         # from functools import partial
