@@ -1132,7 +1132,7 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
     graph_info.fe_list = fe_list
 
     assert len(graph_info.wait_node_idx) == len(fe_list), (
-        "The expected wait_nodes in graph_info is different from the fe_list "
+        "The expected wait_nodes in graph_info are different from the fe_list "
         f"{len(graph_info.wait_node_idx)} {len(fe_list)}."
     )
 
@@ -1172,11 +1172,14 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
             curr_size = 0
             start = stop
 
-    # fuse any leftovers
+    # fuse any leftovers - this is held over as an external step to try additional
+    # splitting to minimize last all_reduce
+
     if start < len(graph_info.fe_list):
         _debug(
             f"remaining fusion: {len(graph_info.fe_list)-start} items left over"
         )
+
         fe_list = graph_info.fe_list[start:]
         jit_buffer_node = _fuse_with_jit(graph_info, gm, fe_list)
         grad_nodes = _scatter_results_jit(
@@ -1192,26 +1195,7 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
             new_output_args,
             grad_nodes,
         )
-    """
-    # Fuse every ``fusion_length`` FusionElement.
-    for start in range(0, len(graph_info.fe_list), fusion_length):
 
-        fe_list = graph_info.fe_list[start : (start + fusion_length)]
-        jit_buffer_node = _fuse_with_jit(graph_info, gm, fe_list)
-        grad_nodes = _scatter_results_jit(
-            graph_info, gm, fe_list, jit_buffer_node
-        )
-
-        _debug(f"1142, {grad_nodes=}")
-
-        _update_output_args(
-            graph_info,
-            gm,
-            fe_list,
-            new_output_args,
-            grad_nodes,
-        )
-    """
     # update output with the updated args
     gm.graph.erase_node(graph_info.output)
     gm.graph.output(new_output_args)
