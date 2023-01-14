@@ -1036,7 +1036,7 @@ def _fuse_with_jit(
 
     assert copy_list[-1].comm_node is not None
 
-    fused_comm_node = copy_list[-1].comm_node
+    fused_comm_node: fx.Node = copy_list[-1].comm_node
 
     fused_comm_node.update_arg(0, [jit_buffer_node])  # type: ignore
 
@@ -1044,8 +1044,8 @@ def _fuse_with_jit(
 
     # Move the fused_comm_node and its args to right after the source node
     nodes_to_move = jit_inputs + [
-        fused_comm_node.args[1],
-        fused_comm_node.args[2],
+        fused_comm_node.args[1],  # type: ignore
+        fused_comm_node.args[2],  # type: ignore
         fused_comm_node,
     ]  # type: ignore
 
@@ -1077,7 +1077,7 @@ def _scatter_results_jit(
 
     # ensure user
 
-    wait_user = cast(Tuple[fx.Node], wait_node.args)[0]
+    wait_user: fx.Node = cast(Tuple[fx.Node], wait_node.args)[0]
     wait_node.users[wait_user] = ""  # type: ignore
 
     scatter_nodes = []
