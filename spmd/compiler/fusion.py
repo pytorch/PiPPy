@@ -1158,8 +1158,6 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
                 graph_info, gm, fe_list, jit_buffer_node
             )
 
-            _debug(f"1142, {grad_nodes=}")
-
             _update_output_args(
                 graph_info,
                 gm,
@@ -1186,8 +1184,6 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
             graph_info, gm, fe_list, jit_buffer_node
         )
 
-        _debug(f"1142, {grad_nodes=}")
-
         _update_output_args(
             graph_info,
             gm,
@@ -1196,7 +1192,8 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
             grad_nodes,
         )
 
-    # update output with the updated args
+    # update output with the buffer view args
     gm.graph.erase_node(graph_info.output)
     gm.graph.output(new_output_args)
+
     rebuild_graph(gm, remove_dead_code=True)
