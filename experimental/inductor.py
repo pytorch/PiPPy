@@ -52,6 +52,41 @@ def print_value(name, value):
         print(name, value)
 
 
+def convert_getattrs_to_inputs(gm):
+    """
+    Turn getattr into inputs
+        - This is needed for functionalize to work. Functionalize expects
+          all tensors to be passed as inputs to the function being functionalized.
+        - We collect all concrete getattr inputs into "attr_vals"
+    """
+    from collections import defaultdict
+    attr_vals_map = dict()
+    attr_nodes = defaultdict(lambda: [])
+
+    for p in gm.graph.nodes:
+        if p.op == 'get_attr':
+            val = getattr(gm, p.target)
+            attr_vals_map[p.target] = val
+            attr_nodes[p.target].append(p)
+
+    after_last_placeholder = None
+    for i, p in enumerate(gm.graph.nodes):
+        if p.op != 'placeholder':
+            after_last_placeholder = p
+            break
+
+    attr_vals = []
+    with gm.graph.inserting_before(after_last_placeholder):
+        for attr, nodes in attr_nodes.items():
+            placeholder = gm.graph.placeholder(attr)
+            attr_vals.append(attr_vals_map[attr])
+            for node in nodes:
+                node.replace_all_uses_with(placeholder)
+                gm.graph.erase_node(node)
+
+    return attr_vals
+
+
 def make_functional_fx(fn):
     """
     Given a function, does make_fx(functionalize(make_fx(fn))).
@@ -67,35 +102,7 @@ def make_functional_fx(fn):
         k2 = k1(*args, **kwargs)
         print_graph('first_fx', k2)
 
-        # 2. Turn getattr into inputs
-        #    - This is needed for functionalize to work. Functionalize expects
-        #      all tensors to be passed as inputs to the function being functionalized.
-        #    - We collect all concrete getattr inputs into "attr_vals"
-        from collections import defaultdict
-        attr_vals_map = dict()
-        attr_nodes = defaultdict(lambda: [])
-
-        for p in k2.graph.nodes:
-            if p.op == 'get_attr':
-                val = getattr(k2, p.target)
-                attr_vals_map[p.target] = val
-                attr_nodes[p.target].append(p)
-
-        after_last_placeholder = None
-        for i, p in enumerate(k2.graph.nodes):
-            if p.op != 'placeholder':
-                after_last_placeholder = p
-                break
-
-        attr_vals = []
-        with k2.graph.inserting_before(after_last_placeholder):
-            for attr, nodes in attr_nodes.items():
-                placeholder = k2.graph.placeholder(attr)
-                attr_vals.append(attr_vals_map[attr])
-                for node in nodes:
-                    node.replace_all_uses_with(placeholder)
-                    k2.graph.erase_node(node)
-    
+        attr_vals = convert_getattrs_to_inputs(k2)
         print_value('attr_vals', attr_vals)
 
         # 3. Remove unused inputs
@@ -126,14 +133,21 @@ def make_functional_fx(fn):
             k3 = make_fx(functionalize(k2), decomposition_table=all_decomps)
             k4 = k3(*used_args_and_attrs, **kwargs)
 
+        # 5. remove useless "alias" nodes
         for p in k4.graph.nodes:
             if p.target == torch.ops.aten.alias.default:
                 p.replace_all_uses_with(p.args[0])
 
+        # 6. functionalization adds getattrs sometimes, so move them to inputs again
+        #    (hoping they'll be deterministic constants...)
+        attr_vals += convert_getattrs_to_inputs(k4)
+
         print_graph('after functionalize before DCE', k4)
 
+        # 7. eliminate dead code but make sure we're still keeping the final copy_
         torch.fx.node._side_effectful_functions.add(torch.ops.aten.copy_.default)
         k4.graph.eliminate_dead_code()
+        k4.graph.lint()
         k4.recompile()
 
         print_graph('after functionalize after DCE', k4)
@@ -142,8 +156,9 @@ def make_functional_fx(fn):
 
     return call
 
+DEFAULT_SCHEMA = 'default' 
 
-def make_inductor_fn(fn, example_inputs):
+def make_inductor_fn(fn, example_inputs, shard_map=None):
     """
     Use inductor to compile the function fn. 
     Uses make_functional_fx to trace it passing example_inputs.
@@ -151,6 +166,14 @@ def make_inductor_fn(fn, example_inputs):
     fnfx, attr_vals, unused_input_idx = make_functional_fx(fn)(*example_inputs)
 
     used_args = prepare_args(attr_vals, unused_input_idx, example_inputs)
+
+    if shard_map != None:
+        schemas = [shard_map.get(inp, shard_map[DEFAULT_SCHEMA]) for inp in used_args]
+        from spmd.compiler.distribute import _convert_to_distributed, TrainingPhase
+        fnfx, output_schemas = _convert_to_distributed(TrainingPhase.FORWARD, fnfx, used_args, schemas, _allow_partial=True)
+
+    print_graph('after_spmd_expansion', fnfx)
+
     compiled_f = compile_fx_inner(fnfx, used_args)
 
     def inductor_fn(*args):
@@ -165,20 +188,45 @@ def make_inductor_fn(fn, example_inputs):
 # =====================================
 
 def inplace_test(x, p):
-    loss = torch.sigmoid(torch.matmul(x, p)).sum()
+    p.grad = None  # zero_grad
+    loss = (torch.sigmoid(torch.matmul(x, p)) ** 2).sum()
     # pg, = torch.autograd.grad(loss, p)
     loss.backward()
     with torch.no_grad():
-        p -= 0.01 * p.grad
+        p -= 0.05 * p.grad
     return (loss, p)
 
 
-def main_simple():
+def main_simple(dist=False):
     x = torch.randn(10, 2, device='cuda')
     p = torch.randn(2, 1, requires_grad=True, device='cuda')
 
     print('before copmile: ', (p*p).sum())
-    compiled_f = make_inductor_fn(inplace_test, [x, p])
+    if dist:
+        from torch.distributed._tensor import (
+            Replicate,
+            Shard,
+            DeviceMesh,
+            DTensor,
+        )
+
+        # register rule for this op
+        from torch.distributed._tensor.ops.tensor_ops import default_prop_rule
+        DTensor._op_to_rules['aten.lift_fresh_copy.default'] = default_prop_rule
+
+        from spmd.compiler.distribute import Schema
+        mesh = DeviceMesh('cuda', [0])
+        shard_map = {
+            x: Schema(mesh, [Shard(0)]),
+            p: Schema(mesh, [Replicate()]),
+            # default (TODO figure this out)
+            # currently this is needed for when functionalization adds constants
+            # so assuming its safe to make them replicated.
+            DEFAULT_SCHEMA: Schema(mesh, [Replicate()]),
+        }
+    else:
+        shard_map = None
+    compiled_f = make_inductor_fn(inplace_test, [x, p], shard_map=shard_map)
     print('after compile: ', (p*p).sum())
 
     with torch.no_grad():
@@ -243,9 +291,15 @@ def main(optim_cls):
             loss,  = compiled_f(mc, sgd, x, y)
             print(loss)
 
+
+DIST = False
 if __name__ == '__main__':
-    main_simple()
-    from functools import partial
-    # note we need capturable=True otherwise Adam implementation uses a scalar training step
-    # which doesn't work with make_fx
-    main(partial(torch.optim.Adam, capturable=True))
+    if DIST:
+        torch.distributed.init_process_group(backend='nccl')
+        main_simple(dist=True)
+    else:
+        main_simple(dist=False)
+        # from functools import partial
+        # note we need capturable=True otherwise Adam implementation uses a scalar training step
+        # which doesn't work with make_fx
+        # main(partial(torch.optim.Adam, capturable=True))
