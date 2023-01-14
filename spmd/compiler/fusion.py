@@ -1077,7 +1077,7 @@ def _scatter_results_jit(
 
     # ensure user
 
-    wait_user = cast(fx.Node, cast(fx.Node, wait_node).args[0])
+    wait_user = wait_node.args[0]  # type: ignore
     wait_node.users[wait_user] = ""  # type: ignore
 
     scatter_nodes = []
