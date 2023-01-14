@@ -7,7 +7,7 @@ from typing import Any, Callable, DefaultDict, Dict, Iterable, Sequence, Set
 from .bucketing_strategies import BucketingStrategy
 from .distributed_graph import DistributedGraph
 from .fusion import (
-    run_fuse_communication,
+    run_fuse_communication_ring,
     run_fuse_communication_cat,
     run_overlap_communication,
 )
@@ -24,7 +24,7 @@ _run_before_sets: DefaultDict[str, Set[str]] = defaultdict(set)
 class GraphOptimizationType(str, Enum):
     NOOP = "noop"
     OVERLAP_COMMUNICATION = "overlap_communication"
-    FUSE_COMMUNICATION = "fuse_communication"
+    FUSE_COMMUNICATION_RING = "fuse_communication_ring"
     FUSE_COMMUNICATION_CAT = "fuse_communication_cat"
 
 
@@ -166,18 +166,23 @@ class DistGraphOptimization:
         return self
 
     @graph_optimization_pass()
-    def fuse_communication(
+    def fuse_communication_ring(
         self,
         bucketing_strategy: BucketingStrategy = BucketingStrategy.FIXED,
         scheduling_policy: SchedulingPolicy = SchedulingPolicy.FCFS,
-        fusion_policy: int = 10,
+        fusion_length: int = 2,
+        ring_num_buffers: int = 2,
     ) -> "DistGraphOptimization":
 
         assert len(
             self._graph.bwd_graph_modules
         ), f"no bwd graph ready from {self._graph.bwd_graph_modules}"
 
-        run_fuse_communication(self._graph.bwd_graph_modules[0], fusion_policy)
+        run_fuse_communication_ring(
+            self._graph.bwd_graph_modules[0],
+            fusion_length,
+            ring_num_buffers,
+        )
         return self
 
     @graph_optimization_pass()

@@ -74,7 +74,7 @@ class CommOverlapTest(DTensorTestBase):
         optimizations = [
             [],
             [GraphOptimization("overlap_communication")],
-            [GraphOptimization("fuse_communication")],
+            [GraphOptimization("fuse_communication_ring")],
             [GraphOptimization("fuse_communication_cat")],
         ]
         for optim in optimizations:
