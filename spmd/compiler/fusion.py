@@ -1037,7 +1037,8 @@ def _fuse_with_jit(
     assert copy_list[-1].comm_node is not None
 
     fused_comm_node = copy_list[-1].comm_node
-    fused_comm_node.update_arg(0, [jit_buffer_node])
+
+    fused_comm_node.update_arg(0, [jit_buffer_node])  # type: ignore
 
     fused_comm_node.users[jit_buffer_node] = ""  # type: ignore
 
@@ -1046,7 +1047,7 @@ def _fuse_with_jit(
         fused_comm_node.args[1],
         fused_comm_node.args[2],
         fused_comm_node,
-    ]
+    ]  # type: ignore
 
     insert_node = last_grad_tensor_node.next
     for node in nodes_to_move:
