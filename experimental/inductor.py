@@ -19,6 +19,14 @@ inductor_decomps = select_decomp_table()
 from copy import copy
 all_decomps = copy(inductor_decomps)
 
+from torch._decomp import get_decompositions
+
+all_decomps.update(get_decompositions([
+    # used in Adam optimizer
+    # TODO: add here https://github.com/pytorch/pytorch/blob/66b324cf06bce720887dabac710aee11b522450f/torch/_inductor/decomposition.py#L20
+    torch.ops.aten.addcdiv.default,
+]))
+
 
 def prepare_args(attr_vals, unused_inputs_idx, args):
     """
