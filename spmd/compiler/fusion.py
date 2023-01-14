@@ -980,7 +980,7 @@ def _fuse_with_jit(
     gi: GraphInfo, gm: fx.GraphModule, copy_list: List[FusionElement]
 ) -> fx.Node:
 
-    # Find the actual last gradient.
+    # Find the actual last gradient node.
     last_grad_fe_index = _get_last_grad_node_from_fe_group(gi, copy_list)
 
     last_grad_tensor_node = cast(
@@ -1036,7 +1036,7 @@ def _fuse_with_jit(
 
     assert copy_list[-1].comm_node is not None
 
-    fused_comm_node = copy_list[-1].comm_node
+    fused_comm_node = cast(fx.Node, copy_list[-1].comm_node)
     fused_comm_node.update_arg(0, [jit_buffer_node])
 
     fused_comm_node.users[jit_buffer_node] = ""  # type: ignore
@@ -1068,9 +1068,11 @@ def _scatter_results_jit(
     scatter_list: List[FusionElement],
     jit_buffer_node: fx.Node,
 ) -> List[fx.Node]:
+    """prepare views against completed buffer, these will replace gradient nodes for
+    graph output to avoid copy back overhead."""
 
     assert scatter_list[-1].wait_node is not None
-    wait_node = cast(fx.Node, scatter_list[-1].wait_node)
+    wait_node = scatter_list[-1].wait_node
 
     # ensure user
 
