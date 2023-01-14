@@ -952,23 +952,37 @@ def _map_local_gradients(
             graph_info.actual_grad_index_mapping[node] = idx
 
 
-def _fuse_with_jit(
-    gi: GraphInfo, gm: fx.GraphModule, copy_list: List[FusionElement]
-) -> fx.Node:
-    # Find the actual last gradient.
+def _get_last_grad_node_from_fe_group(
+    gi: GraphInfo, copy_list: List[FusionElement]
+) -> int:
+    """given a subset of FusionElements, find the index of the last
+    gradient node, where last = actual graph order"""
+
     all_grad_tensor_nodes = []
     for fe in copy_list:
         assert fe.grad_tensor_node is not None
         assert fe.grad_tensor_node.name.startswith("clone")
         all_grad_tensor_nodes.append(fe.grad_tensor_node)
-    grad_indices_mapping = [
+
+    grad_index_mapping = [
         gi.actual_grad_index_mapping[
             cast(Tuple[fx.Node], grad_tensor_node.args)[0]
         ]
         for grad_tensor_node in all_grad_tensor_nodes
     ]
-    last_grad_fe_index = grad_indices_mapping.index(max(grad_indices_mapping))
+
+    last_grad_fe_index = grad_index_mapping.index(max(grad_index_mapping))
     assert copy_list[last_grad_fe_index].grad_tensor_node is not None
+    return last_grad_fe_index
+
+
+def _fuse_with_jit(
+    gi: GraphInfo, gm: fx.GraphModule, copy_list: List[FusionElement]
+) -> fx.Node:
+
+    # Find the actual last gradient.
+    last_grad_fe_index = _get_last_grad_node_from_fe_group(gi, copy_list)
+
     last_grad_tensor_node = cast(
         fx.Node,
         cast(fx.Node, copy_list[last_grad_fe_index].grad_tensor_node).args[0],
@@ -1022,7 +1036,7 @@ def _fuse_with_jit(
 
     assert copy_list[-1].comm_node is not None
 
-    fused_comm_node = cast(fx.Node, copy_list[-1].comm_node)
+    fused_comm_node = copy_list[-1].comm_node
     fused_comm_node.update_arg(0, [jit_buffer_node])
 
     fused_comm_node.users[jit_buffer_node] = ""  # type: ignore
@@ -1056,10 +1070,11 @@ def _scatter_results_jit(
 ) -> List[fx.Node]:
 
     assert scatter_list[-1].wait_node is not None
-    wait_node = scatter_list[-1].wait_node
+    wait_node = cast(fx.Node, scatter_list[-1].wait_node)
 
     # ensure user
-    wait_user = cast(Tuple[fx.Node], wait_node.args)[0]
+
+    wait_user = wait_node.args[0]
     wait_node.users[wait_user] = ""  # type: ignore
 
     scatter_nodes = []
