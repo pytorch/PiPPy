@@ -169,13 +169,15 @@ def make_inductor_fn(fn, example_inputs, shard_map=None, sharded_example_inputs=
 
     if shard_map != None:
         schemas = [shard_map.get(inp, shard_map[DEFAULT_SCHEMA]) for inp in used_args]
+
+        # pass the sharded inputs to spmd expander and to inductor afterwards
+        used_args = prepare_args(attr_vals, unused_input_idx, sharded_example_inputs)
+
         from spmd.compiler.distribute import _convert_to_distributed, TrainingPhase
         fnfx, output_schemas = _convert_to_distributed(TrainingPhase.FORWARD, fnfx, used_args, schemas, _allow_partial=True)
 
         print_graph('after_spmd_expansion', fnfx)
 
-        # pass the sharded inputs to inductor for final lowering
-        used_args = prepare_args(attr_vals, unused_input_idx, sharded_example_inputs)
 
     compiled_f = compile_fx_inner(fnfx, used_args)
 

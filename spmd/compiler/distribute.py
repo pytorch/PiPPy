@@ -94,7 +94,7 @@ def _get_dtensor_dispatch_graph(
     def remap_arg(arg: object) -> object:
         if isinstance(arg, torch.fx.Node):
             obj = node_to_obj[arg]
-            if _get_tracer():
+            if _get_tracer(obj):  # FIXME arg "obj" removed in latest pytorch
                 # This is a shared arg, already has a tracer from previous
                 # tracing. Delete the tracer.
                 del cast(Dict[object, object], obj.__dict__)[proxy_slot]
