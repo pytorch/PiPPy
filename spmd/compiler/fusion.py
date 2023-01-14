@@ -36,7 +36,7 @@ class FusionElement:
     in_graph: bool = False
     # Has gone through the fusion policy process
     processed: bool = False
-    size: Optional[int] = None
+    size: int = 0
     shape: Optional[torch.Size] = None
     comm_type: Optional[CommType] = None
     node_list: List[fx.Node] = field(default_factory=lambda: [])  # type: ignore
@@ -979,7 +979,7 @@ def _fuse_with_jit(
     size = 0
     copy_nodes = []
 
-    buffer_size_needed = sum([item.size for item in copy_list])
+    buffer_size_needed = sum([item.size for item in copy_list])  # type: ignore
 
     device = torch.cuda.current_device()
     gpu = "cuda:" + str(device)
@@ -995,10 +995,18 @@ def _fuse_with_jit(
     for fe in copy_list:
         start = offset
         stop = offset + fe.size
+        # jump from clone to actual tensor node
+        grad_tensor_clone_node = cast(fx.Node, fe.grad_tensor_node)
+        grad_node = grad_tensor_clone_node.args[0]
+
         view_node = gm.graph.call_function(
             torch.ops.aten.view.default,
-            (fe.grad_tensor_node.args[0], [-1]),
-        )  # type: ignore
+            (
+                grad_node,
+                [-1],
+            ),
+        )
+
         slice_node = gm.graph.call_function(
             torch.ops.aten.slice.Tensor,
             (jit_buffer_node, 0, start, stop),
@@ -1046,11 +1054,11 @@ def _scatter_results_jit(
 ) -> List[fx.Node]:
 
     assert scatter_list[-1].wait_node is not None
-    wait_node = scatter_list[-1].wait_node
+    wait_node = cast(fx.Node, scatter_list[-1].wait_node)
 
     # ensure user
-    wait_user = wait_node.args[0]
-    wait_node.users[wait_user] = ""
+    wait_user = cast(Tuple[fx.Node], wait_node.args)[0]
+    wait_node.users[wait_user] = ""  # type: ignore
 
     scatter_nodes = []
 
@@ -1058,12 +1066,12 @@ def _scatter_results_jit(
 
     offset = 0
     start, stop = 0, 0
-    shape = 0
+    shape: torch.Size = None  # type: ignore
 
     for fe in scatter_list:
         start = offset
         stop = start + fe.size
-        shape = fe.shape
+        shape = cast(torch.Size, fe.shape)
 
         slice_node = gm.graph.call_function(
             torch.ops.aten.slice.Tensor,
