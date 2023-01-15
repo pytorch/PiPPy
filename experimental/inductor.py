@@ -17,10 +17,33 @@ inductor_decomps = select_decomp_table()
 DIST = True
 
 if DIST:
+    from torch.distributed._tensor import (
+        Replicate,
+        Shard,
+        DeviceMesh,
+    )
+    from torch.distributed._tensor.placement_types import DTensorSpec
+    from spmd.compiler.distribute import Schema
+
     from torch.distributed._tensor import DTensor, ops
     DTensor._op_to_rules['aten.lift_fresh_copy.default'] = ops.tensor_ops.default_prop_rule
 
+    # the rule below may have issues issues:
+    #  - likely doens't cover the case when a shape constant is passed
+    DTensor._op_to_rules['aten.zero.default'] = ops.tensor_ops.prop_create_like
 
+
+"""
+* We are passing in:
+1) objects with state (most likely with tensors that will be updated over the iterations)
+2) list of tensors
+
+* We want all tensors to be fake tensors when passed in.
+  - this will lead to fake optimizer state as well.
+
+* Next time user calls our functions
+  - we will not take the state again
+"""
 
 
 from copy import copy
@@ -64,6 +87,34 @@ def dprint(msg):
         print(f'rank {torch.distributed.get_rank()}: {msg}')
     else:
         print(msg)
+
+
+def mark_placements(tensor, placements):
+    tensor._placements = placements
+
+
+def get_placements(tensor):
+    if hasattr(tensor, '_placements'):
+        return tensor._placements
+    elif isinstance(tensor, DTensor):
+        return tensor.placements
+    else:
+        return None
+
+
+def get_example_shard(tensor, mesh, default=None):
+    from torch._subclasses.fake_tensor import FakeTensor
+    if not isinstance(tensor, torch.Tensor):
+        return tensor
+    elif isinstance(tensor, DTensor):
+        return tensor.to_local()
+    elif hasattr(tensor, '_placements'):
+        inp_spec = DTensorSpec(mesh, tensor._placements, tensor.shape, tensor.ndim)
+        return torch.randn(inp_spec.local_shape, device=tensor.device)
+    elif default is not None:
+        inp_spec = DTensorSpec(mesh, default, tensor.shape, tensor.ndim)
+        return torch.randn(inp_spec.local_shape, device=tensor.device)
+    raise NotImplementedError(f'Dont know how to get a shard of tensor {tensor}')
 
 
 def convert_getattrs_to_inputs(gm):
@@ -155,6 +206,7 @@ def make_functional_fx(fn):
         # 6. functionalization adds getattrs sometimes, so move them to inputs again
         #    (hoping they'll be deterministic constants...)
         attr_vals += convert_getattrs_to_inputs(k4)
+        print_value('attr_vals_after_functionalize', attr_vals)
 
         print_graph('after functionalize before DCE', k4)
 
@@ -172,7 +224,7 @@ def make_functional_fx(fn):
 
 DEFAULT_SCHEMA = 'default' 
 
-def make_inductor_fn(fn, example_inputs, shard_map=None, sharded_example_inputs=None):
+def make_inductor_fn(fn, example_inputs, default_shard_schema=None):
     """
     Use inductor to compile the function fn. 
     Uses make_functional_fx to trace it passing example_inputs.
@@ -181,17 +233,29 @@ def make_inductor_fn(fn, example_inputs, shard_map=None, sharded_example_inputs=
 
     used_args = prepare_args(attr_vals, unused_input_idx, example_inputs)
 
-    if shard_map != None:
-        schemas = [shard_map.get(inp, shard_map[DEFAULT_SCHEMA]) for inp in used_args]
+    def get_schema(inp):
+        placements = get_placements(inp)
+        if placements is not None:
+            return Schema(default_shard_schema.mesh, placements)
+        else:
+            return default_shard_schema
 
-        # pass the sharded inputs to spmd expander and to inductor afterwards
-        used_args = prepare_args(attr_vals, unused_input_idx, sharded_example_inputs)
+    if default_shard_schema != None:
+        schemas = [get_schema(inp) for inp in used_args]
+
+        # from now on we'll pass local shards as example inputs
+        used_args = [
+            get_example_shard(
+                arg,
+                schema.mesh,
+                schema.placements
+            ) for arg, schema in zip(used_args, schemas)
+        ]
 
         from spmd.compiler.distribute import _convert_to_distributed, TrainingPhase
         fnfx, output_schemas = _convert_to_distributed(TrainingPhase.FORWARD, fnfx, used_args, schemas, _allow_partial=True)
 
         print_graph('after_spmd_expansion', fnfx)
-
 
     compiled_f = compile_fx_inner(fnfx, used_args)
 
@@ -216,35 +280,26 @@ def inplace_test(x, p):
     return (loss, )
 
 
-def main_simple(dist=False):
+def main_simple():
     x = torch.randn(10, 2, device='cuda')
     p = torch.randn(2, 1, requires_grad=True, device='cuda')
 
-    dprint('before copmile: ', (p*p).sum())
-    if dist:
-        from torch.distributed._tensor import (
-            Replicate,
-            Shard,
-            DeviceMesh,
-        )
-
-        from spmd.compiler.distribute import Schema
+    dprint(f'before compile: {(p*p).sum()}')
+    if DIST:
         mesh = DeviceMesh('cuda', range(torch.distributed.get_world_size()))
-        shard_map = {
-            x: Schema(mesh, [Shard(0)]),
-            p: Schema(mesh, [Replicate()]),
-            # default (TODO figure this out)
-            # currently this is needed for when functionalization adds constants
-            # so assuming its safe to make them replicated.
-            DEFAULT_SCHEMA: Schema(mesh, [Replicate()]),
-        }
-        # we run the SPMD expanded with a sharded version of the input tensor
-        x_shard = torch.randn(10 // torch.distributed.get_world_size(), 2, device='cuda')
-    else:
-        shard_map = None
-    compiled_f = make_inductor_fn(inplace_test, [x, p], shard_map=shard_map, sharded_example_inputs=[x_shard, p])
+        default_shard_schema = Schema(mesh, [Replicate()])
+        mark_placements(x, [Shard(0)])
+        mark_placements(p, [Replicate()])
 
-    if dist:
+        x_shard = get_example_shard(x, mesh)
+        dprint(f'Input shape: {x.shape}; shard shape: {x_shard.shape}')
+    else:
+        x_shard = x
+        default_shard_schema = None
+
+    compiled_f = make_inductor_fn(inplace_test, [x, p], default_shard_schema=default_shard_schema)
+
+    if DIST:
         # make sure our parameter is the same across devices initially
         # doing this after compile because during compilation we're running the training step a few times
         # TODO: fix this. we should run compilation with fake tensors.
@@ -272,7 +327,10 @@ class MyModule(nn.Module):
 
 
 def train_step(m, o, x, y):
-    o.zero_grad()
+    # if we dont set to none, the gradients will be copied into the buffers at the end
+    # that's alright but probably a perf regression
+    o.zero_grad(set_to_none=True)  
+
     y_hat = m.forward(x)
     loss = torch.sum((y_hat - y) ** 2)
     loss.backward()
@@ -299,10 +357,32 @@ def main(optim_cls):
 
     sgd = optim_cls(mc.parameters(), lr=0.01)
 
+    if DIST:
+        mesh = DeviceMesh('cuda', range(torch.distributed.get_world_size()))
+        default_shard_schema = Schema(mesh, [Replicate()])
+        mark_placements(x, [Shard(0)])
+        mark_placements(y, [Shard(0)])
+
+        x_shard = get_example_shard(x, mesh)
+        y_shard = get_example_shard(y, mesh)
+        dprint(f'Input shape: {x.shape}; shard shape: {x_shard.shape}')
+    else:
+        x_shard = x
+        y_shard = y
+        default_shard_schema = None
+
+
     # warning: even though we'ree passing mc and sgd as "example" inputs,
     #    the tracer actually takes its tensor states and saves them as part of
     #    the compiled_f. So mc and sgd cannot be mutated directly afterwards.
-    compiled_f = make_inductor_fn(train_step, [mc, sgd, x, y])
+    compiled_f = make_inductor_fn(train_step, [mc, sgd, x, y], default_shard_schema=default_shard_schema)
+
+    if DIST:
+        # make sure our parameter is the same across devices initially
+        # doing this after compile because during compilation we're running the training step a few times
+        # TODO: fix this. we should run compilation with fake tensors.
+        for p in mc.parameters(): 
+            torch.distributed.all_reduce(p)
 
     with torch.no_grad():
         for i in range(10): 
@@ -310,19 +390,19 @@ def main(optim_cls):
             #    this is because we collected parameter/tensors from mc and sgd
             #    during the first tracing, and we're reusing those here instead of
             #    actually taking them from mc and sgd.
-            loss,  = compiled_f(mc, sgd, x, y)
-            print(loss)
+            loss_shard,  = compiled_f(mc, sgd, x_shard, y_shard)
+            dprint(f'iteration: local_loss={loss_shard}')
 
 
 if __name__ == '__main__':
     if DIST:
         torch.distributed.init_process_group(backend='nccl')
         torch.cuda.set_device(torch.distributed.get_rank() % 8)
-        main_simple(dist=True)
-        # main(torch.optim.SGD)
-    else:
-        main_simple(dist=False)
-        # from functools import partial
-        # note we need capturable=True otherwise Adam implementation uses a scalar training step
-        # which doesn't work with make_fx
-        # main(partial(torch.optim.Adam, capturable=True))
+
+    main_simple()
+
+    main(torch.optim.SGD)
+
+    # sharding seems to be wrong -- seems to be doing a bunch of allreduces that are not needed
+    from functools import partial
+    main(partial(torch.optim.Adam, capturable=True))
