@@ -399,10 +399,13 @@ if __name__ == '__main__':
         torch.distributed.init_process_group(backend='nccl')
         torch.cuda.set_device(torch.distributed.get_rank() % 8)
 
+    print('================ main_simple =================')
     main_simple()
 
+    print('================ main with SGD =================')
     main(torch.optim.SGD)
 
+    print('================ main with Adam =================')
     # sharding seems to be wrong -- seems to be doing a bunch of allreduces that are not needed
     from functools import partial
     main(partial(torch.optim.Adam, capturable=True))
