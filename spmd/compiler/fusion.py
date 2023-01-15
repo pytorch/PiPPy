@@ -1137,6 +1137,7 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
     We can thus del the gradient tensors as fused, and by only creating buffers as
     needed, minimize overhead memory pressure."""
     MBFACTOR = float(1 << 20)
+    FP32_BYTES = 4
 
     gm.recompile()
     graph_info = GraphInfo().update_info(gm)
@@ -1167,7 +1168,8 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
     curr_size = 0
 
     for i, fe in enumerate(graph_info.fe_list):
-        curr_size += fe.size
+        # TODO - we assume fp32 atm.
+        curr_size += fe.size * FP32_BYTES
         if curr_size >= bucket_size:
             stop = i + 1
             fe_list = graph_info.fe_list[start:stop]
