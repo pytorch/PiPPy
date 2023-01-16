@@ -394,18 +394,59 @@ def main(optim_cls):
             dprint(f'iteration: local_loss={loss_shard}')
 
 
+from torch._subclasses.fake_tensor import FakeTensorMode, FakeTensor
+
+
+# doesn't work (load_state_dict fails)
+def materialize_state_dict(state_dict):
+    for k, v in state_dict.items():
+        if isinstance(v, FakeTensor):
+            state_dict[k] = torch.zeros(v.shape, device=v.device)
+        elif isinstance(v, dict):
+            materialize_state_dict(v)
+
+
+# doesn't work
+def main_fake(optim_cls):
+    x = torch.ones(10, 4, device='cuda')
+    y = torch.ones(10, 2, device='cuda')
+
+    fake_mode = FakeTensorMode()
+    with fake_mode:
+        torch.set_default_device('cuda')
+        m = MyModule()
+        print(m.state_dict())
+        sgd = optim_cls(m.parameters(), lr=0.01)
+
+        fake_x = torch.ones(10, 4, device='cuda')
+        fake_y = torch.ones(10, 2, device='cuda')
+
+        train_step(m, sgd, fake_x, fake_y)
+
+    m_state = m.state_dict()
+    sgd_state = sgd.state_dict()
+    materialize_state_dict(m_state)
+    materialize_state_dict(sgd_state)
+
+    m.load_state_dict(m_state)
+    sgd.load_state_dict(sgd_state)
+
+
 if __name__ == '__main__':
     if DIST:
         torch.distributed.init_process_group(backend='nccl')
         torch.cuda.set_device(torch.distributed.get_rank() % 8)
 
-    print('================ main_simple =================')
-    main_simple()
+    # print('================ main_simple =================')
+    # main_simple()
 
-    print('================ main with SGD =================')
-    main(torch.optim.SGD)
+    # print('================ main with SGD =================')
+    # main(torch.optim.SGD)
 
     print('================ main with Adam =================')
-    # sharding seems to be wrong -- seems to be doing a bunch of allreduces that are not needed
+    # NOTE: we get multiple all_reduce for each parameter but this is because
+    #       the parameter gradient is used multiple times by adam.
+    #       we need to run CSE for this
+    # fused needs to be false because the fused ops don't support "meta" device.
     from functools import partial
-    main(partial(torch.optim.Adam, capturable=True))
+    main(partial(torch.optim.Adam, capturable=True, fused=False))
