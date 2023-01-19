@@ -1,20 +1,24 @@
 import torch
-from torch import nn
-from torch.fx.experimental.proxy_tensor import make_fx
+from torch import nn, Tensor
+from torch.fx.experimental.proxy_tensor import (
+    make_fx,
+    maybe_disable_fake_tensor_mode,
+)
 from torch._functorch.aot_autograd import run_functionalized_fw_and_collect_metadata, aot_function
 import functorch
 from functorch.compile import min_cut_rematerialization_partition
-
 from torch._functorch.eager_transforms import functionalize
-
 from torch import autograd
 from torch._inductor.compile_fx import compile_fx_inner
-
-
+from torch._subclasses.fake_tensor import FakeTensorMode, FakeTensor
+from typing import Sequence, List, Union, TypeVar, Callable, Dict
 from torch._inductor.decomposition import select_decomp_table
+
+
 inductor_decomps = select_decomp_table()
 
-DIST = True
+DIST = False
+DEBUG = False
 
 if DIST:
     from torch.distributed._tensor import (
@@ -68,7 +72,6 @@ def prepare_args(attr_vals, unused_inputs_idx, args):
     return [a for i, a in enumerate(all_args) if i not in unused_inputs_idx]
 
 
-DEBUG = True
 
 def print_graph(name, graph):
     if DEBUG:
@@ -103,8 +106,7 @@ def get_placements(tensor):
 
 
 def get_example_shard(tensor, mesh, default=None):
-    from torch._subclasses.fake_tensor import FakeTensor
-    if not isinstance(tensor, torch.Tensor):
+    if not isinstance(tensor, Tensor):
         return tensor
     elif isinstance(tensor, DTensor):
         return tensor.to_local()
@@ -160,7 +162,9 @@ def make_functional_fx(fn):
     """
     def call(*args, **kwargs):
         # 0. hack: run one iteration to initialize optimizer states
-        fn(*args, **kwargs)
+        for inp in args:
+            if isinstance(inp, torch.optim.Optimizer):
+                warmup_optimizer(inp)
 
         # 1. call make_fx for the first time
         k1 = make_fx(fn)
@@ -224,6 +228,60 @@ def make_functional_fx(fn):
 
 DEFAULT_SCHEMA = 'default' 
 
+
+def track_state_dict_materialization(map: Dict[FakeTensor, Tensor], fake_state_dict, real_state_dict):
+    for k, v in fake_state_dict.items():
+        real_k = map[k] if isinstance(k, Tensor) else k
+        if isinstance(v, Tensor):
+            map[v] = real_state_dict[real_k]
+        elif isinstance(v, dict):
+            track_state_dict_materialization(map, v, real_state_dict[real_k])
+
+
+def warmup_optimizer(optim):
+    # unfortunatelly, in order to initialize the optimizer states
+    # we need to call optimizer.step(). In order to do that, we will initialize
+    # parameter gradients with zero tensors just so we can run a step.
+    for group in optim.param_groups:
+        for param in group['params']:
+            param.grad = torch.zeros_like(param)
+    # run an optimizer step just to initialize the optimizer states
+    # multiple issues here:
+    # 1. this will make the optimizer think we're at the 2nd iteration
+    # 2. doesn't support optimizers that require callables passed in
+    optim.step()
+    # now we can delete those zero gradients
+    optim.zero_grad(set_to_none=True)
+
+
+def materialize_optimizer(optim, tracking_map):
+    # reset this optimizer state so that we can properly materialize
+    # the optimizer state next.
+    from collections import defaultdict
+    saved_fake_state = optim.state
+    optim.state = defaultdict(dict)
+
+    # replace parameters in the param groups with the materialized
+    # parameters taken from the tracking materializer
+    # this will throw if any of the parameters is not found in one of the models
+    print([id(k) for k in tracking_map.keys()])
+    for group in optim.param_groups:
+        print([id(k) for k in group['params']])
+        group['params'] = [tracking_map[param] for param in group['params']]
+
+    # this warms up the optimizer with real state dict now
+    warmup_optimizer(optim)
+
+    print(saved_fake_state)
+    print(optim.state)
+    # we will then map the fake optimizer states to the real ones
+    track_state_dict_materialization(
+        tracking_map,
+        saved_fake_state,
+        optim.state,
+    )
+
+
 def make_inductor_fn(fn, example_inputs, default_shard_schema=None):
     """
     Use inductor to compile the function fn. 
@@ -233,35 +291,52 @@ def make_inductor_fn(fn, example_inputs, default_shard_schema=None):
 
     used_args = prepare_args(attr_vals, unused_input_idx, example_inputs)
 
-    def get_schema(inp):
-        placements = get_placements(inp)
-        if placements is not None:
-            return Schema(default_shard_schema.mesh, placements)
-        else:
-            return default_shard_schema
+    # materialize models + SPMD expansion. must be outside of fake mode
+    with maybe_disable_fake_tensor_mode():
+        # In the following lines we perform utterly black magic in order to
+        # materialize our models. It special cases models and optimizers
+        # and assumes that all parameters contained in optimziers are model
+        # parameters.
+        tracking_materializer = TrackingMaterializer(_materialize_tensor)
+        # 1. materialize models
+        for inp in example_inputs:
+            if isinstance(inp, nn.Module):
+                materialize_module(inp, tensor_materializer=tracking_materializer)
+        # 2. "materialize" optimizers
+        for inp in example_inputs:
+            if isinstance(inp, torch.optim.Optimizer):
+                materialize_optimizer(inp, tracking_materializer.map)
+ 
+        def get_schema(inp):
+            placements = get_placements(inp)
+            if placements is not None:
+                return Schema(default_shard_schema.mesh, placements)
+            else:
+                return default_shard_schema
 
-    if default_shard_schema != None:
-        schemas = [get_schema(inp) for inp in used_args]
+        if default_shard_schema != None:
+            schemas = [get_schema(inp) for inp in used_args]
 
-        # from now on we'll pass local shards as example inputs
-        used_args = [
-            get_example_shard(
-                arg,
-                schema.mesh,
-                schema.placements
-            ) for arg, schema in zip(used_args, schemas)
-        ]
+            # from now on we'll pass local shards as example inputs
+            used_args = [
+                get_example_shard(
+                    arg,
+                    schema.mesh,
+                    schema.placements
+                ) for arg, schema in zip(used_args, schemas)
+            ]
 
-        from spmd.compiler.distribute import _convert_to_distributed, TrainingPhase
-        fnfx, output_schemas = _convert_to_distributed(TrainingPhase.FORWARD, fnfx, used_args, schemas, _allow_partial=True)
+            from spmd.compiler.distribute import _convert_to_distributed, TrainingPhase
+            fnfx, output_schemas = _convert_to_distributed(TrainingPhase.FORWARD, fnfx, used_args, schemas, _allow_partial=True)
 
-        print_graph('after_spmd_expansion', fnfx)
+            print_graph('after_spmd_expansion', fnfx)
 
-    compiled_f = compile_fx_inner(fnfx, used_args)
+        compiled_f = compile_fx_inner(fnfx, used_args)
 
     def inductor_fn(*args):
-        used_args = prepare_args(attr_vals, unused_input_idx, args)
-        return compiled_f(used_args)
+        with torch.no_grad():
+            used_args = prepare_args(attr_vals, unused_input_idx, args)
+            return compiled_f(used_args)
 
     return inductor_fn
 
@@ -333,6 +408,7 @@ def train_step(m, o, x, y):
 
     y_hat = m.forward(x)
     loss = torch.sum((y_hat - y) ** 2)
+    print(loss)
     loss.backward()
     o.step()
     return (loss, )
@@ -394,45 +470,111 @@ def main(optim_cls):
             dprint(f'iteration: local_loss={loss_shard}')
 
 
-from torch._subclasses.fake_tensor import FakeTensorMode, FakeTensor
+
+#def _distribute_tensor(t: torch.Tensor, mesh: DeviceMesh, placements: Sequence[Placement]) -> DTensor:
+#    assert not isinstance(t, DTensor), 'Trying to distribute a distributed tensor.'
+#    return spmd.distribute_tensor(t, mesh, placements)
+
+def _materialize_tensor(t: torch.Tensor, param=None):
+    if True: # if isinstance(t, FakeTensor):
+        return torch.zeros(t.shape, device=t.device)
+
+	
+T = TypeVar('T')
+
+from typing import Tuple, Dict
 
 
-# doesn't work (load_state_dict fails)
-def materialize_state_dict(state_dict):
-    for k, v in state_dict.items():
-        if isinstance(v, FakeTensor):
-            state_dict[k] = torch.zeros(v.shape, device=v.device)
-        elif isinstance(v, dict):
-            materialize_state_dict(v)
+class TrackingMaterializer:
+    def __init__(self, materializer):
+        print('materializing module ...')
+        self.map: Dict[torch.Tensor, torch.Tensor] = dict()
+        self.materializer = materializer
+
+    def __call__(self, tensor, param=None):
+        if tensor in self.map:
+            return self.map[tensor]
+        elif param is not None and param in self.map:
+            return self.map[param]
+        else:
+            print(f'Adding to materialization map tensor {id(tensor)} param {id(param)}')
+            materialized = self.materializer(tensor)
+            self.map[tensor] = materialized
+            self.map[param] = materialized
+            return materialized
 
 
-# doesn't work
+def materialize_module(
+    mod: nn.Module,
+    tensor_materializer: Callable[[FakeTensor], torch.Tensor] = _materialize_tensor,
+) -> Tuple[nn.Module, dict[torch.Tensor, torch.Tensor]]:
+    def to_real_tensor(m: nn.Module, key: str, t: T) -> Union[T, torch.Tensor, nn.Parameter]:
+        if isinstance(t, nn.Parameter):
+            print(f'tracking parameter {id(t)}')
+            return nn.Parameter(tensor_materializer(t.data, t))
+        else:
+            assert isinstance(t, torch.Tensor)
+            return tensor_materializer(t)
+
+    def materialize_this_module(m: nn.Module) -> None:
+        for key, param in m._parameters.items():
+            assert isinstance(param, nn.Parameter)
+            if True:  # if isinstance(param.data, FakeTensor):
+                dparam = to_real_tensor(m, key, param)
+                assert isinstance(dparam, nn.Parameter)
+                m.register_parameter(key, dparam)
+        for key, buffer in m._buffers.items():
+            if True:  # if isinstance(buffer, FakeTensor):
+                m._buffers[key] = to_real_tensor(m, key, buffer)
+
+    materialize_this_module(mod)
+    for name, submod in mod.named_modules():
+        materialize_this_module(submod)
+
+    return mod
+
+
 def main_fake(optim_cls):
-    x = torch.ones(10, 4, device='cuda')
-    y = torch.ones(10, 2, device='cuda')
-
     fake_mode = FakeTensorMode()
+    torch.set_default_device('cuda')
+    # with fake_mode:
     with fake_mode:
-        torch.set_default_device('cuda')
-        m = MyModule()
-        print(m.state_dict())
-        sgd = optim_cls(m.parameters(), lr=0.01)
+        # 1.1. create fake model
+        mc = MyModule()
 
-        fake_x = torch.ones(10, 4, device='cuda')
-        fake_y = torch.ones(10, 2, device='cuda')
+        # 1.2. create fake optimizers
+        sgd = optim_cls(mc.parameters(), lr=0.01, capturable=True)
 
-        train_step(m, sgd, fake_x, fake_y)
+        print([id(p) for p in mc.parameters()])
+        for g in sgd.param_groups:
+            print([id(p) for p in g['params']])
 
-    m_state = m.state_dict()
-    sgd_state = sgd.state_dict()
-    materialize_state_dict(m_state)
-    materialize_state_dict(sgd_state)
+        # 1.3. create fake input examples
+        fake_x = torch.ones(10, 4)
+        fake_y = torch.ones(10, 2)
 
-    m.load_state_dict(m_state)
-    sgd.load_state_dict(sgd_state)
+        compiled_f = make_inductor_fn(train_step, [mc, sgd, fake_x, fake_y], default_shard_schema=None)
+
+    # 2.3. create real input examples (should be DTensors)
+    x = torch.ones(10, 4)
+    y = torch.ones(10, 2)
+
+    compiled_f(mc, sgd, x, y)
+
+
+def debug_fake_backwards():
+    torch.set_default_device('cuda')
+    with FakeTensorMode():
+        p = torch.randn(4, 2, requires_grad=True)
+        x = torch.randn(8, 4)
+        y = torch.mm(x, p).square().sum()
+        y.backward()
 
 
 if __name__ == '__main__':
+    debug_fake_backwards()
+
+    
     if DIST:
         torch.distributed.init_process_group(backend='nccl')
         torch.cuda.set_device(torch.distributed.get_rank() % 8)
@@ -449,4 +591,7 @@ if __name__ == '__main__':
     #       we need to run CSE for this
     # fused needs to be false because the fused ops don't support "meta" device.
     from functools import partial
-    main(partial(torch.optim.Adam, capturable=True, fused=False))
+    # main(partial(torch.optim.Adam, capturable=True, fused=False))
+
+    main_fake(partial(torch.optim.Adam, capturable=True, fused=False))
+
