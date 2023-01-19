@@ -1124,9 +1124,7 @@ def _scatter_results_jit(
     return grad_nodes
 
 
-def run_fuse_communication_jit(
-    gm: fx.GraphModule, fusion_length: int, use_MB=False
-) -> None:
+def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
 
     """runs fusion by creating a Just in Time buffer to use for each fusion.
     It then returns views to the buffer for the gradient outputs, avoiding the
