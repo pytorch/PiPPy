@@ -1103,11 +1103,6 @@ def _scatter_results_jit(
             (slice_node, shape),
         )
 
-        """copy_out_node = gm.graph.call_function(
-            torch.ops.aten.copy_.default,
-            (fe.grad_tensor_node.args[0], view_node),
-        )
-        """
         offset += fe.size
 
         # ensure user for view node
@@ -1129,18 +1124,20 @@ def _scatter_results_jit(
     return grad_nodes
 
 
-def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
+def run_fuse_communication_jit(
+    gm: fx.GraphModule, fusion_length: int, use_MB=False
+) -> None:
 
     """runs fusion by creating a Just in Time buffer to use for each fusion.
     It then returns views to the buffer for the gradient outputs, avoiding the
     need to copy back to the original tensor.
     We can thus del the gradient tensors as fused, and by only creating buffers as
     needed, minimize overhead memory pressure."""
-    MBFACTOR = float(1 << 20)
     FP32_BYTES = 4
 
     gm.recompile()
     graph_info = GraphInfo().update_info(gm)
+    _debug(f"pre graph = {gm.graph.print_tabular()}")
 
     fe_list = _scan_graph_for_fusion_elements(
         graph_info, gm, comm_type=CommType.ALLREDUCE
@@ -1217,3 +1214,4 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
     gm.graph.output(new_output_args)
 
     rebuild_graph(gm, remove_dead_code=True)
+    _debug(f"1221, final graph = {gm.graph.print_tabular()}")
