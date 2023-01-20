@@ -282,7 +282,7 @@ def _convert_output(
 def _rebuild_graph(
     gm: fx.GraphModule,
     node_replacements: Dict[torch.fx.Node, torch.fx.GraphModule],
-) -> None:
+) -> Dict[torch.fx.Node, torch.fx.Node]:
     # replace nodes in local traced graph with DTensor's dispatch graph
     new_nodes: Dict[torch.fx.Node, torch.fx.Node] = {}
     for node in gm.graph.nodes:
@@ -351,6 +351,7 @@ def _rebuild_graph(
     gm.graph.lint()
     gm.graph.eliminate_dead_code()
     gm.recompile()
+    return new_nodes
 
 
 def get_user_to_last_uses(
@@ -381,11 +382,13 @@ def _convert_to_distributed(
     inps: List[torch.Tensor],
     schemas: List[Schema],
     _allow_partial: bool = False,
-) -> Tuple[fx.GraphModule, Dict[str, Schema]]:
+) -> Tuple[fx.GraphModule, Dict[str, Schema], List[Schema]]:
     """
     Returns:
         - transformed graph module
         - map from output name to DTensorSpec
+        - a list with output Schemas in the order they appear in output,
+          with None for non DTensor entries.
     """
     node_to_obj: Dict[fx.Node, object] = {}
     # map local op node in traced_f to its corresponding subgraph of
@@ -396,6 +399,7 @@ def _convert_to_distributed(
 
     rank0_info(logger, f"Training phase: {training_phase}")
     output_schemas: Dict[str, Schema] = {}
+    output_schemas_list = []
     for i, node in enumerate(gm.graph.nodes):
         rank0_info(logger, f"node{i}: op={node.op} target={node.target}")
         if node.op == OP.PLACEHOLDER:
@@ -426,9 +430,11 @@ def _convert_to_distributed(
                 if isinstance(a, fx.Node):
                     obj = node_to_obj[a]
                     if isinstance(obj, DTensor):
-                        output_schemas[a.name] = Schema(
+                        schema = Schema(
                             obj.device_mesh, obj.placements  # type: ignore
                         )
+                        output_schemas[a.name] = schema
+                        output_schemas_list.append(schema)
 
         elif node.op == OP.CALL_FUNCTION:
 
@@ -458,7 +464,7 @@ def _convert_to_distributed(
 
     _rebuild_graph(gm, node_replacements)
 
-    return gm, output_schemas
+    return gm, output_schemas, output_schemas_list
 
 
 class _SPMD:
@@ -581,7 +587,7 @@ class _SPMD:
                 else:
                     schemas.append(shard_schema)
 
-        parallelized_gm, output_specs = _convert_to_distributed(
+        parallelized_gm, output_specs, _ = _convert_to_distributed(
             training_phase,
             gm,
             inps,

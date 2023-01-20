@@ -2,7 +2,7 @@ import torch
 from torch._subclasses.fake_tensor import FakeTensorMode
 
 def debug_fake_backwards():
-    torch.cuda.set_device(0)
+    torch.randn(1, device='cuda')
     # torch.set_default_device('cuda')
     with FakeTensorMode():
         p = torch.randn(4, 2, requires_grad=True, device='cuda')
