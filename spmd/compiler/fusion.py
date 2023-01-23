@@ -36,7 +36,7 @@ class FusionElement:
     in_graph: bool = False
     # Has gone through the fusion policy process
     processed: bool = False
-    size: Optional[int] = None
+    size: int = 0
     shape: Optional[torch.Size] = None
     comm_type: Optional[CommType] = None
     node_list: List[fx.Node] = field(default_factory=lambda: [])  # type: ignore
@@ -790,44 +790,6 @@ def _move_comm_section(
     return nodes_to_move
 
 
-def run_overlap_communication(gm: fx.GraphModule) -> None:
-    """spreads the all_reduce to maximum dispersion by moving
-    comm calls next to source nodes.
-    """
-
-    graph_info = _setup(gm)
-
-    # scan graph for all comm sections (fusion elements)
-    fe_list = _scan_graph_for_fusion_elements(
-        graph_info, gm, comm_type=CommType.ALLREDUCE
-    )  # type:ignore[arg-type]
-
-    _debug(f"length of fe_list {len(fe_list)}")  # type: ignore
-
-    # -- distribute comm nodes to source nodes for overlap
-    # the first (which is last) is not moved b/c it is already
-    # next to source node.
-    index = -1
-    for index, item in enumerate(fe_list[1:]):  # type: ignore
-        moved_nodes = _move_comm_section(graph_info, gm, item)  # type: ignore
-        # _debug(f"{moved_nodes=}\n")
-
-    assert (
-        index > 0
-    ), f"comm_overlap did not find move any communication nodes...{index=}"
-
-    _debug(
-        f"\nOptimization stats:\nOverlap communication pass has moved -* {index+1} *- communication calls\n"
-    )
-    gm.recompile()
-
-    _debug(" ------ finish, run communication overlap pass -----\n")
-    # _debug(f"graph = {print(gm.graph)}\n")
-    # _debug(f"{gm.graph.print_tabular()}\n")
-
-    _teardown(gm)
-
-
 def _fuse_with_cat(
     gi: GraphInfo, gm: fx.GraphModule, copy_list: List[FusionElement]
 ) -> fx.Node:
@@ -930,6 +892,7 @@ def run_fuse_communication_cat(gm: fx.GraphModule, fusion_length: int) -> None:
     """
     # First recompile to make sure we have coherent graph
     gm.recompile()
+
     graph_info = GraphInfo().update_info(gm)
 
     fe_list = _scan_graph_for_fusion_elements(
@@ -955,7 +918,9 @@ def run_fuse_communication_cat(gm: fx.GraphModule, fusion_length: int) -> None:
 
     # Fuse every ``fusion_length`` FusionElement.
     for start in range(0, len(graph_info.fe_list), fusion_length):
+        _debug(f"fusion indexes = {start=},{start+fusion_length=}")
         fe_list = graph_info.fe_list[start : (start + fusion_length)]
+        _debug(f"len of fe_list = {len(fe_list)}\n")
         fused_comm_node = _fuse_with_cat(graph_info, gm, fe_list)
         grad_nodes = _scatter_results(graph_info, gm, fe_list)
         _update_output_args(
@@ -970,3 +935,281 @@ def run_fuse_communication_cat(gm: fx.GraphModule, fusion_length: int) -> None:
     gm.graph.erase_node(graph_info.output)
     gm.graph.output(new_output_args)
     rebuild_graph(gm)
+
+
+def _map_local_gradients(
+    gm: fx.GraphModule, graph_info: GraphInfo, fe_list: List[FusionElement]
+) -> None:
+    """map gradient tensors to index within the graph.  This is needed b/c
+    sometimes clones are out of order and we want to use the actual 'last'
+    gradient tensor within a set for fusion"""
+    actual_gradients = set(
+        cast(Tuple[fx.Node], cast(fx.Node, fe.grad_tensor_node).args)[0]
+        for fe in fe_list
+    )
+    for idx, node in enumerate(gm.graph.nodes):
+        if node in actual_gradients:
+            graph_info.actual_grad_index_mapping[node] = idx
+
+
+def _get_last_grad_node_from_fe_group(
+    gi: GraphInfo, copy_list: List[FusionElement]
+) -> int:
+    """given a subset of FusionElements, find the index of the last
+    gradient node, where last = actual graph order"""
+
+    all_grad_tensor_nodes = []
+    for fe in copy_list:
+        assert fe.grad_tensor_node is not None
+        assert fe.grad_tensor_node.name.startswith("clone")
+        all_grad_tensor_nodes.append(fe.grad_tensor_node)
+
+    grad_index_mapping = [
+        gi.actual_grad_index_mapping[
+            cast(Tuple[fx.Node], grad_tensor_node.args)[0]
+        ]
+        for grad_tensor_node in all_grad_tensor_nodes
+    ]
+
+    last_grad_fe_index = grad_index_mapping.index(max(grad_index_mapping))
+    assert copy_list[last_grad_fe_index].grad_tensor_node is not None
+    return last_grad_fe_index
+
+
+def _fuse_with_jit(
+    gi: GraphInfo, gm: fx.GraphModule, copy_list: List[FusionElement]
+) -> fx.Node:
+
+    # Find the actual last gradient node.
+    last_grad_fe_index = _get_last_grad_node_from_fe_group(gi, copy_list)
+
+    last_grad_tensor_node = cast(
+        fx.Node,
+        cast(fx.Node, copy_list[last_grad_fe_index].grad_tensor_node).args[0],
+    )
+
+    jit_inputs = []
+    offset = 0
+    size = 0
+    copy_nodes = []
+
+    buffer_size_needed = sum([item.size for item in copy_list])  # type: ignore
+
+    device = torch.cuda.current_device()
+    gpu = "cuda:" + str(device)
+
+    jit_buffer_node = gm.graph.create_node(
+        OP.CALL_FUNCTION,
+        target=torch.empty,
+        args=(buffer_size_needed,),
+        kwargs={"device": gpu},
+    )
+    jit_inputs.append(jit_buffer_node)
+
+    for fe in copy_list:
+        start = offset
+        stop = offset + fe.size
+        # jump from clone to actual tensor node
+        grad_tensor_clone_node = cast(fx.Node, fe.grad_tensor_node)
+        grad_node = grad_tensor_clone_node.args[0]
+
+        view_node = gm.graph.call_function(
+            torch.ops.aten.view.default,
+            (
+                grad_node,
+                [-1],
+            ),
+        )
+
+        slice_node = gm.graph.call_function(
+            torch.ops.aten.slice.Tensor,
+            (jit_buffer_node, 0, start, stop),
+        )
+        copy_node = gm.graph.call_function(
+            # torch.Tensor.copy_,
+            torch.ops.aten.copy_.default,
+            (slice_node, view_node),
+        )
+        offset += fe.size
+        jit_inputs.extend([view_node, slice_node, copy_node])
+        copy_nodes.append(copy_node)
+
+    assert copy_list[-1].comm_node is not None
+
+    fused_comm_node = copy_list[-1].comm_node  # type: ignore
+
+    fused_comm_node.update_arg(0, [jit_buffer_node])  # type: ignore
+
+    fused_comm_node.users[jit_buffer_node] = ""  # type: ignore
+
+    # Move the fused_comm_node and its args to right after the source node
+    nodes_to_move = jit_inputs + [
+        fused_comm_node.args[1],  # type: ignore
+        fused_comm_node.args[2],  # type: ignore
+        fused_comm_node,
+    ]  # type: ignore
+
+    insert_node = last_grad_tensor_node.next
+    for node in nodes_to_move:
+        insert_node.prepend(node)
+
+    # enforce users count
+    for node in copy_nodes:
+        user = node.args[0]
+        node.users[user] = ""  # type: ignore
+        node_user_len = len(node.users)
+        assert node_user_len, f"failed to update users for node {node.name}"
+
+    return jit_buffer_node
+
+
+def _scatter_results_jit(
+    gi: GraphInfo,
+    gm: fx.GraphModule,
+    scatter_list: List[FusionElement],
+    jit_buffer_node: fx.Node,
+) -> List[fx.Node]:
+    """prepare views against completed buffer, these will replace gradient nodes for
+    graph output to avoid copy back overhead."""
+
+    assert scatter_list[-1].wait_node is not None
+    wait_node = scatter_list[-1].wait_node
+
+    # ensure user
+
+    wait_user = wait_node.args[0]  # type: ignore
+    wait_node.users[wait_user] = ""  # type: ignore
+
+    scatter_nodes = []
+
+    grad_nodes = []
+
+    offset = 0
+    start, stop = 0, 0
+    shape: torch.Size = None  # type: ignore
+
+    for fe in scatter_list:
+        start = offset
+        stop = start + fe.size
+        shape = cast(torch.Size, fe.shape)
+
+        slice_node = gm.graph.call_function(
+            torch.ops.aten.slice.Tensor,
+            (jit_buffer_node, 0, start, stop),
+        )
+
+        view_node = gm.graph.call_function(
+            torch.ops.aten.view.default,
+            (slice_node, shape),
+        )
+
+        offset += fe.size
+
+        # ensure user for view node
+        user = slice_node
+        view_node.users[user] = ""  # type: ignore
+        # ensure for copy_node
+        # user = copy_out_node.args[0]
+        # copy_out_node.users[user] = ""
+
+        scatter_nodes.extend([slice_node, view_node])
+
+        grad_nodes.append(view_node)
+
+    # move nodes
+    insert_node = wait_node.next  # type: ignore
+    for node in scatter_nodes:
+        insert_node.prepend(node)
+
+    return grad_nodes
+
+
+def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
+
+    """runs fusion by creating a Just in Time buffer to use for each fusion.
+    It then returns views to the buffer for the gradient outputs, avoiding the
+    need to copy back to the original tensor.
+    We can thus del the gradient tensors as fused, and by only creating buffers as
+    needed, minimize overhead memory pressure."""
+    FP32_BYTES = 4
+
+    gm.recompile()
+    graph_info = GraphInfo().update_info(gm)
+    _debug(f"pre graph = {gm.graph.print_tabular()}")
+
+    fe_list = _scan_graph_for_fusion_elements(
+        graph_info, gm, comm_type=CommType.ALLREDUCE
+    )
+
+    _debug(f"1083 len fe list = {len(fe_list)}\n")
+
+    graph_info.fe_list = fe_list
+
+    assert len(graph_info.wait_node_idx) == len(fe_list), (
+        "The expected wait_nodes in graph_info are different from the fe_list "
+        f"{len(graph_info.wait_node_idx)} {len(fe_list)}."
+    )
+
+    assert graph_info.output is not None
+    new_output_args = list(cast(Tuple[fx.Node], graph_info.output.args[0]))
+
+    _map_local_gradients(gm, graph_info, fe_list)
+
+    # use fusion length as mb instead of count
+    start = 0
+    stop = 0
+
+    bucket_size = fusion_length * 1024 * 1024
+    curr_size = 0
+
+    for i, fe in enumerate(graph_info.fe_list):
+        # TODO - we assume fp32 atm.
+        curr_size += fe.size * FP32_BYTES
+        if curr_size >= bucket_size:
+            stop = i + 1
+            fe_list = graph_info.fe_list[start:stop]
+            jit_buffer_node = _fuse_with_jit(graph_info, gm, fe_list)
+            grad_nodes = _scatter_results_jit(
+                graph_info, gm, fe_list, jit_buffer_node
+            )
+
+            _update_output_args(
+                graph_info,
+                gm,
+                fe_list,
+                new_output_args,
+                grad_nodes,
+            )
+
+            # fusion done for this mb size
+            curr_size = 0
+            start = stop
+
+    # fuse any leftovers - this is held over as an external step to try additional
+    # splitting to minimize last all_reduce
+
+    if start < len(graph_info.fe_list):
+        _debug(
+            f"remaining fusion: {len(graph_info.fe_list)-start} items left over"
+        )
+
+        fe_list = graph_info.fe_list[start:]
+        jit_buffer_node = _fuse_with_jit(graph_info, gm, fe_list)
+        grad_nodes = _scatter_results_jit(
+            graph_info, gm, fe_list, jit_buffer_node
+        )
+
+        _update_output_args(
+            graph_info,
+            gm,
+            fe_list,
+            new_output_args,
+            grad_nodes,
+        )
+
+    # update output with the buffer view args
+    gm.graph.erase_node(graph_info.output)
+    gm.graph.output(new_output_args)
+
+    rebuild_graph(gm, remove_dead_code=True)
+    _debug(f"1221, final graph = {gm.graph.print_tabular()}")
