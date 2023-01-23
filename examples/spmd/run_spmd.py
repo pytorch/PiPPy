@@ -143,7 +143,7 @@ def work_main(rank: int, world_size: int) -> None:
                 ),
                 placements=[Replicate()],
             ),
-            optimize_first_iter=True,
+            force_compile=True,
             optimizations=optim,
         )
         all_spmd.append(spmd)
