@@ -10,12 +10,13 @@ from torch.distributed._tensor.placement_types import (
     Shard,
     _Partial,
 )
-from torch.distributed._tensor.dispatch import OpSchema, OutputSharding
+from torch.distributed._tensor.op_schema import OpSchema, OutputSharding
 from torch.distributed._tensor.ops.utils import register_prop_rule
 from torch.distributed._tensor.ops.common_rules import pointwise_rule
 
+aten = torch.ops.aten
 
-@register_prop_rule("aten.native_layer_norm.default")
+@register_prop_rule(aten.native_layer_norm.default)
 def _prop_native_layer_norm(op_schema: OpSchema) -> OutputSharding:
     input, normalized_shape, weight, bias, eps = op_schema.args_schema
     assert isinstance(input, DTensorSpec)
@@ -42,7 +43,7 @@ def _prop_native_layer_norm(op_schema: OpSchema) -> OutputSharding:
     return OutputSharding(output_spec=(input, stats_spec, stats_spec))
 
 
-@register_prop_rule("aten.native_layer_norm_backward.default")
+@register_prop_rule(aten.native_layer_norm_backward.default)
 def _prop_native_layer_norm_backward(op_schema: OpSchema) -> OutputSharding:
     (
         grad,
@@ -90,7 +91,7 @@ def _prop_native_layer_norm_backward(op_schema: OpSchema) -> OutputSharding:
     )
 
 
-@register_prop_rule("aten.cat.default")
+@register_prop_rule(aten.cat.default)
 def prop_cat(op_schema: OpSchema) -> OutputSharding:
     tensor_list = op_schema.args_schema[0]
     if len(op_schema.args_schema) > 1:
@@ -167,7 +168,7 @@ def _refine_sharding(
         return tuple(out_schema.placements)
 
 
-@register_prop_rule("aten.slice_scatter.default")
+@register_prop_rule(aten.slice_scatter.default)
 def prop_slice_scatter(op_schema: OpSchema) -> OutputSharding:
     # 1. number of dimensions in input and src need to match.
     # 2. number of elements on all non-dim need to match between input and src.
