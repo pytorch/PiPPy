@@ -373,7 +373,6 @@ def get_user_to_last_uses(
 
 
 def _convert_to_distributed(
-    training_phase: TrainingPhase,
     gm: fx.GraphModule,
     inps: List[torch.Tensor],
     schemas: List[Schema],
@@ -391,7 +390,6 @@ def _convert_to_distributed(
 
     user_to_last_uses = get_user_to_last_uses(gm.graph)
 
-    rank0_info(logger, f"Training phase: {training_phase}")
     output_schemas: Dict[str, Schema] = {}
     for i, node in enumerate(gm.graph.nodes):
         rank0_info(logger, f"node{i}: op={node.op} target={node.target}")
@@ -527,6 +525,11 @@ class _SPMD:
         gm: fx.GraphModule,
         inps: List[torch.Tensor],
     ) -> fx.GraphModule:
+        
+        # if torch.distributed.get_rank() == 0:
+        #     print(f"inps {[i.size() for i in inps]}")
+        #     print(f"orig inps {[i.size() for i in original_inputs[0]]}")
+
         with maybe_disable_fake_tensor_mode():
             return self._compile(training_phase, gm, original_inputs[0])
 
@@ -579,7 +582,6 @@ class _SPMD:
                     schemas.append(shard_schema)
 
         parallelized_gm, output_specs = _convert_to_distributed(
-            training_phase,
             gm,
             inps,
             schemas,
@@ -598,6 +600,7 @@ class _SPMD:
         return make_boxed_func(parallelized_gm)
 
 
+# TODO: Can we move this up or is it because of a circular import?
 from torch._subclasses.fake_tensor import FakeTensorMode
 
 
@@ -619,11 +622,11 @@ def distribute(
     # will update this to the original forward inputs
     original_inputs: List[Optional[Sequence[object]]] = [None]
 
-    def input_to_fake(x: object) -> object:
-        if not isinstance(x, torch.Tensor):
-            return x
-        y = fake_mode.from_tensor(x)
-        if x in input_set:
+    def input_to_fake(input: object) -> object:
+        if not isinstance(input, torch.Tensor):
+            return input
+        y = fake_mode.from_tensor(input)
+        if input in input_set:
             # "unshard" our fake tensor
             # (considers that inputs are sharded)
             y = y.repeat(param_schema.mesh.size(0), *((1,) * (y.ndim - 1)))
