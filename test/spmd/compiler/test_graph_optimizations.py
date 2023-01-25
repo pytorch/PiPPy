@@ -73,9 +73,8 @@ class CommOverlapTest(DTensorTestBase):
         all_spmd = []
         optimizations = [
             [],
-            [GraphOptimization("overlap_communication")],
-            [GraphOptimization("fuse_communication_ring")],
             [GraphOptimization("fuse_communication_cat")],
+            [GraphOptimization("fuse_communication_jit")],
         ]
         for optim in optimizations:
             spmd = SPMD(
