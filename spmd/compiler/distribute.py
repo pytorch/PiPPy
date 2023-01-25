@@ -211,7 +211,6 @@ def _convert_output(
     gm: fx.GraphModule,
     node: fx.Node,
     node_to_obj: Dict[fx.Node, object],
-    logger: Optional[logging.Logger] = None,
 ) -> fx.Node:
     new_args = []
     has_partial = False
@@ -273,11 +272,9 @@ def _convert_output(
                         dtn, lambda n: value_remap[n]
                     )
     if has_partial:
-        logger.info("The output has partial arguments.")  # type: ignore
         gm.graph.erase_node(node)
         return gm.graph.output(new_args)
     else:
-        logger.info("The output does not have partial arguments.")  # type: ignore
         return node
 
 
@@ -420,7 +417,7 @@ def _convert_to_distributed(
         elif node.op == OP.OUTPUT:
             if not _allow_partial:
                 # returns the possibly modified output node
-                node = _convert_output(gm, node, node_to_obj, logger=logger)
+                node = _convert_output(gm, node, node_to_obj)
 
             # save output sharding for the inputs to backward pass
             for a in node.args[0]:
@@ -611,8 +608,6 @@ def distribute(
     *args: Tuple[object],
     **kwargs: Dict[str, object],
 ) -> nn.Module:
-    # Initialize logger
-    logger = get_logger("spmd_exp")
 
     flat_args, _ = tree_flatten(args)
     flat_kwargs, _ = tree_flatten(kwargs)

@@ -883,9 +883,7 @@ def run_fuse_communication_cat(gm: fx.GraphModule, fusion_length: int) -> None:
 
     # Fuse every ``fusion_length`` FusionElement.
     for start in range(0, len(graph_info.fe_list), fusion_length):
-        _debug(f"fusion indexes = {start=},{start+fusion_length=}")
         fe_list = graph_info.fe_list[start : (start + fusion_length)]
-        _debug(f"len of fe_list = {len(fe_list)}\n")
         fused_comm_node = _fuse_with_cat(graph_info, gm, fe_list)
         grad_nodes = _scatter_results(graph_info, gm, fe_list)
         _update_output_args(
@@ -1100,13 +1098,10 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
 
     gm.recompile()
     graph_info = GraphInfo().update_info(gm)
-    _debug(f"pre graph = {gm.graph.print_tabular()}")
 
     fe_list = _scan_graph_for_fusion_elements(
         graph_info, gm, comm_type=CommType.ALLREDUCE
     )
-
-    _debug(f"1083 len fe list = {len(fe_list)}\n")
 
     graph_info.fe_list = fe_list
 
@@ -1154,10 +1149,6 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
     # splitting to minimize last all_reduce
 
     if start < len(graph_info.fe_list):
-        _debug(
-            f"remaining fusion: {len(graph_info.fe_list)-start} items left over"
-        )
-
         fe_list = graph_info.fe_list[start:]
         jit_buffer_node = _fuse_with_jit(graph_info, gm, fe_list)
         grad_nodes = _scatter_results_jit(
@@ -1177,4 +1168,3 @@ def run_fuse_communication_jit(gm: fx.GraphModule, fusion_length: int) -> None:
     gm.graph.output(new_output_args)
 
     rebuild_graph(gm, remove_dead_code=True)
-    _debug(f"1221, final graph = {gm.graph.print_tabular()}")
