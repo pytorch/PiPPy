@@ -2,12 +2,11 @@ import itertools
 from typing import Any, Dict, List, Optional
 
 import torch
-
 import torch.nn as nn
 from torch import fx
 
-from .profiler import GraphProfiler, GraphType, ProfilerEngine
 from .graph_utils import get_node_tensor_metadata
+from .profiler import GraphProfiler, GraphType, ProfilerEngine
 
 
 class DistributedGraph:

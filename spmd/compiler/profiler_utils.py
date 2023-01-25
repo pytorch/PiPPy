@@ -1,6 +1,6 @@
 import math
 from dataclasses import dataclass, field
-from enum import auto, Enum
+from enum import Enum, auto
 from typing import (
     Any,
     Dict,

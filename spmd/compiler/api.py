@@ -1,21 +1,19 @@
-import logging
 from typing import Dict, Optional, Sequence, Tuple
+import logging
 
 import torch.distributed as dist
 import torch.nn as nn
+
+from spmd.compiler.log_utils import get_logger
 from spmd.tensor import Placement, Replicate
 
-from .distribute import distribute, Schema
+from .distribute import Schema, distribute
 from .distributed_graph import DistributedGraph
 from .graph_optimization import (
     DistGraphOptimization,
     GraphOptimization,
     GraphOptimizationType,
 )
-from .log_utils import rank0_info
-
-
-logger: logging.Logger = logging.getLogger(__name__)
 
 
 class SPMD(nn.Module):
@@ -65,6 +63,7 @@ class SPMD(nn.Module):
         self._optimizations = optimizations
         self._map_param_and_grad = False
         self._print_graph = print_graph
+        self.logger: Optional[logging.Logger] = get_logger("spmd_exp")
 
     def forward(
         self, *args: Tuple[object], **kwargs: Dict[str, object]
@@ -106,14 +105,8 @@ class SPMD(nn.Module):
                 # apply any optimization, we still need to print out the graph.
                 fwd_gm = self._dist_graph.fwd_graph_modules[0]
                 bwd_gm = self._dist_graph.bwd_graph_modules[0]
-                rank0_info(logger, "The forward graph.")
-                rank0_info(
-                    logger, f"\n {fwd_gm.print_readable(print_output=False)}"
-                )
-                rank0_info(logger, "The backward graph.")
-                rank0_info(
-                    logger, f"\n {bwd_gm.print_readable(print_output=False)}"
-                )
+                self.logger.info(fwd_gm.print_readable(print_output=False))  # type: ignore
+                self.logger.info(bwd_gm.print_readable(print_output=False))  # type: ignore
 
             # We only print out the graph once.
             self._print_graph = False

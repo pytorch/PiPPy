@@ -1,14 +1,15 @@
-from torch._functorch.aot_autograd import (
-    default_partition,
-    AOTConfig,
-    AOT_COUNTER,
-    PytreeThunk,
-    create_aot_dispatcher_function,
-    KNOWN_TYPES,
-)
 from functools import wraps
 from typing import Callable, Dict, Optional, Tuple
+
 import torch.utils._pytree as pytree
+from torch._functorch.aot_autograd import (
+    AOT_COUNTER,
+    KNOWN_TYPES,
+    AOTConfig,
+    PytreeThunk,
+    create_aot_dispatcher_function,
+    default_partition,
+)
 
 
 def patched_aot_function(
