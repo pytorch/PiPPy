@@ -83,50 +83,11 @@ def _dispatch_with_local_tensors(
             else arg
         )
 
-    # FIXME: this is broken because it won't redistributed potential tensors on the kwargs
+    # TODO: this is broken because it won't redistributed potential tensors on the kwargs
     return op(*tree_map(redistribute, local_args), **kwargs)
 
-
-def _get_dtensor_dispatch_graph(
-    node: fx.Node,
-    node_to_obj: Dict[fx.Node, object],
-) -> fx.GraphModule:
-    def remap_arg(arg: object) -> object:
-        if isinstance(arg, torch.fx.Node):
-            obj = node_to_obj[arg]
-            if _get_tracer():
-                # This is a shared arg, already has a tracer from previous
-                # tracing. Delete the tracer.
-                del cast(Dict[object, object], obj.__dict__)[proxy_slot]
-            return obj
-        else:
-            return arg
-
-    args = tree_map(remap_arg, node.args)
-    # kwargs in this set of tests are all constants
-    kwargs = cast(Dict[str, object], node.kwargs)
-
-    op_overload = cast(torch._ops.OpOverload, node.target)
-
-    # run dispatch once to get the real DTensor output
-    with torch.no_grad():
-        out = operator_dispatch(
-            op_overload,
-            args,
-            kwargs,  # kwargs in this set of tests are all constants
-            DTensor._op_to_rules,
-            DTensor._custom_dispatch_ops,
-        )
-        node_to_obj[node] = out
-
-    # get DTensor specs for inputs and outputs
-    (target_schema, redistribute, output_sharding,) = propagate_input_sharding(
-        op_overload,
-        args,
-        kwargs,
-        DTensor._op_to_rules,
-    )
-    # ===== Begin code taken from pack_args_kwargs_with_local_tensor =====
+def _update_specs_for_redistribute(args, target_schema, redistribute):
+    # Code adapted from pack_args_kwargs_with_local_tensor
     flatten_args, args_tree_spec = tree_flatten(args)
     flatten_args_schema, _ = tree_flatten(target_schema.args_schema)
 
@@ -150,24 +111,70 @@ def _get_dtensor_dispatch_graph(
                 )
             flatten_args_schema[i] = arg._local_tensor
 
-    local_target_args = tree_unflatten(flatten_args_schema, args_tree_spec)
-    # ===== End code taken from pack_args_kwargs_with_local_tensor =====
+    unflattened_args = tree_unflatten(flatten_args_schema, args_tree_spec)
+    
+    return specs, unflattened_args
 
-    # FIXME: this is broken when kwargs contains tensors
-    #        or if a non-tensor kwarg was modified by the sharding propagation
-    #        (in order to fix, need to port over pack_args_kwargs_with_local_tensor for kwargs as well)
+def _get_dtensor_dispatch_graph(
+    node: fx.Node,
+    node_to_obj: Dict[fx.Node, object],
+) -> fx.GraphModule:
+    def remap_arg(arg: object) -> object:
+        if isinstance(arg, torch.fx.Node):
+            obj = node_to_obj[arg]
+            if _get_tracer():
+                # This is a shared arg, already has a tracer from previous
+                # tracing. Delete the tracer.
+                del cast(Dict[object, object], obj.__dict__)[proxy_slot]
+            return obj
+        else:
+            return arg
+
+    # Args should be a list of objects post remapping.
+    args = tree_map(remap_arg, node.args)
+    # kwargs in this set of tests are all constants
+    kwargs = cast(Dict[str, object], node.kwargs)
+
+    op_overload = cast(torch._ops.OpOverload, node.target)
+
+    # run dispatch once to get the real DTensor output.
+    with torch.no_grad():
+        out = operator_dispatch(
+            op_overload,
+            args,
+            kwargs,  # kwargs in this set of tests are all constants
+            DTensor._op_to_rules,
+            DTensor._custom_dispatch_ops,
+        )
+        node_to_obj[node] = out
+
+    # get DTensor specs for inputs and outputs
+    (target_schema, redistribute, output_sharding,) = propagate_input_sharding(
+        op_overload,
+        args,
+        kwargs,
+        DTensor._op_to_rules,
+    )
+
+    if torch.distributed.get_rank() == 0:
+        print(f"target_schema {target_schema} output_sharding {output_sharding}")
+
+    # TODO: this is broken when kwargs contains tensors
+    # or if a non-tensor kwarg was modified by the sharding propagation
+    # (in order to fix, need to port over pack_args_kwargs_with_local_tensor for kwargs as well)
+    updated_args_spec, unflattened_args = _update_specs_for_redistribute(args, target_schema, redistribute)
 
     dispatch = partial(
         _dispatch_with_local_tensors,
         op_overload,
         kwargs=kwargs,
-        specs=specs,
+        specs=updated_args_spec,
     )
 
     def unwrap_local(e: object) -> object:
         return e._local_tensor if isinstance(e, DTensor) else e
 
-    return make_fx(dispatch)(local_target_args)
+    return make_fx(dispatch)(unflattened_args)
 
 
 def _build_dummy_add_graph(
@@ -230,6 +237,9 @@ def _convert_output(
         dt = cast(DTensor, obj)
 
         traced_dispatch, result_obj = _build_dummy_add_graph(dt, node_to_obj)
+
+        if torch.distributed.get_rank() == 0:
+            print(f"node {node.name} traced_dispatch{traced_dispatch}")
 
         wait = [n for n in traced_dispatch.graph.nodes if n.name == "wait_comm"]
         add = [n for n in traced_dispatch.graph.nodes if n.name == "add"]
@@ -411,6 +421,8 @@ def _convert_to_distributed(
             node_replacements[node] = _get_dtensor_dispatch_graph(
                 node, node_to_obj
             )
+            # if torch.distributed.get_rank() == 0:
+            #     print(f"g {node_replacements[node].graph}")
         elif node.op == OP.OUTPUT:
             if not _allow_partial:
                 # returns the possibly modified output node
@@ -526,9 +538,9 @@ class _SPMD:
         inps: List[torch.Tensor],
     ) -> fx.GraphModule:
         
-        # if torch.distributed.get_rank() == 0:
-        #     print(f"inps {[i.size() for i in inps]}")
-        #     print(f"orig inps {[i.size() for i in original_inputs[0]]}")
+        if torch.distributed.get_rank() == 0:
+            print(f"inps {[i.size() for i in inps]}")
+            print(f"orig inps {[i.size() for i in original_inputs[0]]}")
 
         with maybe_disable_fake_tensor_mode():
             return self._compile(training_phase, gm, original_inputs[0])
@@ -581,6 +593,8 @@ class _SPMD:
                 else:
                     schemas.append(shard_schema)
 
+        if torch.distributed.get_rank() == 0:
+            print(f"before convertToD {[i.size() for i in inps]}")
         parallelized_gm, output_specs = _convert_to_distributed(
             gm,
             inps,
