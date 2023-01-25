@@ -18,7 +18,7 @@ from torch.utils._pytree import tree_flatten
 inductor_decomps = select_decomp_table()
 
 DIST = True
-DEBUG = False
+DEBUG = True
 
 if DIST:
     from torch.distributed._tensor.ops.utils import register_prop_rule
@@ -339,7 +339,7 @@ def _materialize_dtensor(mesh, default, tensor, param=None):
             )
 
         if isinstance(tensor, FakeTensor):
-            shard = get_example_shard(tensor, mesh, default, fn=torch.zeros)
+            shard = get_example_shard(tensor, mesh, placements, fn=torch.zeros)
             return DTensor.from_local(shard, device_mesh=mesh, placements=placements)
         else:
             # assume the input is a full real tensor, we distribute it.
@@ -710,7 +710,7 @@ def main(optim_cls):
     # as well as reset_parameters() which is present in a bunch of nn.modules.
     # 
     # Note that this needs inplace random functions to be properly exposed as DTensor rules.
-    # mc.linear.reset_parameters()
+    mc.linear.reset_parameters()
 
     if DIST:
         # make sure our parameter is the same across devices initially
