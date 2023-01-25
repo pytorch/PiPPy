@@ -1,3 +1,10 @@
+"""
+Note: this is an incomplete example where we're trying to trace the model initialization itself
+      and lower it to inductor. This not strictly necessary becuase model initialization shouldn't
+      need to be compiled as long as we already know the sharding of the parameters.
+
+I'm leaving this experiment here as a possible avenue in case that becomes desirable. (e.g. exportin model initialization for a possible C++ trainer)
+"""
 import torch
 from torch import nn
 from torch._subclasses.fake_tensor import FakeTensorMode
@@ -81,6 +88,5 @@ def main():
 if __name__ == '__main__':
     if DIST:
         torch.distributed.init_process_group(backend='nccl')
-        torch.cuda.set_device(torch.distributed.get_rank() % 8)
- 
+        torch.cuda.set_device(torch.distributed.get_rank() % 8) 
     main()

@@ -1,18 +1,18 @@
-import torch
+from collections import defaultdict
+from copy import copy
+from functools import partial
+from spmd.compiler.distribute import _convert_to_distributed, TrainingPhase
 from torch import nn, Tensor
-from torch.fx.experimental.proxy_tensor import (
-    make_fx,
-    maybe_disable_fake_tensor_mode,
-)
+from torch._decomp import get_decompositions
 from torch._functorch.eager_transforms import functionalize
 from torch._inductor.compile_fx import compile_fx_inner
-from torch._subclasses.fake_tensor import FakeTensorMode, FakeTensor
-from typing import Callable, Dict, Tuple, TypeVar, Union
 from torch._inductor.decomposition import select_decomp_table
-from functools import partial
+from torch._subclasses.fake_tensor import FakeTensorMode, FakeTensor
+from torch.fx.experimental.proxy_tensor import make_fx, maybe_disable_fake_tensor_mode
+from torch.utils._python_dispatch import TorchDispatchMode
 from torch.utils._pytree import tree_flatten
-
-
+from typing import Callable, Dict, Tuple, TypeVar, Union
+import torch
 
 
 inductor_decomps = select_decomp_table()
@@ -57,30 +57,24 @@ if DIST:
             ),
         )
 
+    # FIXME: as pointed out by @anj this is actually buggy.
+    #   - because if input is Replicated, our output needs to be Replicated.
+    #   - this means that we need to make sure we pass down the same seed to each shard,
+    #   - or that we broadast from rank0 to all other ranks.
+    #   - for Sharded initialization, this is ok, but not ideal.
+    #   - TODO(@wanchaol): concrete story for random ops in DTensor
     # required sharded parameter initialization
+    #   - Note: inductor uses a shard-invariant random generator; we could do the same
+    #           but we'd have to change the signature of our torch ops to accept the seed offset and as well
+    #           for the different shards.
     # we assume IID so it's fine to just run uniform_ on each shard
     # and keep the sharding as long as its not _Partial()
     # (TODO: whanchao -- ideally if we wanted reproducibility we'd need to do random seed distribution)
     DTensor._op_to_rules['aten.uniform_.default'] = ops.tensor_ops.prop_create_like
 
 
-"""
-* We are passing in:
-1) objects with state (most likely with tensors that will be updated over the iterations)
-2) list of tensors
 
-* We want all tensors to be fake tensors when passed in.
-  - this will lead to fake optimizer state as well.
-
-* Next time user calls our functions
-  - we will not take the state again
-"""
-
-
-from copy import copy
 all_decomps = copy(inductor_decomps)
-
-from torch._decomp import get_decompositions
 
 all_decomps.update(get_decompositions([
     # used in Adam optimizer
@@ -120,10 +114,26 @@ def dprint(msg):
 
 
 def mark_placements(tensor, placements):
+    """
+    Mark tensor sharding placements.
+
+        mark_placements(model.linear.weight, [Shard(0)])
+        mark_placements(model.linear.bias, [Replicate()])
+
+    These marks will be used for
+        1) model materialization
+        2) sharding hints for SPMD expansion
+    """
     tensor._placements = placements
 
 
 def get_placements(tensor):
+    """
+    Get placements for the given tensor.
+        1) If placements were marked with `mark_placement`, return those;
+        2) If placements were not marked but tensor is a DTensor, return dtensor placements
+        3) Else, return None
+    """
     if hasattr(tensor, '_placements'):
         return tensor._placements
     elif isinstance(tensor, DTensor):
@@ -133,6 +143,15 @@ def get_placements(tensor):
 
 
 def get_example_shard(tensor, mesh, default=None, fn=torch.randn):
+    """
+    Given a tensor, returns a local shard of that tensor.
+    This will work off different possible hints in order to figure out the Placements:
+      1) If `tensor` is not actually a torch.Tensor, return the object itself.
+      2) If the tensor is a DTensor, we return the acutal local shard of this DTensor.
+      3) If `mark_placements(tensor, placements)` was previously called on this tensor, returns `placements`.
+      4) Otherwise, use `default` placement passed as input.
+    We use `fn` as the filler function. (E.g. fn=torch.zeros)
+    """
     if not isinstance(tensor, Tensor):
         return tensor
     elif isinstance(tensor, DTensor):
@@ -153,7 +172,6 @@ def convert_getattrs_to_inputs(gm):
           all tensors to be passed as inputs to the function being functionalized.
         - We collect all concrete getattr inputs into "attr_vals"
     """
-    from collections import defaultdict
     attr_vals_map = dict()
     attr_nodes = defaultdict(lambda: [])
 
@@ -257,6 +275,18 @@ DEFAULT_SCHEMA = 'default'
 
 
 def track_state_dict_materialization(map: Dict[FakeTensor, Tensor], fake_state_dict, real_state_dict):
+    """
+    Recursivelly align values from fake_state_dict` and `real_state_dict`, and populate `map`
+    with the aligned values.
+
+        map = {}
+        with FakeTensorMode():
+            fake = torch.zeros(2)
+        real = torch.zeros(2)
+        track_state_dict_materialization(map, {'a': {'b': fake}}, {'a': {'b': real}}})
+
+        >>  map[fake] --> real
+    """
     for k, v in fake_state_dict.items():
         real_k = map[k] if isinstance(k, Tensor) else k
         if isinstance(v, Tensor):
@@ -266,9 +296,14 @@ def track_state_dict_materialization(map: Dict[FakeTensor, Tensor], fake_state_d
 
 
 def warmup_optimizer(optim):
-    # unfortunatelly, in order to initialize the optimizer states
-    # we need to call optimizer.step(). In order to do that, we will initialize
-    # parameter gradients with zero tensors just so we can run a step.
+    """
+    Unfortunatelly, in order to initialize the optimizer states
+    we need to call optimizer.step(). In order to do that, we will initialize
+    parameter gradients with zero tensors just so we can run a step.
+
+    Note: this does the same as TorchRec's KeyedOptimizer.init_state:
+    https://github.com/pytorch/torchrec/blob/83fa6df617fe0c19b63a7a204ace25f2d57ff371/torchrec/optim/keyed.py#L232-L251
+    """
     for group in optim.param_groups:
         for param in group['params']:
             param.grad = torch.zeros_like(param)
@@ -282,9 +317,19 @@ def warmup_optimizer(optim):
 
 
 def materialize_optimizer(optim, tracking_map):
-    # reset this optimizer state so that we can properly materialize
-    # the optimizer state next.
-    from collections import defaultdict
+    """
+    Takes `optim: torch.optim.Optimizer` and a `tracking_map: Dict[Tensor, Tensor]` and:
+       1. replaces its fake parameters with real parameters using mapping from `tracking_map`
+       2. calls warm_up optimizer to reinitialize optimizer_states
+    E.g.:
+
+        with FakeMode():
+            model = nn.Module()
+            optim = Adam(model.parameters())
+
+        tensor_mapping = materialize_model(model)
+        materialize_optimizer(optim, tensor_mapping)
+    """
     saved_fake_state = optim.state
     optim.state = defaultdict(dict)
 
@@ -306,14 +351,23 @@ def materialize_optimizer(optim, tracking_map):
 
 
 def _materialize_tensor(t: torch.Tensor, param=None):
-    if True: # if isinstance(t, FakeTensor):
-        return torch.zeros(t.shape, device=t.device)
+    return torch.zeros(t.shape, device=t.device)
 
 	
 T = TypeVar('T')
 
 
 def _materialize_dtensor(mesh, default, tensor, param=None):
+    """
+    Materializes a tensor into a DTensor.
+    If the input tensor is a FakeTensor, fills the materialized tensor with zeros.
+    It users similar hints as `get_example_shard` in order to determine the placements, in order:
+       1) If tensor is already a DTensor, return it as is;
+       2) If tensor was marked with `mark_placements`, use those;
+       3) If param was marked with `mark_placements`, use those;
+       4) Otherwise, uses the `default` placements as passed in;
+       5) If `default` is None, materializes as a regular tensor (not DTensor)
+    """
     if isinstance(tensor, DTensor):
         return tensor
     else:
@@ -350,6 +404,14 @@ def materialize_module(
     mod: nn.Module,
     tensor_materializer: Callable[[FakeTensor], torch.Tensor] = _materialize_tensor,
 ) -> Tuple[nn.Module, dict[torch.Tensor, torch.Tensor]]:
+    """
+    Given an nn.Module `mod`, recursivelly calls `tensor_materializer` for each state
+    tensor (either parameter or buffer). `tensor_materializer` is a Callable that takes
+    a tensor (likely a FakeTensor) and produces a materialized tensor.
+
+    For parameters, the call looks like `real_param_data = tensor_materializer(param.data, param=param)`
+    For buffers, the call looks like `real_buffer = tensor_materializer(buffer, param=None)`
+    """
     def to_real_tensor(m: nn.Module, key: str, t: T) -> Union[T, torch.Tensor, nn.Parameter]:
         if isinstance(t, nn.Parameter):
             return nn.Parameter(tensor_materializer(t.data, param=t))
@@ -375,24 +437,27 @@ def materialize_module(
     return mod
 
 
-def get_example_shard(tensor, mesh, default=None, fn=torch.randn):
-    """
-    Return a "real" and "local" tensor.
-    """
-    if not isinstance(tensor, Tensor):
-        return tensor
-    elif isinstance(tensor, DTensor):
-        return tensor.to_local()
-    elif hasattr(tensor, '_placements'):
-        inp_spec = DTensorSpec(mesh, tensor._placements, tensor.shape, tensor.ndim)
-        return fn(inp_spec.local_shape, device=tensor.device)
-    elif default is not None:
-        inp_spec = DTensorSpec(mesh, default, tensor.shape, tensor.ndim)
-        return fn(inp_spec.local_shape, device=tensor.device)
-    raise NotImplementedError(f'Dont know how to get a shard of tensor {tensor}')
 
+class TrackingMaterializer:
+    """
+    Callable that can be passed as `tensor_materializer` in the call to `materialize_module`.
+    In addition to forwarding the call, TrackingMaterializer keeps a dict with the mapping
+    from original to materialized parameter.
+    """
+    def __init__(self, materializer):
+        self.map: Dict[torch.Tensor, torch.Tensor] = dict()
+        self.materializer = materializer
 
-from torch.utils._python_dispatch import TorchDispatchMode
+    def __call__(self, tensor, param=None):
+        if tensor in self.map:
+            return self.map[tensor]
+        elif param is not None and param in self.map:
+            return self.map[param]
+        else:
+            materialized = self.materializer(tensor, param=param)
+            self.map[tensor] = materialized
+            self.map[param] = materialized
+            return materialized
 
 
 class DTensorMode(TorchDispatchMode):
@@ -511,7 +576,6 @@ def make_inductor_fn(fn, example_inputs, default_shard_schema=None):
                 ) for arg, schema in zip(used_args, schemas)
             ]
 
-            from spmd.compiler.distribute import _convert_to_distributed, TrainingPhase
             fnfx, _, output_schemas = _convert_to_distributed(TrainingPhase.FORWARD, fnfx, used_args, schemas, _allow_partial=True)
 
             print_graph('after_spmd_expansion', fnfx)
@@ -519,18 +583,6 @@ def make_inductor_fn(fn, example_inputs, default_shard_schema=None):
             output_schemas = None
 
         compiled_f = compile_fx_inner(fnfx, used_args)
-
-        # temporary hack to reset state since we're actually updating the model and our eager collective implementation is incorrect
-        # this shouldn't be needed once either convert_to_distributed accepts fake mode or functional collectives work in eager mode.
-        # also this is strictly incorrect in multiple levels, because:
-        #  1. parametres should be properly initialized, not initialized to zero.
-        #  2. optimizer states may or may not bei nitialized with zero, it should be up to the optimizer to decide. 
-        # 
-        # (NOTE: the immediate problem i'm solving here is that when sharding parameters we need to do an all_gather in the forward
-        #        step to gather the parametres ,but collectives are not working in eager mode. Not sure why I'm getting "nan"s for the
-        #        loss, however.
-        # for t in real_attr_vals:
-        #     t.zero_()
 
     def inductor_fn(*args):
         with torch.no_grad():
@@ -666,9 +718,6 @@ def main(optim_cls):
     m = MyModule().to('cuda')
     sgd = optim_cls(m.parameters(), lr=0.01)
 
-    # from copy import deepcopy
-    # mc = deepcopy(m)
-
     print ('==== Eager ====')
     # eager
     for i in range(10): 
@@ -677,6 +726,7 @@ def main(optim_cls):
 
     if DIST:
         mesh = DeviceMesh('cuda', range(torch.distributed.get_world_size()))
+        # everything not marked becomes [Replicate()]
         default_shard_schema = Schema(mesh, [Replicate()])
     else:
         default_shard_schema = None
@@ -695,7 +745,7 @@ def main(optim_cls):
             # we are sharding the weight of our linear layer
             mark_placements(mc.linear.weight, [Shard(0)])
             # (but we are replicating the bias)
-            # mark_placements(mc.linear.bias, [Replicate()])
+            mark_placements(mc.linear.bias, [Replicate()])
 
         # warning: even though we'ree passing mc and sgd as "example" inputs,
         #    the tracer actually takes its tensor states and saves them as part of
@@ -713,11 +763,6 @@ def main(optim_cls):
     mc.linear.reset_parameters()
 
     if DIST:
-        # make sure our parameter is the same across devices initially
-        # doing this after compile because during compilation we're running the training step a few times
-        # TODO: fix this. we should run compilation with fake tensors.
-        # for p in mc.parameters(): 
-        #    torch.distributed.all_reduce(p)
         x = distribute_tensor(x, mesh, placements=[Shard(0)])
         y = distribute_tensor(y, mesh, placements=[Shard(0)])
 
@@ -731,24 +776,6 @@ def main(optim_cls):
             dprint(f'iteration: local_loss={loss_shard}')
 
 
-
-class TrackingMaterializer:
-    def __init__(self, materializer):
-        self.map: Dict[torch.Tensor, torch.Tensor] = dict()
-        self.materializer = materializer
-
-    def __call__(self, tensor, param=None):
-        if tensor in self.map:
-            return self.map[tensor]
-        elif param is not None and param in self.map:
-            return self.map[param]
-        else:
-            materialized = self.materializer(tensor, param=param)
-            self.map[tensor] = materialized
-            self.map[param] = materialized
-            return materialized
-
-
 if __name__ == '__main__':
     # Need to allocate at least one real cuda tensor to avoid bug:
     # https://github.com/pytorch/pytorch/issues/92627
@@ -758,16 +785,15 @@ if __name__ == '__main__':
         torch.distributed.init_process_group(backend='nccl')
         torch.cuda.set_device(torch.distributed.get_rank() % 8)
 
-    # print('================ main_simple =================')
-    # main_simple()
+    print('================ main_simple =================')
+    main_simple()
 
-    # print('================ main with SGD =================')
-    # main(torch.optim.SGD)
+    print('================ main with SGD =================')
+    main(torch.optim.SGD)
 
     print('================ main with Adam =================')
     # NOTE: we get multiple all_reduce for each parameter but this is because
     #       the parameter gradient is used multiple times by adam.
     #       we need to run CSE for this
     # fused needs to be false because the fused ops don't support "meta" device.
-    from functools import partial
     main(partial(torch.optim.Adam, capturable=True, fused=False))
