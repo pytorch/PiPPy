@@ -58,7 +58,7 @@ class ProcessGroupAwareSavePlanner(DefaultSavePlanner):
         with a PG specific string.
         """
         self.state_dict = create_state_dict_copy(state_dict)  # pyre-ignore[16]
-        super().init(self.state_dict, is_coordinator)
+        super().__init__(self.state_dict, is_coordinator)
 
 
 class ProcessGroupAwareLoadPlanner(DefaultLoadPlanner):
@@ -78,7 +78,7 @@ class ProcessGroupAwareLoadPlanner(DefaultLoadPlanner):
         """
         self.pg_original_state_dict = state_dict  # pyre-ignore[16]
         self.state_dict = create_state_dict_copy(state_dict)  # pyre-ignore[16]
-        super().init(self.state_dict, metadata, is_coordinator)
+        super().__init__(self.state_dict, metadata, is_coordinator)
 
     def load_bytes(self, read_item: ReadItem, value: io.BytesIO) -> None:
         """
