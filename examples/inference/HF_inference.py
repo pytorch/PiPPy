@@ -57,7 +57,7 @@ def get_number_of_params(model):
 
 def run_master(pp_ranks, args):
 
-    logger = setup_logger()
+    # logger = setup_logger()
 
     torch.manual_seed(42)
 
@@ -98,10 +98,11 @@ def run_master(pp_ranks, args):
     if 't5' in args.model_name:
         inp = torch.empty(bs, seq_length, dtype=torch.long, device=device).random_(model.config.vocab_size)
         model_input_dict = {'input_ids': inp, 'decoder_input_ids': inp}
-    if 'opt' or 'bloom' in args.model_name:
+    elif 'opt' or 'bloom' in args.model_name:
         inp = torch.empty(bs, seq_length, dtype=torch.long, device=device).random_(model.config.vocab_size)
         model_input_dict = {'input_ids': inp}
-    if 'regnet' in args.model_name:
+
+    elif 'regnet' in args.model_name:
         url = "http://images.cocodataset.org/val2017/000000039769.jpg"
         image = Image.open(requests.get(url, stream=True).raw)
         inputs = feature_extractor(image, return_tensors="pt")
@@ -120,7 +121,7 @@ def run_master(pp_ranks, args):
    
     model_pipe.defer_stage_init(args.device)
 
-    torch.distributed.barrier(args.pp_group)
+    pippy.utils.pp_group_barrier()
 
     if args.rank!=0:
         return 
@@ -139,10 +140,10 @@ def run_master(pp_ranks, args):
     if 't5' in args.model_name:
         kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'decoder_input_ids': TensorChunkSpec(0)}
         output_chunk_spec = {"logits": TensorChunkSpec(0),"encoder_last_hidden_state": TensorChunkSpec(0)}
-    if 'opt' or 'bloom' in args.model_name:
+    elif 'opt' or 'bloom' in args.model_name:
         kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0)}
         output_chunk_spec = {"logits": TensorChunkSpec(0)}
-    if 'regnet' in args.model_name:
+    elif 'regnet' in args.model_name:
         kwargs_chunk_spec = {'pixel_values': TensorChunkSpec(0)}
         output_chunk_spec = {"last_hidden_state": TensorChunkSpec(0), 'hidden_states':TensorChunkSpec(0)}
     
@@ -179,7 +180,7 @@ def run_master(pp_ranks, args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 8)))
+    parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 4)))
     parser.add_argument('--rank', type=int, default=int(os.getenv("RANK", -1)))
     parser.add_argument('--master_addr', type=str, default=os.getenv('MASTER_ADDR', 'localhost'))
     parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
@@ -202,7 +203,7 @@ if __name__ == "__main__":
     parser.add_argument('--visualize', type=int, default=1, choices=[0, 1])
     parser.add_argument('--record_mem_dumps', type=int, default=0, choices=[0, 1])
     parser.add_argument('--checkpoint', type=int, default=1, choices=[0, 1])
-    parser.add_argument('--pp_group_size', type=int, default=8)
+    parser.add_argument('--pp_group_size', type=int, default=4)
     parser.add_argument('--exclude_master', type=int, default=0, choices=[0, 1])
     parser.add_argument('--auto_split', type=str, default="equal_size")
 

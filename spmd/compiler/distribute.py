@@ -484,9 +484,7 @@ class _SPMD:
     def _is_param(self, t: torch.Tensor) -> bool:
         # N.B.: id(t) and id(param) does not match
         orig_module = cast(nn.Module, self._dist_graph.orig_module)
-        return t.storage().data_ptr() in (
-            p.storage().data_ptr() for p in orig_module.parameters()
-        )
+        return t.data_ptr() in (p.data_ptr() for p in orig_module.parameters())
 
     def _map_primal_to_param(
         self, gm: fx.GraphModule, inputs: List[torch.Tensor], nparams: int
