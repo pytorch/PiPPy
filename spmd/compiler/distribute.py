@@ -116,6 +116,8 @@ def _get_dtensor_dispatch_graph(
             kwargs,  # kwargs in this set of tests are all constants
             DTensor._op_to_rules,
             DTensor._custom_dispatch_ops,
+            # TODO need to pass default mesh here for tensor creation ops
+            # default_mesh=...
         )
         node_to_obj[node] = out
 

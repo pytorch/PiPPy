@@ -10,6 +10,9 @@ from torch._subclasses.fake_tensor import FakeTensorMode, FakeTensor
 from typing import Callable, Dict, Tuple, TypeVar, Union
 from torch._inductor.decomposition import select_decomp_table
 from functools import partial
+from torch.utils._pytree import tree_flatten
+
+
 
 
 inductor_decomps = select_decomp_table()
@@ -18,10 +21,16 @@ DIST = True
 DEBUG = False
 
 if DIST:
+    from torch.distributed._tensor.ops.utils import register_prop_rule
     from torch.distributed._tensor import (
         Replicate,
         Shard,
         DeviceMesh,
+    )
+    from torch.distributed._tensor.dispatch import (
+        operator_dispatch,
+        OpSchema,
+        OutputSharding,
     )
     from torch.distributed._tensor.placement_types import DTensorSpec
     from spmd.compiler.distribute import Schema
@@ -32,6 +41,27 @@ if DIST:
     # the rule below may have issues issues:
     #  - likely doens't cover the case when a shape constant is passed
     DTensor._op_to_rules['aten.zero.default'] = ops.tensor_ops.prop_create_like
+
+    @register_prop_rule("aten.zeros.default")
+    def prop_aten_zeros_default(op_schema: OpSchema) -> OutputSharding:
+        # rule for tensor creation operators that take no tensor as input.
+        # we create the output tensor as replicated for now.
+        assert op_schema.default_mesh is not None, (
+            'Default mesh required for aten.zeros sharding propagation.')
+        return OutputSharding(
+            output_spec=DTensorSpec(
+                mesh=op_schema.default_mesh,
+                placements=(Replicate(), ) * op_schema.default_mesh.ndim,
+                shape=op_schema.args_schema[0],
+                ndim=len(op_schema.args_schema[0]),
+            ),
+        )
+
+    # required sharded parameter initialization
+    # we assume IID so it's fine to just run uniform_ on each shard
+    # and keep the sharding as long as its not _Partial()
+    # (TODO: whanchao -- ideally if we wanted reproducibility we'd need to do random seed distribution)
+    DTensor._op_to_rules['aten.uniform_.default'] = ops.tensor_ops.prop_create_like
 
 
 """
@@ -289,6 +319,13 @@ def _materialize_dtensor(mesh, default, tensor, param=None):
     else:
         # do we have a way to make this into a DTensor?
         placements = get_placements(tensor)
+        # the placement tag could be either in the param.data or in param
+        # we are prioritizing param.data first, and then falling back to param
+        if placements is None and param is not None:
+            placements = get_placements(param)
+
+        # we then fallback to default if all else fails.
+        # TODO we should probably just error out instead of falling back to default.
         if placements is None:
             placements = default
 
@@ -315,7 +352,7 @@ def materialize_module(
 ) -> Tuple[nn.Module, dict[torch.Tensor, torch.Tensor]]:
     def to_real_tensor(m: nn.Module, key: str, t: T) -> Union[T, torch.Tensor, nn.Parameter]:
         if isinstance(t, nn.Parameter):
-            return nn.Parameter(tensor_materializer(t.data, t))
+            return nn.Parameter(tensor_materializer(t.data, param=t))
         else:
             assert isinstance(t, torch.Tensor)
             return tensor_materializer(t)
@@ -339,6 +376,9 @@ def materialize_module(
 
 
 def get_example_shard(tensor, mesh, default=None, fn=torch.randn):
+    """
+    Return a "real" and "local" tensor.
+    """
     if not isinstance(tensor, Tensor):
         return tensor
     elif isinstance(tensor, DTensor):
@@ -351,6 +391,52 @@ def get_example_shard(tensor, mesh, default=None, fn=torch.randn):
         return fn(inp_spec.local_shape, device=tensor.device)
     raise NotImplementedError(f'Dont know how to get a shard of tensor {tensor}')
 
+
+from torch.utils._python_dispatch import TorchDispatchMode
+
+
+class DTensorMode(TorchDispatchMode):
+    """
+    This is used for when new tensors get created using a no-input-tensor constructor
+    such as torch.zeros, and we want the output to be a DTensor.
+
+    Note that for ops that take regular tensors (but no DTensors) as inputs, we are 
+    still falling back to the non DTensor dispatch.
+    """
+    def __init__(self, default_mesh):
+        self.default_mesh = default_mesh
+
+    def __torch_dispatch__(self, func, types, args=..., kwargs=None):
+        # unfortunatelly we have these non-standard aten calls that we'll have to ignore
+        # they happen in torch.optim.Optimizer base-class.
+        non_tensor_ops = (
+            torch.ops.profiler._record_function_enter_new.default,
+            torch.ops.profiler._record_function_exit._RecordFunction,
+        )
+
+        # if we do have tensor inputs that are non-DTensor then we should fallback as well
+        # as this is a regular non-dtensor op.
+        # this is needed to handle stuff like print(my_tensor)
+        arg_list, _ = tree_flatten(args)
+        has_regular_tensors = False
+        for arg in arg_list:
+            if isinstance(arg, torch.Tensor) and not isinstance(arg, DTensor):
+                has_regular_tensors = True
+
+        if func in non_tensor_ops or has_regular_tensors:
+            return func(*args, **kwargs)
+
+        if kwargs is None:
+            kwargs = {}
+
+        return operator_dispatch(
+            func,
+            args,
+            kwargs,
+            DTensor._op_to_rules,
+            DTensor._custom_dispatch_ops,
+            default_mesh=self.default_mesh,
+        )
 
 
 def make_inductor_fn(fn, example_inputs, default_shard_schema=None):
@@ -376,7 +462,7 @@ def make_inductor_fn(fn, example_inputs, default_shard_schema=None):
         # materialize our models. It special cases models and optimizers
         # and assumes that all parameters contained in optimziers are model
         # parameters.
-        tracking_materializer = TrackingMaterializer(_materialize_tensor)
+        tracking_materializer = TrackingMaterializer(tensor_materializer)
         # 1. materialize models
         for inp in example_inputs:
             if isinstance(inp, nn.Module):
@@ -384,13 +470,27 @@ def make_inductor_fn(fn, example_inputs, default_shard_schema=None):
         # 2. "materialize" optimizers
         for inp in example_inputs:
             if isinstance(inp, torch.optim.Optimizer):
-                materialize_optimizer(inp, tracking_materializer.map)
+                if default_shard_schema is not None:
+                    # we need DTensorMode because our optimizer used here (Adam)
+                    # instantiates a few tensors using torch.zeros() which take no
+                    # tensors in the input. We need to ensure the tensor created is a DTensor.
+                    with DTensorMode(default_shard_schema.mesh):
+                        materialize_optimizer(inp, tracking_materializer.map)
+                else:
+                    materialize_optimizer(inp, tracking_materializer.map)
 
-        # create attr_vals with concrete inputs
+
+        # (re-)create attr_vals with concrete inputs
         real_attr_vals = [
             tracking_materializer.map[val] if isinstance(val, FakeTensor) else val
             for val in attr_vals
         ]
+
+        # from now on, we use the real attr_vals as inputs.
+        # in particular this is important because in the previous step we warmed up
+        # optimizers -- this means that the optimizer states should have the same sharding
+        # as their respective parameters.
+        used_args = prepare_args(real_attr_vals, unused_input_idx, example_inputs)
  
         def get_schema(inp):
             placements = get_placements(inp)
@@ -420,6 +520,18 @@ def make_inductor_fn(fn, example_inputs, default_shard_schema=None):
 
         compiled_f = compile_fx_inner(fnfx, used_args)
 
+        # temporary hack to reset state since we're actually updating the model and our eager collective implementation is incorrect
+        # this shouldn't be needed once either convert_to_distributed accepts fake mode or functional collectives work in eager mode.
+        # also this is strictly incorrect in multiple levels, because:
+        #  1. parametres should be properly initialized, not initialized to zero.
+        #  2. optimizer states may or may not bei nitialized with zero, it should be up to the optimizer to decide. 
+        # 
+        # (NOTE: the immediate problem i'm solving here is that when sharding parameters we need to do an all_gather in the forward
+        #        step to gather the parametres ,but collectives are not working in eager mode. Not sure why I'm getting "nan"s for the
+        #        loss, however.
+        # for t in real_attr_vals:
+        #     t.zero_()
+
     def inductor_fn(*args):
         with torch.no_grad():
             used_args = prepare_args(real_attr_vals, unused_input_idx, args)
@@ -429,9 +541,14 @@ def make_inductor_fn(fn, example_inputs, default_shard_schema=None):
             for i in range(len(used_args)):
                 arg = used_args[i]
                 if isinstance(arg, DTensor):
-                    assert (
-                        arg.placements == schemas[i].placements and
-                        arg.device_mesh == schemas[i].mesh
+                    assert arg.device_mesh == schemas[i].mesh, (
+                        f'Input device meshes passed to compiled function '
+                        f'do not match: got {arg.device_mesh}, expected {schemas[i].mesh}'
+                    )
+                    # TODO(wanchao) we should normalize whether we're returning tuples or lists for placements
+                    assert tuple(arg.placements) == tuple(schemas[i].placements), (
+                        f'Input placements passed to compiled function '
+                        f'do not match: got {arg.placements}, expected {schemas[i].placements}'
                     )
                     used_args[i] = arg.to_local()
 
@@ -575,12 +692,25 @@ def main(optim_cls):
             mark_placements(fake_x, [Shard(0)])
             mark_placements(fake_y, [Shard(0)])
 
-            # mark_placements(mc.linear.weight, [Shard(0]])
+            # we are sharding the weight of our linear layer
+            mark_placements(mc.linear.weight, [Shard(0)])
+            # (but we are replicating the bias)
+            # mark_placements(mc.linear.bias, [Replicate()])
 
         # warning: even though we'ree passing mc and sgd as "example" inputs,
         #    the tracer actually takes its tensor states and saves them as part of
         #    the compiled_f. So mc and sgd cannot be mutated directly afterwards.
         compiled_f = make_inductor_fn(train_step, [mc, sgd, fake_x, fake_y], default_shard_schema=default_shard_schema)
+
+    # now that we compiled our function all of our parameters are already DTensors, but since we were in fake mode 
+    # when we first initialized it, we don't have real values for these parametesr (they are all initialized as zero)
+    # 
+    # We'll need to figure out how to do standard lazy-initialization.
+    # We can use any inplace initialization functions (pretty much all of torch.nn.init)
+    # as well as reset_parameters() which is present in a bunch of nn.modules.
+    # 
+    # Note that this needs inplace random functions to be properly exposed as DTensor rules.
+    # mc.linear.reset_parameters()
 
     if DIST:
         # make sure our parameter is the same across devices initially
@@ -613,36 +743,10 @@ class TrackingMaterializer:
         elif param is not None and param in self.map:
             return self.map[param]
         else:
-            materialized = self.materializer(tensor)
+            materialized = self.materializer(tensor, param=param)
             self.map[tensor] = materialized
             self.map[param] = materialized
             return materialized
-
-
-
-def main_fake(optim_cls):
-    fake_mode = FakeTensorMode()
-    torch.set_default_device('cuda')
-
-    # with fake_mode:
-    with fake_mode:
-        # 1.1. create fake model
-        mc = MyModule()
-
-        # 1.2. create fake optimizers
-        sgd = optim_cls(mc.parameters(), lr=0.01, capturable=True)
-
-        # 1.3. create fake input examples
-        fake_x = torch.ones(10, 4)
-        fake_y = torch.ones(10, 2)
-
-        compiled_f = make_inductor_fn(train_step, [mc, sgd, fake_x, fake_y], default_shard_schema=None)
-
-    # 2.3. create real input examples (should be DTensors)
-    x = torch.ones(10, 4)
-    y = torch.ones(10, 2)
-
-    compiled_f(mc, sgd, x, y)
 
 
 if __name__ == '__main__':
