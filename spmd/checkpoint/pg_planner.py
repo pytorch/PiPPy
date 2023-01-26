@@ -52,13 +52,13 @@ class ProcessGroupAwareSavePlanner(DefaultSavePlanner):
     ProcessGroupAwareSavePlanner extends DefaultSavePlanner and re-write the state_dict.
     """
 
-    def init(self, state_dict: Dict[str, Any], is_coordinator: bool) -> None:
+    def set_up_planner(self, state_dict: Dict[str, Any], is_coordinator: bool) -> None:
         """
         Rename all keys of sharded tensors from sub-process groups by prefixing it
         with a PG specific string.
         """
         self.state_dict = create_state_dict_copy(state_dict)  # pyre-ignore[16]
-        super().init(self.state_dict, is_coordinator)
+        super().set_up_planner(self.state_dict, is_coordinator)
 
 
 class ProcessGroupAwareLoadPlanner(DefaultLoadPlanner):
@@ -66,7 +66,7 @@ class ProcessGroupAwareLoadPlanner(DefaultLoadPlanner):
     ProcessGroupAwareSaveLoader extends DefaultLoadPlanner and re-write the state_dict.
     """
 
-    def init(
+    def set_up_planner(
         self,
         state_dict: STATE_DICT_TYPE,
         metadata: Metadata,
@@ -78,7 +78,7 @@ class ProcessGroupAwareLoadPlanner(DefaultLoadPlanner):
         """
         self.pg_original_state_dict = state_dict  # pyre-ignore[16]
         self.state_dict = create_state_dict_copy(state_dict)  # pyre-ignore[16]
-        super().init(self.state_dict, metadata, is_coordinator)
+        super().set_up_planner(self.state_dict, metadata, is_coordinator)
 
     def load_bytes(self, read_item: ReadItem, value: io.BytesIO) -> None:
         """
