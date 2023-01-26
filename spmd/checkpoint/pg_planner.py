@@ -52,7 +52,9 @@ class ProcessGroupAwareSavePlanner(DefaultSavePlanner):
     ProcessGroupAwareSavePlanner extends DefaultSavePlanner and re-write the state_dict.
     """
 
-    def set_up_planner(self, state_dict: Dict[str, Any], is_coordinator: bool) -> None:
+    def set_up_planner(
+        self, state_dict: Dict[str, Any], is_coordinator: bool
+    ) -> None:
         """
         Rename all keys of sharded tensors from sub-process groups by prefixing it
         with a PG specific string.
