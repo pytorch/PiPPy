@@ -14,6 +14,8 @@ from torch.fx.experimental.proxy_tensor import (
     maybe_disable_fake_tensor_mode,
     proxy_slot,
 )
+from torch.distributed._tensor.op_schema import OpSchema
+from torch.distributed._tensor.placement_types import DTensorSpec
 from torch.utils._pytree import tree_flatten, tree_map, tree_unflatten
 
 from spmd.compiler.log_utils import get_logger
@@ -88,7 +90,9 @@ def _dispatch_with_local_tensors(
     return op(*tree_map(redistribute, local_args), **kwargs)
 
 
-def _update_specs_for_redistribute(args, target_schema, redistribute):
+def _update_specs_for_redistribute(
+    args: List[object], target_schema: OpSchema, redistribute: bool
+) -> Tuple[object, object]:
     # Code adapted from pack_args_kwargs_with_local_tensor
     flatten_args, args_tree_spec = tree_flatten(args)
     flatten_args_schema, _ = tree_flatten(target_schema.args_schema)
@@ -120,6 +124,7 @@ def _update_specs_for_redistribute(args, target_schema, redistribute):
 def _get_dtensor_dispatch_graph(
     node: fx.Node,
     node_to_obj: Dict[fx.Node, object],
+    node_to_output_spec: Dict[fx.Node, DTensorSpec],
 ) -> fx.GraphModule:
     def _remap_arg(arg: object) -> object:
         if isinstance(arg, torch.fx.Node):
@@ -149,6 +154,7 @@ def _get_dtensor_dispatch_graph(
             DTensor._custom_dispatch_ops,
         )
         node_to_obj[node] = out
+        node_to_output_spec[node] = out._spec
 
     # get DTensor specs for inputs and outputs
     (target_schema, redistribute, output_sharding,) = propagate_input_sharding(
@@ -172,14 +178,12 @@ def _get_dtensor_dispatch_graph(
         specs=updated_args_spec,
     )
 
-    def unwrap_local(e: object) -> object:
-        return e._local_tensor if isinstance(e, DTensor) else e
-
     return make_fx(dispatch)(unflattened_args)
 
 
 def _build_dummy_add_graph(
-    dt: DTensor, node_to_obj: Dict[fx.Node, object]
+    dt: DTensor, node_to_obj: Dict[fx.Node, object],
+    node_to_output_spec: Dict[fx.Node, DTensorSpec]
 ) -> Tuple[fx.GraphModule, object]:
     """
     Creates a graph for a dummy add function from a partial DTensor.
@@ -205,21 +209,26 @@ def _build_dummy_add_graph(
     node_to_obj[placeholders[0]] = dt
     node_to_obj[placeholders[1]] = zero
 
+    node_to_output_spec[placeholders[0]] = dt._spec
+    node_to_output_spec[placeholders[1]] = dt._spec
+    
+
     traced_dispatch = _get_dtensor_dispatch_graph(
-        call_functions[0], node_to_obj
+        call_functions[0], node_to_obj, node_to_output_spec
     )
 
     traced_dispatch.graph.lint()
 
     # TODO(anj): This depends on the call function node -> actual DTensor output
     # mapping that we want to avoid for SPMD expansion
-    return traced_dispatch, node_to_obj[call_functions[0]]
+    return traced_dispatch, node_to_obj[call_functions[0]], node_to_output_spec[call_functions[0]]
 
 
 def _convert_output(
     gm: fx.GraphModule,
     node: fx.Node,
     node_to_obj: Dict[fx.Node, object],
+    node_to_output_spec: Dict[fx.Node, DTensorSpec],
 ) -> fx.Node:
     new_args = []
     has_partial = False
@@ -229,6 +238,9 @@ def _convert_output(
             continue
 
         obj = node_to_obj[argument]
+        node_spec = node_to_output_spec[argument]
+        if torch.distributed.get_rank() == 0:
+            print(f"node_spec {node_spec}")
 
         if not _is_partial_dtensor(obj):
             new_args.append(argument)
@@ -239,7 +251,9 @@ def _convert_output(
         # we know it's a dtensor from is partial DT check...
         dt = cast(DTensor, obj)
 
-        traced_dispatch, result_obj = _build_dummy_add_graph(dt, node_to_obj)
+        traced_dispatch, result_obj, result_spec = _build_dummy_add_graph(dt, node_to_obj, node_to_output_spec)
+        if torch.distributed.get_rank() == 0:
+            print(f"result_spec {result_spec}")
 
         wait = [n for n in traced_dispatch.graph.nodes if n.name == "wait_comm"]
         add = [n for n in traced_dispatch.graph.nodes if n.name == "add"]
@@ -253,6 +267,7 @@ def _convert_output(
         # TODO(anj): We require mapping of the final DTensor output to the wait
         # comm node.
         node_to_obj[wait[0]] = result_obj
+        node_to_output_spec[wait[0]] = result_spec
 
         value_remap: Dict[fx.Node, fx.Node] = {}
         for dtn in traced_dispatch.graph.nodes:
@@ -270,6 +285,9 @@ def _convert_output(
                 # output node so that we can report the final output specs correctly.
                 # TODO(anj): We are depending on the concrete DTensor output of the dummy add.
                 node_to_obj[value_remap[dtn.args[0][0]]] = node_to_obj[
+                    dtn.args[0][0]
+                ]
+                node_to_output_spec[value_remap[dtn.args[0][0]]] = node_to_output_spec[
                     dtn.args[0][0]
                 ]
 
@@ -402,6 +420,9 @@ def _convert_to_distributed(
     global logger
     logger = get_logger("spmd_exp")  # type: ignore
     node_to_obj: Dict[fx.Node, object] = {}
+    # Mapping from Node to output DTensor spec.
+    node_to_output_spec: Dict[fx.Node. DTensorSpec] = {}
+
     # map local op node in traced_f to its corresponding subgraph of
     # DTensor ops.
     node_replacements: Dict[torch.fx.Node, torch.fx.GraphModule] = {}
@@ -424,17 +445,18 @@ def _convert_to_distributed(
                 # prevent running this collective in backwards pass
                 run_check=False,
             )
+            node_to_output_spec[node] = schemas[i]
 
         elif isinstance(node.target, torch._ops.OpOverload):
             node_replacements[node] = _get_dtensor_dispatch_graph(
-                node, node_to_obj
+                node, node_to_obj, node_to_output_spec
             )
         elif node.op == OP.OUTPUT:
             if not _allow_partial:
                 # Returns an expanded dummy add node that ensures
                 # that the partial output tensor has been converted
                 # to a replicated tensor.
-                node = _convert_output(gm, node, node_to_obj)
+                node = _convert_output(gm, node, node_to_obj, node_to_output_spec)
 
             # Save output sharding for the inputs to backward pass.
             # TODO(anj): Pipe the output schema for the BW pass
@@ -443,7 +465,13 @@ def _convert_to_distributed(
             for inp_arg in node.args[0]:
                 if isinstance(inp_arg, fx.Node):
                     obj = node_to_obj[inp_arg]
+
                     if isinstance(obj, DTensor):
+                        if torch.distributed.get_rank() == 0:
+                            print(f"obj._spec {obj._spec} Vs {node_to_output_spec[inp_arg]}")
+                        # output_schemas[inp_arg.name] = Schema(
+                        #     obj.device_mesh, obj.placements  # type: ignore
+                        # )
                         output_schemas[inp_arg.name] = Schema(
                             obj.device_mesh, obj.placements  # type: ignore
                         )

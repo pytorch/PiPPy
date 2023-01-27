@@ -8,7 +8,7 @@ from typing import Set
 # INFO print compiler functions + distributed graphs
 # WARN print warnings
 # ERROR print exceptions
-log_level: int = logging.DEBUG
+log_level: int = logging.WARN
 # Verbose will print full stack traces on warnings and errors
 verbose = False
 
