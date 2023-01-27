@@ -10,7 +10,6 @@ from .fusion import (
     run_fuse_communication_cat,
     run_fuse_communication_jit,
 )
-from .log_utils import rank0_info
 from .scheduling_policies import SchedulingPolicy
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -126,39 +125,15 @@ class DistGraphOptimization:
     def apply(
         self,
         optimizations: Sequence[GraphOptimization],
-        print_graph: bool = False,
     ) -> "DistGraphOptimization":
         if not optimizations:
             return self
-        fwd_gm = self._graph.fwd_graph_modules[0]
-        bwd_gm = self._graph.bwd_graph_modules[0]
-        if print_graph:
-            fwd_gm = self._graph.fwd_graph_modules[0]
-            bwd_gm = self._graph.bwd_graph_modules[0]
-            rank0_info(logger, "The forward graph before optimization.")
-            rank0_info(
-                logger, f"\n {fwd_gm.print_readable(print_output=False)}"
-            )
-            rank0_info(logger, "The backward graph before optimization.")
-            rank0_info(
-                logger, f"\n {bwd_gm.print_readable(print_output=False)}"
-            )
 
         for optim in optimizations:
             _self = _GraphOptimizationMapping[optim.optim_type](
                 self, **optim.kwargs
             )
             assert _self == self
-
-        if print_graph:
-            rank0_info(logger, "The forward graph after optimization.")
-            rank0_info(
-                logger, f"\n {fwd_gm.print_readable(print_output=False)}"
-            )
-            rank0_info(logger, "The backward graph after optimization.")
-            rank0_info(
-                logger, f"\n {bwd_gm.print_readable(print_output=False)}"
-            )
 
         self._optimizing = False
         self._optimized = True

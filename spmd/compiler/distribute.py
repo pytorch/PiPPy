@@ -603,7 +603,7 @@ def distribute(
     dist_graph: DistributedGraph,
     param_schema: Schema,
     input_schemas: Sequence[Placement],
-    force_compile: bool,
+    optimize_first_iter: bool,
     map_param_and_grad: bool,
     *args: Tuple[object],
     **kwargs: Dict[str, object],
@@ -654,7 +654,7 @@ def distribute(
     #
     # TODO(chienchin): figure out how to be compatible with optimizer state_dict
     # loading.
-    if force_compile:
+    if optimize_first_iter:
         output = compiled_m(*args, **kwargs)
         # Force to compile the backward
         output.sum().backward()
