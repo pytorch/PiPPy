@@ -1,20 +1,19 @@
-import logging
 from typing import Dict, Optional, Sequence, Tuple
+import logging
 
 import torch.distributed as dist
 import torch.nn as nn
+
+from spmd.compiler.log_utils import get_logger
 from spmd.tensor import Placement, Replicate
 
-from .distribute import distribute, Schema
+from .distribute import Schema, distribute
 from .distributed_graph import DistributedGraph
 from .graph_optimization import (
     DistGraphOptimization,
     GraphOptimization,
     GraphOptimizationType,
 )
-
-
-logger: logging.Logger = logging.getLogger(__name__)
 
 
 class SPMD(nn.Module):
