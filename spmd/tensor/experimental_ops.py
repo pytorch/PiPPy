@@ -91,44 +91,6 @@ def _prop_native_layer_norm_backward(op_schema: OpSchema) -> OutputSharding:
     )
 
 
-@register_prop_rule(aten.cat.default)
-def prop_cat(op_schema: OpSchema) -> OutputSharding:
-    tensor_list = op_schema.args_schema[0]
-    if len(op_schema.args_schema) > 1:
-        dim = op_schema.args_schema[1]
-    else:
-        dim = -1
-    assert isinstance(tensor_list, (list, tuple))
-    assert isinstance(dim, int)
-
-    if dim < 0:
-        dim += len(tensor_list[0].shape)
-
-    output_placements: Optional[List[Placement]] = None
-    for tensor in tensor_list:
-        assert isinstance(tensor, DTensorSpec)
-        if output_placements is None:
-            output_placements = tensor.placements  # type: ignore
-        else:
-            # not sure why we're getting a tuple here sometimes, so casting to list to be sure
-            assert list(output_placements) == list(
-                tensor.placements
-            ), f"Current only accept cat when all inputs are same sharded. Got {output_placements} vs. {tensor.placements}"
-    assert output_placements is not None
-
-    output_shape = list(tensor_list[0].shape)
-    output_shape[dim] = sum((t.shape[dim] for t in tensor_list))
-
-    return OutputSharding(
-        output_spec=DTensorSpec(
-            mesh=tensor_list[0].mesh,
-            placements=output_placements,
-            ndim=tensor_list[0].ndim,
-            shape=torch.Size(output_shape),
-        )
-    )
-
-
 def _refine_sharding(
     op_schema: OpSchema, active_dim: Optional[int]
 ) -> Sequence[Placement]:
