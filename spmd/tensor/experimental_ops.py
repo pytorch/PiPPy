@@ -1,5 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import List, Optional, Sequence
+from typing import Optional, Sequence
 
 import torch
 
