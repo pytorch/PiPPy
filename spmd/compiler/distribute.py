@@ -15,7 +15,7 @@ from torch.fx.experimental.proxy_tensor import (
     proxy_slot,
 )
 from torch.distributed._tensor.op_schema import OpSchema
-from torch.distributed._tensor.placement_types import DTensorSpec
+from torch.distributed._tensor.placement_types import DTensorSpec, _Partial
 from torch.utils._pytree import tree_flatten, tree_map, tree_unflatten
 
 from spmd.compiler.log_utils import get_logger
@@ -56,6 +56,11 @@ class Schema:
     placements: List[Placement]
 
 
+def print0(input):
+    if torch.distributed.get_rank() == 0:
+        print(input)
+        
+
 def _is_partial_dtensor(obj: object) -> bool:
     """check if object is 1) DTensor and  2) with any placement of _Partial"""
     if not isinstance(obj, DTensor):
@@ -80,6 +85,9 @@ def _dispatch_with_local_tensors(
     ] = {},
 ) -> object:
     def redistribute(arg: object) -> object:
+        # print0(f"specs {specs}")
+        # print0(f"redistribute {isinstance(arg, torch.Tensor)} arg {arg}")
+
         return (
             _redistribute_with_local_tensor(arg, *specs[arg])
             if isinstance(arg, torch.Tensor) and arg in specs
@@ -124,7 +132,6 @@ def _update_specs_for_redistribute(
 def _get_dtensor_dispatch_graph(
     node: fx.Node,
     node_to_obj: Dict[fx.Node, object],
-    node_to_output_spec: Dict[fx.Node, DTensorSpec],
 ) -> fx.GraphModule:
     def _remap_arg(arg: object) -> object:
         if isinstance(arg, torch.fx.Node):
@@ -145,16 +152,16 @@ def _get_dtensor_dispatch_graph(
     op_overload = cast(torch._ops.OpOverload, node.target)
 
     # run dispatch once to get the real DTensor output.
-    with torch.no_grad():
-        out = operator_dispatch(
-            op_overload,
-            args,
-            kwargs,  # kwargs in this set of tests are all constants
-            DTensor._op_to_rules,
-            DTensor._custom_dispatch_ops,
-        )
-        node_to_obj[node] = out
-        node_to_output_spec[node] = out._spec
+    # with torch.no_grad():
+    #     out = operator_dispatch(
+    #         op_overload,
+    #         args,
+    #         kwargs,  # kwargs in this set of tests are all constants
+    #         DTensor._op_to_rules,
+    #         DTensor._custom_dispatch_ops,
+    #     )
+    #     node_to_obj[node] = out
+        
 
     # get DTensor specs for inputs and outputs
     (target_schema, redistribute, output_sharding,) = propagate_input_sharding(
@@ -163,6 +170,12 @@ def _get_dtensor_dispatch_graph(
         kwargs,
         DTensor._op_to_rules,
     )
+    # We need to allow non fake inputs because the first args in the BW pass
+    # are going to be real.
+    with FakeTensorMode(allow_non_fake_inputs=True):
+        local_tensor = torch.ones(output_sharding.output_spec.shape)
+        dten_out = DTensor.from_local(local_tensor, device_mesh=output_sharding.output_spec.mesh, placements=output_sharding.output_spec.placements)
+    node_to_obj[node] = dten_out
 
     # TODO: this is broken when kwargs contains tensors
     # or if a non-tensor kwarg was modified by the sharding propagation
@@ -178,12 +191,12 @@ def _get_dtensor_dispatch_graph(
         specs=updated_args_spec,
     )
 
+    # print0(f"unflattened_args {unflattened_args}")
     return make_fx(dispatch)(unflattened_args)
 
 
 def _build_dummy_add_graph(
     dt: DTensor, node_to_obj: Dict[fx.Node, object],
-    node_to_output_spec: Dict[fx.Node, DTensorSpec]
 ) -> Tuple[fx.GraphModule, object]:
     """
     Creates a graph for a dummy add function from a partial DTensor.
@@ -206,29 +219,25 @@ def _build_dummy_add_graph(
     ]
     assert len(placeholders) == 2
     assert len(call_functions) == 1
+
+    # TODO(anj): Remove this once we can trace DTs using fake tensors.
     node_to_obj[placeholders[0]] = dt
     node_to_obj[placeholders[1]] = zero
 
-    node_to_output_spec[placeholders[0]] = dt._spec
-    node_to_output_spec[placeholders[1]] = dt._spec
-    
-
     traced_dispatch = _get_dtensor_dispatch_graph(
-        call_functions[0], node_to_obj, node_to_output_spec
-    )
+        call_functions[0], node_to_obj)
 
     traced_dispatch.graph.lint()
 
     # TODO(anj): This depends on the call function node -> actual DTensor output
     # mapping that we want to avoid for SPMD expansion
-    return traced_dispatch, node_to_obj[call_functions[0]], node_to_output_spec[call_functions[0]]
+    return traced_dispatch, node_to_obj[call_functions[0]]
 
 
 def _convert_output(
     gm: fx.GraphModule,
     node: fx.Node,
     node_to_obj: Dict[fx.Node, object],
-    node_to_output_spec: Dict[fx.Node, DTensorSpec],
 ) -> fx.Node:
     new_args = []
     has_partial = False
@@ -238,10 +247,7 @@ def _convert_output(
             continue
 
         obj = node_to_obj[argument]
-        node_spec = node_to_output_spec[argument]
-        if torch.distributed.get_rank() == 0:
-            print(f"node_spec {node_spec}")
-
+        
         if not _is_partial_dtensor(obj):
             new_args.append(argument)
             continue
@@ -251,10 +257,8 @@ def _convert_output(
         # we know it's a dtensor from is partial DT check...
         dt = cast(DTensor, obj)
 
-        traced_dispatch, result_obj, result_spec = _build_dummy_add_graph(dt, node_to_obj, node_to_output_spec)
-        if torch.distributed.get_rank() == 0:
-            print(f"result_spec {result_spec}")
-
+        traced_dispatch, result_obj, result_spec = _build_dummy_add_graph(dt, node_to_obj)
+        
         wait = [n for n in traced_dispatch.graph.nodes if n.name == "wait_comm"]
         add = [n for n in traced_dispatch.graph.nodes if n.name == "add"]
         assert len(wait) == 1 and len(add) == 1
@@ -267,7 +271,6 @@ def _convert_output(
         # TODO(anj): We require mapping of the final DTensor output to the wait
         # comm node.
         node_to_obj[wait[0]] = result_obj
-        node_to_output_spec[wait[0]] = result_spec
 
         value_remap: Dict[fx.Node, fx.Node] = {}
         for dtn in traced_dispatch.graph.nodes:
@@ -285,9 +288,6 @@ def _convert_output(
                 # output node so that we can report the final output specs correctly.
                 # TODO(anj): We are depending on the concrete DTensor output of the dummy add.
                 node_to_obj[value_remap[dtn.args[0][0]]] = node_to_obj[
-                    dtn.args[0][0]
-                ]
-                node_to_output_spec[value_remap[dtn.args[0][0]]] = node_to_output_spec[
                     dtn.args[0][0]
                 ]
 
@@ -445,18 +445,16 @@ def _convert_to_distributed(
                 # prevent running this collective in backwards pass
                 run_check=False,
             )
-            node_to_output_spec[node] = schemas[i]
 
         elif isinstance(node.target, torch._ops.OpOverload):
             node_replacements[node] = _get_dtensor_dispatch_graph(
-                node, node_to_obj, node_to_output_spec
-            )
+                node, node_to_obj)
         elif node.op == OP.OUTPUT:
             if not _allow_partial:
                 # Returns an expanded dummy add node that ensures
                 # that the partial output tensor has been converted
                 # to a replicated tensor.
-                node = _convert_output(gm, node, node_to_obj, node_to_output_spec)
+                node = _convert_output(gm, node, node_to_obj)
 
             # Save output sharding for the inputs to backward pass.
             # TODO(anj): Pipe the output schema for the BW pass
@@ -465,13 +463,7 @@ def _convert_to_distributed(
             for inp_arg in node.args[0]:
                 if isinstance(inp_arg, fx.Node):
                     obj = node_to_obj[inp_arg]
-
                     if isinstance(obj, DTensor):
-                        if torch.distributed.get_rank() == 0:
-                            print(f"obj._spec {obj._spec} Vs {node_to_output_spec[inp_arg]}")
-                        # output_schemas[inp_arg.name] = Schema(
-                        #     obj.device_mesh, obj.placements  # type: ignore
-                        # )
                         output_schemas[inp_arg.name] = Schema(
                             obj.device_mesh, obj.placements  # type: ignore
                         )
@@ -572,27 +564,39 @@ class _SPMD:
 
     def _compile_wrapper(
         self,
+        num_inps: int,
         training_phase: TrainingPhase,
         original_inputs: List[List[torch.Tensor]],
         gm: fx.GraphModule,
         inps: List[torch.Tensor],
     ) -> fx.GraphModule:
 
-        with maybe_disable_fake_tensor_mode():
-            return self._compile(training_phase, gm, original_inputs[0])
+        # print0(f"original_inputs[0] {original_inputs[0]}")
+        # with maybe_disable_fake_tensor_mode():
+        return self._compile(num_inps, training_phase, gm, original_inputs[0])
 
     def _compile(
         self,
+        num_inps: int,
         training_phase: TrainingPhase,
         gm: fx.GraphModule,
         inps: List[torch.Tensor],
     ) -> fx.GraphModule:
+        if training_phase == TrainingPhase.BACKWARD:
+            print0(f"BW graph {gm.graph}")
+        
+        print0(f" {training_phase} inps {inps}")
         shard_schema: Schema = Schema(
             mesh=self._param_schema.mesh, placements=[Shard(0)]
         )
         schemas: List[Schema] = []
         inp_schema_count = 0
+        if training_phase == TrainingPhase.FORWARD:
+            num_params = len(inps) - num_inps
+        else:
+            num_params = 0
         nparams = 0
+        print0(f"num params {num_params}")
 
         # iterate through inputs (and initial nodes of the graph that should
         # correspond 1:1 to those inputs)
@@ -620,13 +624,19 @@ class _SPMD:
                     )
                 )
             else:
-                if self._is_param(inp):
+                # TODO(anj): Moved to another way of identifying params since this will fail
+                # for FakeTensors.
+                if nparams < num_params: 
                     schemas.append(self._param_schema)
                     nparams += 1
                 elif self._input_schemas:
                     schemas.append(self._input_schemas[inp_schema_count])  # type: ignore
                     inp_schema_count += 1
                 else:
+                    # TODO(anj): Identify a way to specify schema for Params that is not backed
+                    # by actual storage.
+                    # TODO(anj): Remove this once we have a way to trace all_gather OR specify
+                    # param schema correctly
                     schemas.append(shard_schema)
 
         parallelized_gm, output_specs = _convert_to_distributed(
@@ -677,18 +687,25 @@ def distribute(
             y = y.repeat(param_schema.mesh.size(0), *((1,) * (y.ndim - 1)))
         # TODO assume non-inputs (params, etc) are replicated for now.
         return y
+    
+    def input_to_fake_no_expand(input: object) -> object:
+        if not isinstance(input, torch.Tensor):
+            return input
+        return fake_mode.from_tensor(input)
 
     def gather_inputs_for_compilation(
         inps: Tuple[object, ...],
     ) -> Tuple[object, ...]:
-        original_inputs[0] = inps
+        # original_inputs[0] = inps
+        original_inputs[0] = tuple(input_to_fake_no_expand(x) for x in inps)
         return tuple(input_to_fake(x) for x in inps)
 
+    num_inps = len(input_set)
     spmd = _SPMD(dist_graph, param_schema, input_schemas, map_param_and_grad)
     compiled_m = aot_module(
         cast(nn.Module, dist_graph.orig_module),
-        partial(spmd._compile_wrapper, TrainingPhase.FORWARD, original_inputs),
-        partial(spmd._compile, TrainingPhase.BACKWARD),
+        partial(spmd._compile_wrapper, num_inps, TrainingPhase.FORWARD, original_inputs),
+        partial(spmd._compile, num_inps, TrainingPhase.BACKWARD),
         pre_compile_fn=gather_inputs_for_compilation,
         decompositions=_CURRENT_DECOMPOSITION_TABLE,
     )
