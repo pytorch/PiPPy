@@ -7,11 +7,9 @@ from typing import Any, Callable, DefaultDict, Dict, Iterable, Sequence, Set
 from .bucketing_strategies import BucketingStrategy
 from .distributed_graph import DistributedGraph
 from .fusion import (
-    run_fuse_communication_ring,
     run_fuse_communication_cat,
     run_fuse_communication_jit,
 )
-from .log_utils import rank0_info
 from .scheduling_policies import SchedulingPolicy
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -127,23 +125,9 @@ class DistGraphOptimization:
     def apply(
         self,
         optimizations: Sequence[GraphOptimization],
-        print_graph: bool = False,
     ) -> "DistGraphOptimization":
         if not optimizations:
             return self
-        fwd_gm = self._graph.fwd_graph_modules[0]
-        bwd_gm = self._graph.bwd_graph_modules[0]
-        if print_graph:
-            fwd_gm = self._graph.fwd_graph_modules[0]
-            bwd_gm = self._graph.bwd_graph_modules[0]
-            rank0_info(logger, "The forward graph before optimization.")
-            rank0_info(
-                logger, f"\n {fwd_gm.print_readable(print_output=False)}"
-            )
-            rank0_info(logger, "The backward graph before optimization.")
-            rank0_info(
-                logger, f"\n {bwd_gm.print_readable(print_output=False)}"
-            )
 
         for optim in optimizations:
             _self = _GraphOptimizationMapping[optim.optim_type](
@@ -151,38 +135,8 @@ class DistGraphOptimization:
             )
             assert _self == self
 
-        if print_graph:
-            rank0_info(logger, "The forward graph after optimization.")
-            rank0_info(
-                logger, f"\n {fwd_gm.print_readable(print_output=False)}"
-            )
-            rank0_info(logger, "The backward graph after optimization.")
-            rank0_info(
-                logger, f"\n {bwd_gm.print_readable(print_output=False)}"
-            )
-
         self._optimizing = False
         self._optimized = True
-        return self
-
-    @graph_optimization_pass()
-    def fuse_communication_ring(
-        self,
-        bucketing_strategy: BucketingStrategy = BucketingStrategy.FIXED,
-        scheduling_policy: SchedulingPolicy = SchedulingPolicy.FCFS,
-        fusion_length: int = 2,
-        ring_num_buffers: int = 2,
-    ) -> "DistGraphOptimization":
-
-        assert len(
-            self._graph.bwd_graph_modules
-        ), f"no bwd graph ready from {self._graph.bwd_graph_modules}"
-
-        run_fuse_communication_ring(
-            self._graph.bwd_graph_modules[0],
-            fusion_length,
-            ring_num_buffers,
-        )
         return self
 
     @graph_optimization_pass()
