@@ -1,5 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import List, Optional, Sequence
+from typing import Optional, Sequence
 
 import torch
 
@@ -10,12 +10,13 @@ from torch.distributed._tensor.placement_types import (
     Shard,
     _Partial,
 )
-from torch.distributed._tensor.dispatch import OpSchema, OutputSharding
+from torch.distributed._tensor.op_schema import OpSchema, OutputSharding
 from torch.distributed._tensor.ops.utils import register_prop_rule
 from torch.distributed._tensor.ops.common_rules import pointwise_rule
 
+aten = torch.ops.aten
 
-@register_prop_rule("aten.native_layer_norm.default")
+@register_prop_rule(aten.native_layer_norm.default)
 def _prop_native_layer_norm(op_schema: OpSchema) -> OutputSharding:
     input, normalized_shape, weight, bias, eps = op_schema.args_schema
     assert isinstance(input, DTensorSpec)
@@ -42,7 +43,7 @@ def _prop_native_layer_norm(op_schema: OpSchema) -> OutputSharding:
     return OutputSharding(output_spec=(input, stats_spec, stats_spec))
 
 
-@register_prop_rule("aten.native_layer_norm_backward.default")
+@register_prop_rule(aten.native_layer_norm_backward.default)
 def _prop_native_layer_norm_backward(op_schema: OpSchema) -> OutputSharding:
     (
         grad,
@@ -90,44 +91,6 @@ def _prop_native_layer_norm_backward(op_schema: OpSchema) -> OutputSharding:
     )
 
 
-@register_prop_rule("aten.cat.default")
-def prop_cat(op_schema: OpSchema) -> OutputSharding:
-    tensor_list = op_schema.args_schema[0]
-    if len(op_schema.args_schema) > 1:
-        dim = op_schema.args_schema[1]
-    else:
-        dim = -1
-    assert isinstance(tensor_list, (list, tuple))
-    assert isinstance(dim, int)
-
-    if dim < 0:
-        dim += len(tensor_list[0].shape)
-
-    output_placements: Optional[List[Placement]] = None
-    for tensor in tensor_list:
-        assert isinstance(tensor, DTensorSpec)
-        if output_placements is None:
-            output_placements = tensor.placements  # type: ignore
-        else:
-            # not sure why we're getting a tuple here sometimes, so casting to list to be sure
-            assert list(output_placements) == list(
-                tensor.placements
-            ), f"Current only accept cat when all inputs are same sharded. Got {output_placements} vs. {tensor.placements}"
-    assert output_placements is not None
-
-    output_shape = list(tensor_list[0].shape)
-    output_shape[dim] = sum((t.shape[dim] for t in tensor_list))
-
-    return OutputSharding(
-        output_spec=DTensorSpec(
-            mesh=tensor_list[0].mesh,
-            placements=output_placements,
-            ndim=tensor_list[0].ndim,
-            shape=torch.Size(output_shape),
-        )
-    )
-
-
 def _refine_sharding(
     op_schema: OpSchema, active_dim: Optional[int]
 ) -> Sequence[Placement]:
@@ -167,7 +130,7 @@ def _refine_sharding(
         return tuple(out_schema.placements)
 
 
-@register_prop_rule("aten.slice_scatter.default")
+@register_prop_rule(aten.slice_scatter.default)
 def prop_slice_scatter(op_schema: OpSchema) -> OutputSharding:
     # 1. number of dimensions in input and src need to match.
     # 2. number of elements on all non-dim need to match between input and src.
