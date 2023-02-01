@@ -87,7 +87,9 @@ def _dispatch_with_local_tensors(
     # TODO: this is broken because it won't redistributed potential tensors on the kwargs
     return op(*tree_map(redistribute, local_args), **kwargs)
 
-
+# Figure out how to specify a type spec for the return specs value
+# without the entire structure.
+# pyre-fixme
 def _update_specs_for_redistribute(args, target_schema, redistribute):
     # Code adapted from pack_args_kwargs_with_local_tensor
     flatten_args, args_tree_spec = tree_flatten(args)
