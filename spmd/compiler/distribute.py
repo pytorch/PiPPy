@@ -7,7 +7,7 @@ import logging
 import torch
 import torch.fx as fx
 import torch.nn as nn
-from functorch.compile import aot_module, make_boxed_func
+from torch._functorch.aot_autograd import aot_module, make_boxed_func
 from torch.distributed._spmd.comm_tensor import _get_tracer
 from torch.fx.experimental.proxy_tensor import (
     make_fx,
@@ -19,15 +19,14 @@ from torch.utils._pytree import tree_flatten, tree_map, tree_unflatten
 from spmd.compiler.log_utils import get_logger
 from spmd.tensor import (
     _CURRENT_DECOMPOSITION_TABLE,
+    _Partial,
+    _redistribute_with_local_tensor,
     DeviceMesh,
     DTensor,
+    operator_dispatch,
     Placement,
     Replicate,
     Shard,
-    _Partial,
-    _redistribute_with_local_tensor,
-    operator_dispatch,
-    propagate_input_sharding,
 )
 
 from .aot_function_patch import patched_aot_function
@@ -147,18 +146,19 @@ def _get_dtensor_dispatch_graph(
             op_overload,
             args,
             kwargs,  # kwargs in this set of tests are all constants
-            DTensor._op_to_rules,
+            DTensor._propagator,
             DTensor._custom_dispatch_ops,
         )
         node_to_obj[node] = out
 
+    op_schema = DTensor._propagator.prepare_op_schema(op_overload, args, kwargs)
     # get DTensor specs for inputs and outputs
-    (target_schema, redistribute, output_sharding,) = propagate_input_sharding(
+    output_sharding = DTensor._propagator.propagate_op_sharding(
         op_overload,
-        args,
-        kwargs,
-        DTensor._op_to_rules,
+        op_schema,
     )
+    target_schema = output_sharding.schema_suggestions[0]
+    redistribute = target_schema is not op_schema
 
     # TODO: this is broken when kwargs contains tensors
     # or if a non-tensor kwarg was modified by the sharding propagation
@@ -174,10 +174,7 @@ def _get_dtensor_dispatch_graph(
         specs=updated_args_spec,
     )
 
-    def unwrap_local(e: object) -> object:
-        return e._local_tensor if isinstance(e, DTensor) else e
-
-    return make_fx(dispatch)(unflattened_args)
+    return make_fx(dispatch)(local_target_args)
 
 
 def _build_dummy_add_graph(
