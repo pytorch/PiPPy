@@ -157,7 +157,7 @@ def _get_dtensor_dispatch_graph(
         op_overload,
         op_schema,
     )
-    target_schema = output_sharding.schema_suggestions[0]
+    target_schema = output_sharding.schema_suggestions[0]  # type: ignore
     redistribute = target_schema is not op_schema
 
     # TODO: this is broken when kwargs contains tensors
@@ -174,7 +174,7 @@ def _get_dtensor_dispatch_graph(
         specs=updated_args_spec,
     )
 
-    return make_fx(dispatch)(local_target_args)
+    return make_fx(dispatch)(unflattened_args)
 
 
 def _build_dummy_add_graph(
