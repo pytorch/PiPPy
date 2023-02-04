@@ -494,9 +494,6 @@ class _SPMD:
         # used to propagate sharding from the output of the forward pass to
         # the input of backward pass
         self._known_specs_by_node_name: Dict[str, Schema] = {}
-        # A switch that allow users to turn off map_param_and_grad since it is
-        # brittle as for now (the impl depends on the param and grad order).
-        self._map_param_and_grad = map_param_and_grad
 
     def _is_param(self, t: torch.Tensor) -> bool:
         # N.B.: id(t) and id(param) does not match
@@ -610,12 +607,8 @@ class _SPMD:
 
         if training_phase == TrainingPhase.FORWARD:
             self._dist_graph.fwd_graph_modules.append(parallelized_gm)
-            if self._map_param_and_grad:
-                self._map_primal_to_param(parallelized_gm, inps, nparams)
         elif training_phase == TrainingPhase.BACKWARD:
             self._dist_graph.bwd_graph_modules.append(parallelized_gm)
-            if self._map_param_and_grad:
-                self._map_grad_to_param(parallelized_gm)
         return make_boxed_func(parallelized_gm)
 
 
