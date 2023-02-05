@@ -13,6 +13,7 @@ class DistributedGraph:
     def __init__(
         self,
         orig_module: Optional[nn.Module] = None,
+        gm=None,
     ) -> None:
         self.orig_module: Optional[nn.Module] = orig_module
         self.fwd_graph_modules: List[fx.GraphModule] = []
@@ -35,6 +36,8 @@ class DistributedGraph:
 
         # Indicate `update()` must be called before applying any optimization.
         self._dirty = True
+
+        self.gm = gm
 
     def update(self) -> "DistributedGraph":
         """
