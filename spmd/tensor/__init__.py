@@ -15,9 +15,8 @@ from torch.distributed._tensor.device_mesh import (
 )
 from torch.distributed._tensor.ops.utils import register_prop_rule
 from torch.distributed._tensor.dispatch import (
-    operator_dispatch,
-    propagate_input_sharding,
     _CURRENT_DECOMPOSITION_TABLE,
+    operator_dispatch,
 )
 from torch.distributed._tensor.placement_types import Placement, _Partial
 from torch.distributed._tensor.redistribute import (

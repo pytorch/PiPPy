@@ -1,17 +1,45 @@
-from typing import Dict, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
+import torch
 
 import torch.distributed as dist
 import torch.nn as nn
 
 from spmd.tensor import Placement, Replicate
 
-from .distribute import Schema, distribute
+from .distribute import Schema, distribute, distribute_with_gm
 from .distributed_graph import DistributedGraph
 from .graph_optimization import (
     DistGraphOptimization,
     GraphOptimization,
     GraphOptimizationType,
 )
+import torch._dynamo as torchdynamo
+from torch import fx
+
+
+def spmd_dynamo_compile(fn, model, inputs, schema: Schema,
+        input_schemas: Sequence[Placement] = tuple(),):
+    def dynamo_compiler(gm: fx.GraphModule, 
+        *args: Tuple[object],
+        **kwargs: Dict[str, object],):
+            
+            if self._compiled_m is None:
+                self._compiled_m = distribute_with_gm(
+                    gm,
+                    schema,
+                    input_schemas,
+                    *args,
+                    **kwargs,
+                )
+            return self._compiled_m
+            
+            return gm
+
+    optimize_ctx = torchdynamo.optimize(dynamo_compiler)
+
+    # TODO: Add BW pass
+
+    return optimize_ctx(fn)(model, inputs)
 
 
 class SPMD(nn.Module):
@@ -22,6 +50,7 @@ class SPMD(nn.Module):
         input_schemas: Sequence[Placement] = tuple(),
         optimize_first_iter: bool = False,
         optimizations: Sequence[GraphOptimization] = tuple(),
+        example_inputs=None,
     ) -> None:
         """
         Given a non-distributed nn.Module, distribute the module and apply
@@ -57,9 +86,7 @@ class SPMD(nn.Module):
         self._graph_optimization = DistGraphOptimization(self._dist_graph)
         self._optimize_first_iter = optimize_first_iter
         self._optimizations = optimizations
-        # TODO(anj): Remove this constant and use configs to turn
-        # off brittle features.
-        self._map_param_and_grad = False
+
 
     def forward(
         self, *args: Tuple[object], **kwargs: Dict[str, object]
@@ -70,7 +97,6 @@ class SPMD(nn.Module):
                 self._param_schema,
                 self._input_schemas,
                 self._optimize_first_iter,
-                self._map_param_and_grad,
                 *args,
                 **kwargs,
             )

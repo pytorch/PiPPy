@@ -7,7 +7,7 @@ import logging
 import torch
 import torch.fx as fx
 import torch.nn as nn
-from functorch.compile import aot_module, make_boxed_func
+from torch._functorch.aot_autograd import aot_module, make_boxed_func
 from torch.distributed._spmd.comm_tensor import _get_tracer
 from torch.fx.experimental.proxy_tensor import (
     make_fx,
@@ -19,15 +19,14 @@ from torch.utils._pytree import tree_flatten, tree_map, tree_unflatten
 from spmd.compiler.log_utils import get_logger
 from spmd.tensor import (
     _CURRENT_DECOMPOSITION_TABLE,
+    _Partial,
+    _redistribute_with_local_tensor,
     DeviceMesh,
     DTensor,
+    operator_dispatch,
     Placement,
     Replicate,
     Shard,
-    _Partial,
-    _redistribute_with_local_tensor,
-    operator_dispatch,
-    propagate_input_sharding,
 )
 
 from .aot_function_patch import patched_aot_function
@@ -147,18 +146,19 @@ def _get_dtensor_dispatch_graph(
             op_overload,
             args,
             kwargs,  # kwargs in this set of tests are all constants
-            DTensor._op_to_rules,
+            DTensor._propagator,
             DTensor._custom_dispatch_ops,
         )
         node_to_obj[node] = out
 
+    op_schema = DTensor._propagator.prepare_op_schema(op_overload, args, kwargs)
     # get DTensor specs for inputs and outputs
-    (target_schema, redistribute, output_sharding,) = propagate_input_sharding(
+    output_sharding = DTensor._propagator.propagate_op_sharding(
         op_overload,
-        args,
-        kwargs,
-        DTensor._op_to_rules,
+        op_schema,
     )
+    target_schema = output_sharding.schema_suggestions[0]
+    redistribute = target_schema is not op_schema
 
     # TODO: this is broken when kwargs contains tensors
     # or if a non-tensor kwarg was modified by the sharding propagation
@@ -173,9 +173,6 @@ def _get_dtensor_dispatch_graph(
         kwargs=kwargs,
         specs=updated_args_spec,
     )
-
-    def unwrap_local(e: object) -> object:
-        return e._local_tensor if isinstance(e, DTensor) else e
 
     return make_fx(dispatch)(unflattened_args)
 
@@ -620,6 +617,52 @@ class _SPMD:
             if self._map_param_and_grad:
                 self._map_grad_to_param(parallelized_gm)
         return make_boxed_func(parallelized_gm)
+
+
+def distribute_with_gm(
+    dist_graph: DistributedGraph,
+    param_schema: Schema,
+    input_schemas: Sequence[Placement],
+    *args: Tuple[object],
+    **kwargs: Dict[str, object],
+) -> nn.Module:
+
+    flat_args, _ = tree_flatten(args)
+    flat_kwargs, _ = tree_flatten(kwargs)
+    input_set: Set[object] = set(flat_args + flat_kwargs)
+
+    fake_mode: FakeTensorMode = FakeTensorMode()
+
+    # will update this to the original forward inputs
+    original_inputs: List[Optional[Sequence[object]]] = [None]
+
+    def input_to_fake(input: object) -> object:
+        if not isinstance(input, torch.Tensor):
+            return input
+        y = fake_mode.from_tensor(input)
+        if input in input_set:
+            # "unshard" our fake tensor
+            # (considers that inputs are sharded)
+            y = y.repeat(param_schema.mesh.size(0), *((1,) * (y.ndim - 1)))
+        # TODO assume non-inputs (params, etc) are replicated for now.
+        return y
+
+    def gather_inputs_for_compilation(
+        inps: Tuple[object, ...],
+    ) -> Tuple[object, ...]:
+        original_inputs[0] = inps
+        return tuple(input_to_fake(x) for x in inps)
+
+    spmd = _SPMD(dist_graph, param_schema, input_schemas, map_param_and_grad=False)
+    compiled_m = aot_module(
+        cast(nn.Module, dist_graph.orig_module),
+        partial(spmd._compile_wrapper, TrainingPhase.FORWARD, original_inputs),
+        partial(spmd._compile, TrainingPhase.BACKWARD),
+        pre_compile_fn=gather_inputs_for_compilation,
+        decompositions=_CURRENT_DECOMPOSITION_TABLE,
+    )
+    return compiled_m
+
 
 
 def distribute(
