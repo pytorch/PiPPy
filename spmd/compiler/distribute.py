@@ -7,7 +7,7 @@ import logging
 import torch
 import torch.fx as fx
 import torch.nn as nn
-from functorch.compile import aot_module, make_boxed_func
+from torch._functorch.aot_autograd import aot_module, make_boxed_func
 from torch.distributed._spmd.comm_tensor import _get_tracer
 from torch.fx.experimental.proxy_tensor import (
     make_fx,
@@ -21,15 +21,14 @@ from torch.utils._pytree import tree_flatten, tree_map, tree_unflatten
 from spmd.compiler.log_utils import get_logger
 from spmd.tensor import (
     _CURRENT_DECOMPOSITION_TABLE,
+    _Partial,
+    _redistribute_with_local_tensor,
     DeviceMesh,
     DTensor,
+    operator_dispatch,
     Placement,
     Replicate,
     Shard,
-    _Partial,
-    _redistribute_with_local_tensor,
-    operator_dispatch,
-    propagate_input_sharding,
 )
 
 from .aot_function_patch import patched_aot_function
@@ -152,13 +151,15 @@ def _get_dtensor_dispatch_graph(
     op_overload = cast(torch._ops.OpOverload, node.target)
         
 
+    op_schema = DTensor._propagator.prepare_op_schema(op_overload, args, kwargs)
     # get DTensor specs for inputs and outputs
-    (target_schema, redistribute, output_sharding,) = propagate_input_sharding(
+    output_sharding = DTensor._propagator.propagate_op_sharding(
         op_overload,
-        args,
-        kwargs,
-        DTensor._op_to_rules,
+        op_schema,
     )
+    assert output_sharding.schema_suggestions is not None
+    target_schema = output_sharding.schema_suggestions[0]
+    redistribute = target_schema is not op_schema
     # We need to allow non fake inputs because the first args in the BW pass
     # are going to be real.
     with FakeTensorMode(allow_non_fake_inputs=True):
