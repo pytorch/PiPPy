@@ -31,7 +31,7 @@ from spmd.tensor import (
 
 from .aot_function_patch import patched_aot_function
 from .distributed_graph import DistributedGraph
-from .graph_utils import OP, CommType, get_comm_block_nodes
+from .graph_utils import OP
 
 from torch._subclasses.fake_tensor import FakeTensorMode
 
@@ -610,7 +610,7 @@ def distribute(
         original_inputs[0] = inps
         return tuple(input_to_fake(x) for x in inps)
 
-    spmd = _SPMD(dist_graph, param_schema, input_schemas, map_param_and_grad)
+    spmd = _SPMD(dist_graph, param_schema, input_schemas)
     compiled_m = aot_module(
         cast(nn.Module, dist_graph.orig_module),
         partial(spmd._compile_wrapper, TrainingPhase.FORWARD, original_inputs),
