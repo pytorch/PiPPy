@@ -125,6 +125,7 @@ def _get_dtensor_dispatch_graph(
         op_overload,
         op_schema,
     )
+    assert output_sharding.schema_suggestions is not None
     target_schema = output_sharding.schema_suggestions[0]
     redistribute = target_schema is not op_schema
     # ===== Begin code taken from pack_args_kwargs_with_local_tensor =====
