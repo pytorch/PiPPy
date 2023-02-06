@@ -16,6 +16,7 @@ from torch.distributed._tensor.ops.common_rules import pointwise_rule
 
 aten = torch.ops.aten
 
+
 @register_prop_rule(aten.native_layer_norm.default)
 def _prop_native_layer_norm(op_schema: OpSchema) -> OutputSharding:
     input, normalized_shape, weight, bias, eps = op_schema.args_schema
