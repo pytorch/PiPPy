@@ -57,9 +57,6 @@ class SPMD(nn.Module):
         self._graph_optimization = DistGraphOptimization(self._dist_graph)
         self._optimize_first_iter = optimize_first_iter
         self._optimizations = optimizations
-        # TODO(anj): Remove this constant and use configs to turn
-        # off brittle features.
-        self._map_param_and_grad = False
 
     def forward(
         self, *args: Tuple[object], **kwargs: Dict[str, object]
@@ -70,7 +67,6 @@ class SPMD(nn.Module):
                 self._param_schema,
                 self._input_schemas,
                 self._optimize_first_iter,
-                self._map_param_and_grad,
                 *args,
                 **kwargs,
             )
