@@ -150,17 +150,6 @@ def _get_dtensor_dispatch_graph(
     kwargs = cast(Dict[str, object], node.kwargs)
 
     op_overload = cast(torch._ops.OpOverload, node.target)
-
-    # run dispatch once to get the real DTensor output.
-    # with torch.no_grad():
-    #     out = operator_dispatch(
-    #         op_overload,
-    #         args,
-    #         kwargs,  # kwargs in this set of tests are all constants
-    #         DTensor._op_to_rules,
-    #         DTensor._custom_dispatch_ops,
-    #     )
-    #     node_to_obj[node] = out
         
 
     # get DTensor specs for inputs and outputs
@@ -191,7 +180,6 @@ def _get_dtensor_dispatch_graph(
         specs=updated_args_spec,
     )
 
-    # print0(f"unflattened_args {unflattened_args}")
     return make_fx(dispatch)(unflattened_args)
 
 
@@ -637,7 +625,9 @@ class _SPMD:
                     # by actual storage.
                     # TODO(anj): Remove this once we have a way to trace all_gather OR specify
                     # param schema correctly
-                    schemas.append(shard_schema)
+                    schemas.append(Schema(
+                        mesh=self._param_schema.mesh, placements=[Replicate()]
+                    ))
 
         parallelized_gm, output_specs = _convert_to_distributed(
             gm,
