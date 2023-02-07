@@ -31,7 +31,7 @@ from spmd.tensor import (
 )
 
 from .aot_function_patch import patched_aot_function
-from .distributed_graph import DistributedGraph
+from .distributed_graph import DistributedGraph, DistributedGraphModule, fake_comm_fusion
 from .graph_utils import OP, CommType, get_comm_block_nodes
 
 from torch._subclasses.fake_tensor import FakeTensorMode
@@ -466,6 +466,7 @@ class _SPMD:
         param_schema: Schema,
         input_schemas: Sequence[Placement],
         map_param_and_grad: bool = False,
+        max_iters: int = 5,
     ) -> None:
         self._dist_graph = dist_graph
         self._param_schema = param_schema
@@ -477,6 +478,8 @@ class _SPMD:
         # A switch that allow users to turn off map_param_and_grad since it is
         # brittle as for now (the impl depends on the param and grad order).
         self._map_param_and_grad = map_param_and_grad
+        self._dgm: Optional[DistributedGraphModule] = None
+        self._max_iters = max_iters
 
     def _is_param(self, t: torch.Tensor) -> bool:
         # N.B.: id(t) and id(param) does not match
@@ -592,6 +595,10 @@ class _SPMD:
             self._dist_graph.fwd_graph_modules.append(parallelized_gm)
             if self._map_param_and_grad:
                 self._map_primal_to_param(parallelized_gm, inps, nparams)
+            self._dgm = DistributedGraphModule(parallelized_gm)
+            self._dgm.setup(self._max_iters)
+            fake_comm_fusion(self._dgm)
+            return make_boxed_func(self._dgm)
         elif training_phase == TrainingPhase.BACKWARD:
             self._dist_graph.bwd_graph_modules.append(parallelized_gm)
             if self._map_param_and_grad:
@@ -605,6 +612,7 @@ def distribute(
     input_schemas: Sequence[Placement],
     optimize_first_iter: bool,
     map_param_and_grad: bool,
+    max_iters: int,
     *args: Tuple[object],
     **kwargs: Dict[str, object],
 ) -> nn.Module:
@@ -635,7 +643,7 @@ def distribute(
         original_inputs[0] = inps
         return tuple(input_to_fake(x) for x in inps)
 
-    spmd = _SPMD(dist_graph, param_schema, input_schemas, map_param_and_grad)
+    spmd = _SPMD(dist_graph, param_schema, input_schemas, map_param_and_grad, max_iters=max_iters)
     compiled_m = aot_module(
         cast(nn.Module, dist_graph.orig_module),
         partial(spmd._compile_wrapper, TrainingPhase.FORWARD, original_inputs),
@@ -663,4 +671,4 @@ def distribute(
             if p.grad is not None:
                 p.grad = None
 
-    return compiled_m
+    return compiled_m, spmd._dgm

@@ -22,6 +22,7 @@ class SPMD(nn.Module):
         input_schemas: Sequence[Placement] = tuple(),
         optimize_first_iter: bool = False,
         optimizations: Sequence[GraphOptimization] = tuple(),
+        max_iters: int = 5,
     ) -> None:
         """
         Given a non-distributed nn.Module, distribute the module and apply
@@ -60,17 +61,19 @@ class SPMD(nn.Module):
         # TODO(anj): Remove this constant and use configs to turn
         # off brittle features.
         self._map_param_and_grad = False
+        self._max_iters = max_iters
 
     def forward(
         self, *args: Tuple[object], **kwargs: Dict[str, object]
     ) -> object:
         if self._compiled_m is None:
-            self._compiled_m = distribute(
+            self._compiled_m, dgm = distribute(
                 self._dist_graph,
                 self._param_schema,
                 self._input_schemas,
                 self._optimize_first_iter,
                 self._map_param_and_grad,
+                self._max_iters,
                 *args,
                 **kwargs,
             )
