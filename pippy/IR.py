@@ -103,7 +103,9 @@ def _find_loss_output(
     assert len(output_nodes) == 1
     output_node = output_nodes[0]
 
-    if isinstance(mod, LossWrapper):
+    if isinstance(mod, TrivialLossWrapper):
+        # TrivialLossWrapper is pre-defined by PiPPy.
+        # It has loss as the only output so we can safely assume the first output arg is the loss.
         assert len(output_node.args) == 1
         loss_node = output_node.args[0]
     else:
