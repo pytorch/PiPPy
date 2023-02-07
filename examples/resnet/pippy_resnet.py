@@ -61,7 +61,10 @@ def run_master(_, args):
 
         def forward(self, input, target):
             output = self.module(input)
-            return output, self.loss_fn(output, target)
+            loss = self.loss_fn(output, target)
+            # Here we use a dict with the "loss" keyword so that PiPPy can automatically find the loss field when
+            # generating the backward pass
+            return {"output": output, "loss": loss}
 
     model = ResNet50()
 
@@ -73,7 +76,7 @@ def run_master(_, args):
 
     wrapper = OutputLossWrapper(model, cross_entropy)
 
-    pipe = Pipe.from_tracing(wrapper, MULTI_USE_PARAM_CONFIG, output_loss_value_spec=(False, True))
+    pipe = Pipe.from_tracing(wrapper, MULTI_USE_PARAM_CONFIG)
     pipe.to(args.device)
 
     args_chunk_spec = (TensorChunkSpec(0), TensorChunkSpec(0))
