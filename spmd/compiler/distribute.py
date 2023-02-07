@@ -157,7 +157,9 @@ def _get_dtensor_dispatch_graph(
         op_overload,
         op_schema,
     )
-    target_schema = output_sharding.schema_suggestions[0]  # type: ignore
+
+    assert output_sharding.schema_suggestions is not None
+    target_schema = output_sharding.schema_suggestions[0]
     redistribute = target_schema is not op_schema
 
     # TODO: this is broken when kwargs contains tensors
