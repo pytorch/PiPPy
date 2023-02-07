@@ -350,6 +350,20 @@ class DistributedFxGraph(fx.Graph):
         self._cleanup_mapping[main_node] = cleanup_node
         return main_node
 
+    def prepend(self, node: fx.Node, target_node: fx.Node) -> None:
+        """Prepend node to target_node."""
+        for graph in self._all_graphs:
+            actual_node = self._lookup_node(node, graph)
+            actual_target_node = self._lookup_node(target_node, graph)
+            actual_target_node.prepend(actual_node)
+
+    def append(self, node: fx.Node, target_node: fx.Node) -> None:
+        """Append node to target_node."""
+        for graph in self._all_graphs:
+            actual_node = self._lookup_node(node, graph)
+            actual_target_node = self._lookup_node(target_node, graph)
+            actual_target_node.append(actual_node)
+
     def lint(self) -> None:
         self.setup_graph.lint()
         super().lint()
