@@ -116,6 +116,8 @@ def _get_dtensor_dispatch_graph(
             kwargs,  # kwargs in this set of tests are all constants
             DTensor._propagator,
             DTensor._custom_dispatch_ops,
+            # TODO need to pass default mesh here for tensor creation ops
+            # default_mesh=...
         )
         node_to_obj[node] = out
 
@@ -279,7 +281,7 @@ def _convert_output(
 def _rebuild_graph(
     gm: fx.GraphModule,
     node_replacements: Dict[torch.fx.Node, torch.fx.GraphModule],
-) -> None:
+) -> Dict[torch.fx.Node, torch.fx.Node]:
     # replace nodes in local traced graph with DTensor's dispatch graph
     new_nodes: Dict[torch.fx.Node, torch.fx.Node] = {}
     for node in gm.graph.nodes:
@@ -341,10 +343,14 @@ def _rebuild_graph(
                     value_remap[dtn] = gm.graph.node_copy(
                         dtn, lambda n: value_remap[n]
                     )
+            # this ensures that we removed this node even if something
+            # (like inplace ops) would prevent it from being deleted.
+            gm.graph.erase_node(node)
 
     gm.graph.lint()
     gm.graph.eliminate_dead_code()
     gm.recompile()
+    return new_nodes
 
 
 def _get_user_to_last_uses(
@@ -375,11 +381,13 @@ def _convert_to_distributed(
     inps: List[torch.Tensor],
     schemas: List[Schema],
     _allow_partial: bool = False,
-) -> Tuple[fx.GraphModule, Dict[str, Schema]]:
+) -> Tuple[fx.GraphModule, Dict[str, Schema], List[Schema]]:
     """
     Returns:
         - transformed graph module
         - map from output name to DTensorSpec
+        - a list with output Schemas in the order they appear in output,
+          with None for non DTensor entries.
     """
     global logger
     logger = get_logger("spmd_exp")  # type: ignore
@@ -392,6 +400,7 @@ def _convert_to_distributed(
 
     logger.info(f"Training phase: {training_phase}")  # type: ignore
     output_schemas: Dict[str, Schema] = {}
+    output_schemas_list = []
     for i, node in enumerate(gm.graph.nodes):
         logger.info(f"node{i}: op={node.op} target={node.target}")  # type: ignore
         if node.op == OP.PLACEHOLDER:
@@ -422,9 +431,11 @@ def _convert_to_distributed(
                 if isinstance(a, fx.Node):
                     obj = node_to_obj[a]
                     if isinstance(obj, DTensor):
-                        output_schemas[a.name] = Schema(
+                        schema = Schema(
                             obj.device_mesh, obj.placements  # type: ignore
                         )
+                        output_schemas[a.name] = schema
+                        output_schemas_list.append(schema)
 
         elif node.op == OP.CALL_FUNCTION:
 
@@ -454,7 +465,7 @@ def _convert_to_distributed(
 
     _rebuild_graph(gm, node_replacements)
 
-    return gm, output_schemas
+    return gm, output_schemas, output_schemas_list
 
 
 class _SPMD:
@@ -577,7 +588,7 @@ class _SPMD:
                 else:
                     schemas.append(shard_schema)
 
-        parallelized_gm, output_specs = _convert_to_distributed(
+        parallelized_gm, output_specs, _ = _convert_to_distributed(
             training_phase,
             gm,
             inps,
