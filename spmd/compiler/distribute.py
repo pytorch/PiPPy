@@ -83,52 +83,14 @@ def _dispatch_with_local_tensors(
             else arg
         )
 
-    # FIXME: this is broken because it won't redistributed potential tensors on the kwargs
+    # TODO: this is broken because it won't redistributed potential tensors on the kwargs
     return op(*tree_map(redistribute, local_args), **kwargs)
 
-
-def _get_dtensor_dispatch_graph(
-    node: fx.Node,
-    node_to_obj: Dict[fx.Node, object],
-) -> fx.GraphModule:
-    def remap_arg(arg: object) -> object:
-        if isinstance(arg, torch.fx.Node):
-            obj = node_to_obj[arg]
-            if _get_tracer():
-                # This is a shared arg, already has a tracer from previous
-                # tracing. Delete the tracer.
-                del cast(Dict[object, object], obj.__dict__)[proxy_slot]
-            return obj
-        else:
-            return arg
-
-    args = tree_map(remap_arg, node.args)
-    # kwargs in this set of tests are all constants
-    kwargs = cast(Dict[str, object], node.kwargs)
-
-    op_overload = cast(torch._ops.OpOverload, node.target)
-
-    # run dispatch once to get the real DTensor output
-    with torch.no_grad():
-        out = operator_dispatch(
-            op_overload,
-            args,
-            kwargs,  # kwargs in this set of tests are all constants
-            DTensor._propagator,
-            DTensor._custom_dispatch_ops,
-        )
-        node_to_obj[node] = out
-
-    op_schema = DTensor._propagator.prepare_op_schema(op_overload, args, kwargs)
-    # get DTensor specs for inputs and outputs
-    output_sharding = DTensor._propagator.propagate_op_sharding(
-        op_overload,
-        op_schema,
-    )
-    assert output_sharding.schema_suggestions is not None
-    target_schema = output_sharding.schema_suggestions[0]
-    redistribute = target_schema is not op_schema
-    # ===== Begin code taken from pack_args_kwargs_with_local_tensor =====
+# Figure out how to specify a type spec for the return specs value
+# without the entire structure.
+# pyre-fixme
+def _update_specs_for_redistribute(args, target_schema, redistribute):
+    # Code adapted from pack_args_kwargs_with_local_tensor
     flatten_args, args_tree_spec = tree_flatten(args)
     flatten_args_schema, _ = tree_flatten(target_schema.args_schema)
 
@@ -152,28 +114,76 @@ def _get_dtensor_dispatch_graph(
                 )
             flatten_args_schema[i] = arg._local_tensor
 
-    local_target_args = tree_unflatten(flatten_args_schema, args_tree_spec)
-    # ===== End code taken from pack_args_kwargs_with_local_tensor =====
+    unflattened_args = tree_unflatten(flatten_args_schema, args_tree_spec)
+    return specs, unflattened_args
 
-    # FIXME: this is broken when kwargs contains tensors
-    #        or if a non-tensor kwarg was modified by the sharding propagation
-    #        (in order to fix, need to port over pack_args_kwargs_with_local_tensor for kwargs as well)
+
+def _get_dtensor_dispatch_graph(
+    node: fx.Node,
+    node_to_obj: Dict[fx.Node, object],
+) -> fx.GraphModule:
+    def _remap_arg(arg: object) -> object:
+        if isinstance(arg, torch.fx.Node):
+            obj = node_to_obj[arg]
+            if _get_tracer():
+                # This is a shared arg, already has a tracer from previous
+                # tracing. Delete the tracer.
+                del cast(Dict[object, object], obj.__dict__)[proxy_slot]
+            return obj
+        else:
+            return arg
+
+    # Args should be a list of objects post remapping.
+    args = tree_map(_remap_arg, node.args)
+    # kwargs in this set of tests are all constants
+    kwargs = cast(Dict[str, object], node.kwargs)
+
+    op_overload = cast(torch._ops.OpOverload, node.target)
+
+    # run dispatch once to get the real DTensor output.
+    with torch.no_grad():
+        out = operator_dispatch(
+            op_overload,
+            args,
+            kwargs,  # kwargs in this set of tests are all constants
+            DTensor._propagator,
+            DTensor._custom_dispatch_ops,
+        )
+        node_to_obj[node] = out
+
+    op_schema = DTensor._propagator.prepare_op_schema(op_overload, args, kwargs)
+    # get DTensor specs for inputs and outputs
+    output_sharding = DTensor._propagator.propagate_op_sharding(
+        op_overload,
+        op_schema,
+    )
+
+    assert output_sharding.schema_suggestions is not None
+    target_schema = output_sharding.schema_suggestions[0]
+    redistribute = target_schema is not op_schema
+
+    # TODO: this is broken when kwargs contains tensors
+    # or if a non-tensor kwarg was modified by the sharding propagation
+    # (in order to fix, need to port over pack_args_kwargs_with_local_tensor for kwargs as well)
+    updated_args_spec, unflattened_args = _update_specs_for_redistribute(
+        args, target_schema, redistribute
+    )
 
     dispatch = partial(
         _dispatch_with_local_tensors,
         op_overload,
         kwargs=kwargs,
-        specs=specs,
+        specs=updated_args_spec,
     )
 
-    return make_fx(dispatch)(local_target_args)
+    return make_fx(dispatch)(unflattened_args)
 
 
 def _build_dummy_add_graph(
     dt: DTensor, node_to_obj: Dict[fx.Node, object]
 ) -> Tuple[fx.GraphModule, object]:
     """
-    creates a graph for a dummy add function from a partial DTensor.
+    Creates a graph for a dummy add function from a partial DTensor.
     This dummy add is used for triggering all_reduce on a Partial DTensor
     during the DTensor expansion of the traced graph.
     Also returns the actual DTensor after resharding.
@@ -202,6 +212,8 @@ def _build_dummy_add_graph(
 
     traced_dispatch.graph.lint()
 
+    # TODO(anj): This depends on the call function node -> actual DTensor output
+    # mapping that we want to avoid for SPMD expansion
     return traced_dispatch, node_to_obj[call_functions[0]]
 
 
@@ -239,6 +251,8 @@ def _convert_output(
         traced_dispatch.graph.lint()
         traced_dispatch.graph.eliminate_dead_code()
         # also update the actual DTensor corresponding to the node
+        # TODO(anj): We require mapping of the final DTensor output to the wait
+        # comm node.
         node_to_obj[wait[0]] = result_obj
 
         value_remap: Dict[fx.Node, fx.Node] = {}
@@ -255,9 +269,11 @@ def _convert_output(
                 # the concrete DTensor value of output was added when creating the
                 # inner graph (in _build_dummy_add_graph). Just add it to the final
                 # output node so that we can report the final output specs correctly.
+                # TODO(anj): We are depending on the concrete DTensor output of the dummy add.
                 node_to_obj[value_remap[dtn.args[0][0]]] = node_to_obj[
                     dtn.args[0][0]
                 ]
+
             else:
                 if dtn.op == OP.GET_ATTR:
                     setattr(
@@ -280,8 +296,8 @@ def _rebuild_graph(
     gm: fx.GraphModule,
     node_replacements: Dict[torch.fx.Node, torch.fx.GraphModule],
 ) -> None:
+
     # replace nodes in local traced graph with DTensor's dispatch graph
-    new_nodes: Dict[torch.fx.Node, torch.fx.Node] = {}
     for node in gm.graph.nodes:
         if node not in node_replacements:
             continue
@@ -300,12 +316,12 @@ def _rebuild_graph(
         # insert DT's dispatch graph to traced local graph.
         with gm.graph.inserting_before(node):
             for dtn in traced_dispatch.graph.nodes:
+
                 if dtn.op == OP.PLACEHOLDER:
                     # do nothing, ignore placeholders, as it has already
                     # been prepared in value_remap
                     pass
                 elif dtn.op == OP.OUTPUT:
-                    # TODO: AssertionError: Expecting single output, but got ([getitem, getitem_1, getitem_2],)
                     assert (
                         len(dtn.args) == 1
                     ), f"Expecting single output, but got {dtn.args} {len(dtn.args[0])}"
@@ -336,7 +352,6 @@ def _rebuild_graph(
 
                     new_node = value_remap[output]
                     node.replace_all_uses_with(new_node)
-                    new_nodes[node] = new_node
                 else:
                     value_remap[dtn] = gm.graph.node_copy(
                         dtn, lambda n: value_remap[n]
@@ -347,30 +362,34 @@ def _rebuild_graph(
     gm.recompile()
 
 
-def _get_user_to_last_uses(
+def _get_last_consumer_to_nodes(
     graph: fx.Graph,
 ) -> Dict[fx.Node, List[fx.Node]]:
     # Run through reverse nodes and record the first instance of a use
     # of a given node. This represents the *last* use of the node in the
     # execution order of the program, which we will use to free unused
     # values
-    node_to_last_use: Dict[fx.Node, fx.Node] = {}
-    user_to_last_uses: Dict[fx.Node, List[fx.Node]] = {}
+    node_to_last_consumer: Dict[fx.Node, fx.Node] = {}
+    last_consumer_to_nodes: Dict[fx.Node, List[fx.Node]] = {}
 
-    def register_last_uses(n: fx.Node, user: fx.Node) -> None:
-        if n not in node_to_last_use:
-            node_to_last_use[n] = user
-            user_to_last_uses.setdefault(user, []).append(n)
+    def _register_final_consumer(arg_node: fx.Node, consumer: fx.Node) -> None:
+        if arg_node not in node_to_last_consumer:
+            node_to_last_consumer[arg_node] = consumer
+            last_consumer_to_nodes.setdefault(consumer, []).append(arg_node)
 
     for node in reversed(graph.nodes):
-        fx.node.map_arg(node.args, lambda n: register_last_uses(n, node))
-        fx.node.map_arg(node.kwargs, lambda n: register_last_uses(n, node))
+        fx.node.map_arg(
+            node.args, lambda arg_node: _register_final_consumer(arg_node, node)
+        )
+        fx.node.map_arg(
+            node.kwargs,
+            lambda kwarg_node: _register_final_consumer(kwarg_node, node),
+        )
 
-    return user_to_last_uses
+    return last_consumer_to_nodes
 
 
 def _convert_to_distributed(
-    training_phase: TrainingPhase,
     gm: fx.GraphModule,
     inps: List[torch.Tensor],
     schemas: List[Schema],
@@ -388,9 +407,8 @@ def _convert_to_distributed(
     # DTensor ops.
     node_replacements: Dict[torch.fx.Node, torch.fx.GraphModule] = {}
 
-    user_to_last_uses = _get_user_to_last_uses(gm.graph)
+    last_consumer_to_nodes = _get_last_consumer_to_nodes(gm.graph)
 
-    logger.info(f"Training phase: {training_phase}")  # type: ignore
     output_schemas: Dict[str, Schema] = {}
     for i, node in enumerate(gm.graph.nodes):
         logger.info(f"node{i}: op={node.op} target={node.target}")  # type: ignore
@@ -414,26 +432,28 @@ def _convert_to_distributed(
             )
         elif node.op == OP.OUTPUT:
             if not _allow_partial:
-                # returns the possibly modified output node
+                # Returns an expanded dummy add node that ensures
+                # that the partial output tensor has been converted
+                # to a replicated tensor.
                 node = _convert_output(gm, node, node_to_obj)
 
-            # save output sharding for the inputs to backward pass
-            for a in node.args[0]:
-                if isinstance(a, fx.Node):
-                    obj = node_to_obj[a]
+            # Save output sharding for the inputs to backward pass.
+            # TODO(anj): Pipe the output schema for the BW pass
+            # instead of requiring the full output DTensor to be
+            # materialized.
+            for inp_arg in node.args[0]:
+                if isinstance(inp_arg, fx.Node):
+                    obj = node_to_obj[inp_arg]
                     if isinstance(obj, DTensor):
-                        output_schemas[a.name] = Schema(
+                        output_schemas[inp_arg.name] = Schema(
                             obj.device_mesh, obj.placements  # type: ignore
                         )
 
         elif node.op == OP.CALL_FUNCTION:
 
-            def remap_arg(arg: object) -> object:
+            def _remap_arg(arg: object) -> object:
                 if isinstance(arg, torch.fx.Node):
                     obj = node_to_obj[arg]
-                    # TODO(anj): we need this for getitem but can we be more generic?
-                    if isinstance(obj, tuple):
-                        return obj
                     if _get_tracer():
                         # This is a shared arg, already has a tracer from previous
                         # tracing. Delete the tracer.
@@ -442,15 +462,19 @@ def _convert_to_distributed(
                 else:
                     return arg
 
-            args = tree_map(remap_arg, node.args)
+            args = tree_map(_remap_arg, node.args)
+            assert (
+                len(args) >= 2
+            ), f"Expected number of args for call function to be at least 2, found {len(args)}"
+            # TODO(anj): Why do we assume this is only 2?
             node_to_obj[node] = node.target(args[0], args[1])
         else:
-            raise ValueError(f"Unrecognized node {node}")
+            raise ValueError(f"Unrecognized node.op type {node.op}")
 
-        if node in user_to_last_uses:
-            # save memory by deleting objs that wont be used anymore
-            for last_use in user_to_last_uses[node]:
-                del node_to_obj[last_use]
+        if node in last_consumer_to_nodes:
+            # Save memory by deleting objs that wont be used anymore.
+            for arg_node in last_consumer_to_nodes[node]:
+                del node_to_obj[arg_node]
 
     _rebuild_graph(gm, node_replacements)
 
@@ -526,6 +550,7 @@ class _SPMD:
         gm: fx.GraphModule,
         inps: List[torch.Tensor],
     ) -> fx.GraphModule:
+
         with maybe_disable_fake_tensor_mode():
             return self._compile(training_phase, gm, original_inputs[0])
 
@@ -578,7 +603,6 @@ class _SPMD:
                     schemas.append(shard_schema)
 
         parallelized_gm, output_specs = _convert_to_distributed(
-            training_phase,
             gm,
             inps,
             schemas,
@@ -616,11 +640,11 @@ def distribute(
     # will update this to the original forward inputs
     original_inputs: List[Optional[Sequence[object]]] = [None]
 
-    def input_to_fake(x: object) -> object:
-        if not isinstance(x, torch.Tensor):
-            return x
-        y = fake_mode.from_tensor(x)
-        if x in input_set:
+    def input_to_fake(input: object) -> object:
+        if not isinstance(input, torch.Tensor):
+            return input
+        y = fake_mode.from_tensor(input)
+        if input in input_set:
             # "unshard" our fake tensor
             # (considers that inputs are sharded)
             y = y.repeat(param_schema.mesh.size(0), *((1,) * (y.ndim - 1)))
