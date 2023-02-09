@@ -18,6 +18,7 @@ from pippy.IR import (
 )
 from pippy.microbatch import (
     TensorChunkSpec,
+    Replicate,
     split_args_kwargs_into_chunks,
     merge_chunks,
 )
@@ -645,9 +646,9 @@ class TestIR(unittest.TestCase):
         args_split, kwargs_split = split_args_kwargs_into_chunks(
             (x,),
             {"input_nt": input_nt},
-            (None,),
-            {"input_nt": SpecialInputNamedTuple(TensorChunkSpec(0), None)},
             chunks=NCHUNKS,
+            args_chunk_spec=(Replicate,),
+            kwargs_chunk_spec={"input_nt": SpecialInputNamedTuple(TensorChunkSpec(0), Replicate)},
         )
 
         # Args should have 5 chunks that all contain the single replicated `x` value
@@ -680,9 +681,9 @@ class TestIR(unittest.TestCase):
         args_split, kwargs_split = split_args_kwargs_into_chunks(
             (x,),
             {"input_nt": input_nt},
-            (TensorChunkSpec(0),),
-            {"input_nt": SpecialInputNamedTuple(TensorChunkSpec(0), None)},
             chunks=NCHUNKS,
+            args_chunk_spec=(TensorChunkSpec(0),),
+            kwargs_chunk_spec={"input_nt": SpecialInputNamedTuple(TensorChunkSpec(0), Replicate)},
         )
 
         assert len(args_split) == NCHUNKS
@@ -708,9 +709,9 @@ class TestIR(unittest.TestCase):
         args_split_masked, kwargs_split_masked = split_args_kwargs_into_chunks(
             (x,),
             {"input_nt": input_nt},
-            (TensorChunkSpec(0),),
-            {"input_nt": SpecialInputNamedTuple(TensorChunkSpec(0), None)},
             chunks=NCHUNKS,
+            args_chunk_spec=(TensorChunkSpec(0),),
+            kwargs_chunk_spec={"input_nt": SpecialInputNamedTuple(TensorChunkSpec(0), Replicate)},
             _debug_mask_minibatches=True,
         )
 
