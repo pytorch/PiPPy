@@ -10,6 +10,9 @@ class CustomReducer:
         self.reduce_fn = reduce_fn
 
 
+DEFAULT_CHUNK_DIM = 0
+
+# Class used to specify chunking of inputs
 class TensorChunkSpec:
     def __init__(self, split_dim):
         self.split_dim = split_dim
@@ -21,6 +24,11 @@ class TensorChunkSpec:
 
     def __str__(self):
         return f"TensorChunkSpec({self.split_dim})"
+
+
+# Class used to specify replication of inputs
+class Replicate:
+    pass
 
 
 def shard_dict_of_args(
@@ -39,22 +47,29 @@ def shard_dict_of_args(
     assert len(args_dict) == len(
         args_chunk_spec
     ), f"args_dict.keys() = {list(args_dict.keys())} args_chunk_spec.keys() = {list(args_chunk_spec.keys())}"
+
     for arg_key, arg in args_dict.items():
-        chunk_spec = args_chunk_spec[arg_key]
         flat, spec = tree_flatten(arg)
         arg_specs.append(spec)
-        chunk_spec_flat, _ = tree_flatten(chunk_spec)
 
-        if len(flat) != len(chunk_spec_flat):
-            raise ValueError(
-                f"Argument value {arg} did not have the same number of "
-                f"values as as chunk spec {chunk_spec}"
-            )
+        chunk_spec = args_chunk_spec[arg_key]
+        chunk_spec_flat, _ = tree_flatten(chunk_spec)
+        if chunk_spec is not None:
+            if len(flat) != len(chunk_spec_flat):
+                raise ValueError(
+                    f"Argument value {arg} did not have the same number of "
+                    f"values as as chunk spec {chunk_spec}"
+                )
+        else:
+            # If user did not provide an args_chunk_spec, we would use a default spec which chunks along dim 0
+            chunk_spec_flat = [TensorChunkSpec(DEFAULT_CHUNK_DIM)] * len(flat)
 
         sharded_arg_flat = []
 
         for v, chunk_v in zip(flat, chunk_spec_flat):
-            if isinstance(chunk_v, TensorChunkSpec):
+            if isinstance(chunk_v, Replicate):
+                sharded_arg_flat.append([v] * num_chunks)
+            elif isinstance(chunk_v, TensorChunkSpec):
                 # TODO: check type of v. If it's a tensor, use chunk (or debug mask).
                 # If it's a collection type, split it as you would expect. Otherwise,
                 # Throw an error
@@ -88,7 +103,9 @@ def shard_dict_of_args(
                 else:
                     sharded_arg_flat.append(chunk_tensors)
             else:
-                sharded_arg_flat.append([v] * num_chunks)
+                raise TypeError(
+                    f"Unrecognized chunk spec type: {type(chunk_v)}"
+                )
 
         args_sharded_replicated[arg_key] = sharded_arg_flat
 
@@ -158,12 +175,21 @@ def split_args_kwargs_into_chunks(
 
     # TODO: _debug_mask_minibatches
 
+    # If user did not provide args_chunk_spec or kwargs_chunk_spec, we extend their format for use by
+    # `shard_dict_of_args`
+    if args_chunk_spec is None:
+        args_chunk_spec = [None] * len(args)
+
+    if kwargs_chunk_spec is None:
+        kwargs_chunk_spec = dict.fromkeys(kwargs, None)
+
     args_split_dict = shard_dict_of_args(
         dict(enumerate(args)),
         dict(enumerate(args_chunk_spec)),
         chunks,
         _debug_mask_minibatches,
     )
+
     kwargs_split = shard_dict_of_args(
         kwargs, kwargs_chunk_spec, chunks, _debug_mask_minibatches
     )
