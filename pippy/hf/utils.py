@@ -308,8 +308,8 @@ def wrap(
     training_args,
     pp_ranks,
     output_chunk_spec,
-    args_chunk_spec = None,
-    kwargs_chunk_spec = None,
+    args_chunk_spec=None,
+    kwargs_chunk_spec=None,
 ):
     model.to(training_args.device)
     logger.info("[PiPPy] Splitting model ...")
@@ -347,8 +347,8 @@ def wrap(
         output_chunk_spec,
         world_size=len(all_worker_ranks),
         all_ranks=all_worker_ranks,
-        args_chunk_spec = args_chunk_spec,
-        kwargs_chunk_spec = kwargs_chunk_spec,
+        args_chunk_spec=args_chunk_spec,
+        kwargs_chunk_spec=kwargs_chunk_spec,
         _debug_mask_minibatches=False,
         _record_mem_dumps=bool(training_args.record_mem_dumps),
         checkpoint=bool(training_args.checkpoint),

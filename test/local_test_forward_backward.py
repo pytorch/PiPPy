@@ -193,9 +193,9 @@ def run_master(_, args):
             (ec_input, target),
             {},
             CHUNKS,
-            args_chunk_spec = None,
-            kwargs_chunk_spec = None,
-            _debug_mask_minibatches = DEBUG_MASK_MINIBATCHES,
+            args_chunk_spec=None,
+            kwargs_chunk_spec=None,
+            _debug_mask_minibatches=DEBUG_MASK_MINIBATCHES,
         )
         ref_outs = []
         for chunk in range(CHUNKS):

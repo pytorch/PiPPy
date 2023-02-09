@@ -137,8 +137,8 @@ def split_args_kwargs_into_chunks(
     args,
     kwargs,
     chunks,
-    args_chunk_spec = None,
-    kwargs_chunk_spec = None,
+    args_chunk_spec=None,
+    kwargs_chunk_spec=None,
     _debug_mask_minibatches: bool = False,
 ):
     # Given `args` and `kwargs`, we want to yield a set of `chunks` args and kwargs such that
