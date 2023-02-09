@@ -2,7 +2,6 @@
 import argparse
 import inspect
 import os
-from typing import Dict
 
 import torch
 import torch.autograd.profiler_legacy

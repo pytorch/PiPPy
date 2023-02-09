@@ -3,7 +3,6 @@ import argparse
 import copy
 import os
 import unittest
-from typing import Dict
 
 import torch
 import torch.distributed.rpc as rpc
@@ -23,7 +22,6 @@ from pippy.PipelineDriver import (
     PipelineDriverInterleaved1F1B,
 )
 from pippy.microbatch import (
-    TensorChunkSpec,
     CustomReducer,
     split_args_kwargs_into_chunks,
 )
