@@ -396,9 +396,6 @@ def run_master(pp_ranks, training_args, model_args, data_args):
     model.resize_token_embeddings(len(tokenizer))
 
     # =============================================== PiPPy change start ===============================================
-    args_chunk_spec = ()
-    kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'decoder_input_ids': TensorChunkSpec(0),
-                         'labels': TensorChunkSpec(0), 'attention_mask': TensorChunkSpec(0)}
     if model.__class__.__name__ == 'T5ForConditionalGeneration':
         output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b),
                              'logits': TensorChunkSpec(0),
@@ -413,7 +410,7 @@ def run_master(pp_ranks, training_args, model_args, data_args):
         output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b),
                              'logits': TensorChunkSpec(0),
                              'encoder_last_hidden_state': TensorChunkSpec(0)}
-    model = wrap(model, training_args, pp_ranks, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec)
+    model = wrap(model, training_args, pp_ranks, output_chunk_spec)
     # ================================================ PiPPy change end ================================================
 
     # Set decoder_start_token_id

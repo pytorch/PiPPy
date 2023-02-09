@@ -84,8 +84,6 @@ def run_master(_, args):
         list(bert_pipe.split_gm.children())
     )
 
-    args_chunk_spec = (TensorChunkSpec(0),)
-    kwargs_chunk_spec: Dict = {}
     output_chunk_spec = {
         "last_hidden_state": TensorChunkSpec(0),
         "pooler_output": TensorChunkSpec(0),
@@ -94,8 +92,6 @@ def run_master(_, args):
     pipe_driver: PipelineDriverBase = schedules[args.schedule](
         bert_pipe,
         5,
-        args_chunk_spec,
-        kwargs_chunk_spec,
         output_chunk_spec,
         args.world_size,
         _debug_mask_minibatches=True,

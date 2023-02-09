@@ -66,14 +66,10 @@ def run_master(_, args):
     target = torch.randn(bs, hid_dim)
     accum_pipe(input, target)
 
-    args_chunk_spec = (TensorChunkSpec(0), TensorChunkSpec(0))
-    kwargs_chunk_spec = {}
     output_chunk_spec = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
     pipe_driver: PipelineDriverBase = schedules[args.schedule](
         accum_pipe,
         chunks,
-        args_chunk_spec,
-        kwargs_chunk_spec,
         output_chunk_spec,
         args.world_size - 1,
         all_ranks=all_ranks,

@@ -90,10 +90,8 @@ def run_master(pp_ranks, args):
     pipe = Pipe.from_tracing(wrapper, MULTI_USE_PARAM_CONFIG, output_loss_value_spec=(False, True))
     pipe.to(args.device)
 
-    args_chunk_spec = (TensorChunkSpec(0), TensorChunkSpec(0))
-    kwargs_chunk_spec = {}
     output_chunk_spec = (TensorChunkSpec(0), CustomReducer(torch.tensor(0.0), lambda a, b: a + b))
-    pipe_driver: PipelineDriverBase = schedules[args.schedule](pipe, chunks, args_chunk_spec, kwargs_chunk_spec,
+    pipe_driver: PipelineDriverBase = schedules[args.schedule](pipe, chunks,
                                                                output_chunk_spec,
                                                                world_size=len(all_worker_ranks),
                                                                all_ranks=all_worker_ranks,

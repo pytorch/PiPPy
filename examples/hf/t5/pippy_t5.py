@@ -185,15 +185,6 @@ def transform_into_pipeline(
     # t5_pipe.to(device) TODO: Uncomment this after https://github.com/pytorch/PiPPy/issues/142
     # t5_pipe(**t5_input_dict)
 
-    args_chunk_spec = ()
-
-    kwargs_chunk_spec = {
-        "input_ids": TensorChunkSpec(0),
-        "decoder_input_ids": TensorChunkSpec(0),
-    }
-    if args.train:
-        kwargs_chunk_spec.setdefault("labels", TensorChunkSpec(0))
-
     if args.train:
         output_chunk_spec = {"loss": CustomReducer(torch.tensor(0.0), lambda a, b: a + b)}
     else:
@@ -210,8 +201,6 @@ def transform_into_pipeline(
     pipe_driver: PipelineDriverBase = schedules[args.schedule](
         t5_pipe,
         chunks,
-        args_chunk_spec,
-        kwargs_chunk_spec,
         output_chunk_spec,
         world_size=len(all_worker_ranks),
         all_ranks=all_worker_ranks,

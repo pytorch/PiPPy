@@ -116,15 +116,11 @@ def run_master(pp_ranks, args):
     if args.rank == 0:
         print(ec_pipe.split_gm)
 
-    args_chunk_spec = (TensorChunkSpec(0), TensorChunkSpec(0))
-    kwargs_chunk_spec: Dict = {}
     output_chunk_spec = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
 
     pipe_driver: PipelineDriverBase = schedules[args.schedule](
         ec_pipe,
         CHUNKS,
-        args_chunk_spec,
-        kwargs_chunk_spec,
         output_chunk_spec,
         args.pp_group_size,
         all_ranks=pp_ranks,

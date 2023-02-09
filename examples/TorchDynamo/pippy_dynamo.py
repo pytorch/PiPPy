@@ -71,8 +71,6 @@ def run_master(_, args):
     bs = 503
 
     # Chunking parameters
-    args_chunk_spec = (TensorChunkSpec(0),)
-    kwargs_chunk_spec: Dict = {}
     output_chunk_spec = (TensorChunkSpec(0),)
     chunks = 1
 
@@ -97,8 +95,6 @@ def run_master(_, args):
         pipe_driver: PipelineDriverBase = schedules[args.schedule](
             pipe,
             chunks,
-            args_chunk_spec,
-            kwargs_chunk_spec,
             output_chunk_spec,
             args.world_size,
             checkpoint=bool(args.checkpoint),

@@ -150,15 +150,11 @@ def run_master(_, args):
     ec_pipe = Pipe.from_tracing(wrapper, MULTI_USE_PARAM_CONFIG)
     print(ec_pipe.split_gm)
 
-    args_chunk_spec = (TensorChunkSpec(0), TensorChunkSpec(0))
-    kwargs_chunk_spec: Dict = {}
     output_chunk_spec = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
 
     pipe_driver: PipelineDriverBase = schedules[args.schedule](
         ec_pipe,
         CHUNKS,
-        args_chunk_spec,
-        kwargs_chunk_spec,
         output_chunk_spec,
         args.world_size,
         _debug_mask_minibatches=DEBUG_MASK_MINIBATCHES,

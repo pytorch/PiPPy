@@ -80,15 +80,11 @@ def run_master(_, args):
     )
     print(ec_pipe.split_gm)
 
-    args_chunk_spec = (TensorChunkSpec(0),)
-    kwargs_chunk_spec: Dict = {}
     output_chunk_spec = {"out": TensorChunkSpec(0)}
 
     pipe_driver: PipelineDriverBase = schedules[args.schedule](
         ec_pipe,
         5,
-        args_chunk_spec,
-        kwargs_chunk_spec,
         output_chunk_spec,
         args.world_size,
         _debug_mask_minibatches=True,

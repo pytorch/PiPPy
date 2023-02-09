@@ -90,8 +90,6 @@ class DDP2PipeConnector(nn.Module):
 
             self.pipe = Pipe.from_tracing(self.pipe_model, output_loss_value_spec=(False, True))
             self.pipe.to(self.device)
-            args_chunk_spec = (TensorChunkSpec(0), TensorChunkSpec(0))
-            kwargs_chunk_spec = {}
             output_chunk_spec = (TensorChunkSpec(0), CustomReducer(torch.tensor(0.0), lambda a, b: a + b))
             all_worker_ranks = self.pp_ranks
             chunks = len(all_worker_ranks)
@@ -99,7 +97,7 @@ class DDP2PipeConnector(nn.Module):
             # print(self.pipe)
 
             self.pipeline = PipelineDriverFillDrain(self.pipe, chunks,
-                                                    args_chunk_spec, kwargs_chunk_spec, output_chunk_spec,
+                                                    output_chunk_spec,
                                                     world_size=len(all_worker_ranks),
                                                     all_ranks=all_worker_ranks,
                                                     _debug_mask_minibatches=False)
