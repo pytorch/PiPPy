@@ -192,10 +192,10 @@ def run_master(_, args):
         args_split, kwargs_split = split_args_kwargs_into_chunks(
             (ec_input, target),
             {},
-            args_chunk_spec,
-            kwargs_chunk_spec,
             CHUNKS,
-            DEBUG_MASK_MINIBATCHES,
+            args_chunk_spec = None,
+            kwargs_chunk_spec = None,
+            _debug_mask_minibatches = DEBUG_MASK_MINIBATCHES,
         )
         ref_outs = []
         for chunk in range(CHUNKS):

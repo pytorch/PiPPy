@@ -2061,9 +2061,9 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         args_split, kwargs_split = split_args_kwargs_into_chunks(
             args,
             kwargs,
+            self.chunks,
             self.args_chunk_spec,
             self.kwargs_chunk_spec,
-            self.chunks,
             self._debug_mask_minibatches,
         )
 
