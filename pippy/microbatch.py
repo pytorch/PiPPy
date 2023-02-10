@@ -67,7 +67,7 @@ def shard_dict_of_args(
         sharded_arg_flat = []
 
         for v, chunk_v in zip(flat, chunk_spec_flat):
-            if isinstance(chunk_v, Replicate):
+            if chunk_v is Replicate:
                 sharded_arg_flat.append([v] * num_chunks)
             elif isinstance(chunk_v, TensorChunkSpec):
                 # TODO: check type of v. If it's a tensor, use chunk (or debug mask).
@@ -104,7 +104,7 @@ def shard_dict_of_args(
                     sharded_arg_flat.append(chunk_tensors)
             else:
                 raise TypeError(
-                    f"Unrecognized chunk spec type: {type(chunk_v)}"
+                    f"Unrecognized chunk spec: {chunk_v}"
                 )
 
         args_sharded_replicated[arg_key] = sharded_arg_flat
