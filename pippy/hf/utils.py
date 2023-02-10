@@ -317,7 +317,10 @@ def wrap(
 
     all_worker_ranks = pp_ranks[training_args.exclude_master :]
 
-    input_names = list(kwargs_chunk_spec.keys())
+    input_names = []
+    if kwargs_chunk_spec is not None:
+        input_names = list(kwargs_chunk_spec.keys())
+
     sig = inspect.signature(model.forward)
     concrete_args = {
         p.name: p.default
