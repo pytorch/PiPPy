@@ -103,9 +103,7 @@ def shard_dict_of_args(
                 else:
                     sharded_arg_flat.append(chunk_tensors)
             else:
-                raise TypeError(
-                    f"Unrecognized chunk spec: {chunk_v}"
-                )
+                raise TypeError(f"Unrecognized chunk spec: {chunk_v}")
 
         args_sharded_replicated[arg_key] = sharded_arg_flat
 

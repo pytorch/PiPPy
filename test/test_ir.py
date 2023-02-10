@@ -648,7 +648,11 @@ class TestIR(unittest.TestCase):
             {"input_nt": input_nt},
             chunks=NCHUNKS,
             args_chunk_spec=(Replicate,),
-            kwargs_chunk_spec={"input_nt": SpecialInputNamedTuple(TensorChunkSpec(0), Replicate)},
+            kwargs_chunk_spec={
+                "input_nt": SpecialInputNamedTuple(
+                    TensorChunkSpec(0), Replicate
+                )
+            },
         )
 
         # Args should have 5 chunks that all contain the single replicated `x` value
@@ -683,7 +687,11 @@ class TestIR(unittest.TestCase):
             {"input_nt": input_nt},
             chunks=NCHUNKS,
             args_chunk_spec=(TensorChunkSpec(0),),
-            kwargs_chunk_spec={"input_nt": SpecialInputNamedTuple(TensorChunkSpec(0), Replicate)},
+            kwargs_chunk_spec={
+                "input_nt": SpecialInputNamedTuple(
+                    TensorChunkSpec(0), Replicate
+                )
+            },
         )
 
         assert len(args_split) == NCHUNKS
@@ -711,7 +719,11 @@ class TestIR(unittest.TestCase):
             {"input_nt": input_nt},
             chunks=NCHUNKS,
             args_chunk_spec=(TensorChunkSpec(0),),
-            kwargs_chunk_spec={"input_nt": SpecialInputNamedTuple(TensorChunkSpec(0), Replicate)},
+            kwargs_chunk_spec={
+                "input_nt": SpecialInputNamedTuple(
+                    TensorChunkSpec(0), Replicate
+                )
+            },
             _debug_mask_minibatches=True,
         )
 
