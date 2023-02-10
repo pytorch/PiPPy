@@ -73,28 +73,6 @@ jobs:
         run: |
           pytest --shard-id=${{ matrix.shard }} --num-shards=8 -k 'HFModelsForwardBackwardTest' -sv --cov=pippy test/hf_test.py
 
-  min_gpt_test:
-    runs-on: linux.4xlarge
-    strategy:
-      matrix:
-        python-version: ["3.9"]
-    container:
-      image: python:${{ matrix.python-version }}
-
-    steps:
-      - uses: actions/checkout@v2
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install flake8 pytest pytest-cov numpy
-          if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
-      - name: Install pippy
-        run: "python setup.py install"
-      - name: Initialize minGPT submodule
-        run: git submodule update --init test/minGPT
-      - name: Test min-gpt-tracing
-        run: python test/min_gpt_tracing.py
-
   integration_test_cpu:
     runs-on: linux.4xlarge
     strategy:
@@ -179,6 +157,11 @@ jobs:
       - name: "HF Translation: fine-tune BART model translation English to Romanian"
         run: >
           python examples/hf/translation/run_translation.py --model_name_or_path facebook/bart-base --do_train --source_lang en --target_lang ro --source_prefix "translate English to Romanian: " --dataset_name wmt16 --dataset_config_name ro-en --output_dir /tmp/tst-translation --per_device_train_batch_size=8 --per_device_eval_batch_size=8 --overwrite_output_dir --predict_with_generate --max_steps=10  --dp_group_size=2 --pp_group_size=8
+      - name: Test min-GPT
+        run: |
+          git config --global --add safe.directory /__w/tau/tau
+          git submodule update --init test/minGPT
+          python test/min_gpt_tracing.py
 
   integration_test_gpu:
     runs-on: linux.16xlarge.nvidia.gpu
