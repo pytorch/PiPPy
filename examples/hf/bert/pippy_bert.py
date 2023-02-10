@@ -97,11 +97,8 @@ def run_master(_, args):
     for i, sm in enumerate(bert_pipe.split_gm.children()):
         print(f"submod_{i} {get_number_of_params(sm) // 10 ** 6}M params")
 
-    args_chunk_spec = ()
-    kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'labels': TensorChunkSpec(0),
-                         'attention_mask': TensorChunkSpec(0)}
     output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b), 'logits': TensorChunkSpec(0)}
-    pipe_driver: PipelineDriverBase = schedules[args.schedule](bert_pipe, chunks, args_chunk_spec, kwargs_chunk_spec,
+    pipe_driver: PipelineDriverBase = schedules[args.schedule](bert_pipe, chunks,
                                                                output_chunk_spec, len(all_worker_ranks),
                                                                all_ranks=all_worker_ranks,
                                                                _debug_mask_minibatches=False,

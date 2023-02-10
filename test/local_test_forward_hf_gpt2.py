@@ -2,7 +2,6 @@
 import argparse
 import inspect
 import os
-from typing import Dict
 
 import torch
 import torch.autograd.profiler_legacy
@@ -79,15 +78,11 @@ def run_master(_, args):
 
     assert gpt2.config.n_layer + 2 == len(list(gpt2_pipe.split_gm.children()))
 
-    args_chunk_spec = (TensorChunkSpec(0),)
-    kwargs_chunk_spec: Dict = {}
     output_chunk_spec = {"last_hidden_state": TensorChunkSpec(0)}
 
     pipe_driver: PipelineDriverBase = schedules[args.schedule](
         gpt2_pipe,
         5,
-        args_chunk_spec,
-        kwargs_chunk_spec,
         output_chunk_spec,
         args.world_size,
         _debug_mask_minibatches=True,

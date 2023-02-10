@@ -389,12 +389,14 @@ def run_master(pp_ranks, training_args, model_args, data_args):
     # =============================================== PiPPy change start ===============================================
 
     model.config.problem_type = "single_label_classification"  # "regression", "single_label_classification", or "multi_label_classification"
-
-    args_chunk_spec = ()
     kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'token_type_ids': TensorChunkSpec(0),
                          'labels': TensorChunkSpec(0), 'attention_mask': TensorChunkSpec(0)}
     output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b), 'logits': TensorChunkSpec(0)}
-    model = wrap(model, training_args, pp_ranks, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec)
+    model = wrap(model,
+                 training_args,
+                 pp_ranks,
+                 output_chunk_spec,
+                 kwargs_chunk_spec=kwargs_chunk_spec)
     training_args.label_names = ['labels']  # https://github.com/huggingface/transformers/blob/c8b6ae858d61e5bc10e388d095aa74f7690d1021/src/transformers/trainer.py#L629-L630
     # ================================================ PiPPy change end ================================================
 

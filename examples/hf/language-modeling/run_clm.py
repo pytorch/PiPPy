@@ -400,13 +400,17 @@ def run_master(pp_ranks, training_args, model_args, data_args):
     model.resize_token_embeddings(len(tokenizer))
 
     # =============================================== PiPPy change start ===============================================
-    args_chunk_spec = ()
+    # The kwarg keywords are needed for FX tracing's concrete_args setting (in the `wrap` call)
     kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'labels': TensorChunkSpec(0),
                          'attention_mask': TensorChunkSpec(0)}
     output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b), 'logits': TensorChunkSpec(0),
                          'past_key_values': [[TensorChunkSpec(0) for _ in range(2)] for _ in
                                              range(model.config.n_layer)]}
-    model = wrap(model, training_args, pp_ranks, args_chunk_spec, kwargs_chunk_spec, output_chunk_spec)
+    model = wrap(model,
+                 training_args,
+                 pp_ranks,
+                 output_chunk_spec,
+                 kwargs_chunk_spec=kwargs_chunk_spec)
     training_args.label_names = ['labels']  # https://github.com/huggingface/transformers/blob/c8b6ae858d61e5bc10e388d095aa74f7690d1021/src/transformers/trainer.py#L629-L630
     # ================================================ PiPPy change end ================================================
 

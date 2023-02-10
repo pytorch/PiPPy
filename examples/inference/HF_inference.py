@@ -135,20 +135,15 @@ def run_master(pp_ranks, args):
         total_params += params
     print(f"total {total_params // 10 ** 6}M params")
 
-    args_chunk_spec = ()
-    
     if 't5' in args.model_name:
-        kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'decoder_input_ids': TensorChunkSpec(0)}
         output_chunk_spec = {"logits": TensorChunkSpec(0),"encoder_last_hidden_state": TensorChunkSpec(0)}
     elif 'opt' or 'bloom' in args.model_name:
-        kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0)}
         output_chunk_spec = {"logits": TensorChunkSpec(0)}
     elif 'regnet' in args.model_name:
-        kwargs_chunk_spec = {'pixel_values': TensorChunkSpec(0)}
         output_chunk_spec = {"last_hidden_state": TensorChunkSpec(0), 'hidden_states':TensorChunkSpec(0)}
     
 
-    pipe_driver: PipelineDriverBase = schedules[args.schedule](model_pipe, chunks, args_chunk_spec, kwargs_chunk_spec,
+    pipe_driver: PipelineDriverBase = schedules[args.schedule](model_pipe, chunks,
                                                                output_chunk_spec,
                                                                world_size=len(all_worker_ranks),
                                                                all_ranks=all_worker_ranks,

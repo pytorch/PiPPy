@@ -307,9 +307,9 @@ def wrap(
     model,
     training_args,
     pp_ranks,
-    args_chunk_spec,
-    kwargs_chunk_spec,
     output_chunk_spec,
+    args_chunk_spec=None,
+    kwargs_chunk_spec=None,
 ):
     model.to(training_args.device)
     logger.info("[PiPPy] Splitting model ...")
@@ -317,7 +317,10 @@ def wrap(
 
     all_worker_ranks = pp_ranks[training_args.exclude_master :]
 
-    input_names = list(kwargs_chunk_spec.keys())
+    input_names = []
+    if kwargs_chunk_spec is not None:
+        input_names = list(kwargs_chunk_spec.keys())
+
     sig = inspect.signature(model.forward)
     concrete_args = {
         p.name: p.default
@@ -344,11 +347,11 @@ def wrap(
     model = PipelineDriverFillDrain(
         model,
         training_args.chunks or len(all_worker_ranks),
-        args_chunk_spec,
-        kwargs_chunk_spec,
         output_chunk_spec,
         world_size=len(all_worker_ranks),
         all_ranks=all_worker_ranks,
+        args_chunk_spec=args_chunk_spec,
+        kwargs_chunk_spec=kwargs_chunk_spec,
         _debug_mask_minibatches=False,
         _record_mem_dumps=bool(training_args.record_mem_dumps),
         checkpoint=bool(training_args.checkpoint),

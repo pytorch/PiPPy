@@ -28,7 +28,7 @@ from pippy.PipelineDriver import (
     PipelineDriverInterleaved1F1B,
 )
 from pippy.events import Event
-from pippy.microbatch import TensorChunkSpec, CustomReducer
+from pippy.microbatch import CustomReducer
 from pippy.visualizer import events_to_json
 
 PROFILING_ENABLED = True
@@ -178,16 +178,12 @@ def run_master(_, args):
     wrapper = TrivialLossWrapper(ec, mse_loss)
     ec_pipe = Pipe.from_tracing(wrapper, MULTI_USE_PARAM_CONFIG)
 
-    args_chunk_spec = (TensorChunkSpec(0), TensorChunkSpec(0))
-    kwargs_chunk_spec = {}
     output_chunk_spec = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
 
     all_ranks = list(range(1, args.world_size))  # exclude master rank = 0
     pipe_driver: PipelineDriverBase = schedules[args.schedule](
         ec_pipe,
         chunks,
-        args_chunk_spec,
-        kwargs_chunk_spec,
         output_chunk_spec,
         args.world_size - 1,
         all_ranks=all_ranks,

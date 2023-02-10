@@ -3,7 +3,6 @@ import argparse
 import copy
 import os
 import unittest
-from typing import Dict
 
 import torch
 import torch.distributed.rpc as rpc
@@ -23,7 +22,6 @@ from pippy.PipelineDriver import (
     PipelineDriverInterleaved1F1B,
 )
 from pippy.microbatch import (
-    TensorChunkSpec,
     CustomReducer,
     split_args_kwargs_into_chunks,
 )
@@ -150,15 +148,11 @@ def run_master(_, args):
     ec_pipe = Pipe.from_tracing(wrapper, MULTI_USE_PARAM_CONFIG)
     print(ec_pipe.split_gm)
 
-    args_chunk_spec = (TensorChunkSpec(0), TensorChunkSpec(0))
-    kwargs_chunk_spec: Dict = {}
     output_chunk_spec = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
 
     pipe_driver: PipelineDriverBase = schedules[args.schedule](
         ec_pipe,
         CHUNKS,
-        args_chunk_spec,
-        kwargs_chunk_spec,
         output_chunk_spec,
         args.world_size,
         _debug_mask_minibatches=DEBUG_MASK_MINIBATCHES,
@@ -196,10 +190,10 @@ def run_master(_, args):
         args_split, kwargs_split = split_args_kwargs_into_chunks(
             (ec_input, target),
             {},
-            args_chunk_spec,
-            kwargs_chunk_spec,
             CHUNKS,
-            DEBUG_MASK_MINIBATCHES,
+            args_chunk_spec=None,
+            kwargs_chunk_spec=None,
+            _debug_mask_minibatches=DEBUG_MASK_MINIBATCHES,
         )
         ref_outs = []
         for chunk in range(CHUNKS):

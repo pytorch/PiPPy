@@ -3,7 +3,6 @@ import argparse
 import copy
 import os
 import unittest
-from typing import Dict
 
 import torch
 import torch.distributed.rpc as rpc
@@ -22,7 +21,7 @@ from pippy.PipelineDriver import (
     PipelineDriverBase,
     PipelineDriverInterleaved1F1B,
 )
-from pippy.microbatch import TensorChunkSpec, CustomReducer
+from pippy.microbatch import CustomReducer
 
 # TODOs for implementing forward/backward/loss with schedules:
 # * ability to switch between full-batch loss vs. per-microbatch loss. shen mentioned
@@ -116,15 +115,11 @@ def run_master(pp_ranks, args):
     if args.rank == 0:
         print(ec_pipe.split_gm)
 
-    args_chunk_spec = (TensorChunkSpec(0), TensorChunkSpec(0))
-    kwargs_chunk_spec: Dict = {}
     output_chunk_spec = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
 
     pipe_driver: PipelineDriverBase = schedules[args.schedule](
         ec_pipe,
         CHUNKS,
-        args_chunk_spec,
-        kwargs_chunk_spec,
         output_chunk_spec,
         args.pp_group_size,
         all_ranks=pp_ranks,
