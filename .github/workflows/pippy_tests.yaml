@@ -91,7 +91,9 @@ jobs:
       - name: Install pippy
         run: "python setup.py install"
       - name: Initialize minGPT submodule
-        run: git submodule update --init test/minGPT
+        run: |
+          git config --global --add safe.directory /__w/tau/tau
+          git submodule update --init test/minGPT
       - name: Test min-gpt-tracing
         run: python test/min_gpt_tracing.py
 
