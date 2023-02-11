@@ -84,13 +84,6 @@ def _find_loss_from_output_and_spec(output_val, spec_val):
             f"Did not find loss value in specification {spec_val}"
         )
 
-    if spec_val is None:
-        # Use default spec, i.e. search for "loss" in output values
-        if isinstance(output_val, dict) and "loss" in output_val.keys():
-            return output_val["loss"]
-        else:
-            return None
-
     raise RuntimeError(
         f"Unsupported type {type(spec_val)} in loss specification"
     )
@@ -102,18 +95,30 @@ def _find_loss_output(
     output_nodes = [n for n in g.nodes if n.op == "output"]
     assert len(output_nodes) == 1
     output_node = output_nodes[0]
+    output_val = output_node.args[0]
 
     if isinstance(mod, TrivialLossWrapper):
         # TrivialLossWrapper is pre-defined by PiPPy.
         # It has loss as the only output so we can safely assume the first output arg is the loss.
         assert len(output_node.args) == 1
-        loss_node = output_node.args[0]
+        loss_node = output_val
+        generated_spec = TrivialLossWrapper.loss_spec
+    elif output_loss_value_spec is None:
+        # Use default spec, i.e. search for "loss" in output values
+        if isinstance(output_val, dict) and "loss" in output_val.keys():
+            loss_node = output_val["loss"]
+            generated_spec = dict.fromkeys(output_val, False)
+            generated_spec["loss"] = True
+        else:
+            loss_node = None
+            generated_spec = None
     else:
         loss_node = _find_loss_from_output_and_spec(
-            output_node.args[0], output_loss_value_spec
+            output_val, output_loss_value_spec
         )
+        generated_spec = output_loss_value_spec
 
-    return loss_node, output_node
+    return loss_node, output_node, generated_spec
 
 
 def _insert_stage_symbolic_backward(
@@ -308,6 +313,8 @@ class TrivialLossWrapper(LossWrapper):
         model_out = self.module(x)
         return self.loss_fn(model_out, targets)
 
+    loss_spec = True
+
 
 # Pipe model representation
 #
@@ -489,12 +496,14 @@ class Pipe(torch.nn.Module):
         qualname_mapping: Dict[str, str],
         num_stages: int,
         has_loss_and_backward: bool,
+        loss_spec,
     ):
         super().__init__()
         self.split_gm: pippy.fx.GraphModule = split_gm
         self.executor: DetachExecutor = DetachExecutor(self.split_gm)
         self.num_stages: int = num_stages
         self.has_loss_and_backwards = has_loss_and_backward
+        self.loss_spec = loss_spec
         self.last_grads = None
 
         for node in split_gm.graph.nodes:
@@ -942,7 +951,7 @@ class Pipe(torch.nn.Module):
         has_loss_and_backward = False
 
         if mod.training:
-            loss_node, output_node = _find_loss_output(
+            loss_node, output_node, generated_loss_spec = _find_loss_output(
                 mod, split.graph, output_loss_value_spec
             )
             if loss_node is not None:
@@ -958,7 +967,13 @@ class Pipe(torch.nn.Module):
                     "`output_loss_value_spec`."
                 )
 
-        return Pipe(split, qualname_map, num_stages, has_loss_and_backward)
+        return Pipe(
+            split,
+            qualname_map,
+            num_stages,
+            has_loss_and_backward,
+            generated_loss_spec,
+        )
 
     @staticmethod
     def from_tracing(

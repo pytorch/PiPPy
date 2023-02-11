@@ -1,4 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+from pippy.IR import TrivialLossWrapper
 import torch
 
 from torch.utils._pytree import tree_flatten, tree_unflatten
@@ -9,6 +10,8 @@ class CustomReducer:
         self.init_value = init_value
         self.reduce_fn = reduce_fn
 
+
+sum_reducer = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
 
 DEFAULT_CHUNK_DIM = 0
 
@@ -53,8 +56,8 @@ def shard_dict_of_args(
         arg_specs.append(spec)
 
         chunk_spec = args_chunk_spec[arg_key]
-        chunk_spec_flat, _ = tree_flatten(chunk_spec)
         if chunk_spec is not None:
+            chunk_spec_flat, _ = tree_flatten(chunk_spec)
             if len(flat) != len(chunk_spec_flat):
                 raise ValueError(
                     f"Argument value {arg} did not have the same number of "
@@ -311,3 +314,20 @@ def merge_chunks(chunks, chunk_spec, _debug_mask_minibatches: bool = False):
 
     # Stage 4: Unflatten combined args
     return tree_unflatten(args_flattened, flatten_spec)
+
+
+def gen_output_chunk_spec(loss_spec, loss_reducer):
+    if loss_spec is None:
+        return None
+    elif loss_spec == TrivialLossWrapper.loss_spec:
+        return loss_reducer
+    elif isinstance(loss_spec, dict):
+        output_chunk_spec = {
+            k: loss_reducer
+            if loss_spec[k]
+            else TensorChunkSpec(DEFAULT_CHUNK_DIM)
+            for k in loss_spec
+        }
+        return output_chunk_spec
+    else:
+        raise ValueError(f"Cannot generate output chunk spec for {loss_spec}")
