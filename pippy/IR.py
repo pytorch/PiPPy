@@ -948,6 +948,7 @@ class Pipe(torch.nn.Module):
         num_stages = Pipe._number_and_count_forward_stages(split)
 
         has_loss_and_backward = False
+        generated_loss_spec = output_loss_value_spec
 
         if mod.training:
             loss_node, output_node, generated_loss_spec = _find_loss_output(
