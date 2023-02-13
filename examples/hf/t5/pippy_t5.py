@@ -26,7 +26,6 @@ from pippy.PipelineDriver import (
 from pippy import split_on_size_threshold, split_into_equal_size
 from pippy.events import EventsContext
 from pippy.hf import PiPPyHFTracer
-from pippy.microbatch import CustomReducer, TensorChunkSpec
 from pippy.visualizer import events_to_json
 
 PROFILING_ENABLED = True

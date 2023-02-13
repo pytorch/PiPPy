@@ -107,8 +107,7 @@ def _find_loss_output(
         # Use default spec, i.e. search for "loss" in output values
         if isinstance(output_val, dict) and "loss" in output_val.keys():
             loss_node = output_val["loss"]
-            generated_spec = dict.fromkeys(output_val, False)
-            generated_spec["loss"] = True
+            generated_spec = {k: k == "loss" for k in output_val}
         else:
             loss_node = None
             generated_spec = None

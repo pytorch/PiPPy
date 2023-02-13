@@ -18,7 +18,6 @@ from pippy.PipelineDriver import (
     PipelineDriverFillDrain,
     PipelineDriver1F1B,
 )
-from pippy.microbatch import CustomReducer
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True

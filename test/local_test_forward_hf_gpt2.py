@@ -21,7 +21,6 @@ from pippy.PipelineDriver import (
     PipelineDriverBase,
 )
 from pippy.hf import PiPPyHFTracer
-from pippy.microbatch import TensorChunkSpec
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True

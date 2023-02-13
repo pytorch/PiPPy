@@ -12,7 +12,6 @@ from pippy.IR import MultiUseParameterConfig, Pipe
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverInterleaved1F1B, \
     PipelineDriverBase
 from pippy.hf import PiPPyHFTracer
-from pippy.microbatch import TensorChunkSpec
 from pippy import split_on_size_threshold, split_into_equal_size
 from transformers import  AutoModelForSeq2SeqLM
 from transformers import OPTModel, BloomModel

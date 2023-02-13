@@ -22,7 +22,6 @@ from pippy.PipelineDriver import (
     PipelineDriverInterleaved1F1B,
 )
 from pippy.microbatch import (
-    CustomReducer,
     split_args_kwargs_into_chunks,
 )
 

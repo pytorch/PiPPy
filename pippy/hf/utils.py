@@ -330,7 +330,8 @@ def wrap(
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.TRANSMIT
     if isinstance(output_chunk_spec, dict):
         output_loss_value_spec = {
-            k: isinstance(v, CustomReducer) for k, v in output_chunk_spec.items()
+            k: isinstance(v, CustomReducer)
+            for k, v in output_chunk_spec.items()
         }
     model_config = model.config
 

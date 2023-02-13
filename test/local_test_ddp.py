@@ -21,7 +21,6 @@ from pippy.PipelineDriver import (
     PipelineDriverBase,
     PipelineDriverInterleaved1F1B,
 )
-from pippy.microbatch import CustomReducer
 
 # TODOs for implementing forward/backward/loss with schedules:
 # * ability to switch between full-batch loss vs. per-microbatch loss. shen mentioned

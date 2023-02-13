@@ -28,7 +28,6 @@ from pippy.PipelineDriver import (
     PipelineDriverInterleaved1F1B,
 )
 from pippy.events import Event
-from pippy.microbatch import CustomReducer
 from pippy.visualizer import events_to_json
 
 PROFILING_ENABLED = True
