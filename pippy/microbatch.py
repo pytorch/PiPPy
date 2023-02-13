@@ -235,7 +235,13 @@ def merge_chunks(chunks, chunk_spec, _debug_mask_minibatches: bool = False):
     #       value = ([A, [B, C]], D)
 
     # Preliminary: flatten the chunk spec
-    spec_flattened, flatten_spec = tree_flatten(chunk_spec)
+    if chunk_spec is not None:
+        spec_flattened, flatten_spec = tree_flatten(chunk_spec)
+    else:
+        # If chunk_spec is not provided, we will merge chunks along the default dimension (0), for all output fields
+        # We obtain the output structure by flattening chunk 0 and generate the chunk_spec
+        chunk0_flat, flatten_spec = tree_flatten(chunks[0])
+        spec_flattened = [TensorChunkSpec(DEFAULT_CHUNK_DIM)] * len(chunk0_flat)
 
     # Stage 1: flatten chunks
     # chunks_flattened : [num chunks, num args]
