@@ -54,7 +54,7 @@ from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
 from pippy.hf import PiPPySeq2SeqTrainingArguments, PiPPySeq2SeqTrainer, wrap
-from pippy.microbatch import TensorChunkSpec, CustomReducer
+from pippy.microbatch import TensorChunkSpec, sum_reducer
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.22.0.dev0")
@@ -398,25 +398,21 @@ def run_master(pp_ranks, training_args, model_args, data_args):
     # =============================================== PiPPy change start ===============================================
     kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'decoder_input_ids': TensorChunkSpec(0),
                          'labels': TensorChunkSpec(0), 'attention_mask': TensorChunkSpec(0)}
-    if model.__class__.__name__ == 'T5ForConditionalGeneration':
-        output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b),
-                             'logits': TensorChunkSpec(0),
-                             'encoder_last_hidden_state': TensorChunkSpec(0)
-                            }
-        if model.config.use_cache:
-            # past_key_values, optional, returned when use_cache=True is passed or when config.use_cache=True.
-            output_chunk_spec['past_key_values'] = [
-                [TensorChunkSpec(0) for _ in range(model.config.num_decoder_layers)] for _ in range(4)
-            ]
-    else:
-        output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b),
-                             'logits': TensorChunkSpec(0),
-                             'encoder_last_hidden_state': TensorChunkSpec(0)}
+    output_chunk_spec = {'loss': sum_reducer,
+                         'logits': TensorChunkSpec(0),
+                         'encoder_last_hidden_state': TensorChunkSpec(0),
+                        }
+    if model.config.use_cache:
+        # past_key_values, optional, returned when use_cache=True is passed or when config.use_cache=True.
+        output_chunk_spec['past_key_values'] = [
+            [TensorChunkSpec(0) for _ in range(model.config.num_decoder_layers)] for _ in range(4)
+        ]
     model = wrap(model,
                  training_args,
                  pp_ranks,
-                 output_chunk_spec,
-                 kwargs_chunk_spec=kwargs_chunk_spec)
+                 kwargs_chunk_spec=kwargs_chunk_spec,
+                 output_chunk_spec=output_chunk_spec,
+    )
     # ================================================ PiPPy change end ================================================
 
     # Set decoder_start_token_id

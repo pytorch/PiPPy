@@ -101,7 +101,9 @@ The barrier would make sure all the rank have loaded their shards and finally we
         return 
  ```
 
-* Define the input/ouput to the model, "TensorChunkSpec(0)" below shows the batch dimension in the input is zero. Pipelining relies on _micro-batching_--that is--the process of dividing the program's input data into smaller chunks and feeding those chunks through the pipeline sequentially. Doing this requires that the data and operations be _separable_, i.e.there should be at least one dimension along which data can be split such that the program does not have interactions across this dimension.
+* (Optional) Define the input/ouput to the model. "TensorChunkSpec(0)" below indicates that the batch dimension in the input is zero. Pipelining relies on _micro-batching_--that is--the process of dividing the program's input data into smaller chunks and feeding those chunks through the pipeline sequentially. Doing this requires that the data and operations be _separable_, i.e.there should be at least one dimension along which data can be split such that the program does not have interactions across this dimension.
+
+By default, PiPPy uses dimension 0 as the input chunking or output merging dimension. Therefore, the settings below are optional.
 
 ```
 kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'decoder_input_ids': TensorChunkSpec(0)}
@@ -120,7 +122,6 @@ schedules = {
 
 ```
 pipe_driver: PipelineDriverBase = schedules[args.schedule](t5_pipe, chunks, args_chunk_spec, kwargs_chunk_spec,
-                                                            output_chunk_spec,
                                                             world_size=len(all_worker_ranks),
                                                             all_ranks=all_worker_ranks,
                                                             checkpoint=bool(args.checkpoint), #optional in case pretrained weights not required

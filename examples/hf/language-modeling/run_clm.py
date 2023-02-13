@@ -53,7 +53,7 @@ from transformers.utils.versions import require_version
 
 from pippy import run_pippy
 from pippy.hf import PiPPyTrainingArguments, PiPPyTrainer, wrap
-from pippy.microbatch import TensorChunkSpec, CustomReducer
+from pippy.microbatch import TensorChunkSpec, sum_reducer
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.22.0.dev0")
@@ -403,7 +403,7 @@ def run_master(pp_ranks, training_args, model_args, data_args):
     # The kwarg keywords are needed for FX tracing's concrete_args setting (in the `wrap` call)
     kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'labels': TensorChunkSpec(0),
                          'attention_mask': TensorChunkSpec(0)}
-    output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b), 'logits': TensorChunkSpec(0),
+    output_chunk_spec = {'loss': sum_reducer, 'logits': TensorChunkSpec(0),
                          'past_key_values': [[TensorChunkSpec(0) for _ in range(2)] for _ in
                                              range(model.config.n_layer)]}
     model = wrap(model,

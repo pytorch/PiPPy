@@ -178,13 +178,10 @@ def run_master(_, args):
     wrapper = TrivialLossWrapper(ec, mse_loss)
     ec_pipe = Pipe.from_tracing(wrapper, MULTI_USE_PARAM_CONFIG)
 
-    output_chunk_spec = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
-
     all_ranks = list(range(1, args.world_size))  # exclude master rank = 0
     pipe_driver: PipelineDriverBase = schedules[args.schedule](
         ec_pipe,
         chunks,
-        output_chunk_spec,
         args.world_size - 1,
         all_ranks=all_ranks,
         _debug_mask_minibatches=True,

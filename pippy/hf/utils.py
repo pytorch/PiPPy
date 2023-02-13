@@ -307,9 +307,9 @@ def wrap(
     model,
     training_args,
     pp_ranks,
-    output_chunk_spec,
     args_chunk_spec=None,
     kwargs_chunk_spec=None,
+    output_chunk_spec=None,
 ):
     model.to(training_args.device)
     logger.info("[PiPPy] Splitting model ...")
@@ -328,9 +328,10 @@ def wrap(
         if p.name not in input_names
     }
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.TRANSMIT
-    output_loss_value_spec = {
-        k: isinstance(v, CustomReducer) for k, v in output_chunk_spec.items()
-    }
+    if isinstance(output_chunk_spec, dict):
+        output_loss_value_spec = {
+            k: isinstance(v, CustomReducer) for k, v in output_chunk_spec.items()
+        }
     model_config = model.config
 
     logger.info("[PiPPy] Creating pipeline ...")
@@ -347,12 +348,11 @@ def wrap(
     model = PipelineDriverFillDrain(
         model,
         training_args.chunks or len(all_worker_ranks),
-        output_chunk_spec,
         world_size=len(all_worker_ranks),
         all_ranks=all_worker_ranks,
         args_chunk_spec=args_chunk_spec,
         kwargs_chunk_spec=kwargs_chunk_spec,
-        _debug_mask_minibatches=False,
+        output_chunk_spec=output_chunk_spec,
         _record_mem_dumps=bool(training_args.record_mem_dumps),
         checkpoint=bool(training_args.checkpoint),
     )

@@ -16,7 +16,7 @@ from torchvision.transforms import transforms
 from tqdm import tqdm
 
 from pippy import Pipe, PipelineDriverFillDrain, annotate_split_points, PipeSplitWrapper
-from pippy.microbatch import TensorChunkSpec, CustomReducer
+from pippy.microbatch import TensorChunkSpec, sum_reducer
 from pippy.utils import tp_transports
 
 # logging.getLogger().setLevel(logging.DEBUG)
@@ -90,17 +90,17 @@ class DDP2PipeConnector(nn.Module):
 
             self.pipe = Pipe.from_tracing(self.pipe_model, output_loss_value_spec=(False, True))
             self.pipe.to(self.device)
-            output_chunk_spec = (TensorChunkSpec(0), CustomReducer(torch.tensor(0.0), lambda a, b: a + b))
+            output_chunk_spec = (TensorChunkSpec(0), sum_reducer)
             all_worker_ranks = self.pp_ranks
             chunks = len(all_worker_ranks)
 
             # print(self.pipe)
 
             self.pipeline = PipelineDriverFillDrain(self.pipe, chunks,
-                                                    output_chunk_spec,
                                                     world_size=len(all_worker_ranks),
                                                     all_ranks=all_worker_ranks,
-                                                    _debug_mask_minibatches=False)
+                                                    output_chunk_spec=output_chunk_spec,
+            )
 
             self.pipeline.init_data_parallel(dp_group_size, dp_pg_cb=resolve_pg_per_stage)
 

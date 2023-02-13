@@ -75,13 +75,11 @@ def run_gspmd(pp_ranks, args):
     if args.rank > 0:
         return  # Workers stop here
 
-    output_chunk_spec = {"out": TensorChunkSpec(0)}
     chunks = 5
 
     pipe_driver: PipelineDriverBase = schedules[args.schedule](
         ec_pipe,
         chunks,
-        output_chunk_spec,
         args.world_size,
         _debug_mask_minibatches=True,
         _record_mem_dumps=bool(args.record_mem_dumps),
