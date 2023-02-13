@@ -409,8 +409,9 @@ def run_master(pp_ranks, training_args, model_args, data_args):
     model = wrap(model,
                  training_args,
                  pp_ranks,
-                 output_chunk_spec,
-                 kwargs_chunk_spec=kwargs_chunk_spec)
+                 kwargs_chunk_spec=kwargs_chunk_spec,
+                 output_chunk_spec=output_chunk_spec,
+    )
     training_args.label_names = ['labels']  # https://github.com/huggingface/transformers/blob/c8b6ae858d61e5bc10e388d095aa74f7690d1021/src/transformers/trainer.py#L629-L630
     # ================================================ PiPPy change end ================================================
 
