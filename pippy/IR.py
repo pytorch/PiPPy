@@ -3,7 +3,7 @@ import copy
 import logging
 import operator
 from enum import Enum
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.fx as torch_fx
@@ -96,6 +96,7 @@ def _find_loss_output(
     assert len(output_nodes) == 1
     output_node = output_nodes[0]
     output_val = output_node.args[0]
+    generated_spec: Any = None
 
     if isinstance(mod, TrivialLossWrapper):
         # TrivialLossWrapper is pre-defined by PiPPy.

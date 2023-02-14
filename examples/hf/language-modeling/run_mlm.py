@@ -51,7 +51,7 @@ from transformers.utils.versions import require_version
 
 from pippy import run_pippy
 from pippy.hf import PiPPyTrainingArguments, PiPPyTrainer, wrap
-from pippy.microbatch import TensorChunkSpec, CustomReducer
+from pippy.microbatch import TensorChunkSpec
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
 check_min_version("4.22.0.dev0")
