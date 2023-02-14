@@ -8,13 +8,10 @@ import subprocess
 from torch.distributed._tensor.device_mesh import DeviceMesh
 from torch.distributed._tensor.placement_types import Replicate
 from models import DemoConfig, MnistConfig
-from spmd import Schema, SPMD  
+from spmd import Schema, SPMD
 from spmd.compiler.graph_optimization import GraphOptimization
 
-model_to_config = {
-    "demo": DemoConfig(),
-    "mnist": MnistConfig()
-}
+model_to_config = {"demo": DemoConfig(), "mnist": MnistConfig()}
 
 
 def print0(pstr):
@@ -45,7 +42,7 @@ def benchmark(args):
         device_type = "cuda"
         world_size = torch.distributed.get_world_size()
         device_mesh = DeviceMesh(device_type, list(range(world_size)))
-        model = model_config.get_model(device_mesh)
+        model = model_config.get_model()
         model = SPMD(
             model.cuda(),
             schema=Schema(
@@ -89,6 +86,9 @@ def benchmark(args):
     ) as torch_profiler:
         for batch_idx, data in enumerate(train_data_loader):
             x, y = data
+            # TODO(anj): Make this part of the transform instead of this conditional.
+            if args.model == "mnist":
+                x = x.view(x.shape[0], -1)
             step += 1
             cuda_start.record()
             x, y = x.cuda(), y.cuda()
@@ -124,8 +124,9 @@ def run_benchmark(rank, world_size, args):
 
 def setup(local_rank, world_size):
     node_list = os.environ.get("SLURM_JOB_NODELIST")
-    hostnames = subprocess.check_output(["scontrol", "show", "hostnames",
-                                        node_list])
+    hostnames = subprocess.check_output(
+         ["scontrol", "show", "hostnames", node_list]
+     )
     master_host = hostnames.split()[0].decode("utf-8")
 
     nnodes = int(os.environ.get("SLURM_NNODES"))
@@ -154,26 +155,31 @@ def run_dd(demo_fn, world_size, args):
 
     # os.environ["NCCL_DEBUG"] = "INFO"
 
-    mp.spawn(demo_fn,
-             args=(world_size, args,),
-             nprocs=world_size,
-             join=True)
+    mp.spawn(
+         demo_fn,
+         args=(
+             world_size,
+             args,
+         ),
+         nprocs=world_size,
+         join=True,
+     )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--steps', type=int, default=1)
-    parser.add_argument('--seq_size', type=int, default=1)
-    parser.add_argument('--lr', type=float, default=1e-4)
-    parser.add_argument('--batch_size', type=int, default=2)
-    parser.add_argument('--ddp', action="store_true")
-    parser.add_argument('--fsdp', action="store_true")
-    parser.add_argument('--spmd', action="store_true")
-    parser.add_argument('--log_freq', type=int, default=1)
-    parser.add_argument('--gpus', type=int, default=-1)
-    parser.add_argument('--tb_wait', type=int, default=1000)
-    parser.add_argument('--compiler_backend', type=str)
-    parser.add_argument('--model', type=str)
+    parser.add_argument("--steps", type=int, default=1)
+    parser.add_argument("--seq_size", type=int, default=1)
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--batch_size", type=int, default=2)
+    parser.add_argument("--ddp", action="store_true")
+    parser.add_argument("--fsdp", action="store_true")
+    parser.add_argument("--spmd", action="store_true")
+    parser.add_argument("--log_freq", type=int, default=1)
+    parser.add_argument("--gpus", type=int, default=-1)
+    parser.add_argument("--tb_wait", type=int, default=1000)
+    parser.add_argument("--compiler_backend", type=str)
+    parser.add_argument("--model", type=str)
 
     args = parser.parse_args()
 
