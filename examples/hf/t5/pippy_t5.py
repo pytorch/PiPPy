@@ -225,7 +225,6 @@ def run_master(pp_ranks, args):
     t5.to(
         device
     )  # TODO: Delete this after https://github.com/pytorch/PiPPy/issues/142
-    t5.eval()
     print(t5.config)
     print(f"T5 total number of params = {get_number_of_params(t5) // 10 ** 6}M")
 

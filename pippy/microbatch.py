@@ -1,4 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+import logging
+from typing import Any
 from pippy.IR import TrivialLossWrapper
 import torch
 
@@ -323,10 +325,11 @@ def merge_chunks(chunks, chunk_spec, _debug_mask_minibatches: bool = False):
 
 
 def gen_output_chunk_spec(loss_spec, loss_reducer):
+    output_chunk_spec: Any = None
     if loss_spec is None:
-        return None
+        pass
     elif loss_spec == TrivialLossWrapper.loss_spec:
-        return loss_reducer
+        output_chunk_spec = loss_reducer
     elif isinstance(loss_spec, dict):
         output_chunk_spec = {
             k: loss_reducer
@@ -334,6 +337,11 @@ def gen_output_chunk_spec(loss_spec, loss_reducer):
             else TensorChunkSpec(DEFAULT_CHUNK_DIM)
             for k in loss_spec
         }
-        return output_chunk_spec
     else:
         raise ValueError(f"Cannot generate output chunk spec for {loss_spec}")
+
+    logging.info(
+        f"Generated output_chunk_spec for loss_spec {loss_spec}: "
+        f"{output_chunk_spec}"
+    )
+    return output_chunk_spec

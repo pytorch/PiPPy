@@ -961,12 +961,19 @@ class Pipe(torch.nn.Module):
                 )
                 split.recompile()
                 has_loss_and_backward = True
+                logging.info(
+                    "Pipeline is in training mode, backward pass generated"
+                )
             else:
                 logging.warning(
                     "Did not find any loss value from model output, your pipeline will be in inference mode. "
                     "If you want your pipeline to be in training mode, please specify a loss value via "
                     "`output_loss_value_spec`."
                 )
+        else:
+            logging.info(
+                "Pipeline is in evaluation mode, backward pass not generated"
+            )
 
         return Pipe(
             split,
