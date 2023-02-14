@@ -5,7 +5,7 @@ import logging
 import os
 import types
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
 import torch
 import torch.distributed
@@ -328,6 +328,7 @@ def wrap(
         if p.name not in input_names
     }
     MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.TRANSMIT
+    output_loss_value_spec: Any = None
     if isinstance(output_chunk_spec, dict):
         output_loss_value_spec = {
             k: isinstance(v, CustomReducer)
