@@ -402,7 +402,7 @@ def run_master(pp_ranks, training_args, model_args, data_args):
                          'logits': TensorChunkSpec(0),
                          'encoder_last_hidden_state': TensorChunkSpec(0),
                         }
-    if model.config.use_cache:
+    if model.__class__.__name__ == 'T5ForConditionalGeneration' and model.config.use_cache:
         # past_key_values, optional, returned when use_cache=True is passed or when config.use_cache=True.
         output_chunk_spec['past_key_values'] = [
             [TensorChunkSpec(0) for _ in range(model.config.num_decoder_layers)] for _ in range(4)

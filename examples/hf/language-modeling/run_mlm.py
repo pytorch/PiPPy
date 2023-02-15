@@ -401,6 +401,8 @@ def run_master(pp_ranks, training_args, model_args, data_args):
     model.resize_token_embeddings(len(tokenizer))
 
     # =============================================== PiPPy change start ===============================================
+    # Setting model to training mode so that PiPPy would automatically look for "loss" and generate backward pass
+    model.train()
     # The kwarg keywords are needed for FX tracing's concrete_args setting (in the `wrap` call)
     kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0),
                          'labels': TensorChunkSpec(0), 'attention_mask': TensorChunkSpec(0)}

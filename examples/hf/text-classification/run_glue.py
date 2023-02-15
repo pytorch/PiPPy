@@ -386,7 +386,8 @@ def run_master(pp_ranks, training_args, model_args, data_args):
     )
 
     # =============================================== PiPPy change start ===============================================
-
+    # Setting model to training mode so that PiPPy would automatically look for "loss" and generate backward pass
+    model.train()
     model.config.problem_type = "single_label_classification"  # "regression", "single_label_classification", or "multi_label_classification"
     kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'token_type_ids': TensorChunkSpec(0),
                          'labels': TensorChunkSpec(0), 'attention_mask': TensorChunkSpec(0)}
