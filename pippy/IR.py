@@ -951,7 +951,7 @@ class Pipe(torch.nn.Module):
         has_loss_and_backward = False
         generated_loss_spec = output_loss_value_spec
 
-        if mod.training:
+        if mod.training or output_loss_value_spec is not None:
             loss_node, output_node, generated_loss_spec = _find_loss_output(
                 mod, split.graph, output_loss_value_spec
             )
