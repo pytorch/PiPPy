@@ -116,12 +116,46 @@ jobs:
       - name: Run auto-split test
         run: python test/local_test_autosplit.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
 
-  hf_example_tests:
+  hf_examples_without_trainer:
     runs-on: linux.12xlarge
     strategy:
       matrix:
         python-version: ["3.9"]
         replicate: ["0", "1"]
+        schedule: ["FillDrain"]
+    env:
+      OMP_NUM_THREADS: "1"
+    container:
+      image: python:${{ matrix.python-version }}
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 pytest pytest-cov numpy datasets evaluate scikit-learn sacrebleu
+          if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
+      - name: Install pavel's huggingface fork
+        run: pip install git+https://github.com/huggingface/transformers.git@main sentencepiece six sacremoses
+      - name: Install pippy
+        run: "python setup.py install"
+      - name: Test min-GPT
+        run: |
+          git config --global --add safe.directory /__w/tau/tau
+          git submodule update --init test/minGPT
+          python test/min_gpt_tracing.py
+      - name: Run GPT2 example
+        run: python examples/hf/gpt2/pippy_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+      - name: Run BERT example
+        run: python examples/hf/bert/pippy_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+      - name: Run T5 example
+        run: python examples/hf/t5/pippy_t5.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+
+  hf_examples_with_trainer:
+    runs-on: linux.12xlarge
+    strategy:
+      matrix:
+        python-version: ["3.9"]
         schedule: ["FillDrain", "1F1B"]
     env:
       OMP_NUM_THREADS: "1"
@@ -139,12 +173,6 @@ jobs:
         run: pip install git+https://github.com/huggingface/transformers.git@main sentencepiece six sacremoses
       - name: Install pippy
         run: "python setup.py install"
-      - name: Run GPT2 example
-        run: python examples/hf/gpt2/pippy_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
-      - name: Run BERT example
-        run: python examples/hf/bert/pippy_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
-      - name: Run T5 example
-        run: python examples/hf/t5/pippy_t5.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: "HF Causal Language Modeling: fine-tune GPT-2 on WikiText-2"
         run: python examples/hf/language-modeling/run_clm.py --dp_group_size=2 --pp_group_size=8 --model_name_or_path gpt2 --dataset_name wikitext --dataset_config_name wikitext-2-raw-v1 --per_device_train_batch_size 8 --per_device_eval_batch_size 8 --do_train --do_eval --output_dir /tmp/test-clm --max_steps=3 --overwrite_output_dir
       - name: "HF Masked Language Modeling: fine-tune RoBERTa on WikiText-2"
@@ -157,11 +185,6 @@ jobs:
       - name: "HF Translation: fine-tune BART model translation English to Romanian"
         run: >
           python examples/hf/translation/run_translation.py --model_name_or_path facebook/bart-base --do_train --source_lang en --target_lang ro --source_prefix "translate English to Romanian: " --dataset_name wmt16 --dataset_config_name ro-en --output_dir /tmp/tst-translation --per_device_train_batch_size=8 --per_device_eval_batch_size=8 --overwrite_output_dir --predict_with_generate --max_steps=10  --dp_group_size=2 --pp_group_size=8
-      - name: Test min-GPT
-        run: |
-          git config --global --add safe.directory /__w/tau/tau
-          git submodule update --init test/minGPT
-          python test/min_gpt_tracing.py
 
   integration_test_gpu:
     runs-on: linux.16xlarge.nvidia.gpu
