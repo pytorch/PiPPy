@@ -126,12 +126,12 @@ if local_rank == 0:
     kwargs_chunk_spec: Any = {}
     # The output of our model is now a `loss` value, which is a scalar tensor.
     # PiPPy's default is to concatenate outputs, but that will not
-    # work with a scalar tensor. So we use a CustomReducer instead
+    # work with a scalar tensor. So we use a LossReducer instead
     # to merge together the loss values from each microbatch into a
     # single unified loss.
-    from pippy.microbatch import CustomReducer
+    from pippy.microbatch import LossReducer
 
-    output_chunk_spec: Any = CustomReducer(0.0, lambda a, b: a + b)
+    output_chunk_spec: Any = LossReducer(0.0, lambda a, b: a + b)
 
     # Instantiate the driver as usual.
     driver = PipelineDriverFillDrain(
