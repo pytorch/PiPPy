@@ -21,7 +21,7 @@ from pippy.backward import (
 )
 from pippy.events import EventRecorder, EventsContext, Event, Allocator
 from pippy.microbatch import (
-    CustomReducer,
+    LossReducer,
     sum_reducer,
     gen_output_chunk_spec,
     split_args_kwargs_into_chunks,
@@ -1352,7 +1352,7 @@ class PipelineDriverBase(torch.nn.Module):
         _record_mem_dumps=False,
         checkpoint=False,
         use_c10d=False,
-        loss_reducer: CustomReducer = sum_reducer,
+        loss_reducer: LossReducer = sum_reducer,
     ):
         super().__init__()
         self.pipe = pipe
@@ -2036,7 +2036,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         _record_mem_dumps=False,
         checkpoint=False,
         use_c10d=False,
-        loss_reducer: CustomReducer = sum_reducer,
+        loss_reducer: LossReducer = sum_reducer,
     ):
         super().__init__(
             pipe,
@@ -2195,7 +2195,7 @@ class PipelineDriver1F1B(PipelineDriverFillDrain):
         _record_mem_dumps=False,
         checkpoint=False,
         use_c10d=False,
-        loss_reducer: CustomReducer = sum_reducer,
+        loss_reducer: LossReducer = sum_reducer,
     ):
         # In 1F1B with backward stages, the maximum number of outstanding
         # micro-batches equals the number of pipeline stages
@@ -2237,7 +2237,7 @@ class PipelineDriverInterleaved1F1B(PipelineDriver1F1B):
         _record_mem_dumps=False,
         checkpoint=False,
         use_c10d=False,
-        loss_reducer: CustomReducer = sum_reducer,
+        loss_reducer: LossReducer = sum_reducer,
     ):
         super().__init__(
             pipe,

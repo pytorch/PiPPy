@@ -13,7 +13,11 @@ class CustomReducer:
         self.reduce_fn = reduce_fn
 
 
-sum_reducer = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
+class LossReducer(CustomReducer):
+    pass
+
+
+sum_reducer = LossReducer(torch.tensor(0.0), lambda a, b: a + b)
 
 DEFAULT_CHUNK_DIM = 0
 

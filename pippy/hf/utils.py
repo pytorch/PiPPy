@@ -30,7 +30,7 @@ import pippy.hf.roberta as roberta
 import pippy.hf.t5 as t5
 from pippy import PipelineDriverFillDrain
 from pippy.IR import MultiUseParameterConfig, Pipe
-from pippy.microbatch import CustomReducer
+from pippy.microbatch import LossReducer
 
 logger = logging.getLogger(__name__)
 
@@ -331,8 +331,7 @@ def wrap(
     output_loss_value_spec: Any = None
     if isinstance(output_chunk_spec, dict):
         output_loss_value_spec = {
-            k: isinstance(v, CustomReducer)
-            for k, v in output_chunk_spec.items()
+            k: isinstance(v, LossReducer) for k, v in output_chunk_spec.items()
         }
     model_config = model.config
 
