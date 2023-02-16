@@ -11,6 +11,7 @@ import torch
 d_hid = 512
 bs = 256
 
+
 class ExampleCode(torch.nn.Module):
     def __init__(self):
         super().__init__()
@@ -47,7 +48,7 @@ def run_master(_, args):
         num_chunks=4,
         schedule=args.schedule,
         checkpoint=bool(args.checkpoint),
-        _debug_mask_minibatches=True, # for numerical equivalence test only
+        _debug_mask_minibatches=True,  # for numerical equivalence test only
     )
 
     # Warm up and correctness runs

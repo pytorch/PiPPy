@@ -1,7 +1,11 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import logging
 from typing import Any, Callable, List, Optional
-from pippy.PipelineDriver import PipelineDriver1F1B, PipelineDriverFillDrain, PipelineDriverInterleaved1F1B
+from pippy.PipelineDriver import (
+    PipelineDriver1F1B,
+    PipelineDriverFillDrain,
+    PipelineDriverInterleaved1F1B,
+)
 import pippy.fx as fx
 from pippy.IR import MultiUseParameterConfig, Pipe
 from pippy.microbatch import LossReducer, sum_reducer
@@ -15,14 +19,13 @@ PIPELINE_SCHEDULE_DRIVERS = {
     "Interleaved1F1B": PipelineDriverInterleaved1F1B,
 }
 
+
 def compile(
     mod: torch.nn.Module,
     num_ranks: int,
     num_chunks: int,
     schedule: Optional[str] = "FillDrain",
-    split_policy: Optional[
-        Callable[[fx.GraphModule], fx.GraphModule]
-    ] = None,
+    split_policy: Optional[Callable[[fx.GraphModule], fx.GraphModule]] = None,
     rank: int = None,
     ranks: List[int] = None,
     tracer=None,
