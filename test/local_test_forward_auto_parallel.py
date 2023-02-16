@@ -16,7 +16,6 @@ from pippy.PipelineDriver import (
     PipelineDriverInterleaved1F1B,
 )
 from pippy.auto_parallelization import AutoParallelConfig, dp_auto_parallel
-from pippy.microbatch import TensorChunkSpec
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
@@ -79,12 +78,9 @@ def run_master(_, args):
     )
     print(ec_pipe.split_gm)
 
-    output_chunk_spec = {"out": TensorChunkSpec(0)}
-
     pipe_driver: PipelineDriverBase = schedules[args.schedule](
         ec_pipe,
         5,
-        output_chunk_spec,
         args.world_size,
         _debug_mask_minibatches=True,
         _record_mem_dumps=bool(args.record_mem_dumps),

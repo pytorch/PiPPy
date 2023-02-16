@@ -22,7 +22,6 @@ from pippy.PipelineDriver import (
     PipelineDriverInterleaved1F1B,
 )
 from pippy.microbatch import (
-    CustomReducer,
     split_args_kwargs_into_chunks,
 )
 
@@ -148,12 +147,9 @@ def run_master(_, args):
     ec_pipe = Pipe.from_tracing(wrapper, MULTI_USE_PARAM_CONFIG)
     print(ec_pipe.split_gm)
 
-    output_chunk_spec = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
-
     pipe_driver: PipelineDriverBase = schedules[args.schedule](
         ec_pipe,
         CHUNKS,
-        output_chunk_spec,
         args.world_size,
         _debug_mask_minibatches=DEBUG_MASK_MINIBATCHES,
         _record_mem_dumps=bool(args.record_mem_dumps),

@@ -15,7 +15,7 @@ from pippy.IR import MultiUseParameterConfig, Pipe, LossWrapper, PipeSplitWrappe
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverInterleaved1F1B, \
     PipelineDriverBase
 from pippy.events import EventsContext
-from pippy.microbatch import CustomReducer, TensorChunkSpec
+from pippy.microbatch import sum_reducer, TensorChunkSpec
 from pippy.visualizer import events_to_json
 from resnet import ResNet50
 
@@ -79,12 +79,11 @@ def run_master(_, args):
     pipe = Pipe.from_tracing(wrapper, MULTI_USE_PARAM_CONFIG)
     pipe.to(args.device)
 
-    output_chunk_spec = (TensorChunkSpec(0), CustomReducer(torch.tensor(0.0), lambda a, b: a + b))
+    output_chunk_spec = (TensorChunkSpec(0), sum_reducer)
     pipe_driver: PipelineDriverBase = schedules[args.schedule](pipe, chunks,
-                                                               output_chunk_spec,
                                                                len(all_worker_ranks),
                                                                all_ranks=all_worker_ranks,
-                                                               _debug_mask_minibatches=False,
+                                                               output_chunk_spec=output_chunk_spec,
                                                                _record_mem_dumps=bool(args.record_mem_dumps),
                                                                checkpoint=bool(args.checkpoint))
 

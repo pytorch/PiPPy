@@ -14,7 +14,6 @@ from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, Pi
     PipelineDriverBase
 from pippy.events import EventsContext
 from pippy.hf import PiPPyHFTracer
-from pippy.microbatch import CustomReducer, TensorChunkSpec
 from pippy.visualizer import events_to_json
 
 PROFILING_ENABLED = True
@@ -97,9 +96,8 @@ def run_master(_, args):
     for i, sm in enumerate(bert_pipe.split_gm.children()):
         print(f"submod_{i} {get_number_of_params(sm) // 10 ** 6}M params")
 
-    output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b), 'logits': TensorChunkSpec(0)}
     pipe_driver: PipelineDriverBase = schedules[args.schedule](bert_pipe, chunks,
-                                                               output_chunk_spec, len(all_worker_ranks),
+                                                               len(all_worker_ranks),
                                                                all_ranks=all_worker_ranks,
                                                                _debug_mask_minibatches=False,
                                                                _record_mem_dumps=bool(args.record_mem_dumps),

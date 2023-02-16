@@ -26,7 +26,6 @@ from pippy.PipelineDriver import (
 from pippy import split_on_size_threshold, split_into_equal_size
 from pippy.events import EventsContext
 from pippy.hf import PiPPyHFTracer
-from pippy.microbatch import CustomReducer, TensorChunkSpec
 from pippy.visualizer import events_to_json
 
 PROFILING_ENABLED = True
@@ -185,15 +184,6 @@ def transform_into_pipeline(
     # t5_pipe.to(device) TODO: Uncomment this after https://github.com/pytorch/PiPPy/issues/142
     # t5_pipe(**t5_input_dict)
 
-    if args.train:
-        output_chunk_spec = {"loss": CustomReducer(torch.tensor(0.0), lambda a, b: a + b)}
-    else:
-        output_chunk_spec = {}
-    output_chunk_spec.update({
-        "logits": TensorChunkSpec(0),
-        "encoder_last_hidden_state": TensorChunkSpec(0),
-    })
-
     # We can use c10d for inference mode now
     use_c10d = False if args.train else True
     print(f"use_c10d: {use_c10d}")
@@ -201,7 +191,6 @@ def transform_into_pipeline(
     pipe_driver: PipelineDriverBase = schedules[args.schedule](
         t5_pipe,
         chunks,
-        output_chunk_spec,
         world_size=len(all_worker_ranks),
         all_ranks=all_worker_ranks,
         _debug_mask_minibatches=False,
@@ -236,7 +225,6 @@ def run_master(pp_ranks, args):
     t5.to(
         device
     )  # TODO: Delete this after https://github.com/pytorch/PiPPy/issues/142
-    t5.eval()
     print(t5.config)
     print(f"T5 total number of params = {get_number_of_params(t5) // 10 ** 6}M")
 

@@ -1,4 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+import logging
+from typing import Any
+from pippy.IR import TrivialLossWrapper
 import torch
 
 from torch.utils._pytree import tree_flatten, tree_unflatten
@@ -9,6 +12,8 @@ class CustomReducer:
         self.init_value = init_value
         self.reduce_fn = reduce_fn
 
+
+sum_reducer = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
 
 DEFAULT_CHUNK_DIM = 0
 
@@ -53,8 +58,8 @@ def shard_dict_of_args(
         arg_specs.append(spec)
 
         chunk_spec = args_chunk_spec[arg_key]
-        chunk_spec_flat, _ = tree_flatten(chunk_spec)
         if chunk_spec is not None:
+            chunk_spec_flat, _ = tree_flatten(chunk_spec)
             if len(flat) != len(chunk_spec_flat):
                 raise ValueError(
                     f"Argument value {arg} did not have the same number of "
@@ -232,7 +237,13 @@ def merge_chunks(chunks, chunk_spec, _debug_mask_minibatches: bool = False):
     #       value = ([A, [B, C]], D)
 
     # Preliminary: flatten the chunk spec
-    spec_flattened, flatten_spec = tree_flatten(chunk_spec)
+    if chunk_spec is not None:
+        spec_flattened, flatten_spec = tree_flatten(chunk_spec)
+    else:
+        # If chunk_spec is not provided, we will merge chunks along the default dimension (0), for all output fields
+        # We obtain the output structure by flattening chunk 0 and generate the chunk_spec
+        chunk0_flat, flatten_spec = tree_flatten(chunks[0])
+        spec_flattened = [TensorChunkSpec(DEFAULT_CHUNK_DIM)] * len(chunk0_flat)
 
     # Stage 1: flatten chunks
     # chunks_flattened : [num chunks, num args]
@@ -311,3 +322,26 @@ def merge_chunks(chunks, chunk_spec, _debug_mask_minibatches: bool = False):
 
     # Stage 4: Unflatten combined args
     return tree_unflatten(args_flattened, flatten_spec)
+
+
+def gen_output_chunk_spec(loss_spec, loss_reducer):
+    output_chunk_spec: Any = None
+    if loss_spec is None:
+        pass
+    elif loss_spec == TrivialLossWrapper.loss_spec:
+        output_chunk_spec = loss_reducer
+    elif isinstance(loss_spec, dict):
+        output_chunk_spec = {
+            k: loss_reducer
+            if loss_spec[k]
+            else TensorChunkSpec(DEFAULT_CHUNK_DIM)
+            for k in loss_spec
+        }
+    else:
+        raise ValueError(f"Cannot generate output chunk spec for {loss_spec}")
+
+    logging.info(
+        f"Generated output_chunk_spec for loss_spec {loss_spec}: "
+        f"{output_chunk_spec}"
+    )
+    return output_chunk_spec

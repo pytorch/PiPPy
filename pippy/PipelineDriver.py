@@ -20,7 +20,13 @@ from pippy.backward import (
     _null_coalesce_accumulate,
 )
 from pippy.events import EventRecorder, EventsContext, Event, Allocator
-from pippy.microbatch import split_args_kwargs_into_chunks, merge_chunks
+from pippy.microbatch import (
+    CustomReducer,
+    sum_reducer,
+    gen_output_chunk_spec,
+    split_args_kwargs_into_chunks,
+    merge_chunks,
+)
 
 # TODO: Define the strategy for replicating the computation. In particular, we will likely make the assumption
 # that the operations in the program are batch-wise commutative (my term), i.e. we can guarantee equivalence
@@ -1335,17 +1341,18 @@ class PipelineDriverBase(torch.nn.Module):
         self,
         pipe: Pipe,
         chunks: int,
-        output_chunk_spec,
         world_size: int,
         all_ranks: List[int] = None,
         args_chunk_spec=None,
         kwargs_chunk_spec=None,
+        output_chunk_spec=None,
         _debug_mask_minibatches: bool = False,
         max_outstanding=None,
         interleave_stages=False,
         _record_mem_dumps=False,
         checkpoint=False,
         use_c10d=False,
+        loss_reducer: CustomReducer = sum_reducer,
     ):
         super().__init__()
         self.pipe = pipe
@@ -1354,7 +1361,13 @@ class PipelineDriverBase(torch.nn.Module):
         self.all_ranks = all_ranks
         self.args_chunk_spec = args_chunk_spec
         self.kwargs_chunk_spec = kwargs_chunk_spec
-        self.output_chunk_spec = output_chunk_spec
+        self.loss_reducer = loss_reducer
+        self.output_chunk_spec = (
+            output_chunk_spec
+            if output_chunk_spec
+            else gen_output_chunk_spec(pipe.loss_spec, loss_reducer)
+        )
+
         # Maximum outstanding micro-batches allowed by the pipeline schedule
         # None means no limit
         self.max_outstanding: Optional[int] = max_outstanding
@@ -2011,11 +2024,11 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         self,
         pipe: Pipe,
         chunks: int,
-        output_chunk_spec,
         world_size: int,
         all_ranks: List[int] = None,
         args_chunk_spec=None,
         kwargs_chunk_spec=None,
+        output_chunk_spec=None,
         single_loss: bool = False,
         _debug_mask_minibatches: bool = False,
         max_outstanding=None,
@@ -2023,21 +2036,23 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         _record_mem_dumps=False,
         checkpoint=False,
         use_c10d=False,
+        loss_reducer: CustomReducer = sum_reducer,
     ):
         super().__init__(
             pipe,
             chunks,
-            output_chunk_spec,
             world_size,
             all_ranks,
             args_chunk_spec,
             kwargs_chunk_spec,
+            output_chunk_spec,
             _debug_mask_minibatches,
             max_outstanding=max_outstanding,
             interleave_stages=interleave_stages,
             _record_mem_dumps=_record_mem_dumps,
             checkpoint=checkpoint,
             use_c10d=use_c10d,
+            loss_reducer=loss_reducer,
         )
         self.single_loss = single_loss
 
@@ -2169,17 +2184,18 @@ class PipelineDriver1F1B(PipelineDriverFillDrain):
         self,
         pipe: Pipe,
         chunks: int,
-        output_chunk_spec,
         world_size: int,
         all_ranks: List[int] = None,
         args_chunk_spec=None,
         kwargs_chunk_spec=None,
+        output_chunk_spec=None,
         single_loss: bool = False,
         _debug_mask_minibatches: bool = False,
         interleave_stages=False,
         _record_mem_dumps=False,
         checkpoint=False,
         use_c10d=False,
+        loss_reducer: CustomReducer = sum_reducer,
     ):
         # In 1F1B with backward stages, the maximum number of outstanding
         # micro-batches equals the number of pipeline stages
@@ -2190,11 +2206,11 @@ class PipelineDriver1F1B(PipelineDriverFillDrain):
         super().__init__(
             pipe,
             chunks,
-            output_chunk_spec,
             world_size,
             all_ranks,
             args_chunk_spec,
             kwargs_chunk_spec,
+            output_chunk_spec,
             single_loss,
             _debug_mask_minibatches,
             max_outstanding=max_outstanding,
@@ -2202,6 +2218,7 @@ class PipelineDriver1F1B(PipelineDriverFillDrain):
             _record_mem_dumps=_record_mem_dumps,
             checkpoint=checkpoint,
             use_c10d=use_c10d,
+            loss_reducer=loss_reducer,
         )
 
 
@@ -2210,29 +2227,31 @@ class PipelineDriverInterleaved1F1B(PipelineDriver1F1B):
         self,
         pipe: Pipe,
         chunks: int,
-        output_chunk_spec,
         world_size: int,
         all_ranks: List[int] = None,
         args_chunk_spec=None,
         kwargs_chunk_spec=None,
+        output_chunk_spec=None,
         single_loss: bool = False,
         _debug_mask_minibatches: bool = False,
         _record_mem_dumps=False,
         checkpoint=False,
         use_c10d=False,
+        loss_reducer: CustomReducer = sum_reducer,
     ):
         super().__init__(
             pipe,
             chunks,
-            output_chunk_spec,
             world_size,
             all_ranks,
             args_chunk_spec,
             kwargs_chunk_spec,
+            output_chunk_spec,
             single_loss,
             _debug_mask_minibatches,
             interleave_stages=True,
             _record_mem_dumps=_record_mem_dumps,
             checkpoint=checkpoint,
             use_c10d=use_c10d,
+            loss_reducer=loss_reducer,
         )

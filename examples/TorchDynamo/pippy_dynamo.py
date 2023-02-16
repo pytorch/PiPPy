@@ -21,7 +21,6 @@ from pippy.PipelineDriver import (
     PipelineDriver1F1B,
     PipelineDriverInterleaved1F1B,
 )
-from pippy.microbatch import TensorChunkSpec
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
@@ -70,7 +69,6 @@ def run_master(_, args):
     bs = 503
 
     # Chunking parameters
-    output_chunk_spec = (TensorChunkSpec(0),)
     chunks = 1
 
     # Ask Dynamo to let PiPPy annotation stay in graph
@@ -94,7 +92,6 @@ def run_master(_, args):
         pipe_driver: PipelineDriverBase = schedules[args.schedule](
             pipe,
             chunks,
-            output_chunk_spec,
             args.world_size,
             checkpoint=bool(args.checkpoint),
             use_c10d=True,

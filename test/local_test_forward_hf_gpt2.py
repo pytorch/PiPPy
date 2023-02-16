@@ -21,7 +21,6 @@ from pippy.PipelineDriver import (
     PipelineDriverBase,
 )
 from pippy.hf import PiPPyHFTracer
-from pippy.microbatch import TensorChunkSpec
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
@@ -78,12 +77,9 @@ def run_master(_, args):
 
     assert gpt2.config.n_layer + 2 == len(list(gpt2_pipe.split_gm.children()))
 
-    output_chunk_spec = {"last_hidden_state": TensorChunkSpec(0)}
-
     pipe_driver: PipelineDriverBase = schedules[args.schedule](
         gpt2_pipe,
         5,
-        output_chunk_spec,
         args.world_size,
         _debug_mask_minibatches=True,
         _record_mem_dumps=bool(args.record_mem_dumps),

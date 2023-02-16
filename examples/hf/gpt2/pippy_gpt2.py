@@ -15,7 +15,7 @@ from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, Pi
     PipelineDriverBase
 from pippy.events import EventsContext
 from pippy.hf import PiPPyHFTracer
-from pippy.microbatch import CustomReducer, TensorChunkSpec, Replicate
+from pippy.microbatch import sum_reducer, TensorChunkSpec, Replicate
 from pippy.visualizer import events_to_json
 
 PROFILING_ENABLED = True
@@ -129,13 +129,13 @@ def run_gspmd(pp_ranks, args):
         print(f"submod_{i} {get_number_of_params(sm) // 10 ** 6}M params")
 
     kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'labels': TensorChunkSpec(0), 'position_ids': Replicate}
-    output_chunk_spec = {'loss': CustomReducer(torch.tensor(0.0), lambda a, b: a + b), 'logits': TensorChunkSpec(0),
+    output_chunk_spec = {'loss': sum_reducer, 'logits': TensorChunkSpec(0),
                          'past_key_values': [[TensorChunkSpec(0) for _ in range(2)] for _ in range(config.n_layer)]}
     pipe_driver: PipelineDriverBase = schedules[args.schedule](gpt2_pipe, chunks,
-                                                               output_chunk_spec, len(all_worker_ranks),
+                                                               len(all_worker_ranks),
                                                                all_ranks=all_worker_ranks,
                                                                kwargs_chunk_spec = kwargs_chunk_spec,
-                                                               _debug_mask_minibatches=False,
+                                                               output_chunk_spec=output_chunk_spec,
                                                                _record_mem_dumps=bool(args.record_mem_dumps),
                                                                checkpoint=bool(args.checkpoint),
                                                               )

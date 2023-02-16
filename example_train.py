@@ -137,10 +137,10 @@ if local_rank == 0:
     driver = PipelineDriverFillDrain(
         pipe,
         64,
+        world_size=world_size,
         args_chunk_spec=args_chunk_spec,
         kwargs_chunk_spec=kwargs_chunk_spec,
         output_chunk_spec=output_chunk_spec,
-        world_size=world_size,
     )
 
     # Instantiate remote Adam optimizers. `instantiate_optimizer` takes the

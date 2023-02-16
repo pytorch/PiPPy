@@ -16,7 +16,6 @@ from pippy.PipelineDriver import (
     PipelineDriver1F1B,
     PipelineDriverInterleaved1F1B,
 )
-from pippy.microbatch import TensorChunkSpec
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
@@ -81,14 +80,12 @@ def inspect_split_module(
 
 # Common function to run pipeline with input and check equivalence
 def run_pipe_driver(ec_pipe, args):
-    output_chunk_spec = {"out": TensorChunkSpec(0)}
 
     nstages = len(list(ec_pipe.split_gm.children()))
 
     pipe_driver: PipelineDriverBase = schedules[args.schedule](
         ec_pipe,
         nstages,
-        output_chunk_spec,
         args.world_size,
         _debug_mask_minibatches=True,
         _record_mem_dumps=bool(args.record_mem_dumps),

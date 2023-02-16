@@ -21,7 +21,6 @@ from pippy.PipelineDriver import (
     PipelineDriverBase,
     PipelineDriverInterleaved1F1B,
 )
-from pippy.microbatch import CustomReducer
 
 # TODOs for implementing forward/backward/loss with schedules:
 # * ability to switch between full-batch loss vs. per-microbatch loss. shen mentioned
@@ -115,12 +114,9 @@ def run_master(pp_ranks, args):
     if args.rank == 0:
         print(ec_pipe.split_gm)
 
-    output_chunk_spec = CustomReducer(torch.tensor(0.0), lambda a, b: a + b)
-
     pipe_driver: PipelineDriverBase = schedules[args.schedule](
         ec_pipe,
         CHUNKS,
-        output_chunk_spec,
         args.pp_group_size,
         all_ranks=pp_ranks,
         _debug_mask_minibatches=DEBUG_MASK_MINIBATCHES,

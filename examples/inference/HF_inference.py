@@ -12,7 +12,6 @@ from pippy.IR import MultiUseParameterConfig, Pipe
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B, PipelineDriverInterleaved1F1B, \
     PipelineDriverBase
 from pippy.hf import PiPPyHFTracer
-from pippy.microbatch import TensorChunkSpec
 from pippy import split_on_size_threshold, split_into_equal_size
 from transformers import  AutoModelForSeq2SeqLM
 from transformers import OPTModel, BloomModel
@@ -135,16 +134,7 @@ def run_master(pp_ranks, args):
         total_params += params
     print(f"total {total_params // 10 ** 6}M params")
 
-    if 't5' in args.model_name:
-        output_chunk_spec = {"logits": TensorChunkSpec(0),"encoder_last_hidden_state": TensorChunkSpec(0)}
-    elif 'opt' or 'bloom' in args.model_name:
-        output_chunk_spec = {"logits": TensorChunkSpec(0)}
-    elif 'regnet' in args.model_name:
-        output_chunk_spec = {"last_hidden_state": TensorChunkSpec(0), 'hidden_states':TensorChunkSpec(0)}
-    
-
     pipe_driver: PipelineDriverBase = schedules[args.schedule](model_pipe, chunks,
-                                                               output_chunk_spec,
                                                                world_size=len(all_worker_ranks),
                                                                all_ranks=all_worker_ranks,
                                                                 )
