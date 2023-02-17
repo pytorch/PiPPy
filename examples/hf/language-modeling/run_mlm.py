@@ -33,6 +33,7 @@ import datasets
 from datasets import load_dataset
 
 import evaluate
+import pippy
 import transformers
 from transformers import (
     CONFIG_MAPPING,
@@ -50,7 +51,7 @@ from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
 from pippy import run_pippy
-from pippy.hf import PiPPyTrainingArguments, PiPPyTrainer, wrap
+from pippy.hf import PiPPyTrainingArguments, PiPPyTrainer, roberta, PiPPyHFTracer
 from pippy.microbatch import TensorChunkSpec
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
@@ -400,17 +401,37 @@ def run_master(pp_ranks, training_args, model_args, data_args):
 
     model.resize_token_embeddings(len(tokenizer))
 
+    model.to(training_args.device)
+
+    training_args.label_names = ['labels']  # https://github.com/huggingface/transformers/blob/c8b6ae858d61e5bc10e388d095aa74f7690d1021/src/transformers/trainer.py#L629-L630
+
     # =============================================== PiPPy change start ===============================================
     # Setting model to training mode so that PiPPy would automatically look for "loss" and generate backward pass
     model.train()
-    # The kwarg keywords are needed for FX tracing's concrete_args setting (in the `wrap` call)
-    kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0),
-                         'labels': TensorChunkSpec(0), 'attention_mask': TensorChunkSpec(0)}
-    model = wrap(model,
-                 training_args,
-                 pp_ranks,
-                 kwargs_chunk_spec=kwargs_chunk_spec)
-    training_args.label_names = ['labels']  # https://github.com/huggingface/transformers/blob/c8b6ae858d61e5bc10e388d095aa74f7690d1021/src/transformers/trainer.py#L629-L630
+
+    logger.info("[PiPPy] Splitting model ...")
+    num_ranks=len(pp_ranks)
+    roberta.split(model, num_ranks)
+
+    # Prepare concrete args in case FX tracing needs them
+    inputs = ['input_ids', 'labels', 'attention_mask']
+    concrete_args = pippy.create_default_args(model,
+                                              except_keys=inputs)
+
+    # Compile into pipeline parallel, distributed model
+    pipe_mod = pippy.compile(
+        model,
+        num_ranks,
+        num_chunks=training_args.chunks or num_ranks,
+        ranks=pp_ranks,
+        tracer=PiPPyHFTracer(),
+        checkpoint=bool(training_args.checkpoint),
+        concrete_args=concrete_args,
+    )
+    pipe_mod.init_data_parallel(dp_group_size=training_args.dp_group_size)
+    pipe_mod.config = model.config
+    model = pipe_mod
+
     # ================================================ PiPPy change end ================================================
 
     # Preprocessing the datasets.
@@ -576,7 +597,7 @@ def run_master(pp_ranks, training_args, model_args, data_args):
         else None,
     )
     # =============================================== PiPPy change start ===============================================
-    trainer._signature_columns = list(kwargs_chunk_spec.keys())
+    trainer._signature_columns = inputs
     # ================================================ PiPPy change end ================================================
 
     # Training
