@@ -25,6 +25,8 @@ def create_default_args(
     mod: torch.nn.Module,
     except_keys: List = None,
 ):
+    if except_keys is None:
+        except_keys = []
     sig = inspect.signature(mod.forward)
     default_kwargs = {
         p.name: p.default

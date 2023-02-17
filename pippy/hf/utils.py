@@ -1,11 +1,10 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import contextlib
-import inspect
 import logging
 import os
 import types
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Optional
 
 import torch
 import torch.distributed
@@ -23,12 +22,6 @@ from transformers.utils import (
 )
 from transformers.utils import cached_property
 
-from pippy.compile import compile
-import pippy.hf.bart as bart
-import pippy.hf.bert as bert
-import pippy.hf.gpt2 as gpt2
-import pippy.hf.roberta as roberta
-import pippy.hf.t5 as t5
 
 logger = logging.getLogger(__name__)
 
