@@ -565,7 +565,7 @@ def run_master(pp_ranks, training_args, model_args, data_args):
         data_collator=data_collator,
     )
     # =============================================== PiPPy change start ===============================================
-    trainer._signature_columns = list(kwargs_chunk_spec.keys())
+    trainer._signature_columns = inputs
     # TODO(pbelevich): investigate!
     trainer._signature_columns.remove('labels')
     trainer._signature_columns.append('label')

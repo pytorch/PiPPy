@@ -35,7 +35,6 @@ def run_master(_, args):
     print("Using schedule:", args.schedule)
 
     bert = BertLMHeadModel(BertConfig(is_decoder=True))
-    bert.eval()
     print(bert.config)
     print(f"BERT total number of params = {get_number_of_params(bert) // 10 ** 6}M")
     # print(bert)
