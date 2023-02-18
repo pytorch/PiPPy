@@ -1,47 +1,29 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import argparse
-import inspect
 import os
 from functools import reduce
-from typing import List
 
 import torch
 from transformers import T5ForConditionalGeneration, T5Config
 
+import pippy
 import pippy.fx
 import pippy.ModelSplit
 from pippy import run_pippy
 from pippy.IR import (
-    MultiUseParameterConfig,
-    Pipe,
     PipeSplitWrapper,
     annotate_split_points,
-)
-from pippy.PipelineDriver import (
-    PipelineDriverFillDrain,
-    PipelineDriver1F1B,
-    PipelineDriverInterleaved1F1B,
-    PipelineDriverBase,
 )
 from pippy import split_on_size_threshold, split_into_equal_size
 from pippy.events import EventsContext
 from pippy.hf import PiPPyHFTracer
 from pippy.visualizer import events_to_json
 
-PROFILING_ENABLED = True
-CHECK_NUMERIC_EQUIVALENCE = True
-
-
-schedules = {
-    "FillDrain": PipelineDriverFillDrain,
-    "1F1B": PipelineDriver1F1B,
-    "Interleaved1F1B": PipelineDriverInterleaved1F1B,
-}
 
 pippy.fx.Tracer.proxy_buffer_attributes = True
 
 
-def print_model_size(model_pipe):
+def print_submod_sizes(model_pipe):
     total_params = 0
     for i, sm in enumerate(model_pipe.split_gm.children()):
         params = get_number_of_params(sm)
@@ -151,68 +133,12 @@ def _add_split_points(t5, split_indices):
 
 def resolve_pg_per_stage(pp_rank):
     assert pippy.utils.dp_pg_per_pp_rank
-    return pippy.utils.dp_pg_per_pp_rank[pp_rank + pippy.utils.exclude_master]
-
-
-def transform_into_pipeline(
-    model: torch.nn.Module,
-    number_of_workers: int,
-    args,
-    split_policy=None,
-    multi_use_param_spec=None,
-    concrete_args=None,
-    chunks: int = 1,
-    all_worker_ranks: List[int] = None,
-):
-    if not args.train:
-        model.eval()
-
-    t5_pipe = Pipe.from_tracing(
-        model,
-        multi_use_param_spec,
-        tracer=PiPPyHFTracer(),
-        concrete_args=concrete_args,
-        split_policy=split_policy,
-    )
-
-    split_gm_children = list(t5_pipe.split_gm.children())
-    assert number_of_workers == len(
-        split_gm_children
-    ), f"number_of_workers = {number_of_workers} len(split_gm_children) = {len(split_gm_children)}"
-    print_model_size(t5_pipe)
-
-    # t5_pipe.to(device) TODO: Uncomment this after https://github.com/pytorch/PiPPy/issues/142
-    # t5_pipe(**t5_input_dict)
-
-    # We can use c10d for inference mode now
-    use_c10d = False if args.train else True
-    print(f"use_c10d: {use_c10d}")
-
-    pipe_driver: PipelineDriverBase = schedules[args.schedule](
-        t5_pipe,
-        chunks,
-        world_size=len(all_worker_ranks),
-        all_ranks=all_worker_ranks,
-        _debug_mask_minibatches=False,
-        _record_mem_dumps=bool(args.record_mem_dumps),
-        checkpoint=bool(args.checkpoint) if args.train else False,
-        use_c10d=use_c10d,
-    )
-    return pipe_driver
+    return pippy.utils.dp_pg_per_pp_rank[pp_rank]
 
 
 def run_master(pp_ranks, args):
-
     torch.manual_seed(42)
-
-    MULTI_USE_PARAM_CONFIG = (
-        MultiUseParameterConfig.REPLICATE
-        if args.replicate
-        else MultiUseParameterConfig.TRANSMIT
-    )
-    print(f"REPLICATE config: {args.replicate} -> {MULTI_USE_PARAM_CONFIG}")
     print("Using schedule:", args.schedule)
-
     device = args.device
 
     t5_config = T5Config.from_pretrained(args.model_config)
@@ -222,34 +148,26 @@ def run_master(pp_ranks, args):
     )
     t5_config.use_cache = False  # don't output `past_key_values`
     t5 = T5ForConditionalGeneration(t5_config)
-    t5.to(
-        device
-    )  # TODO: Delete this after https://github.com/pytorch/PiPPy/issues/142
+    t5.to(device)
     print(t5.config)
     print(f"T5 total number of params = {get_number_of_params(t5) // 10 ** 6}M")
 
-    number_of_workers = len(pp_ranks) - pippy.utils.exclude_master
-    print(f"number_of_workers = {number_of_workers}")
+    num_ranks = len(pp_ranks)
+    print(f"number_of_workers = {num_ranks}")
 
-    # Specify auto_split policy for use by `from_tracing` call later
+    # Specify auto_split policy for use by `pippy.compile` call later
     if args.auto_split == "threshold":
         split_policy = split_on_size_threshold(490 * 1e6)
     elif args.auto_split == "equal_size":
-        split_policy = split_into_equal_size(number_of_workers)
+        split_policy = split_into_equal_size(num_ranks)
     else:
-        # Manually insert split points before `from_tracing` call
-        add_split_points(t5, number_of_workers)
+        # Manually insert split points before `pippy.compile` call
+        add_split_points(t5, num_ranks)
         split_policy = None
 
-    all_worker_ranks = pp_ranks[
-        pippy.utils.exclude_master : pippy.utils.exclude_master
-        + number_of_workers
-    ]
-    chunks = args.chunks or len(all_worker_ranks)
+    chunks = args.chunks or num_ranks
     bs = args.batch_size * chunks
     seq_length = args.seq_length
-
-    print("Using device:", device)
 
     torch.manual_seed(args.rank)
     inp = torch.empty(bs, seq_length, dtype=torch.long, device=device).random_(
@@ -265,27 +183,25 @@ def run_master(pp_ranks, args):
             ).random_(t5.config.vocab_size - 1),
         }
     else:
+        t5.eval()
         t5_input_dict = {"input_ids": inp, "decoder_input_ids": inp}
 
-    input_names = t5_input_dict.keys()
-    sig = inspect.signature(t5.forward)
-    concrete_args = {
-        p.name: p.default
-        for p in sig.parameters.values()
-        if p.name not in input_names
-    }
+    concrete_args = pippy.create_default_args(t5,
+                                              except_keys=t5_input_dict.keys())
 
     print("Instantiating T5 Pipeline")
-    pipe_driver = transform_into_pipeline(
-        model=t5,
-        number_of_workers=number_of_workers,
-        args=args,
+    pipe_driver = pippy.compile(
+        t5,
+        num_ranks=num_ranks,
+        num_chunks=chunks,
+        schedule=args.schedule,
         split_policy=split_policy,
-        multi_use_param_spec=MULTI_USE_PARAM_CONFIG,
+        ranks=pp_ranks,
+        tracer=PiPPyHFTracer(),
+        checkpoint=bool(args.checkpoint) if args.train else False,
         concrete_args=concrete_args,
-        chunks=chunks,
-        all_worker_ranks=all_worker_ranks,
     )
+    print_submod_sizes(pipe_driver.pipe)
 
     print("Running T5 pipeline.")
     this_file_name = os.path.splitext(os.path.basename(__file__))[0]
@@ -339,22 +255,14 @@ if __name__ == "__main__":
         "-s",
         "--schedule",
         type=str,
-        default=list(schedules.keys())[0],
-        choices=schedules.keys(),
-    )
-    parser.add_argument(
-        "--replicate", type=int, default=int(os.getenv("REPLICATE", "0"))
+        default="FillDrain",
     )
     parser.add_argument(
         "--cuda", type=int, default=int(torch.cuda.is_available())
     )
     parser.add_argument("--visualize", type=int, default=1, choices=[0, 1])
-    parser.add_argument(
-        "--record_mem_dumps", type=int, default=0, choices=[0, 1]
-    )
     parser.add_argument("--checkpoint", type=int, default=1, choices=[0, 1])
     parser.add_argument("--pp_group_size", type=int, default=8)
-    parser.add_argument("--exclude_master", type=int, default=0, choices=[0, 1])
     parser.add_argument("--auto_split", type=str, default=None)
     parser.add_argument(
         "--train",

@@ -15,22 +15,11 @@ def add_split_points(roberta, encoders_per_rank):
     )
 
 
-def wrap(model, training_args, pp_ranks):
+def split(model, num_ranks):
     emb_head = 2  # embeddings + head
-    master_emb_head = (
-        training_args.exclude_master + emb_head
-    )  # master + embeddings + head
-    num_of_ranks_for_encoders = len(pp_ranks) - master_emb_head
+    num_of_ranks_for_encoders = num_ranks - emb_head
     encoders_per_rank = (
         model.config.num_hidden_layers + num_of_ranks_for_encoders - 1
     ) // num_of_ranks_for_encoders  # a divider of roberta.config.num_hidden_layers: [1, 2, 3, 4, 6, 12]
     # print(f"encoders_per_rank = {encoders_per_rank}")
-    number_of_workers = (
-        emb_head + model.config.num_hidden_layers // encoders_per_rank
-    )  # 3 + a divider of roberta.config.num_hidden_layers: [4, 5, 6, 7, 9, 15]
-    all_worker_ranks = pp_ranks[
-        training_args.exclude_master : training_args.exclude_master
-        + number_of_workers
-    ]
-    # print(f"number_of_workers = {number_of_workers}")
     add_split_points(model, encoders_per_rank)

@@ -30,6 +30,7 @@ from pippy import run_pippy
 
 import datasets
 import numpy as np
+import pippy
 import torch
 from datasets import load_dataset
 
@@ -53,7 +54,7 @@ from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 
-from pippy.hf import PiPPySeq2SeqTrainingArguments, PiPPySeq2SeqTrainer, wrap
+from pippy.hf import PiPPySeq2SeqTrainingArguments, PiPPySeq2SeqTrainer, bart, t5, PiPPyHFTracer
 from pippy.microbatch import TensorChunkSpec, sum_reducer
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
@@ -395,24 +396,48 @@ def run_master(pp_ranks, training_args, model_args, data_args):
 
     model.resize_token_embeddings(len(tokenizer))
 
+    model.to(training_args.device)
+
     # =============================================== PiPPy change start ===============================================
-    kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'decoder_input_ids': TensorChunkSpec(0),
-                         'labels': TensorChunkSpec(0), 'attention_mask': TensorChunkSpec(0)}
+    logger.info("[PiPPy] Splitting model ...")
+    num_ranks=len(pp_ranks)
+    model_name : str = model.__class__.__name__
+    if model_name.startswith("T5"):
+        t5.split(model, num_ranks)
+    elif model_name.startswith("Bart"):
+        bart.split(model, num_ranks)
+    else:
+        raise ValueError(f"Split method does not exist for model {model_name}")
+
+    # Prepare concrete args in case FX tracing needs them
+    inputs = ['input_ids', 'decoder_input_ids', 'labels', 'attention_mask']
+    concrete_args = pippy.create_default_args(model,
+                                              except_keys=inputs)
     output_chunk_spec = {'loss': sum_reducer,
                          'logits': TensorChunkSpec(0),
                          'encoder_last_hidden_state': TensorChunkSpec(0),
                         }
-    if model.__class__.__name__ == 'T5ForConditionalGeneration' and model.config.use_cache:
+    if model_name.startswith("T5") and model.config.use_cache:
         # past_key_values, optional, returned when use_cache=True is passed or when config.use_cache=True.
         output_chunk_spec['past_key_values'] = [
             [TensorChunkSpec(0) for _ in range(model.config.num_decoder_layers)] for _ in range(4)
         ]
-    model = wrap(model,
-                 training_args,
-                 pp_ranks,
-                 kwargs_chunk_spec=kwargs_chunk_spec,
-                 output_chunk_spec=output_chunk_spec,
+
+    # Compile into pipeline parallel, distributed model
+    pipe_mod = pippy.compile(
+        model,
+        num_ranks,
+        num_chunks=training_args.chunks or num_ranks,
+        ranks=pp_ranks,
+        tracer=PiPPyHFTracer(),
+        output_chunk_spec=output_chunk_spec,
+        checkpoint=bool(training_args.checkpoint),
+        concrete_args=concrete_args,
     )
+    pipe_mod.init_data_parallel(dp_group_size=training_args.dp_group_size)
+    pipe_mod.config = model.config
+    model = pipe_mod
+
     # ================================================ PiPPy change end ================================================
 
     # Set decoder_start_token_id
@@ -627,7 +652,7 @@ def run_master(pp_ranks, training_args, model_args, data_args):
         compute_metrics=compute_metrics if training_args.predict_with_generate else None,
     )
     # =============================================== PiPPy change start ===============================================
-    trainer._signature_columns = list(kwargs_chunk_spec.keys())
+    trainer._signature_columns = inputs
     # ================================================ PiPPy change end ================================================
 
     # Training

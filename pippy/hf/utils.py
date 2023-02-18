@@ -1,11 +1,10 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import contextlib
-import inspect
 import logging
 import os
 import types
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Optional
 
 import torch
 import torch.distributed
@@ -23,14 +22,6 @@ from transformers.utils import (
 )
 from transformers.utils import cached_property
 
-import pippy.hf.bart as bart
-import pippy.hf.bert as bert
-import pippy.hf.gpt2 as gpt2
-import pippy.hf.roberta as roberta
-import pippy.hf.t5 as t5
-from pippy import PipelineDriverFillDrain
-from pippy.IR import MultiUseParameterConfig, Pipe
-from pippy.microbatch import LossReducer
 
 logger = logging.getLogger(__name__)
 
@@ -249,15 +240,6 @@ class PiPPySeq2SeqTrainer(PiPPyTrainer, Seq2SeqTrainer):
     pass
 
 
-model_to_wrap = {
-    "BertForSequenceClassification": bert.wrap,
-    "GPT2LMHeadModel": gpt2.wrap,
-    "RobertaForMaskedLM": roberta.wrap,
-    "T5ForConditionalGeneration": t5.wrap,
-    "BartForConditionalGeneration": bart.wrap,
-}
-
-
 def torch_ones_wrapper(*args, **kwargs):
     return torch.ones(*args, **kwargs)
 
@@ -301,64 +283,3 @@ class PiPPyHFTracer(fx.HFTracer):
                 elif getattr(node.target, "_orig", None) == torch.zeros:
                     node.target = torch_zeros_wrapper
         return graph
-
-
-def wrap(
-    model,
-    training_args,
-    pp_ranks,
-    args_chunk_spec=None,
-    kwargs_chunk_spec=None,
-    output_chunk_spec=None,
-):
-    model.to(training_args.device)
-    logger.info("[PiPPy] Splitting model ...")
-    model_to_wrap[model.__class__.__name__](model, training_args, pp_ranks)
-
-    all_worker_ranks = pp_ranks[training_args.exclude_master :]
-
-    input_names = []
-    if kwargs_chunk_spec is not None:
-        input_names = list(kwargs_chunk_spec.keys())
-
-    sig = inspect.signature(model.forward)
-    concrete_args = {
-        p.name: p.default
-        for p in sig.parameters.values()
-        if p.name not in input_names
-    }
-    MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.TRANSMIT
-    output_loss_value_spec: Any = None
-    if isinstance(output_chunk_spec, dict):
-        output_loss_value_spec = {
-            k: isinstance(v, LossReducer) for k, v in output_chunk_spec.items()
-        }
-    model_config = model.config
-
-    logger.info("[PiPPy] Creating pipeline ...")
-    model = Pipe.from_tracing(
-        model,
-        MULTI_USE_PARAM_CONFIG,
-        tracer=PiPPyHFTracer(),
-        concrete_args=concrete_args,
-        output_loss_value_spec=output_loss_value_spec,
-    )
-    model.config = model_config
-
-    logger.info("[PiPPy] Initializing pipeline driver ...")
-    model = PipelineDriverFillDrain(
-        model,
-        training_args.chunks or len(all_worker_ranks),
-        world_size=len(all_worker_ranks),
-        all_ranks=all_worker_ranks,
-        args_chunk_spec=args_chunk_spec,
-        kwargs_chunk_spec=kwargs_chunk_spec,
-        output_chunk_spec=output_chunk_spec,
-        _record_mem_dumps=bool(training_args.record_mem_dumps),
-        checkpoint=bool(training_args.checkpoint),
-    )
-    model.config = model_config
-
-    model.init_data_parallel(dp_group_size=training_args.dp_group_size)
-
-    return model

@@ -1,4 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+import inspect
 import logging
 from typing import Any, Callable, List, Optional
 from pippy.PipelineDriver import (
@@ -18,6 +19,21 @@ PIPELINE_SCHEDULE_DRIVERS = {
     "1F1B": PipelineDriver1F1B,
     "Interleaved1F1B": PipelineDriverInterleaved1F1B,
 }
+
+
+def create_default_args(
+    mod: torch.nn.Module,
+    except_keys: List = None,
+):
+    if except_keys is None:
+        except_keys = []
+    sig = inspect.signature(mod.forward)
+    default_kwargs = {
+        p.name: p.default
+        for p in sig.parameters.values()
+        if p.name not in except_keys and p.default is not inspect._empty
+    }
+    return default_kwargs
 
 
 def compile(
@@ -48,7 +64,7 @@ def compile(
             k: isinstance(v, LossReducer) for k, v in output_chunk_spec.items()
         }
 
-    logging.info("[PiPPy] Splitting model ...")
+    logging.info("[PiPPy] Tracing model ...")
     pipe_model = Pipe.from_tracing(
         mod,
         multi_use_param_spec=multi_use_param_spec,
