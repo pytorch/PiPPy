@@ -6,11 +6,8 @@ import unittest
 import torch
 import torch.autograd.profiler_legacy
 import torch.fx
-# TorchDynamo is moved into PyTorch for PyTorch > 1.13
-# One can use TorchDynamo without installing it separately by:
-# import torch._dynamo as dynamo
-# If your PyTorch version is <= 1.13.0, please install torchdynamo separately
-import torchdynamo as dynamo
+# TorchDynamo is moved into PyTorch as of PyTorch 2.0
+import torch._dynamo as dynamo
 
 import pippy
 import pippy.fx
