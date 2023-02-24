@@ -12,24 +12,12 @@ import torch.fx
 # If your PyTorch version is <= 1.13.0, please install torchdynamo separately
 import torchdynamo as dynamo
 
+import pippy
 import pippy.fx
+from pippy.IR import Pipe, pipe_split
 from pippy import run_pippy
-from pippy.IR import MultiUseParameterConfig, Pipe, pipe_split
-from pippy.PipelineDriver import (
-    PipelineDriverBase,
-    PipelineDriverFillDrain,
-    PipelineDriver1F1B,
-    PipelineDriverInterleaved1F1B,
-)
 
 PROFILING_ENABLED = True
-CHECK_NUMERIC_EQUIVALENCE = True
-
-schedules = {
-    "FillDrain": PipelineDriverFillDrain,
-    "1F1B": PipelineDriver1F1B,
-    "Interleaved1F1B": PipelineDriverInterleaved1F1B,
-}
 
 pippy.fx.Tracer.proxy_buffer_attributes = True
 
@@ -55,51 +43,37 @@ def inspect_split_module(
 
 
 def run_master(_, args):
-    # PiPPy parameters
-    MULTI_USE_PARAM_CONFIG = (
-        MultiUseParameterConfig.REPLICATE
-        if args.replicate
-        else MultiUseParameterConfig.TRANSMIT
-    )
-    print(f"REPLICATE config: {args.replicate} -> {MULTI_USE_PARAM_CONFIG}")
     print("Using schedule:", args.schedule)
-
-    # Model parameters
-    d_hid = 512
-    bs = 503
-
-    # Chunking parameters
-    chunks = 1
 
     # Ask Dynamo to let PiPPy annotation stay in graph
     dynamo.allow_in_graph(pipe_split)
 
     # Define a compiler backend made by PiPPy for use by Dynamo
     # The backend comprising:
-    # - PiPPy's graph split, and
-    # - PiPPy's driver creation
+    # - pippy.compile
     # The driver is return as a compiled runtime callable, which will be used in the actual data execution
     def my_pippy_compiler(gm: torch.fx.GraphModule, example_inputs, **kwargs):
         print("\n============= my_pippy_compiler() called with FX graph =============")
         gm.graph.print_tabular()
 
-        # PiPPy Pipe creation
-        # Here we split the graph
-        pipe = Pipe.from_tracing(gm, MULTI_USE_PARAM_CONFIG)
-        inspect_split_module(pipe, 4)
-
         # Create PipelineDriver
-        pipe_driver: PipelineDriverBase = schedules[args.schedule](
-            pipe,
-            chunks,
+        pipe_driver = pippy.compile(
+            gm,
             args.world_size,
+            num_chunks=1,
+            schedule=args.schedule,
             checkpoint=bool(args.checkpoint),
-            use_c10d=True,
         )
+
+        inspect_split_module(pipe_driver.pipe, args.world_size)
 
         # Return a runtime Callable
         # This PipelineDriver is a distributed runtime
         return pipe_driver
+
+    # Model parameters
+    d_hid = 512
+    bs = 503
 
     class ExampleCode(torch.nn.Module):
         def __init__(self):
@@ -181,8 +155,7 @@ def main(args=None):
         "-s",
         "--schedule",
         type=str,
-        default=list(schedules.keys())[0],
-        choices=schedules.keys(),
+        default="FillDrain",
     )
     parser.add_argument(
         "--replicate", type=int, default=int(os.getenv("REPLICATE", "0"))
