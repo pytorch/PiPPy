@@ -342,8 +342,6 @@ class LocalTestForwardAutoParallelTest(unittest.TestCase):
 
         port = random.randint(29500, 30000)
         args = [
-            "--cuda",
-            os.getenv("USE_CUDA", "0"),
             "--master_port",
             str(port),
         ]

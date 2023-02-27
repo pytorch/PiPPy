@@ -52,7 +52,7 @@ def run_master(pp_ranks, args):
     bs = 503
     CHUNKS = 5
     DEBUG_MASK_MINIBATCHES = True
-    check_numeric = True if args.cuda == 0 else False   # TODO
+    check_numeric = True if args.cuda == 0 else False  # TODO
 
     MULTI_USE_PARAM_CONFIG = (
         MultiUseParameterConfig.REPLICATE
@@ -243,8 +243,6 @@ class LocalTestDDP(unittest.TestCase):
 
         port = random.randint(29500, 30000)
         args = [
-            "--cuda",
-            os.getenv("USE_CUDA", "0"),
             "--master_port",
             str(port),
         ]
