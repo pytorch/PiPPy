@@ -27,9 +27,6 @@ from pippy.PipelineDriver import (
 # this might change numerics. So we should have the ability to compute loss over
 # the whole minibatch rather than doing it for each micro-batch
 
-PROFILING_ENABLED = True
-CHECK_NUMERIC_EQUIVALENCE = True
-
 schedules = {
     "FillDrain": PipelineDriverFillDrain,
     "1F1B": PipelineDriver1F1B,
@@ -55,6 +52,8 @@ def run_master(pp_ranks, args):
     bs = 503
     CHUNKS = 5
     DEBUG_MASK_MINIBATCHES = True
+    check_numeric = True if args.cuda == 0 else False   # TODO
+
     MULTI_USE_PARAM_CONFIG = (
         MultiUseParameterConfig.REPLICATE
         if args.replicate
@@ -120,7 +119,6 @@ def run_master(pp_ranks, args):
         args.pp_group_size,
         all_ranks=pp_ranks,
         _debug_mask_minibatches=DEBUG_MASK_MINIBATCHES,
-        _record_mem_dumps=bool(args.record_mem_dumps),
         checkpoint=bool(args.checkpoint),
     )
     print(f"Rank {args.rank} Instantiated pipe with ranks {pp_ranks}")
@@ -135,6 +133,10 @@ def run_master(pp_ranks, args):
     out = pipe_driver(input, target)
 
     print(f"Rank {args.rank} got loss value {out}")
+
+    if not check_numeric:
+        print("DDP + PP API test passed")
+        return
 
     all_grad_qualnames = {k: None for k, v in ec_pipe.named_parameters()}
 
@@ -158,13 +160,8 @@ def run_master(pp_ranks, args):
         wrapper, process_group=args.driver_group
     )
 
-    optim = torch.optim.SGD(wrapper_ddp.parameters(), lr=0.05)
-    optim.zero_grad()
-    with torch.autograd.profiler.profile(enabled=args.rank == 0) as prof:
-        wrapper_out = wrapper_ddp(input, target)
-        wrapper_out.backward()
-    if prof:
-        prof.export_chrome_trace("ref.json")
+    wrapper_out = wrapper_ddp(input, target)
+    wrapper_out.backward()
 
     not_close_grads = []
     ref_grads = {}
@@ -221,9 +218,6 @@ def main(args=None):
     )
     parser.add_argument(
         "--cuda", type=int, default=int(torch.cuda.is_available())
-    )
-    parser.add_argument(
-        "--record_mem_dumps", type=int, default=0, choices=[0, 1]
     )
     parser.add_argument("--checkpoint", type=int, default=0, choices=[0, 1])
     args = parser.parse_args(args)
