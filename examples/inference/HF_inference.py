@@ -6,6 +6,7 @@ import os
 import time
 
 import torch
+import pippy
 import pippy.fx
 from pippy import run_pippy
 from pippy.IR import MultiUseParameterConfig, Pipe
@@ -95,17 +96,17 @@ def run_master(pp_ranks, args):
 
     # preparing inputs based on the model choice
     if 't5' in args.model_name:
-        inp = torch.empty(bs, seq_length, dtype=torch.long, device=device).random_(model.config.vocab_size)
+        inp = torch.empty(bs, seq_length, dtype=torch.long).random_(model.config.vocab_size)
         model_input_dict = {'input_ids': inp, 'decoder_input_ids': inp}
     elif 'opt' or 'bloom' in args.model_name:
-        inp = torch.empty(bs, seq_length, dtype=torch.long, device=device).random_(model.config.vocab_size)
+        inp = torch.empty(bs, seq_length, dtype=torch.long).random_(model.config.vocab_size)
         model_input_dict = {'input_ids': inp}
 
     elif 'regnet' in args.model_name:
         url = "http://images.cocodataset.org/val2017/000000039769.jpg"
         image = Image.open(requests.get(url, stream=True).raw)
         inputs = feature_extractor(image, return_tensors="pt")
-        inputs["pixel_values"] = inputs["pixel_values"].to(device)
+        inputs["pixel_values"] = inputs["pixel_values"]
         model_input_dict = {'pixel_values': inputs["pixel_values"]}
 
     input_names = model_input_dict.keys()
@@ -114,30 +115,17 @@ def run_master(pp_ranks, args):
 
     print('Instantiating model Pipeline')
     model_init_start = time.time()
-    model_pipe = Pipe.from_tracing(model, MULTI_USE_PARAM_CONFIG, tracer=PiPPyHFTracer(), concrete_args=concrete_args,
-                                output_loss_value_spec=None, split_policy=split_policy
-                                )
-   
-    model_pipe.defer_stage_init(args.device)
-
-    pippy.utils.pp_group_barrier()
-
-    if args.rank!=0:
-        return 
-    
-    split_gm_children = list(model_pipe.split_gm.children())
-
-    total_params = 0
-    for i, sm in enumerate(model_pipe.split_gm.children()):
-        params = get_number_of_params(sm)
-        print(f"submod_{i} {params // 10 ** 6}M params")
-        total_params += params
-    print(f"total {total_params // 10 ** 6}M params")
-
-    pipe_driver: PipelineDriverBase = schedules[args.schedule](model_pipe, chunks,
-                                                               world_size=len(all_worker_ranks),
-                                                               all_ranks=all_worker_ranks,
-                                                                )
+  
+    pipe_driver = pippy.compile(
+        model,
+        num_ranks=args.world_size,
+        num_chunks=chunks,
+        schedule=args.schedule,
+        split_policy=split_policy,
+        tracer=PiPPyHFTracer(),
+        checkpoint=bool(args.checkpoint),
+        concrete_args=concrete_args,
+    )
     model_init_end = time.time()
 
     print("Model initialization time")
