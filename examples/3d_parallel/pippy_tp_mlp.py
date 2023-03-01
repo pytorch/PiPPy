@@ -5,10 +5,8 @@ import functools
 import logging
 import os
 import unittest
-from typing import Dict
 
 import torch
-import torch.distributed.rpc as rpc
 import torch.nn as nn
 
 import pippy.fx
@@ -24,7 +22,6 @@ from pippy.PipelineDriver import (
     PipelineDriverBase,
     PipelineDriverInterleaved1F1B,
 )
-from pippy.microbatch import TensorChunkSpec, CustomReducer
 
 from spmd import (
     distribute_tensor,
@@ -142,15 +139,8 @@ def shard_mlp(m, device_mesh):
     return dist_mod
 
 
-def run_master(pp_ranks, args):
+def run_gspmd(pp_ranks, args):
     CHUNKS = 1
-    DEBUG_MASK_MINIBATCHES = True
-    MULTI_USE_PARAM_CONFIG = (
-        MultiUseParameterConfig.REPLICATE
-        if args.replicate
-        else MultiUseParameterConfig.TRANSMIT
-    )
-    print(f"REPLICATE config: {args.replicate} -> {MULTI_USE_PARAM_CONFIG}")
     print("Using schedule:", args.schedule)
     print(f"Master rank {args.rank}, PP ranks: {pp_ranks}")
 
@@ -158,6 +148,7 @@ def run_master(pp_ranks, args):
 
     d_hid = 10
     inp_size = [5, d_hid]
+
     # Ensure all tp ranks have same input.
     torch.manual_seed(0)
     inp = torch.rand(*inp_size, device=device_type)
@@ -179,33 +170,47 @@ def run_master(pp_ranks, args):
     print(f"Ref out: {ref_out.size()}")
     """
 
-    print("\n ========== Starting PiPPy ==========")
+    # PiPPy run
     ec = ExampleCode(d_hid)
-    ec.to(args.device)
+
     # PiPPy tracing
-    ec_pipe = Pipe.from_tracing(ec, MULTI_USE_PARAM_CONFIG)
+    ec_pipe = Pipe.from_tracing(ec)
     if args.rank == 0:
         print(ec_pipe.split_gm)
 
-    args_chunk_spec = (TensorChunkSpec(0),)
-    kwargs_chunk_spec: Dict = {}
-    output_chunk_spec = TensorChunkSpec(0)
+    # Figure out my PP rank
+    pp_rank = 0
+    for r in pp_ranks:
+        if r == args.rank:
+            break
+        pp_rank += 1
 
+    # Create TP device mesh
+    start_rank = pp_rank * args.tp_group_size
+    tp_ranks = list(range(start_rank, start_rank + args.tp_group_size))
+    tp_device_mesh = DeviceMesh(
+        device_type,
+        tp_ranks,
+    )
+
+    # Tensor parallelize submodules
+    submod = ec_pipe.export(stage_id=pp_rank)
+    shard_mlp(submod, tp_device_mesh)
+
+    # Make sure every rank has tp'lize its stage before master creates the driver
+    pippy.utils.pp_group_barrier()
+
+    if args.rank >= args.tp_group_size:
+        return  # Non-masters stop here
+
+    # Pipeline master code
     pipe_driver: PipelineDriverBase = schedules[args.schedule](
         ec_pipe,
         CHUNKS,
-        args_chunk_spec,
-        kwargs_chunk_spec,
-        output_chunk_spec,
         args.pp_group_size,
         all_ranks=pp_ranks,
-        _debug_mask_minibatches=DEBUG_MASK_MINIBATCHES,
-        _record_mem_dumps=bool(args.record_mem_dumps),
-        checkpoint=bool(args.checkpoint),
     )
     print(f"Rank {args.rank} Instantiated pipe with ranks {pp_ranks}")
-
-    pipe_driver.init_tensor_parallel(shard_mlp, device_type, args.tp_group_size)
 
     out = pipe_driver(inp)
     print(f"PiPPy out: {out.size()}")
@@ -252,9 +257,6 @@ def main(args=None):
     parser.add_argument(
         "--cuda", type=int, default=int(torch.cuda.is_available())
     )
-    parser.add_argument(
-        "--record_mem_dumps", type=int, default=0, choices=[0, 1]
-    )
     parser.add_argument("--checkpoint", type=int, default=0, choices=[0, 1])
     args = parser.parse_args(args)
 
@@ -263,7 +265,8 @@ def main(args=None):
     args.tp_group_size = args.world_size // args.pp_group_size
     print(f"Using tensor parallel group size: {args.tp_group_size}")
 
-    run_pippy(run_master, args)
+    args.gspmd = 1
+    run_pippy(run_gspmd, args)
 
 
 if __name__ == "__main__":
@@ -276,8 +279,6 @@ class LocalTestPiPPyTP(unittest.TestCase):
 
         port = random.randint(29500, 30000)
         args = [
-            "--cuda",
-            os.getenv("USE_CUDA", "0"),
             "--master_port",
             str(port),
         ]
