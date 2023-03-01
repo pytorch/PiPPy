@@ -1,12 +1,9 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import argparse
-import functools
-import logging
 import os
 import unittest
 
 import torch
-import torch.nn as nn
 
 import pippy.fx
 from pippy import run_pippy
