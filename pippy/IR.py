@@ -1055,6 +1055,18 @@ class Pipe(torch.nn.Module):
     def is_stage_init_deferred():
         return hasattr(Pipe, "materialize_stage")
 
+    def export(self, stage_id: int) -> torch.nn.Module:
+        split_gm_children = list(self.split_gm.children())
+        submod = split_gm_children[stage_id]
+
+        # HACK: reusing defer init path in PipelineDriver
+        def materialize_stage(target: str) -> torch.nn.Module:
+            logging.info(f"Locally initializing {target}")
+            return self.split_gm.get_submodule(target)
+
+        setattr(Pipe, "materialize_stage", materialize_stage)
+        return submod
+
 
 class PipeSplitWrapper(torch.nn.Module):
     class SplitPoint(Enum):
