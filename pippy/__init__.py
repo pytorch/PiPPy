@@ -11,7 +11,7 @@ from pippy.IR import (
 from pippy.PipelineDriver import PipelineDriverFillDrain, PipelineDriver1F1B
 from pippy.ModelSplit import split_on_size_threshold, split_into_equal_size
 from pippy.utils import run_pippy
-from pippy.compile import compile, create_default_args
+from pippy.compile import compile, all_compile, create_default_args
 
 
 __all__ = [
@@ -28,5 +28,6 @@ __all__ = [
     "split_into_equal_size",
     "split_on_size_threshold",
     "compile",
+    "all_compile",
     "create_default_args",
 ]
