@@ -13,7 +13,6 @@ from pippy.microbatch import LossReducer, sum_reducer
 from pippy.utils import get_device, get_pp_rank, get_rank, pp_group_barrier
 
 import torch
-import torch.distributed.rpc as rpc
 
 
 PIPELINE_SCHEDULE_DRIVERS = {

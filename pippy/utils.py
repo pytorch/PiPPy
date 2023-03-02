@@ -106,12 +106,13 @@ def tp_transports():
     return ["shm", "uv"] if has_efa() else None
 
 
-# A barrier util for pipeline dimension
 global _pp_group_barrier
+# Defined later in `run_worker` (triggered via `run_pippy`)
 
 
+# A barrier util for pipeline dimension
 def pp_group_barrier():
-    _pp_group_barrier()
+    _pp_group_barrier()  # type: ignore[name-defined]
 
 
 def run_pippy(run_func, args, *extra_args):
@@ -246,7 +247,6 @@ def run_worker(rank, run_func, args, *extra_args):
     )
 
     # A barrier util for pipeline dimension
-    # Defined in this function (via `run_pippy`)
     global _pp_group_barrier
 
     # ProcessGroupGloo cannot create group with strided ranks, e.g. [0, 2, 4, 6, ...]
