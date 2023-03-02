@@ -10,7 +10,7 @@ from pippy.PipelineDriver import (
 import pippy.fx as fx
 from pippy.IR import MultiUseParameterConfig, Pipe
 from pippy.microbatch import LossReducer, sum_reducer
-from pippy.utils import pp_group_barrier
+from pippy.utils import get_device, get_pp_rank, get_rank, pp_group_barrier
 
 import torch
 import torch.distributed.rpc as rpc
@@ -38,39 +38,6 @@ def create_default_args(
     return default_kwargs
 
 
-def get_rank():
-    worker_info = rpc.get_worker_info()
-    logging.debug(worker_info)
-    return worker_info.id
-
-
-def get_device():
-    worker_info = rpc.get_worker_info()
-    agent = rpc._get_current_rpc_agent()
-    dev_map = agent._get_device_map(worker_info)
-    logging.debug(dev_map)
-    if len(dev_map) != 1:
-        raise AssertionError(
-            f"Expecting one device for RPC worker {worker_info}, "
-            f"but got {dev_map}"
-        )
-    src_dev = next(iter(dev_map))
-    dst_dev = dev_map[src_dev]
-    if src_dev != dst_dev:
-        raise AssertionError(
-            f"Expecting one device for RPC worker {worker_info}, "
-            f"but got {dev_map}"
-        )
-    return src_dev
-
-
-def get_pp_rank(rank, ranks):
-    for index, r in enumerate(ranks):
-        if rank == r:
-            return index
-    raise ValueError(f"Rank {rank} not in ranks {ranks}")
-
-
 def _compile(
     all_compile: bool,
     mod: torch.nn.Module,
@@ -93,7 +60,6 @@ def _compile(
 
     if all_compile:
         rank = get_rank()
-        device = get_device()
         pp_rank = get_pp_rank(rank, ranks)
     else:
         pp_rank = 0
@@ -119,7 +85,10 @@ def _compile(
         **kwargs,
     )
 
+    # In all_compile mode, each rank calls pippy.all_compile, hence they will all have the pipe.
+    # We can hence ask each rank to get its own stage from the pipe, and materialize it locally.
     if all_compile:
+        device = get_device()
         pipe_model.defer_stage_init(device)
         stage_mod = pipe_model.export(pp_rank)
         # Make sure every rank has deferred its stage init before master creates the driver

@@ -2,6 +2,7 @@
 import os
 import socket
 import logging
+from typing import List
 
 # Pinning process to a separate GPU if not yet done by launch script
 # Notes:
@@ -41,6 +42,48 @@ else:
     print(f"Unsupported PIPPY_VERBOSITY level: {PIPPY_VERBOSITY}")
 
 
+def get_rank() -> int:
+    worker_info = rpc.get_worker_info()
+    logging.debug(worker_info)
+    return worker_info.id
+
+
+def get_device() -> torch.device:
+    worker_info = rpc.get_worker_info()
+    agent = rpc._get_current_rpc_agent()
+    dev_map = agent._get_device_map(worker_info)
+    logging.debug(dev_map)
+    num_devs = len(dev_map)
+
+    if num_devs == 0:
+        logging.debug("Empty device mapping, assuming device type to be cpu")
+        device = torch.device("cpu")
+    elif num_devs != 1:
+        raise AssertionError(
+            f"Expecting at most one device for RPC worker {worker_info}, "
+            f"but got device map of length {num_devs}: {dev_map}"
+        )
+    else:
+        src_dev = next(iter(dev_map))
+        dst_dev = dev_map[src_dev]
+        if src_dev != dst_dev:
+            raise AssertionError(
+                f"Expecting at most one device for RPC worker {worker_info}, "
+                f"but got {dev_map}"
+            )
+        device = src_dev
+
+    logging.info(f"Found device {device} for rank {worker_info.id}")
+    return device
+
+
+def get_pp_rank(rank: int, ranks: List[int]) -> int:
+    for index, r in enumerate(ranks):
+        if rank == r:
+            return index
+    raise ValueError(f"Rank {rank} not in ranks {ranks}")
+
+
 def has_efa() -> bool:
     try:
         import subprocess
@@ -61,6 +104,10 @@ def has_efa() -> bool:
 
 def tp_transports():
     return ["shm", "uv"] if has_efa() else None
+
+
+# A barrier util for pipeline dimension
+global _pp_group_barrier
 
 
 def pp_group_barrier():
@@ -199,6 +246,7 @@ def run_worker(rank, run_func, args, *extra_args):
     )
 
     # A barrier util for pipeline dimension
+    # Defined in this function (via `run_pippy`)
     global _pp_group_barrier
 
     # ProcessGroupGloo cannot create group with strided ranks, e.g. [0, 2, 4, 6, ...]
