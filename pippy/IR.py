@@ -1060,11 +1060,14 @@ class Pipe(torch.nn.Module):
         submod = split_gm_children[stage_id]
 
         # HACK: reusing defer init path in PipelineDriver
-        def materialize_stage(target: str) -> torch.nn.Module:
-            logging.info(f"Locally initializing {target}")
-            return self.split_gm.get_submodule(target)
+        def exported_stage(target: str) -> torch.nn.Module:
+            logging.info(f"Retrieving exported {target}")
+            assert self.split_gm.get_submodule(target) is submod
+            return submod
 
-        setattr(Pipe, "materialize_stage", materialize_stage)
+        if not hasattr(Pipe, "materialize_stage"):
+            setattr(Pipe, "materialize_stage", exported_stage)
+
         return submod
 
 

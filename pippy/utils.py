@@ -63,6 +63,10 @@ def tp_transports():
     return ["shm", "uv"] if has_efa() else None
 
 
+def pp_group_barrier():
+    _pp_group_barrier()
+
+
 def run_pippy(run_func, args, *extra_args):
     if not hasattr(args, "world_size"):
         assert hasattr(args, "pp_group_size")
@@ -195,14 +199,14 @@ def run_worker(rank, run_func, args, *extra_args):
     )
 
     # A barrier util for pipeline dimension
-    global pp_group_barrier
+    global _pp_group_barrier
 
     # ProcessGroupGloo cannot create group with strided ranks, e.g. [0, 2, 4, 6, ...]
     # Skipping the `pp_group` and `pp_group_barrier` creation here
     # TODO: unskip
     if torch.distributed.get_backend() == "gloo" and args.dp_group_size > 1:
 
-        def pp_group_barrier():
+        def _pp_group_barrier():
             logging.warning(
                 f"pp_group_barrier() does not support ProcessGroupGloo with strided ranks {my_pp_ranks}. This will be a no-op."
             )
@@ -210,7 +214,7 @@ def run_worker(rank, run_func, args, *extra_args):
     else:
         pp_group = torch.distributed.new_group(my_pp_ranks)
 
-        def pp_group_barrier():
+        def _pp_group_barrier():
             logging.debug(
                 f"Running pipeline group barrier on ranks {my_pp_ranks}"
             )
