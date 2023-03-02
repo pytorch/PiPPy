@@ -68,9 +68,7 @@ def get_pp_rank(rank, ranks):
     for index, r in enumerate(ranks):
         if rank == r:
             return index
-    raise ValueError(
-        f"Rank {rank} not in ranks {ranks}"
-    )
+    raise ValueError(f"Rank {rank} not in ranks {ranks}")
 
 
 def _compile(
