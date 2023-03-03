@@ -72,43 +72,12 @@ input_names = t5_input_dict.keys()
 sig = inspect.signature(t5.forward)
 concrete_args = {p.name: p.default for p in sig.parameters.values() if p.name not in input_names}
 ```
-
-* Split the model into a pipline, `Pipe.from_tracing` uses `torch.fx` symbolic tracing to turn our model into a directed acyclic graph (DAG) representation. Then, it groups together the operations and parameters into _pipeline stages_. Stages are represented as `submod_N` submodules, where `N` is a natural number. Note:here we use HF FX_tracer for tracing.
-
-```
-from PiPPY.IR import Pipe
-
-t5_pipe = Pipe.from_tracing(t5, MULTI_USE_PARAM_CONFIG, tracer=PiPPYHFTracer(), concrete_args=concrete_args,
-                                output_loss_value_spec=None, split_policy=split_policy
-                                )
-```
-
 * Set the number of chunks that decide the microbatch sizes
 
 ```
 all_worker_ranks = pp_ranks[PiPPY.utils.exclude_master:PiPPY.utils.exclude_master + number_of_workers]
 chunks = args.chunks or len(all_worker_ranks)
 batch_size = args.batch_size * chunks
-
-```
-* Load to device directly using "defer_stage_init", which basically let each rank trace the model and split the model and only materialize its own shard
-The barrier would make sure all the rank have loaded their shards and finally we make sure that only rank0 run the pipe.
-
-```
- t5_pipe.defer_stage_init(args.device)
- PiPPY.utils.pp_group_barrier()
- if args.rank!=0:
-        return 
- ```
-
-* (Optional) Define the input/ouput to the model. "TensorChunkSpec(0)" below indicates that the batch dimension in the input is zero. Pipelining relies on _micro-batching_--that is--the process of dividing the program's input data into smaller chunks and feeding those chunks through the pipeline sequentially. Doing this requires that the data and operations be _separable_, i.e.there should be at least one dimension along which data can be split such that the program does not have interactions across this dimension.
-
-By default, PiPPy uses dimension 0 as the input chunking or output merging dimension. Therefore, the settings below are optional.
-
-```
-kwargs_chunk_spec = {'input_ids': TensorChunkSpec(0), 'decoder_input_ids': TensorChunkSpec(0)}
-
-output_chunk_spec = {"logits": TensorChunkSpec(0),"encoder_last_hidden_state": TensorChunkSpec(0)}
 
 ```
 * Choose an schedule for the pipline, we use "PipelineDriverFillDrain" here, please learn more about it [here](https://github.com/pytorch/tau/blob/main/README.md#advanced-pipeline-schedules). For inference we would need only "PipelineDriverFillDrain".
@@ -118,15 +87,28 @@ schedules = {
     'FillDrain': PipelineDriverFillDrain,
 }
 ```
-* Now we have all the settings lets define the PipelineDriver that runs the pipeline. To learn more about different schedules for piplelines please use this link[]
 
+* Pass all the the above args to `pippy.compile()`, 
 ```
-pipe_driver: PipelineDriverBase = schedules[args.schedule](t5_pipe, chunks, args_chunk_spec, kwargs_chunk_spec,
-                                                            world_size=len(all_worker_ranks),
-                                                            all_ranks=all_worker_ranks,
-                                                            checkpoint=bool(args.checkpoint), #optional in case pretrained weights not required
-                                                            )
+pipe_driver = pippy.compile(
+        model,
+        num_ranks=args.world_size,
+        num_chunks=chunks,
+        schedule=args.schedule,
+        split_policy=split_policy,
+        tracer=PiPPyHFTracer(),
+        checkpoint=bool(args.checkpoint),
+        concrete_args=concrete_args,
+    )
 ```
+
+This under the hood, split the model into a pipline, `Pipe.from_tracing` uses `torch.fx` symbolic tracing to turn our model into a directed acyclic graph (DAG) representation. Then, it groups together the operations and parameters into _pipeline stages_. Stages are represented as `submod_N` submodules, where `N` is a natural number. Note:here we use HF FX_tracer for tracing.
+
+Load to device directly using "defer_stage_init", which basically let each rank trace the model and split the model and only materialize its own shard
+The barrier would make sure all the rank have loaded their shards and finally we make sure that only rank0 run the pipe.
+
+Finally, we get a PipelineDriver that runs the pipeline. To learn more about different schedules for piplelines please use this link[]
+
 
 * Run the inference by passing input data to the PipelineDriver.
 
