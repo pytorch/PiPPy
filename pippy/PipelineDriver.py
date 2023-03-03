@@ -266,9 +266,16 @@ class RankWorker(EventRecorder):
         ), "PipeStageExecutor requires mod or mod_name"
 
         if mod is None:
-            assert (
-                Pipe.is_stage_init_deferred()
-            ), "Pipe stage initialization is not deferred"
+            with Pipe.stage_init_cv:
+                defer_called = Pipe.stage_init_cv.wait_for(
+                    Pipe.is_stage_init_deferred,
+                    timeout=100,  # stop waiting after 100s
+                )
+                if not defer_called:
+                    raise AssertionError(
+                        f"Rank {self.rank} did not defer stage {stage_id} initialization "
+                        f"though pipeline driver expect it to do so."
+                    )
 
         self.stage_executors[stage_id] = PipeStageExecutor(
             stage_id=stage_id,

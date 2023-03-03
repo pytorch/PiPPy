@@ -90,9 +90,6 @@ def _compile(
         device = get_device()
         pipe_model.defer_stage_init(device)
         stage_mod = pipe_model.export(pp_rank)
-        # Make sure every rank has deferred its stage init before master creates the driver
-        # TODO: accepting ranks as argument here
-        pp_group_barrier()
 
     if pp_rank == 0:
         logging.info(pipe_model.split_gm)
