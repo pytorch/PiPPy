@@ -1,6 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import argparse
-import inspect
 import os
 import time
 
@@ -83,9 +82,11 @@ def run_all(pp_ranks, args):
         split_policy = split_into_equal_size(num_ranks)
 
     model_input_dict = generate_input(args)
-    input_names = model_input_dict.keys()
-    sig = inspect.signature(model.forward)
-    concrete_args = {p.name: p.default for p in sig.parameters.values() if p.name not in input_names}
+    # Use default value for other kwargs than those in `model_input_dict`
+    concrete_args = pippy.create_default_args(
+        model,
+        except_keys=model_input_dict.keys(),
+    )
 
     model_init_start = time.time()
 
@@ -106,6 +107,7 @@ def run_all(pp_ranks, args):
 
     if args.rank == 0:
         print(f"Model init time: {model_init_end - model_init_start} s")
+        print_mem_usage()
         print('Running model pipeline.')
 
         for _ in range(args.num_batches):
