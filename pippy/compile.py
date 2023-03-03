@@ -10,7 +10,7 @@ from pippy.PipelineDriver import (
 import pippy.fx as fx
 from pippy.IR import MultiUseParameterConfig, Pipe
 from pippy.microbatch import LossReducer, sum_reducer
-from pippy.utils import get_device, get_pp_rank, get_rank, pp_group_barrier
+from pippy.utils import get_device, get_pp_rank, get_rank
 
 import torch
 
