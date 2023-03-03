@@ -101,6 +101,9 @@ def run_all(pp_ranks, args):
 
     model_init_end = time.time()
 
+    params = get_number_of_params(stage_mod)
+    print(f"submod_{args.rank} {params // 10 ** 6}M params")
+
     if args.rank == 0:
         print(f"Model init time: {model_init_end - model_init_start} s")
         print('Running model pipeline.')
