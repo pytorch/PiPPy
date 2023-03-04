@@ -3,6 +3,7 @@ import copy
 import logging
 import operator
 from enum import Enum
+import threading
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
@@ -1044,12 +1045,19 @@ class Pipe(torch.nn.Module):
     def __repr__(self):
         return self.split_gm.__repr__()
 
+    # Conditoinal variable to ensure `defer_stage_init` is called before other callers call `materialize_stage`
+    # TODO: cleaner approach
+    _stage_init_lock = threading.Lock()
+    stage_init_cv = threading.Condition(_stage_init_lock)
+
     def defer_stage_init(self, device):
         def materialize_stage(target: str) -> torch.nn.Module:
             logging.info(f"Materializing {target} on {device}")
             return self.split_gm.get_submodule(target).to(device)
 
-        setattr(Pipe, "materialize_stage", materialize_stage)
+        with Pipe.stage_init_cv:
+            setattr(Pipe, "materialize_stage", materialize_stage)
+            Pipe.stage_init_cv.notify()
 
     @staticmethod
     def is_stage_init_deferred():
@@ -1065,8 +1073,10 @@ class Pipe(torch.nn.Module):
             assert self.split_gm.get_submodule(target) is submod
             return submod
 
-        if not hasattr(Pipe, "materialize_stage"):
-            setattr(Pipe, "materialize_stage", exported_stage)
+        with Pipe.stage_init_cv:
+            if not hasattr(Pipe, "materialize_stage"):
+                setattr(Pipe, "materialize_stage", exported_stage)
+                Pipe.stage_init_cv.notify()
 
         return submod
 
