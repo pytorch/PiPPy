@@ -5,18 +5,10 @@ import unittest
 
 import torch
 
+import pippy
 import pippy.fx
 from pippy import run_pippy
-from pippy.IR import (
-    Pipe,
-    pipe_split,
-)
-from pippy.PipelineDriver import (
-    PipelineDriverFillDrain,
-    PipelineDriver1F1B,
-    PipelineDriverBase,
-    PipelineDriverInterleaved1F1B,
-)
+from pippy.IR import pipe_split
 
 from torch.distributed._tensor import (
     DeviceMesh,
@@ -26,12 +18,6 @@ from torch.distributed.tensor.parallel import (
     parallelize_module,
 )
 
-
-schedules = {
-    "FillDrain": PipelineDriverFillDrain,
-    "1F1B": PipelineDriver1F1B,
-    "Interleaved1F1B": PipelineDriverInterleaved1F1B,
-}
 
 pippy.fx.Tracer.proxy_buffer_attributes = True
 
@@ -69,13 +55,13 @@ class ExampleCode(torch.nn.Module):
         return x
 
 
-def run_gspmd(pp_ranks, args):
+def run_all(pp_ranks, args):
     chunks = args.pp_group_size
     device_type = "cuda" if args.cuda else "cpu"
 
     # Figure out my PP rank
     pp_rank = args.rank // args.tp_group_size
-    print(f"GSPMD rank {args.rank}, PP ranks: {pp_ranks}, my rank in pipe: {pp_rank}")
+    print(f"Global rank {args.rank}, pipeline: {pp_ranks}, my rank in pipe: {pp_rank}")
 
     d_hid = 256
     batch_size_per_chunk = 8
@@ -108,13 +94,15 @@ def run_gspmd(pp_ranks, args):
     ec = ExampleCode(d_hid)
     ec.to(args.device)
 
-    # PiPPy tracing
-    ec_pipe = Pipe.from_tracing(ec)
-    if args.rank == 0:
-        print(ec_pipe.split_gm)
-
-    # Ask PiPPy to export stage submodule
-    submod = ec_pipe.export(stage_id=pp_rank)
+    # Get:
+    # - pipeline driver (for pipeline head rank)
+    # - stage submodule (for all ranks)
+    pipe_driver, submod = pippy.all_compile(
+        ec,
+        args.pp_group_size,
+        chunks,
+        ranks=pp_ranks,
+    )
 
     # Create TP device mesh
     my_device_mesh = None
@@ -132,20 +120,10 @@ def run_gspmd(pp_ranks, args):
     print(f"Rank {args.rank} calling parallelize_module with {my_device_mesh}")
     parallelize_module(submod, my_device_mesh, PairwiseParallel())
 
-    if pp_rank > 0:
-        return  # Non-pipe-masters stop here
-
-    # Pipeline master code
-    pipe_driver: PipelineDriverBase = schedules[args.schedule](
-        ec_pipe,
-        chunks,
-        args.pp_group_size,
-        all_ranks=pp_ranks,
-    )
-    print(f"Rank {args.rank} Instantiated pipeline with ranks {pp_ranks}")
-
-    out = pipe_driver(inp)
-    print(f"Pipeline {args.rank} output: {out.size()}")
+    if pp_rank == 0:
+        print(f"Rank {args.rank} Instantiated pipeline with ranks {pp_ranks}")
+        out = pipe_driver(inp)
+        print(f"Pipeline {args.rank} output: {out.size()}")
 
 
 def main(args=None):
@@ -180,8 +158,7 @@ def main(args=None):
         "-s",
         "--schedule",
         type=str,
-        default=list(schedules.keys())[0],
-        choices=schedules.keys(),
+        default="FillDrain",
     )
     parser.add_argument(
         "--cuda", type=int, default=int(torch.cuda.is_available())
@@ -195,7 +172,7 @@ def main(args=None):
 
     # All ranks participate
     args.gspmd = 1
-    run_pippy(run_gspmd, args)
+    run_pippy(run_all, args)
 
 
 if __name__ == "__main__":
