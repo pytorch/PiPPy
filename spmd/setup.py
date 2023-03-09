@@ -47,6 +47,7 @@ requirements = [
     # It can be installed as a binary or from source.
     "torch>=1.14.0.dev",
     "expecttest",
+    "fsspec",
     "numpy",
     "pyyaml",
 ]
