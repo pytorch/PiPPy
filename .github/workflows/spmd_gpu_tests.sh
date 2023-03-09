@@ -18,6 +18,7 @@ pip3 --version
 # Turn off progress bar to save logs
 pip3 install --upgrade pip
 if [ -f spmd/requirements.txt ]; then pip3 install -r spmd/requirements.txt; fi
+if [ -f spmd/requirements_dev.txt ]; then pip3 install -r spmd/requirements_dev.txt; fi
 
 # Install spmd
 python3 spmd/setup.py install

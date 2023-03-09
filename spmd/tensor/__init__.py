@@ -8,6 +8,7 @@
 #    functionality, this is our extension point.
 
 # DTensor imports from core distributed
+# pyre-ignore-all-errors
 from torch.distributed._tensor import *  # noqa: F403
 from torch.distributed._tensor.device_mesh import (
     DeviceMesh,

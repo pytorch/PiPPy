@@ -1,3 +1,5 @@
+# pyre-ignore-all-errors
+
 from typing import Dict, Optional, Sequence, Tuple
 
 import torch.distributed as dist

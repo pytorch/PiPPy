@@ -1,6 +1,5 @@
 # Python dependencies required for release
 expecttest
-fsspec
 numpy
 pyyaml
 

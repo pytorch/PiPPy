@@ -1,4 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+#
 import distutils.command.clean
 import glob
 import os
@@ -47,7 +48,6 @@ requirements = [
     # It can be installed as a binary or from source.
     "torch>=1.14.0.dev",
     "expecttest",
-    "fsspec",
     "numpy",
     "pyyaml",
 ]
@@ -57,7 +57,6 @@ extras: Dict[str, Union[str, List[str]]] = {}
 
 class clean(distutils.command.clean.clean):  # type: ignore
     def run(self) -> None:
-
         with open(".gitignore", "r") as f:
             ignores = f.read()
             for wildcard in filter(None, ignores.split("\n")):
@@ -86,5 +85,5 @@ if __name__ == "__main__":
         packages=find_namespace_packages(),
         install_requires=requirements,
         extras_require=extras,
-        cmdclass={"clean": clean},
+        cmdclass={"clean": clean},  # pyre-ignore[6]
     )

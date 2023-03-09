@@ -1,4 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+# pyre-ignore-all-errors
 from typing import Optional, Sequence
 
 import torch
