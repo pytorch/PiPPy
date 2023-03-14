@@ -40,7 +40,7 @@ RUN cd /opt \
 # Install python libraries needed for CI test.
 RUN pip3 install --upgrade pip \
 	&& pip3 config set global.progress_bar off \
-	&& pip3 install flake8 pytest pytest-cov pytest-shard numpy expecttest hypothesis pyyaml fsspec
+	&& pip3 install flake8 pytest pytest-cov pytest-shard numpy expecttest hypothesis pyyaml
 
 LABEL versin="1.0.2"
 LABEL description="Build docker image for ubuntu Linux OS with cuda 11.3 and Python."

@@ -24,7 +24,6 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.9"]
-        shard: ["0", "1"]
     container:
       image: python:${{ matrix.python-version }}
 
@@ -38,13 +37,10 @@ jobs:
           if [ -f spmd/requirements.txt ]; then pip install -r spmd/requirements.txt; fi
       - name: Test with pytest
         run: |
-          pytest --shard-id=${{ matrix.shard }} --num-shards=2 --cov=spmd test/spmd/
+          pytest --cov=spmd test/spmd/
 
   pytest_tests_gpu:
     runs-on: linux.g4dn.12xlarge.nvidia.gpu
-    strategy:
-      matrix:
-        shard: ["0", "1"]
     env:
       DOCKER_IMAGE: gingerhugo/cuda-11.3-python-3.9:v1.0.2
       SPMD_ROOT: /tau
