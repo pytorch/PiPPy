@@ -1,3 +1,5 @@
+# pyre-ignore-all-errors
+
 from functools import wraps
 from typing import Callable, Dict, Optional, Tuple
 

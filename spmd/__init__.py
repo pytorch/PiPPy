@@ -3,6 +3,7 @@ from spmd.tensor import *  # noqa: F401, F403
 from spmd.tensor import DeviceMesh
 from spmd.compiler.api import Schema, SPMD
 from spmd.tensor import Shard, Replicate
+from spmd.checkpoint.fsspec import FsspecWriter, FsspecReader
 
 
 # All public APIs from spmd package
@@ -13,4 +14,6 @@ __all__ = [
     "SPMD",
     "Shard",
     "distribute_module",
+    "FsspecWriter",
+    "FsspecReader",
 ]

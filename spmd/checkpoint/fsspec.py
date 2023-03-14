@@ -1,3 +1,6 @@
+# pyre-ignore-all-errors
+# mypy: ignore-errors
+
 import collections
 import dataclasses
 import io

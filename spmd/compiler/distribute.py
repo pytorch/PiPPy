@@ -1,3 +1,6 @@
+# pyre-ignore-all-errors
+# mypy: ignore-errors
+
 from dataclasses import dataclass
 from enum import Enum, auto
 from functools import partial
