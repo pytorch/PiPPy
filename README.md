@@ -96,6 +96,7 @@ class MyNetwork(torch.nn.Module):
 
         return self.output_proj(x)
 
+
 mn = MyNetwork(512, [512, 1024, 256])
 ```
 
@@ -104,62 +105,14 @@ This network is written as free-form Python code; it has not been modified for a
 Let us see our first usage of the `pippy.IR.Pipe` interface:
 
 ```python
-from pippy.IR import Pipe
-
-pipe = Pipe.from_tracing(mn)
-print(pipe)
-"""
-GraphModule(
-  (submod_0): GraphModule(
-    (layer0_lin): Linear(in_features=512, out_features=512, bias=True)
-    (layer1_lin): Linear(in_features=512, out_features=1024, bias=True)
-    (layer2_lin): Linear(in_features=1024, out_features=256, bias=True)
-  )
-)
-
-
-
-def forward(self, x):
-    submod_0 = self.submod_0(x);  x = None
-    return submod_0
-"""
-print(pipe.split_gm.submod_0)
-"""
-GraphModule(
-  (layer0_lin): Linear(in_features=512, out_features=512, bias=True)
-  (layer1_lin): Linear(in_features=512, out_features=1024, bias=True)
-  (layer2_lin): Linear(in_features=1024, out_features=256, bias=True)
-  (output_proj): Linear(in_features=256, out_features=10, bias=True)
-)
-
-
-
-def forward(self, x):
-    layer0_lin = self.layer0_lin(x);  x = None
-    relu = torch.relu(layer0_lin);  layer0_lin = None
-    layer1_lin = self.layer1_lin(relu);  relu = None
-    relu_1 = torch.relu(layer1_lin);  layer1_lin = None
-    layer2_lin = self.layer2_lin(relu_1);  relu_1 = None
-    relu_2 = torch.relu(layer2_lin);  layer2_lin = None
-    output_proj = self.output_proj(relu_2);  relu_2 = None
-    return output_proj
-"""
-```
-
-So what's going on here? First, `Pipe.from_tracing` uses `torch.fx` symbolic tracing to turn our model into a directed acyclic graph (DAG) representation. Then, it groups together the operations and parameters into _pipeline stages_. Stages are represented as `submod_N` submodules, where `N` is a natural number.
-
-The above code groups together our model's operators and parameters into only one stage, since we have not specified a splitting policy. Let us add a custom splitting policy:
-
-```python
 from pippy.IR import annotate_split_points, PipeSplitWrapper
 
 annotate_split_points(mn, {'layer0': PipeSplitWrapper.SplitPoint.END,
                            'layer1': PipeSplitWrapper.SplitPoint.END})
 
 pipe = Pipe.from_tracing(mn)
-
-print(' pipe '.center(80, '*'))
 print(pipe)
+
 """
 ************************************* pipe *************************************
 GraphModule(
@@ -175,8 +128,6 @@ GraphModule(
   )
 )
 
-
-
 def forward(self, x):
     submod_0 = self.submod_0(x);  x = None
     submod_1 = self.submod_1(submod_0);  submod_0 = None
@@ -184,15 +135,13 @@ def forward(self, x):
     return submod_2
 """
 
-print(' submod0 '.center(80, '*'))
 print(pipe.split_gm.submod_0)
+
 """
 *********************************** submod0 ************************************
 GraphModule(
   (layer0_mod_lin): Linear(in_features=512, out_features=512, bias=True)
 )
-
-
 
 def forward(self, x):
     layer0_mod_lin = self.layer0_mod_lin(x);  x = None
@@ -200,15 +149,13 @@ def forward(self, x):
     return relu
 """
 
-print(' submod1 '.center(80, '*'))
 print(pipe.split_gm.submod_1)
+
 """
 *********************************** submod1 ************************************
 GraphModule(
   (layer1_mod_lin): Linear(in_features=512, out_features=1024, bias=True)
 )
-
-
 
 def forward(self, relu):
     layer1_mod_lin = self.layer1_mod_lin(relu);  relu = None
@@ -216,16 +163,14 @@ def forward(self, relu):
     return relu_1
 """
 
-print(' submod2 '.center(80, '*'))
 print(pipe.split_gm.submod_2)
+
 """
 *********************************** submod2 ************************************
 GraphModule(
   (layer2_lin): Linear(in_features=1024, out_features=256, bias=True)
   (output_proj): Linear(in_features=256, out_features=10, bias=True)
 )
-
-
 
 def forward(self, relu_1):
     layer2_lin = self.layer2_lin(relu_1);  relu_1 = None
@@ -235,7 +180,23 @@ def forward(self, relu_1):
 """
 ```
 
+So what's going on here? First, `Pipe.from_tracing` uses `torch.fx` symbolic tracing to turn our model into a directed acyclic graph (DAG) representation. Then, it groups together the operations and parameters into _pipeline stages_. Stages are represented as `submod_N` submodules, where `N` is a natural number.
+
 Our code has now been split into _three_ pipeline stages. We used `annotate_split_points` to specify that the code should be split and the end of `layer0` and `layer1`.
+
+In addition to custom splitting policy, PiPPy also provides automatic splitting policies. For example:
+* `split_on_size_threshold(<numel>)`: create a new pipeline stage upon a number-of-element threshold;
+* `split_into_equal_size(num_stages)`: split the model in to specified number of equal-size stages.
+
+We can pass the splitting policy to the `from_tracing` API:
+
+```python
+from pippy import split_into_equal_size
+
+split_policy = split_into_equal_size(world_size)
+
+pipe = Pipe.from_tracing(mn, split_policy=split_policy)
+```
 
 This covers the basic usage of the `Pipe` API. For more information, see the documentation.
 
@@ -318,7 +279,7 @@ torchrun --nproc_per_node=3 example.py
 
 Note that we have launched 3 processes, as we have 3 pipeline stages.
 
-We can now run the pipeline by using the `PipelineDriver.run` method (make sure to add this code in the `<bracketed>` area above):
+We can now run the pipeline by passing input to the `PipelineDriver` because `PipelineDriver` is also a `nn.module`:
 
 ```python
     # Instantiate a random input for testing purposes.
@@ -339,6 +300,46 @@ We can now run the pipeline by using the `PipelineDriver.run` method (make sure 
 ```
 
 We can see that we can now execute our model in a pipelined fashion and get the same numeric outputs.
+
+## pippy.compile and pippy.all_compile
+
+Most users do not need to use the `pipe` object generated by `Pipe.from_tracing`. For convenience, PiPPy provides a `compile` API that directly generates a `PipelineDriver` from user's model.
+
+```python
+import pippy
+
+if rank == 0:
+    # Create pipeline driver
+    driver = pippy.compile(
+        mn,
+        num_ranks=world_size,
+        num_chunks=world_size,
+        schedule="FillDrain",
+        split_policy=split_poicy,
+    )
+
+    output = driver(x)
+```
+
+All examples above assume that the driver process has enough memory to materialize the model (before splitting). In case that the model is so large that the driver process cannot materialize it on a single device, it would be necessary to first split the model and then let each process materialize its own pipeline stage on its own device. `pippy.all_compile` provides such functionality. Different from `pippy.compile`, `pippy.all_compile` requires all ranks to call into it so that they know which part of the model they should materialize. For example:
+
+```python
+import pippy
+
+# All ranks call into it
+driver, stage_mod = pippy.all_compile(
+    mn,
+    num_ranks=world_size,
+    num_chunks=world_size,
+    schedule="FillDrain",
+    split_policy=split_poicy,
+)
+
+if rank == 0:
+    output = driver(x)
+```
+
+Only rank 0 will have the pipeline driver returned, but all ranks will be returned a handle to their local stage module (`stage_mod`).
 
 ## Forward vs. Forward-loss-backward
 
