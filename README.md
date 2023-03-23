@@ -185,7 +185,7 @@ So what's going on here? First, `Pipe.from_tracing` uses `torch.fx` symbolic tra
 Our code has now been split into _three_ pipeline stages. We used `annotate_split_points` to specify that the code should be split and the end of `layer0` and `layer1`.
 
 In addition to custom splitting policy, PiPPy also provides automatic splitting policies. For example:
-* `split_on_size_threshold(<numel>)`: create a new pipeline stage upon a number-of-element threshold;
+* `split_on_size_threshold(numel)`: create a new pipeline stage upon reaching a given number of parameters;
 * `split_into_equal_size(num_stages)`: split the model in to specified number of equal-size stages.
 
 We can pass the splitting policy to the `from_tracing` API:
@@ -321,7 +321,7 @@ if rank == 0:
     output = driver(x)
 ```
 
-All examples above assume that the driver process has enough memory to materialize the model (before splitting). In case that the model is so large that the driver process cannot materialize it on a single device, it would be necessary to first split the model and then let each process materialize its own pipeline stage on its own device. `pippy.all_compile` provides such functionality. Different from `pippy.compile`, `pippy.all_compile` requires all ranks to call into it so that they know which part of the model they should materialize. For example:
+All examples above assume that the driver process has enough memory to materialize the model (before splitting). In case that the model is so large that the driver process cannot materialize it on a single device, it would be necessary to first split the model and then let each process materialize its pipeline stage on its own device. `pippy.all_compile` provides such functionality. Different from `pippy.compile`, `pippy.all_compile` requires all ranks to call into it so that they all know which part of the model they should materialize. For example:
 
 ```python
 import pippy
