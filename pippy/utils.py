@@ -6,12 +6,14 @@ from typing import List
 
 # Pinning process to a separate GPU if not yet done by launch script
 # Notes:
-# 1. Needed to work around the issue of RPC not automatically pinning spawned worker threads to CUDA device of the main
-# thread
-# 2. Must be done before `import torch` at which point CUDA context may be created
-# 3. Currently this is enabled by default (as long as #1 is not implemented in RPC). Users may set `PIPPY_PIN_DEVICE` to
-# 0 to disable the pinning
-if os.getenv("PIPPY_PIN_DEVICE", "1") == "1":
+# 1. Previously this env was added to work around an issue that each RPC process creates an extra CUDA context on device
+# 0.  This issue may have been caused by RPC not automatically pinning spawned worker threads to same CUDA device as the
+# main thread. So pinning each RPC process to one device would avoid the issue.
+# 2. This pinning must be done before `import torch` at which point CUDA context may have been created. Thus, if user
+# code has `import torch` before importing PiPPy, this may not work.
+# (Update): the issue in #1 seems to be gone as of March 2023. Hence, we are setting the default value of
+# `PIPPY_PIN_DEVICE` to 0 now.
+if os.getenv("PIPPY_PIN_DEVICE", "0") == "1":
     cuda_devices_str = os.getenv("CUDA_VISIBLE_DEVICES")
     if (
         cuda_devices_str is None  # not set
