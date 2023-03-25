@@ -2,7 +2,9 @@
 import os
 import socket
 import logging
+import types
 from typing import List
+
 
 # Pinning process to a separate GPU if not yet done by launch script
 # Notes:
@@ -27,10 +29,12 @@ if os.getenv("PIPPY_PIN_DEVICE", "0") == "1":
                 f"Pinning local process {local_rank_str} to gpu {os.getenv('CUDA_VISIBLE_DEVICES')}"
             )
 
+
 import torch
 import torch.multiprocessing as mp
 import torch.distributed.rpc as rpc
 
+from pippy.PipelineDriver import PipelineDriverBase
 
 PIPPY_VERBOSITY = os.environ.get("PIPPY_VERBOSITY", "OFF")
 
@@ -278,3 +282,24 @@ def run_worker(rank, run_func, args, *extra_args):
         run_func(my_pp_ranks, args, *extra_args)
 
     rpc.shutdown()
+
+
+# This is an experimental utility function that replaces the original model's forward method with PiPPy's PipelineDriver
+# forward method.  It is used to support HuggingFace's `generate()` method, which is defined in a `GenerationMixin`
+# class that `PreTrainedModel` inherits from.  We choose this replacement path instead of writing our own `generate()`
+# method because the `generate()` method would call into many `GenerationMixin` APIs that may be implemented differently
+# by each model.
+def inject_pipeline_forward(
+    model: torch.nn.Module,
+    pipe_driver: PipelineDriverBase,
+):
+    logging.info(f"Inserting PiPPy pipeline forward into model {model._get_name()}")
+    # Inject pipeline driver as a member object of original model
+    setattr(model, "pippy_pipeline_driver", pipe_driver)
+
+    # Define a new forward method that uses PiPPy's pipeline driver
+    def pippy_forward(self, *args, **kwargs):
+        return self.pippy_pipeline_driver(*args, **kwargs)
+
+    # Replace the forward method in original model
+    model.forward = types.MethodType(pippy_forward, model)
