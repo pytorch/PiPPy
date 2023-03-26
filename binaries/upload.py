@@ -64,8 +64,8 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    PACKAGES = ["torchserve", "model-archiver", "workflow-archiver"]
-    CONDA_PACKAGES_PATH = os.path.join(REPO_ROOT, "binaries", "conda", "output")
+    PACKAGES = ["torchserve"]
+    
 
     if not args.dry_run:
         PiPPY_WHEEL_PATH = glob.glob(os.path.join(REPO_ROOT, "dist"))[0]
