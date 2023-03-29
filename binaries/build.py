@@ -19,7 +19,7 @@ def build_dist_whl(args):
         create_wheel_cmd = "python setup.py "
     else:
         print("## Started pippy build")
-        create_wheel_cmd = "python setup.py bdist_wheel --release"
+        create_wheel_cmd = "python setup.py bdist_wheel "
 
     cur_dir = REPO_ROOT
         
