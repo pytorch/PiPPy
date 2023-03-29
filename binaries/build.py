@@ -24,9 +24,9 @@ def build_dist_whl(args):
     cur_dir = REPO_ROOT
         
     os.chdir(cur_dir)
-
+    cur_wheel_cmd = create_wheel_cmd
     cur_wheel_cmd = (
-        create_wheel_cmd + "--override-name " + binary + "-nightly" + " bdist_wheel"
+        create_wheel_cmd + "--override-name " + "PiPPy" + "-nightly" + " bdist_wheel"
         if args.nightly
         else create_wheel_cmd
     )
@@ -38,7 +38,7 @@ def build_dist_whl(args):
         build_exit_code = os.system(cur_wheel_cmd)
         # If any one of the steps fail, exit with error
         if build_exit_code != 0:
-            sys.exit(f"## {binary} build Failed !")
+            sys.exit(f"## PiPPy build Failed !")
 
 
 def build(args):
