@@ -57,10 +57,6 @@ def build(args):
     print(f"## PiPPY wheel location: {ts_wheel_path}")
 
 
-    # If conda build fails, exit with error
-    if conda_build_exit_code != 0:
-        sys.exit("## Conda Build Failed !")
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
