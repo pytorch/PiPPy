@@ -77,10 +77,9 @@ if __name__ == "__main__":
         idx = sys.argv.index(NAME_ARG)
         name = sys.argv.pop(idx + 1)
         sys.argv.pop(idx)
-    is_nightly = "nightly" in name
-
-    if is_nightly:
-        version = get_nightly_version() 
+        is_nightly = "nightly" in name
+        if is_nightly:
+            version = get_nightly_version() 
 
     setup(
         # Metadata
