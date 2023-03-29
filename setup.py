@@ -8,6 +8,10 @@ from typing import Dict
 
 from setuptools import setup, find_packages
 
+def get_nightly_version():
+    today = date.today()
+    return today.strftime("%Y.%m.%d")
+
 # Package name
 package_name = "pippy"
 
@@ -67,6 +71,13 @@ class clean(distutils.command.clean.clean):  # type: ignore
 
 if __name__ == "__main__":
     write_version_file()
+    NAME_ARG = "--override-name"
+    if NAME_ARG in sys.argv:
+        idx = sys.argv.index(NAME_ARG)
+        name = sys.argv.pop(idx + 1)
+        sys.argv.pop(idx)
+    is_nightly = "nightly" in name
+    version = get_nightly_version() if is_nightly
 
     setup(
         # Metadata
