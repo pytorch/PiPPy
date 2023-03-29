@@ -5,7 +5,7 @@ import os
 import shutil
 import subprocess
 from typing import Dict
-
+import sys
 from setuptools import setup, find_packages
 
 def get_nightly_version():
@@ -77,7 +77,7 @@ if __name__ == "__main__":
         name = sys.argv.pop(idx + 1)
         sys.argv.pop(idx)
     is_nightly = "nightly" in name
-    
+
     if is_nightly:
         version = get_nightly_version() 
 
