@@ -49,12 +49,12 @@ def build(args):
     os.chdir(REPO_ROOT)
 
     if not args.dry_run:
-        ts_wheel_path = glob.glob(os.path.join(REPO_ROOT, "dist", "*.whl"))[0]
+        pippy_wheel_path = glob.glob(os.path.join(REPO_ROOT, "dist", "*.whl"))[0]
 
     else:
-        ts_wheel_path = os.path.join(REPO_ROOT, "dist", "*.whl")
+        pippy_wheel_path = os.path.join(REPO_ROOT, "dist", "*.whl")
 
-    print(f"## PiPPY wheel location: {ts_wheel_path}")
+    print(f"## PiPPY wheel location: {pippy_wheel_path}")
 
 
 
