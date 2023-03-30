@@ -38,12 +38,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Upload anaconda and pypi packages for torchserve and torch-model-archiver"
     )
-    parser.add_argument(
-        "--upload-conda-packages",
-        action="store_true",
-        required=False,
-        help="Specify whether to upload conda packages",
-    )
+
     parser.add_argument(
         "--upload-pypi-packages",
         action="store_true",
