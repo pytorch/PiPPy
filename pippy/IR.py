@@ -16,6 +16,7 @@ from pippy.backward import (
     sync_barrier,
     _null_coalesce_accumulate,
 )
+from pippy.LoadModule import load_checkpoint
 
 # Because split_module with 4 arguments is available only in PT 1.12+
 TORCH_FX_REQUIRED_VERSION = version.parse("1.12")
@@ -1050,10 +1051,13 @@ class Pipe(torch.nn.Module):
     _stage_init_lock = threading.Lock()
     stage_init_cv = threading.Condition(_stage_init_lock)
 
-    def defer_stage_init(self, device):
+    def defer_stage_init(self, device, index_filename=None):
         def materialize_stage(target: str) -> torch.nn.Module:
             logging.info(f"Materializing {target} on {device}")
-            return self.split_gm.get_submodule(target).to(device)
+            submodule = self.split_gm.get_submodule(target)
+            if index_filename is not None:
+                submodule = load_checkpoint(model=submodule, index_filename=index_filename, device=device)
+            return submodule.to(device)
 
         with Pipe.stage_init_cv:
             setattr(Pipe, "materialize_stage", materialize_stage)

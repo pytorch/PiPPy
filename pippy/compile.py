@@ -52,6 +52,7 @@ def _compile(
     output_chunk_spec=None,
     checkpoint=False,
     _debug_mask_minibatches: bool = False,
+    index_filename=None,
     **kwargs,
 ):
     if ranks is None:
@@ -88,7 +89,7 @@ def _compile(
     # We can hence ask each rank to get its own stage from the pipe, and materialize it locally.
     if all_compile:
         device = get_device()
-        pipe_model.defer_stage_init(device)
+        pipe_model.defer_stage_init(device, index_filename)
         stage_mod = pipe_model.export(pp_rank)
 
     if pp_rank == 0:

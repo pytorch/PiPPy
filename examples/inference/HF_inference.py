@@ -13,7 +13,8 @@ from transformers import  AutoModelForSeq2SeqLM
 from transformers import OPTModel, BloomModel
 from PIL import Image
 import requests
-from transformers import AutoFeatureExtractor, RegNetModel 
+from transformers import AutoFeatureExtractor, RegNetModel
+from accelerate import init_empty_weights
 
 
 pippy.fx.Tracer.proxy_buffer_attributes = True
@@ -98,6 +99,7 @@ def run_all(pp_ranks, args):
         split_policy=split_policy,
         tracer=PiPPyHFTracer(),
         concrete_args=concrete_args,
+        index_filename=args.index_filename
     )
 
     model_init_end = time.time()
@@ -114,6 +116,22 @@ def run_all(pp_ranks, args):
             pipe_driver(**model_input_dict)
 
         print('Inference is finished')
+
+
+def load_model(model_name):
+    if 't5' in args.model_name:
+        model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name, use_cache=False)
+    elif 'opt' in args.model_name:
+        model = OPTModel.from_pretrained(args.model_name, use_cache=False)
+    elif 'bloom' in args.model_name:
+        model = BloomModel.from_pretrained(args.model_name, use_cache=False)
+    elif 'regnet' in args.model_name:
+        feature_extractor = AutoFeatureExtractor.from_pretrained("facebook/regnet-y-10b-seer")
+        model = RegNetModel.from_pretrained("facebook/regnet-y-10b-seer")
+        args.feature_extractor = feature_extractor
+    else:
+        raise ValueError("Please check your model's name.")
+    return model
 
 
 if __name__ == "__main__":
@@ -137,6 +155,7 @@ if __name__ == "__main__":
     parser.add_argument('--visualize', type=int, default=1, choices=[0, 1])
     parser.add_argument('--pp_group_size', type=int, default=int(os.getenv("WORLD_SIZE", 4)))
     parser.add_argument('--auto_split', type=str, default="equal_size")
+    parser.add_argument('--index_filename', type=str, default=None, help="The director of model's index.json file")
 
     args = parser.parse_args()
 
@@ -144,16 +163,12 @@ if __name__ == "__main__":
 
     # Main process loads model
     print(f"Loading model {args.model_name}")
-    if 't5' in args.model_name:
-        model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name, use_cache=False)
-    if 'opt' in args.model_name:
-        model = OPTModel.from_pretrained(args.model_name, use_cache=False)
-    if 'bloom' in args.model_name:
-        model = BloomModel.from_pretrained(args.model_name, use_cache=False)
-    if 'regnet' in args.model_name:
-        feature_extractor = AutoFeatureExtractor.from_pretrained("facebook/regnet-y-10b-seer")
-        model = RegNetModel.from_pretrained("facebook/regnet-y-10b-seer")
-        args.feature_extractor = feature_extractor
+    if args.index_filename is not None:
+        with init_empty_weights():
+            model = load_model(args.model_name)
+    else:
+        model = load_model(args.model_name)
+
     args.model = model
 
     args.gspmd = 1
