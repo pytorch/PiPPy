@@ -52,7 +52,7 @@ pipe_driver, stage_mode = pippy.all_compile(
 
 ## HuggingFace Example
 
-**Define a function such as run_master() and add the followings to it.**
+**Define a function such as run_all() and add the followings to it.**
 
 We use a HuggingFace T5 model as the running example here. The `HF_inference.py` also support HF OPT, Bloom, RegNet models as well. Make sure to specifiy the model name as follows ` python HF_inference.py --model_name "facebook/opt-2.7b" `
 
@@ -82,36 +82,21 @@ sig = inspect.signature(t5.forward)
 concrete_args = {p.name: p.default for p in sig.parameters.values() if p.name not in input_names}
 ```
 
-* Get the pipline driver and model stages with `pippy.all_compile()`.
+* Get the pipline driver and model stages with `pippy.all_compile()`. See the section above.
 
-```python
-from pippy.hf import PiPPyHFTracer
+This under the hood, split the model into a pipline, `Pipe.from_tracing` uses `torch.fx` symbolic tracing to turn our model into a directed acyclic graph (DAG) representation. Then, it groups together the operations and parameters into _pipeline stages_. Stages are represented as `submod_N` submodules, where `N` is a natural number. Note: here we use HF FX_tracer for tracing.
 
-pipe_driver, stage_mode = pippy.all_compile(
-        model,
-        num_ranks=world_size,
-        num_chunks=chunks,
-        schedule="FillDrain",
-        split_policy=split_policy,
-        tracer=PiPPyHFTracer(),
-        concrete_args=concrete_args,
-)
-```
+Load to device directly using `defer_stage_init`, which basically let each rank trace the model and split the model and only materialize its own shard.
 
-This under the hood, split the model into a pipline, `Pipe.from_tracing` uses `torch.fx` symbolic tracing to turn our model into a directed acyclic graph (DAG) representation. Then, it groups together the operations and parameters into _pipeline stages_. Stages are represented as `submod_N` submodules, where `N` is a natural number. Note:here we use HF FX_tracer for tracing.
-
-Load to device directly using "defer_stage_init", which basically let each rank trace the model and split the model and only materialize its own shard
-The barrier would make sure all the rank have loaded their shards and finally we make sure that only rank0 run the pipe.
-
-Finally, we get a PipelineDriver that runs the pipeline. To learn more about different schedules for piplelines please use this link[]
+Finally, we get a `PipelineDriver` that runs the pipeline. It implements the runtime scheduling and communcation between stages.
 
 
-* Run the inference by passing input data to the PipelineDriver.
+* Run the inference by passing input data to the `PipelineDriver`.
 
 `pipe_driver(**t5_input_dict)`
 
 
-**we Now pass the run_master() function to the run_PiPPy() along with args to run the pipeline**
+**we Now pass the run_all() function to the run_pippy() along with args to run the program**
 
 ```python
 if __name__ == "__main__":
@@ -121,11 +106,16 @@ if __name__ == "__main__":
     parser.add_argument('--master_addr', type=str, default=os.getenv('MASTER_ADDR', 'localhost'))
     parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
     args.gspmd = 1
-    run_pippy(run_master, args)
+    run_pippy(run_all, args)
 ```
-Run the full example, simply run your python inference script
+
+To run the full example, simply run your Python inference script:
 
 ` python HF_inference.py --model_name 't5-11b' `
+
+or
+
+` torchrun --nproc_per_node=8 HF_inference.py --model_name 't5-11b' `
 
 ### Run OPT model example
 
@@ -144,4 +134,3 @@ This has been tested for [Bloom 3b](https://huggingface.co/docs/transformers/mod
 This has been tested for [RegNet 10B](https://huggingface.co/facebook/regnet-y-10b-seer) on 8 V100 GPUs.
 
 ` python HF_inference.py --model_name 'facebook/regnet-y-10b-seer' `
-
