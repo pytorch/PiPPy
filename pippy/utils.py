@@ -293,7 +293,9 @@ def inject_pipeline_forward(
     model: torch.nn.Module,
     pipe_driver: PipelineDriverBase,
 ):
-    logging.info(f"Inserting PiPPy pipeline forward into model {model._get_name()}")
+    logging.info(
+        f"Inserting PiPPy pipeline forward into model {model._get_name()}"
+    )
     # Inject pipeline driver as a member object of original model
     setattr(model, "pippy_pipeline_driver", pipe_driver)
 
@@ -302,4 +304,4 @@ def inject_pipeline_forward(
         return self.pippy_pipeline_driver(*args, **kwargs)
 
     # Replace the forward method in original model
-    model.forward = types.MethodType(pippy_forward, model)
+    setattr(model, "forward", types.MethodType(pippy_forward, model))
