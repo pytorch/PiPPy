@@ -1,23 +1,23 @@
-# PiPPY (Pipline Parallelism for PyTorch) Distributed Inference for Large Models
+# PiPPy (Pipline Parallelism for PyTorch) Distributed Inference for Large Models
 
-PiPPY helps to run very large models for inference by splitting the model into mutliple stages running on multiple GPUs.
-PiPPY make this easier by providing a auto split API that automates this process for user. 
+PiPPy helps to run very large models for inference by splitting the model into mutliple stages running on multiple GPUs.
+PiPPy make this easier by providing a auto split API that automates this process for user.
 
 ## How It Works
 
-PiPPY splits your model into multiple stages, each stage loaded on one gpu then the input batch will be furhter divided into micro-batches and run through the splits from 
+PiPPy splits your model into multiple stages, each stage loaded on one gpu then the input batch will be furhter divided into micro-batches and run through the splits from
 rank0..rankN. Results are being returned to rank0 as its runing the PipelineDriver. Please read more on pipleines [here](https://github.com/pytorch/tau/blob/main/README.md)
 
 The flowchart below helps to visualize the process in high level as well.
 
 <img src="https://user-images.githubusercontent.com/9162336/207237303-86dc02fe-dae0-4335-8d23-c56d31ecdb87.png" alt="drawing" width="400"/>
 
-## PiPPY Supports Arbitary Checkpoint Partitioning 
+## PiPPy Supports Arbitary Model Partitioning
 
-Unlike most of the available solutions that they need to know the model architecture beforehand, PiPPY supports arbitary PyTorch checkpoints.
-* PiPPY supports both manual splitting and auto split.
+Unlike most of the available solutions that they need to know the model architecture beforehand, PiPPy supports arbitary PyTorch models.
+* PiPPy supports both manual splitting and auto split.
 * Auto split uses `split_policy` and support both `equal_size` and `threshod` policies, the name are self-explanatory.
-* PiPPY use FX to trace and split the model.
+* PiPPy use FX to trace and split the model.
 
 ## Settings To Care About
 
@@ -25,7 +25,7 @@ Unlike most of the available solutions that they need to know the model architec
 
 * **split_policy** it can be either `equal_size`, `split_into_equal_size(number_of_workers)` or `threshod`, `split_on_size_threshold(#some number)`
 
-* **schedule** for the pipline, we use "PipelineDriverFillDrain" for inference, please learn more about it [here](https://github.com/pytorch/tau/blob/main/README.md#advanced-pipeline-schedules). 
+* **schedule** for the pipline, we use `PipelineDriverFillDrain` for inference, please learn more about it [here](https://github.com/pytorch/tau/blob/main/README.md#advanced-pipeline-schedules).
 
 * **chunks** it detemines the size of microbatches, microbatch = batch size/ chuncks
 
@@ -45,7 +45,6 @@ pipe_driver, stage_mode = pippy.all_compile(
             tracer=PiPPyHFTracer(),
             concrete_args=concrete_args,
         )
-
 ```
 **Main difference between Pippy for training and inference is we dont need to call the init_data_parallel API in the inference. The reason is DDP init is only needed if we need backward pass which is not the case for inference.**
 
@@ -66,7 +65,7 @@ example:
 
 *  Setup the model split policy
 
-```
+```python
 from pippy import split_on_size_threshold, split_into_equal_size
 
 if args.auto_split == "threshold":
@@ -76,27 +75,27 @@ elif args.auto_split == "equal_size":
 ```
 * Make the concerete args (optional), If the model has inside an if-else condition, the concrete args can help FX determine which path to trace. For now control flow is not supported in FX tracing, we are working on integrating Torch Dynamo to make this more flexible. 
 
-```
-t5_input_dict = []'input_ids', 'decoder_input_ids']
+```python
+t5_input_dict = {'input_ids': inp, 'decoder_input_ids': inp}
 input_names = t5_input_dict.keys()
 sig = inspect.signature(t5.forward)
 concrete_args = {p.name: p.default for p in sig.parameters.values() if p.name not in input_names}
 ```
 
-* Get the pipline driver and model stages with `pippy.all_compile()`, 
+* Get the pipline driver and model stages with `pippy.all_compile()`.
 
 ```python
 from pippy.hf import PiPPyHFTracer
 
 pipe_driver, stage_mode = pippy.all_compile(
-            model,
-            num_ranks=world_size,
-            num_chunks=chunks,
-            schedule="FillDrain",
-            split_policy=split_policy,
-            tracer=PiPPyHFTracer(),
-            concrete_args=concrete_args,
-        )
+        model,
+        num_ranks=world_size,
+        num_chunks=chunks,
+        schedule="FillDrain",
+        split_policy=split_policy,
+        tracer=PiPPyHFTracer(),
+        concrete_args=concrete_args,
+)
 ```
 
 This under the hood, split the model into a pipline, `Pipe.from_tracing` uses `torch.fx` symbolic tracing to turn our model into a directed acyclic graph (DAG) representation. Then, it groups together the operations and parameters into _pipeline stages_. Stages are represented as `submod_N` submodules, where `N` is a natural number. Note:here we use HF FX_tracer for tracing.
@@ -112,10 +111,9 @@ Finally, we get a PipelineDriver that runs the pipeline. To learn more about dif
 `pipe_driver(**t5_input_dict)`
 
 
-**we Now pass the run_master() function to the run_PiPPY() along with args to run the pipeline**
+**we Now pass the run_master() function to the run_PiPPy() along with args to run the pipeline**
 
-```
-
+```python
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 8)))
@@ -124,7 +122,6 @@ if __name__ == "__main__":
     parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
     args.gspmd = 1
     run_pippy(run_master, args)
-
 ```
 Run the full example, simply run your python inference script
 
