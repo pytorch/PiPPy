@@ -22,6 +22,8 @@ from transformers.utils import (
 )
 from transformers.utils import cached_property
 
+from pippy.PipelineDriver import PipelineDriverBase
+
 
 logger = logging.getLogger(__name__)
 
@@ -283,3 +285,40 @@ class PiPPyHFTracer(fx.HFTracer):
                 elif getattr(node.target, "_orig", None) == torch.zeros:
                     node.target = torch_zeros_wrapper
         return graph
+
+
+# The `DotDict` class adds dot notation access to dictionary attributes.
+class DotDict(dict):
+    __getattr__ = dict.get
+    __setattr__ = dict.__setitem__
+    __delattr__ = dict.__delitem__
+
+
+# This is an experimental utility function that replaces the original model's forward method with PiPPy's PipelineDriver
+# forward method.  It is used to support HuggingFace's `generate()` method, which is defined in a `GenerationMixin`
+# class that `PreTrainedModel` inherits from.  We choose this replacement path instead of writing our own `generate()`
+# method because the `generate()` method would call into many `GenerationMixin` APIs that may be implemented differently
+# by each model.
+def inject_pipeline_forward(
+    model: torch.nn.Module,
+    pipe_driver: PipelineDriverBase,
+):
+    logging.info(
+        f"Inserting PiPPy pipeline forward into model {model._get_name()}"
+    )
+    # Inject pipeline driver as a member object of original model
+    setattr(model, "pippy_pipeline_driver", pipe_driver)
+
+    # Define a new forward method that uses PiPPy's pipeline driver
+    def pippy_forward(self, *args, **kwargs):
+        output = self.pippy_pipeline_driver(*args, **kwargs)
+        if isinstance(output, dict):
+            # Add dot access if output is a dictionary. The output of a traced HF model is a traditional dict which has
+            # only [`key`] access.  The wrapping is needed for Transformer versons >= 4.28 which access attributes of
+            # output via dot notation, such as `output.logits`.  See for example the `generate()` method and
+            # `modeling_output.py`.
+            output = DotDict(output)
+        return output
+
+    # Replace the forward method in original model
+    setattr(model, "forward", types.MethodType(pippy_forward, model))

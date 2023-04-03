@@ -5,9 +5,8 @@ import os
 import torch
 import pippy
 import pippy.fx
-import pippy.utils
 from pippy import run_pippy
-from pippy.hf import PiPPyHFTracer
+from pippy.hf import PiPPyHFTracer, inject_pipeline_forward
 from transformers import AutoTokenizer, OPTForCausalLM
 
 
@@ -45,7 +44,6 @@ def generate_input(args):
     inp = torch.empty(bs, seq_length, dtype=torch.long, device=args.device).random_(model_config.vocab_size)
     model_input_dict = {
         "input_ids": inp,
-        "attention_mask": None,
     }
 
     return model_input_dict
@@ -90,7 +88,7 @@ def run_all(pp_ranks, args):
     print_mem_usage()
 
     # Inject pipeline driver's forward function back to original model to support HF's `generate()` method
-    pippy.utils.inject_pipeline_forward(model, pipe_driver)
+    inject_pipeline_forward(model, pipe_driver)
 
     # OPT generate
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
