@@ -289,9 +289,14 @@ class PiPPyHFTracer(fx.HFTracer):
 
 # The `DotDict` class adds dot notation access to dictionary attributes.
 class DotDict(dict):
-    __getattr__ = dict.get
-    __setattr__ = dict.__setitem__
-    __delattr__ = dict.__delitem__
+    def __getattr__(self, attr):
+        return self.get(attr)
+
+    def __setattr__(self, key, value):
+        self.__setitem__(key, value)
+
+    def __delattr__(self, item):
+        self.__delitem__(item)
 
 
 # This is an experimental utility function that replaces the original model's forward method with PiPPy's PipelineDriver
