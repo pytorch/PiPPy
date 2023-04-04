@@ -5,8 +5,6 @@ import os
 import shutil
 import subprocess
 from typing import Dict
-from datetime import date
-import sys
 from setuptools import setup, find_packages
 
 # Package name
