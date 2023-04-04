@@ -52,6 +52,10 @@ def run_all(pp_ranks, args):
         model,
         except_keys="input_ids",
     )
+    if 'bloom' in args.model_name:
+        # Used to avoid a control flow and tracing `len` call in BloomForCausalLM that looks like this:
+        # `if len(deprecated_arguments) > 0:`
+        concrete_args.setdefault("deprecated_arguments", {})
 
     pipe_driver, stage_mod = pippy.all_compile(
         model,
@@ -100,9 +104,14 @@ if __name__ == "__main__":
 
     assert args.world_size % args.pp_group_size == 0
 
+    supported_model_categories = ["opt", "gpt2", "bloom"]
+    # For example:
+    # "facebook/opt-350m"
+    # "gpt2"
+    # "bigscience/bloom-3b"
+
     # Main process loads model
-    supported_models = ['opt', 'gpt2']
-    if any([m in args.model_name for m in supported_models]):
+    if any([m in args.model_name for m in supported_model_categories]):
         print(f"Loading model {args.model_name}")
         model = AutoModelForCausalLM.from_pretrained(args.model_name, use_cache=False)
     else:
