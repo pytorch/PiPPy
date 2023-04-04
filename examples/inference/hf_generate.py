@@ -104,11 +104,13 @@ if __name__ == "__main__":
 
     assert args.world_size % args.pp_group_size == 0
 
-    supported_model_categories = ["opt", "gpt2", "bloom"]
+    supported_model_categories = ["opt", "gpt2", "bloom", "EleutherAI/gpt", "codegen"]
     # For example:
     # "facebook/opt-350m"
     # "gpt2"
     # "bigscience/bloom-3b"
+    #EleutherAI/gpt-neo-2.7B
+    #Salesforce/codegen-2B-multi
 
     # Main process loads model
     if any([m in args.model_name for m in supported_model_categories]):
