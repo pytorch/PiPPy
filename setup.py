@@ -9,10 +9,6 @@ from datetime import date
 import sys
 from setuptools import setup, find_packages
 
-def get_nightly_version():
-    today = date.today()
-    return today.strftime("%Y.%m.%d")
-
 # Package name
 package_name = "pippy"
 
