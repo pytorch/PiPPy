@@ -12,29 +12,19 @@ def build_dist_whl(args):
     """
     Function to build the wheel files for PiPPy
     """
-    if args.nightly:
-        print(
-            "## Started pippy build"
-        )
-        create_wheel_cmd = "python setup.py "
-    else:
-        print("## Started pippy build")
-        create_wheel_cmd = "python setup.py bdist_wheel "
+
+    print("## Started pippy build")
+    create_wheel_cmd = "python setup.py bdist_wheel "
 
     cur_dir = REPO_ROOT
         
     os.chdir(cur_dir)
-    cur_wheel_cmd = (
-        create_wheel_cmd + "--override-name " + "PiPPy" + "-nightly" + " bdist_wheel"
-        if args.nightly
-        else create_wheel_cmd
-    )
 
     # Build wheel
-    print(f"## In directory: {os.getcwd()} | Executing command: {cur_wheel_cmd}")
+    print(f"## In directory: {os.getcwd()} | Executing command: {create_wheel_cmd}")
 
     if not args.dry_run:
-        build_exit_code = os.system(cur_wheel_cmd)
+        build_exit_code = os.system(create_wheel_cmd)
         # If any one of the steps fail, exit with error
         if build_exit_code != 0:
             sys.exit(f"## PiPPy build Failed !")
@@ -60,12 +50,6 @@ def build(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Build for pippy"
-    )
-    parser.add_argument(
-        "--nightly",
-        action="store_true",
-        required=False,
-        help="specify nightly is being built",
     )
 
     parser.add_argument(
