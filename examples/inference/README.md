@@ -132,3 +132,8 @@ This has been tested for [Bloom 3b](https://huggingface.co/docs/transformers/mod
 
 ` python hf_generate.py --model_name 'bigscience/bloom-3b' `
 
+### More models to try
+-  "gpt2"
+- "bigscience/bloom-3b"
+- EleutherAI/gpt-neo-2.7B
+- Salesforce/codegen-2B-multi
