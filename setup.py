@@ -72,14 +72,6 @@ class clean(distutils.command.clean.clean):  # type: ignore
 
 if __name__ == "__main__":
     write_version_file()
-    NAME_ARG = "--override-name"
-    if NAME_ARG in sys.argv:
-        idx = sys.argv.index(NAME_ARG)
-        name = sys.argv.pop(idx + 1)
-        sys.argv.pop(idx)
-        is_nightly = "nightly" in name
-        if is_nightly:
-            version = get_nightly_version() 
 
     setup(
         # Metadata
