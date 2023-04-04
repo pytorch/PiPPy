@@ -46,6 +46,8 @@ pipe_driver, stage_mode = pippy.all_compile(
             concrete_args=concrete_args,
         )
 ```
+**Note** As PiPPY leverage FX tracing for partitioning, as a result for HuggingFace models that have `generate` method will need to call `inject_pipeline_forward(model, pipe_driver)` to  make `model.generate` available. This works for the decoder only  models so far, encoder-decoder models such as `T5` is in progress.
+
 **Main difference between Pippy for training and inference is we dont need to call the init_data_parallel API in the inference. The reason is DDP init is only needed if we need backward pass which is not the case for inference.**
 
 
@@ -54,13 +56,14 @@ pipe_driver, stage_mode = pippy.all_compile(
 
 **Define a function such as run_all() and add the followings to it.**
 
-We use a HuggingFace T5 model as the running example here. The `HF_inference.py` also support HF OPT, Bloom, RegNet models as well. Make sure to specifiy the model name as follows ` python HF_inference.py --model_name "facebook/opt-2.7b" `
+We use a HuggingFace `OPT` model as the running example here. The `HF_inference.py` also support other models for text generation such as `Bloom`, `gpt2` models as well. Make sure to specifiy the model name as follows ` python HF_inference.py --model_name "facebook/opt-2.7b" `. This is not limited to LLMs it also works for models such [RegNet 10B](https://huggingface.co/facebook/regnet-y-10b-seer).
+
 
 * Load your model normally on CPU
 
 example:
 
-` t5 = AutoModelForSeq2SeqLM.from_pretrained('t5-11b', use_cache=False) `
+` model = AutoModelForCausalLM.from_pretrained('facebook/opt-6.7b', use_cache=False) `
 
 
 *  Setup the model split policy
@@ -76,24 +79,24 @@ elif args.auto_split == "equal_size":
 * Make the concerete args (optional), If the model has inside an if-else condition, the concrete args can help FX determine which path to trace. For now control flow is not supported in FX tracing, we are working on integrating Torch Dynamo to make this more flexible. 
 
 ```python
-t5_input_dict = {'input_ids': inp, 'decoder_input_ids': inp}
-input_names = t5_input_dict.keys()
-sig = inspect.signature(t5.forward)
+inputs = tokenizer(prompt, return_tensors="pt")
+input_names = inputs.keys()
+sig = inspect.signature(model.forward)
 concrete_args = {p.name: p.default for p in sig.parameters.values() if p.name not in input_names}
 ```
 
 * Get the pipline driver and model stages with `pippy.all_compile()`. See the section above.
 
-This under the hood, split the model into a pipline, `Pipe.from_tracing` uses `torch.fx` symbolic tracing to turn our model into a directed acyclic graph (DAG) representation. Then, it groups together the operations and parameters into _pipeline stages_. Stages are represented as `submod_N` submodules, where `N` is a natural number. Note: here we use HF FX_tracer for tracing.
+This under the hood, splits the model into a pipline, `Pipe.from_tracing` uses `torch.fx` symbolic tracing to turn our model into a directed acyclic graph (DAG) representation. Then, it groups together the operations and parameters into _pipeline stages_. Stages are represented as `submod_N` submodules, where `N` is a natural number. Note: here we use HF FX_tracer for tracing.
 
-Load to device directly using `defer_stage_init`, which basically let each rank trace the model and split the model and only materialize its own shard.
+Loads to device directly using `defer_stage_init`, which basically let each rank trace the model and split the model and only materialize its own shard.
 
 Finally, we get a `PipelineDriver` that runs the pipeline. It implements the runtime scheduling and communcation between stages.
 
 
 * Run the inference by passing input data to the `PipelineDriver`.
 
-`pipe_driver(**t5_input_dict)`
+`pipe_driver(**inputs)`
 
 
 **we Now pass the run_all() function to the run_pippy() along with args to run the program**
@@ -111,11 +114,11 @@ if __name__ == "__main__":
 
 To run the full example, simply run your Python inference script:
 
-` python HF_inference.py --model_name 't5-11b' `
+` python HF_inference.py --model_name 'facebook/opt-6.7b'' `
 
 or
 
-` torchrun --nproc_per_node=8 HF_inference.py --model_name 't5-11b' `
+` torchrun --nproc_per_node=8 HF_inference.py --model_name 'facebook/opt-6.7b' `
 
 ### Run OPT model example
 
@@ -129,8 +132,3 @@ This has been tested for [Bloom 3b](https://huggingface.co/docs/transformers/mod
 
 ` python HF_inference.py --model_name 'bigscience/bloom-3b' `
 
-### Run RegNet Vision model example
-
-This has been tested for [RegNet 10B](https://huggingface.co/facebook/regnet-y-10b-seer) on 8 V100 GPUs.
-
-` python HF_inference.py --model_name 'facebook/regnet-y-10b-seer' `
