@@ -7,10 +7,9 @@ import torch
 import pippy
 import pippy.fx
 from pippy import run_pippy
-from pippy.hf import PiPPyHFTracer
+from pippy.hf import PiPPyHFTracer, inject_pipeline_forward
 from pippy import split_on_size_threshold, split_into_equal_size
-from transformers import  AutoModelForSeq2SeqLM
-from transformers import OPTModel, BloomModel
+from transformers import  AutoModelForCausalLM, AutoTokenizer
 from PIL import Image
 import requests
 from transformers import AutoFeatureExtractor, RegNetModel 
@@ -42,28 +41,6 @@ def get_number_of_params(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-def generate_input(args):
-    bs = args.batch_size * args.chunks
-    seq_length = args.seq_length
-    model_config = args.model.config
-    torch.manual_seed(args.rank)
-
-    # preparing inputs based on the model choice
-    if 't5' in args.model_name:
-        inp = torch.empty(bs, seq_length, dtype=torch.long, device=args.device).random_(model_config.vocab_size)
-        model_input_dict = {'input_ids': inp, 'decoder_input_ids': inp}
-    elif 'opt' or 'bloom' in args.model_name:
-        inp = torch.empty(bs, seq_length, dtype=torch.long, device=args.device).random_(model_config.vocab_size)
-        model_input_dict = {'input_ids': inp}
-    elif 'regnet' in args.model_name:
-        url = "http://images.cocodataset.org/val2017/000000039769.jpg"
-        image = Image.open(requests.get(url, stream=True).raw)
-        inputs = args.feature_extractor(image, return_tensors="pt")
-        inputs["pixel_values"] = inputs["pixel_values"]
-        model_input_dict = {'pixel_values': inputs["pixel_values"]}
-
-    return model_input_dict
-
 
 def run_all(pp_ranks, args):
     model = args.model
@@ -72,48 +49,50 @@ def run_all(pp_ranks, args):
     num_ranks = len(pp_ranks)
 
     if args.rank == 0:
-        print("Using schedule:", args.schedule)
         print(model.config)
         print(f"model total number of params = {get_number_of_params(model) // 10 ** 6}M")
 
-    if args.auto_split == "threshold":
-        split_policy = split_on_size_threshold(490 * 1e6)
-    elif args.auto_split == "equal_size":
-        split_policy = split_into_equal_size(num_ranks)
+    split_policy = pippy.split_into_equal_size(num_ranks)
 
-    model_input_dict = generate_input(args)
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+    prompt = "Hey, are you consciours? Can you talk to me?"
+    input = tokenizer(prompt, return_tensors="pt")
+    del input['attention_mask'] #passing only input_ids to the model
+    print(input.keys())
+
     # Use default value for other kwargs than those in `model_input_dict`
     concrete_args = pippy.create_default_args(
         model,
-        except_keys=model_input_dict.keys(),
+        except_keys=input.keys()
     )
-
-    model_init_start = time.time()
 
     pipe_driver, stage_mod = pippy.all_compile(
         model,
         num_ranks,
         args.chunks,
-        schedule=args.schedule,
         split_policy=split_policy,
         tracer=PiPPyHFTracer(),
         concrete_args=concrete_args,
     )
 
-    model_init_end = time.time()
-
     params = get_number_of_params(stage_mod)
     print(f"submod_{args.rank} {params // 10 ** 6}M params")
 
-    if args.rank == 0:
-        print(f"Model init time: {model_init_end - model_init_start} s")
-        print_mem_usage()
-        print('Running model pipeline.')
+    if args.rank != 0:
+        return
 
-        for _ in range(args.num_batches):
-            pipe_driver(**model_input_dict)
+    # Master continues
+    print_mem_usage()
 
-        print('Inference is finished')
+    # Inject pipeline driver's forward function back to original model to support HF's `generate()` method
+    inject_pipeline_forward(model, pipe_driver)
+
+    input = input.to(args.device)
+    input_ids = input["input_ids"].to(args.device)
+    outputs = model.generate(**input, max_length=30)
+    response = tokenizer.batch_decode(outputs, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
+    print(response)
+
 
 
 if __name__ == "__main__":
@@ -122,21 +101,12 @@ if __name__ == "__main__":
     parser.add_argument('--rank', type=int, default=int(os.getenv("RANK", -1)))
     parser.add_argument('--master_addr', type=str, default=os.getenv('MASTER_ADDR', 'localhost'))
     parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
-
-    parser.add_argument('--model_name', type=str, default='t5-3b')
+    parser.add_argument('--model_name', type=str, default='gpt2')
     parser.add_argument('--batch_size', type=int, default=1)
-    parser.add_argument('--chunks', type=int, default=int(os.getenv("WORLD_SIZE", 4)))
-    parser.add_argument('--num_batches', type=int, default=1)
+    parser.add_argument('--chunks', type=int, default=1)
     parser.add_argument('--seq_length', type=int, default=16)
-    parser.add_argument('--avg_seqlen', type=int, default=16)
-    parser.add_argument('--max_seqlen', type=int, default=16)
-    parser.add_argument('--seqlen-stdev', type=int, default=10)
-
-    parser.add_argument('-s', '--schedule', type=str, default="FillDrain")
     parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
-    parser.add_argument('--visualize', type=int, default=1, choices=[0, 1])
     parser.add_argument('--pp_group_size', type=int, default=int(os.getenv("WORLD_SIZE", 4)))
-    parser.add_argument('--auto_split', type=str, default="equal_size")
 
     args = parser.parse_args()
 
@@ -144,17 +114,11 @@ if __name__ == "__main__":
 
     # Main process loads model
     print(f"Loading model {args.model_name}")
-    if 't5' in args.model_name:
-        model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name, use_cache=False)
-    if 'opt' in args.model_name:
-        model = OPTModel.from_pretrained(args.model_name, use_cache=False)
-    if 'bloom' in args.model_name:
-        model = BloomModel.from_pretrained(args.model_name, use_cache=False)
-    if 'regnet' in args.model_name:
-        feature_extractor = AutoFeatureExtractor.from_pretrained("facebook/regnet-y-10b-seer")
-        model = RegNetModel.from_pretrained("facebook/regnet-y-10b-seer")
-        args.feature_extractor = feature_extractor
-    args.model = model
+    if 't5' not in args.model_name:
+        model = AutoModelForCausalLM.from_pretrained(args.model_name, use_cache=False)
+    else:
+        raise ValueError(f"Unsupported model: {args.model_name}")
 
+    args.model = model
     args.gspmd = 1
     run_pippy(run_all, args)
