@@ -1,24 +1,18 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import argparse
 import os
-import time
 
 import torch
 import pippy
 import pippy.fx
 from pippy import run_pippy
 from pippy.hf import PiPPyHFTracer, inject_pipeline_forward
-from pippy import split_on_size_threshold, split_into_equal_size
-from transformers import  AutoModelForCausalLM, AutoTokenizer
-from PIL import Image
-import requests
-from transformers import AutoFeatureExtractor, RegNetModel 
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 pippy.fx.Tracer.proxy_buffer_attributes = True
 
 gigabyte_size = 1024 ** 3
-megabyte_size = 1024 ** 2
 
 
 def format_to_gb(item, precision=4):
@@ -41,7 +35,6 @@ def get_number_of_params(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-
 def run_all(pp_ranks, args):
     model = args.model
     model.eval()
@@ -54,16 +47,10 @@ def run_all(pp_ranks, args):
 
     split_policy = pippy.split_into_equal_size(num_ranks)
 
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-    prompt = "Hey, are you consciours? Can you talk to me?"
-    input = tokenizer(prompt, return_tensors="pt")
-    del input['attention_mask'] #passing only input_ids to the model
-    print(input.keys())
-
-    # Use default value for other kwargs than those in `model_input_dict`
+    # Use default value for kwargs other than `input_ids`
     concrete_args = pippy.create_default_args(
         model,
-        except_keys=input.keys()
+        except_keys="input_ids",
     )
 
     pipe_driver, stage_mod = pippy.all_compile(
@@ -87,11 +74,14 @@ def run_all(pp_ranks, args):
     # Inject pipeline driver's forward function back to original model to support HF's `generate()` method
     inject_pipeline_forward(model, pipe_driver)
 
-    input = input.to(args.device)
-    outputs = model.generate(**input, max_length=30)
+    # Generate text based on prompt
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+    prompt = "Hey, are you conscious? Can you talk to me?"
+    input = tokenizer(prompt, return_tensors="pt")
+    input_ids = input["input_ids"].to(args.device)
+    outputs = model.generate(input_ids, max_length=30)
     response = tokenizer.batch_decode(outputs, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
     print(response)
-
 
 
 if __name__ == "__main__":
@@ -100,10 +90,9 @@ if __name__ == "__main__":
     parser.add_argument('--rank', type=int, default=int(os.getenv("RANK", -1)))
     parser.add_argument('--master_addr', type=str, default=os.getenv('MASTER_ADDR', 'localhost'))
     parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
-    parser.add_argument('--model_name', type=str, default='gpt2')
+    parser.add_argument('--model_name', type=str, default='facebook/opt-350m')
     parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--chunks', type=int, default=1)
-    parser.add_argument('--seq_length', type=int, default=16)
     parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
     parser.add_argument('--pp_group_size', type=int, default=int(os.getenv("WORLD_SIZE", 4)))
 
@@ -112,8 +101,9 @@ if __name__ == "__main__":
     assert args.world_size % args.pp_group_size == 0
 
     # Main process loads model
-    print(f"Loading model {args.model_name}")
-    if 't5' not in args.model_name:
+    supported_models = ['opt', 'gpt2']
+    if any([m in args.model_name for m in supported_models]):
+        print(f"Loading model {args.model_name}")
         model = AutoModelForCausalLM.from_pretrained(args.model_name, use_cache=False)
     else:
         raise ValueError(f"Unsupported model: {args.model_name}")
