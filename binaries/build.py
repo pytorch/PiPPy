@@ -10,7 +10,7 @@ sys.path.append(REPO_ROOT)
 
 def build_dist_whl(args):
     """
-    Function to build the wheel files for torchserve, model-archiver and workflow-archiver
+    Function to build the wheel files for PiPPy
     """
     if args.nightly:
         print(
@@ -24,7 +24,6 @@ def build_dist_whl(args):
     cur_dir = REPO_ROOT
         
     os.chdir(cur_dir)
-    cur_wheel_cmd = create_wheel_cmd
     cur_wheel_cmd = (
         create_wheel_cmd + "--override-name " + "PiPPy" + "-nightly" + " bdist_wheel"
         if args.nightly
