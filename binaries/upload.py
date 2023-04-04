@@ -36,7 +36,7 @@ def upload_pypi_packages(args, WHL_PATHS):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Upload anaconda and pypi packages for torchserve and torch-model-archiver"
+        description="Upload  pypi packages for PiPPy"
     )
 
     parser.add_argument(
@@ -44,12 +44,6 @@ if __name__ == "__main__":
         action="store_true",
         required=False,
         help="Specify whether to upload pypi packages",
-    )
-    parser.add_argument(
-        "--test-pypi",
-        action="store_true",
-        required=False,
-        help="Specify whether to upload to test PyPI",
     )
 
     parser.add_argument(
@@ -59,7 +53,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    PACKAGES = ["torchserve"]
+    PACKAGES = ["pippy"]
     
 
     if not args.dry_run:
