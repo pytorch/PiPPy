@@ -56,7 +56,7 @@ pipe_driver, stage_mode = pippy.all_compile(
 
 **Define a function such as run_all() and add the followings to it.**
 
-We use a HuggingFace `OPT` model as the running example here. The `HF_inference.py` also support other models for text generation such as `Bloom`, `gpt2` models as well. Make sure to specifiy the model name as follows ` python HF_inference.py --model_name "facebook/opt-2.7b" `. This is not limited to LLMs it also works for models such [RegNet 10B](https://huggingface.co/facebook/regnet-y-10b-seer).
+We use a HuggingFace `OPT` model as the running example here. The `hf_generate.py` also support other models for text generation such as `Bloom`, `gpt2` models as well. Make sure to specifiy the model name as follows ` python hf_generate.py --model_name "facebook/opt-2.7b" `. This is not limited to LLMs it also works for models such [RegNet 10B](https://huggingface.co/facebook/regnet-y-10b-seer).
 
 
 * Load your model normally on CPU
@@ -114,21 +114,21 @@ if __name__ == "__main__":
 
 To run the full example, simply run your Python inference script:
 
-` python HF_inference.py --model_name 'facebook/opt-6.7b'' `
+` python hf_generate.py --model_name 'facebook/opt-6.7b'' `
 
 or
 
-` torchrun --nproc_per_node=8 HF_inference.py --model_name 'facebook/opt-6.7b' `
+` torchrun --nproc_per_node=8 hf_generate.py --model_name 'facebook/opt-6.7b' `
 
 ### Run OPT model example
 
 This has been tested for [OPT 2.7 and 30B](https://huggingface.co/facebook/opt-30b) on 8 V100 GPUs.
 
-` python HF_inference.py --model_name 'facebook/opt-30b' `
+` python hf_generate.py --model_name 'facebook/opt-30b' `
 
 ### Run Bloom model example
 
 This has been tested for [Bloom 3b](https://huggingface.co/docs/transformers/model_doc/bloom) on 8 V100 GPUs.
 
-` python HF_inference.py --model_name 'bigscience/bloom-3b' `
+` python hf_generate.py --model_name 'bigscience/bloom-3b' `
 
