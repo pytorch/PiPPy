@@ -56,7 +56,7 @@ pipe_driver, stage_mode = pippy.all_compile(
 
 **Define a function such as run_all() and add the followings to it.**
 
-We use a HuggingFace `OPT` model as the running example here. The `hf_generate.py` also support other models for text generation such as `Bloom`, `gpt2` models as well. Make sure to specifiy the model name as follows ` python hf_generate.py --model_name "facebook/opt-2.7b" `. This is not limited to LLMs it also works for models such [RegNet 10B](https://huggingface.co/facebook/regnet-y-10b-seer).
+We use a HuggingFace `OPT` model as the running example here. The `hf_generate.py` also support other models for text generation such as `Bloom`, `gpt2` and `codegen` family of the models as well. Make sure to specifiy the model name as follows ` python hf_generate.py --model_name "facebook/opt-2.7b" `. This is not limited to LLMs it also works for models such [RegNet 10B](https://huggingface.co/facebook/regnet-y-10b-seer).
 
 
 * Load your model normally on CPU
