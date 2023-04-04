@@ -76,13 +76,13 @@ def shard_dict_of_args(
         sharded_arg_flat = []
 
         for v, chunk_v in zip(flat, chunk_spec_flat):
-            if chunk_v is Replicate:
+            if chunk_v is Replicate or not isinstance(v, torch.Tensor):
                 sharded_arg_flat.append([v] * num_chunks)
             elif isinstance(chunk_v, TensorChunkSpec):
                 # TODO: check type of v. If it's a tensor, use chunk (or debug mask).
                 # If it's a collection type, split it as you would expect. Otherwise,
                 # Throw an error
-                assert isinstance(v, torch.Tensor)
+                assert isinstance(v, torch.Tensor), f"{v} is not a tensor"
 
                 chunk_tensors = torch.tensor_split(
                     v, num_chunks, chunk_v.split_dim
