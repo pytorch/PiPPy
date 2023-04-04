@@ -57,8 +57,8 @@ def run_all(pp_ranks, args):
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     prompt = "Hey, are you consciours? Can you talk to me?"
     input = tokenizer(prompt, return_tensors="pt")
-    del input['attention_mask'] #passing only input_ids to the model
-    print(input.keys())
+
+    input= {key: value.to(args.device) for key, value in input.items() if key in ["input_ids"]}
 
     # Use default value for other kwargs than those in `model_input_dict`
     concrete_args = pippy.create_default_args(
@@ -87,7 +87,6 @@ def run_all(pp_ranks, args):
     # Inject pipeline driver's forward function back to original model to support HF's `generate()` method
     inject_pipeline_forward(model, pipe_driver)
 
-    input = input.to(args.device)
     outputs = model.generate(**input, max_length=30)
     response = tokenizer.batch_decode(outputs, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
     print(response)
