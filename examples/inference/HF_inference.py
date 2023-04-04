@@ -88,7 +88,6 @@ def run_all(pp_ranks, args):
     inject_pipeline_forward(model, pipe_driver)
 
     input = input.to(args.device)
-    input_ids = input["input_ids"].to(args.device)
     outputs = model.generate(**input, max_length=30)
     response = tokenizer.batch_decode(outputs, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
     print(response)
