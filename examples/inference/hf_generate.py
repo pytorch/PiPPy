@@ -7,7 +7,7 @@ import pippy
 import pippy.fx
 from pippy import run_pippy
 from pippy.hf import PiPPyHFTracer, inject_pipeline_forward
-from transformers import AutoTokenizer, OPTForCausalLM
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 pippy.fx.Tracer.proxy_buffer_attributes = True
@@ -35,23 +35,8 @@ def get_number_of_params(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-def generate_input(args):
-    bs = args.batch_size * args.chunks
-    seq_length = args.seq_length
-    model_config = args.model.config
-    torch.manual_seed(args.rank)
-
-    inp = torch.empty(bs, seq_length, dtype=torch.long, device=args.device).random_(model_config.vocab_size)
-    model_input_dict = {
-        "input_ids": inp,
-    }
-
-    return model_input_dict
-
-
 def run_all(pp_ranks, args):
     model = args.model
-    model.to(args.device)
     model.eval()
     model.config.use_cache = False  # don't output `past_key_values`
     num_ranks = len(pp_ranks)
@@ -62,12 +47,15 @@ def run_all(pp_ranks, args):
 
     split_policy = pippy.split_into_equal_size(num_ranks)
 
-    model_input_dict = generate_input(args)
-    # Use default value for other kwargs than those in `model_input_dict`
+    # Use default value for kwargs other than `input_ids`
     concrete_args = pippy.create_default_args(
         model,
-        except_keys=model_input_dict.keys(),
+        except_keys="input_ids",
     )
+    if 'bloom' in args.model_name:
+        # Used to avoid a control flow and tracing `len` call in BloomForCausalLM that looks like this:
+        # `if len(deprecated_arguments) > 0:`
+        concrete_args.setdefault("deprecated_arguments", {})
 
     pipe_driver, stage_mod = pippy.all_compile(
         model,
@@ -90,11 +78,10 @@ def run_all(pp_ranks, args):
     # Inject pipeline driver's forward function back to original model to support HF's `generate()` method
     inject_pipeline_forward(model, pipe_driver)
 
-    # OPT generate
+    # Generate text based on prompt
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-    prompt = "Hey, are you consciours? Can you talk to me?"
+    prompt = "Hey, are you conscious? Can you talk to me?"
     input = tokenizer(prompt, return_tensors="pt")
-
     input_ids = input["input_ids"].to(args.device)
     outputs = model.generate(input_ids, max_length=30)
     response = tokenizer.batch_decode(outputs, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
@@ -110,7 +97,6 @@ if __name__ == "__main__":
     parser.add_argument('--model_name', type=str, default='facebook/opt-350m')
     parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--chunks', type=int, default=1)
-    parser.add_argument('--seq_length', type=int, default=16)
     parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
     parser.add_argument('--pp_group_size', type=int, default=int(os.getenv("WORLD_SIZE", 4)))
 
@@ -118,13 +104,21 @@ if __name__ == "__main__":
 
     assert args.world_size % args.pp_group_size == 0
 
+    supported_model_categories = ["opt", "gpt2", "bloom", "EleutherAI/gpt", "codegen"]
+    # For example:
+    # "facebook/opt-350m"
+    # "gpt2"
+    # "bigscience/bloom-3b"
+    #EleutherAI/gpt-neo-2.7B
+    #Salesforce/codegen-2B-multi
+
     # Main process loads model
-    print(f"Loading model {args.model_name}")
-    if 'opt' in args.model_name:
-        model = OPTForCausalLM.from_pretrained(args.model_name, use_cache=False)
+    if any([m in args.model_name for m in supported_model_categories]):
+        print(f"Loading model {args.model_name}")
+        model = AutoModelForCausalLM.from_pretrained(args.model_name, use_cache=False)
     else:
         raise ValueError(f"Unsupported model: {args.model_name}")
-    args.model = model
 
+    args.model = model
     args.gspmd = 1
     run_pippy(run_all, args)
