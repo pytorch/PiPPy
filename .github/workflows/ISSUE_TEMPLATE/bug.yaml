@@ -6,7 +6,7 @@ body:
     attributes:
       value: >
         #### Before submitting a bug, please make sure the issue hasn't been already reported/addressed by searching through [the
-        existing and past issues](https://github.com/pytorch/tau/issues), the [README](https://github.com/pytorch/tau/blob/main/README.md).
+        existing and past issues](https://github.com/pytorch/PiPPy/issues), the [README](https://github.com/pytorch/PiPPy/blob/main/README.md).
         
   - type: textarea
     attributes:

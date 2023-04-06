@@ -1,6 +1,6 @@
 ## Description
 
-Please read our [CONTRIBUTING.md](https://github.com/pytorch/tau/blob/main/CONTRIBUTING.md) prior to creating your first pull request.
+Please read our [CONTRIBUTING.md](https://github.com/pytorch/PiPPy/blob/main/CONTRIBUTING.md) prior to creating your first pull request.
 
 Please include a summary of the feature or issue being fixed. Please also include relevant motivation and context. List any dependencies that are required for this change.
 
