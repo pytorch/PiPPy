@@ -2,13 +2,13 @@
 
 function usage() {
   echo 2>&1 <<EOF
-USAGE: ./check [--keep-going] [--skip-pyre]
+USAGE: ./check [--keep-going] [--pyre]
 
   --keep-going (default: 0)
   Continue processing even when errors are ecountered.
 
-  --skip-pyre
-  Don't run pyre checks.
+  --pyre
+  Run pyre checks.
 
   --skip-format
   Don't run format checks.
@@ -16,7 +16,7 @@ EOF
 }
 
 SKIP_FORMAT=0
-SKIP_PYRE=0
+SKIP_PYRE=1
 KEEP_GOING=0
 for x in "$@"; do
   case "$x" in
@@ -24,8 +24,8 @@ for x in "$@"; do
       KEEP_GOING=1
       ;;
 
-    '--skip-pyre')
-      SKIP_PYRE=1
+    '--pyre')
+      SKIP_PYRE=0
       ;;
 
     '--skip-format')
