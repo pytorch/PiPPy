@@ -3,8 +3,7 @@
   "site_package_search_strategy": "all",
   "source_directories": [
     {
-      "import_root": ".",
-      "source": "spmd"
+      "import_root": "."
     }
   ]
 }

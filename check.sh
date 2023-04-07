@@ -60,12 +60,11 @@ if (( SKIP_PYRE == 0 )); then
 fi
 
 echo; echo "Running flake8 ..."
-flake8 pippy spmd test/spmd
+flake8 pippy
 (( RETVAL |= $? ))
 
-# mypy spmd test/spmd
 echo; echo "Running mypy ..."
-mypy spmd pippy
+mypy pippy
 (( RETVAL |= $? ))
 
 echo; echo "Running pylint ..."
