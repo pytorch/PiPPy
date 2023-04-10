@@ -14,9 +14,6 @@ from utils import generate_input_ids_batch, benchmark, format_to_gb,print_mem_us
 logger = logging.getLogger(__name__)
 pippy.fx.Tracer.proxy_buffer_attributes = True
 
-gigabyte_size = 1024**3
-
-
 
 def run_all(pp_ranks, args):
     model = args.model
@@ -98,16 +95,24 @@ if __name__ == "__main__":
     parser.add_argument(
         "--world_size", type=int, default=int(os.getenv("WORLD_SIZE", 4))
     )
-    parser.add_argument("--rank", type=int, default=int(os.getenv("RANK", -1)))
+    parser.add_argument(
+        "--rank", type=int, default=int(os.getenv("RANK", -1))
+    )
     parser.add_argument(
         "--master_addr", type=str, default=os.getenv("MASTER_ADDR", "localhost")
     )
     parser.add_argument(
         "--master_port", type=str, default=os.getenv("MASTER_PORT", "29500")
     )
-    parser.add_argument("--model_name", type=str, default="facebook/opt-350m")
-    parser.add_argument("--batch_size", type=int, default=1)
-    parser.add_argument("--chunks", type=int, default=1)
+    parser.add_argument(
+        "--model_name", type=str, default="facebook/opt-350m"
+    )
+    parser.add_argument(
+        "--batch_size", type=int, default=1
+    )
+    parser.add_argument(
+        "--chunks", type=int, default=1
+    )
     parser.add_argument(
         "--cuda", type=int, default=int(torch.cuda.is_available())
     )
@@ -115,37 +120,22 @@ if __name__ == "__main__":
         "--pp_group_size", type=int, default=int(os.getenv("WORLD_SIZE", 4))
     )
     parser.add_argument(
-        "--seq_len",
-        type=int,
-        default=50,
-        help="",
+        "--seq_len", type=int,default=50,help="",
     )
     parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=8,
-        help="",
+        "--batch-size",type=int,default=8,help="",
     )
 
     parser.add_argument(
-        "--max_tokens",
-        type=int,
-        default=10,
-        help="",
+        "--max_tokens",type=int,default=10, help="",
     )
 
     parser.add_argument(
-        "--iterations",
-        type=int,
-        default=50,
-        help="",
+        "--iterations", type=int,default=50,help="",
     )
 
     parser.add_argument(
-        "--log_filename",
-        type=str,
-        default='pippy_benchmark_logs.csv',
-        help="",
+        "--log_filename",type=str,default='pippy_benchmark_logs.csv', help="",
     )
 
     args = parser.parse_args()
