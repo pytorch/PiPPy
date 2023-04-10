@@ -9,32 +9,13 @@ import pippy.fx
 from pippy import run_pippy
 from pippy.hf import PiPPyHFTracer, inject_pipeline_forward
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from utils import generate_input_ids_batch, benchmark
+from utils import generate_input_ids_batch, benchmark, format_to_gb,print_mem_usage,get_number_of_params
 
 logger = logging.getLogger(__name__)
 pippy.fx.Tracer.proxy_buffer_attributes = True
 
 gigabyte_size = 1024**3
 
-
-def format_to_gb(item, precision=4):
-    """quick function to format numbers to gigabyte and round to (default) 4 digit precision"""
-    metric_num = item / gigabyte_size
-    metric_num = round(metric_num, ndigits=precision)
-    return metric_num
-
-
-def print_mem_usage():
-    memory_reserved = format_to_gb(torch.cuda.memory_reserved())
-    memory_allocated = format_to_gb(torch.cuda.memory_allocated())
-    print(
-        f"memory_reserved: {memory_reserved} GB, "
-        f"memory_allocated: {memory_allocated} GB"
-    )
-
-
-def get_number_of_params(model):
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
 def run_all(pp_ranks, args):
@@ -111,17 +92,6 @@ def run_all(pp_ranks, args):
                     )
                 )
     
-
-    # outputs = model.generate(input_ids, max_new_tokens=10)
-  
-
-    # print(input_ids.size(),outputs.size())
-  
-    # response = tokenizer.batch_decode(
-    #     outputs, skip_special_tokens=True, clean_up_tokenization_spaces=False
-    # )[0]
-    # print(response)
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
