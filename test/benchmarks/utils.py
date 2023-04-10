@@ -2,6 +2,28 @@ import argparse
 
 import torch
 from transformers import AutoModel, AutoModelForCausalLM, GenerationConfig
+gigabyte_size = 1024**3
+
+
+
+def format_to_gb(item, precision=4):
+    """quick function to format numbers to gigabyte and round to (default) 4 digit precision"""
+    metric_num = item / gigabyte_size
+    metric_num = round(metric_num, ndigits=precision)
+    return metric_num
+
+
+def print_mem_usage():
+    memory_reserved = format_to_gb(torch.cuda.memory_reserved())
+    memory_allocated = format_to_gb(torch.cuda.memory_allocated())
+    print(
+        f"memory_reserved: {memory_reserved} GB, "
+        f"memory_allocated: {memory_allocated} GB"
+    )
+
+
+def get_number_of_params(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
 
@@ -30,3 +52,5 @@ def benchmark(model, input_ids, args):
     avg_elapsed_time = elapsed_time / args.iterations
 
     return avg_elapsed_time
+
+
