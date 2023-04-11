@@ -3,6 +3,12 @@ import glob
 import os
 import sys
 
+
+"""
+WARNING:
+make sure the "build" folder is cleaned before build
+"""
+
 # To help discover local modules
 REPO_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.append(REPO_ROOT)
@@ -46,10 +52,9 @@ def build(args):
     print(f"## PiPPY wheel location: {pippy_wheel_path}")
 
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Build for pippy"
+        description="Build wheel package for pippy"
     )
 
     parser.add_argument(
