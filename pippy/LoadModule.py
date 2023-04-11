@@ -22,6 +22,8 @@ def load_checkpoint(
     for checkpoint_file in checkpoint_files:
         checkpoint = torch.load(checkpoint_file)
         for param_name, param in checkpoint.items():
+            # Some weights like word_embeddings.weight and shared.weight will be used in different layers, but these layers
+            # may not in the index file, so we can only clone the shared weight to their corresponding layers.
             if param_name in ["word_embeddings.weight", "shared.weight"]:
                 if hasattr(model, "lm_head"):
                     model.lm_head.weight = torch.nn.Parameter((param.clone()).to(device))
@@ -49,7 +51,7 @@ def set_module_tensor_to_device(
     Args:
         module (`torch.nn.Module`):
             The module in which the tensor we want to move lives.
-        param_name (`str`):
+        tensor_name (`str`):
             The full name of the parameter/buffer.
         device (`int`, `str` or `torch.device`):
             The device on which to set the tensor.
