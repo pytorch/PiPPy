@@ -1697,8 +1697,22 @@ class RemoteInterpreter(pippy.fx.Interpreter, EventRecorder):
                     node.name, Parameter.POSITIONAL_OR_KEYWORD, default=default
                 )
             )
+
+        # We are building a safety net here in case user passes in extra arguments than those defined as variable
+        # arguments (i.e. non-concrete args) at the tracing phase
+        # TODO: Remove this safety net
+        traced_args = [p.name for p in parameters]
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k in traced_args}
+        if len(filtered_kwargs) != len(kwargs):
+            extra_args = kwargs.keys() - filtered_kwargs.keys()
+            warnings.warn(
+                f"Received extra arguments: {extra_args}. "
+                f"They might have already been given a concrete value during pipeline compilation via `concrete_args`. "
+                f"We will ignore the current inputs and use the values given during compilation."
+            )
+
         sig = Signature(parameters)
-        bound_args = sig.bind(*args, **kwargs)
+        bound_args = sig.bind(*args, **filtered_kwargs)
         bound_args.apply_defaults()
         self.args = bound_args.args
         self.args_iter = iter(self.args)

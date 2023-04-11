@@ -5,6 +5,7 @@ from pippy.hf.utils import (
     PiPPySeq2SeqTrainingArguments,
     PiPPyTrainer,
     PiPPySeq2SeqTrainer,
+    inject_pipeline_forward,
 )
 
 __all__ = [
@@ -13,4 +14,5 @@ __all__ = [
     "PiPPySeq2SeqTrainingArguments",
     "PiPPyTrainer",
     "PiPPySeq2SeqTrainer",
+    "inject_pipeline_forward",
 ]

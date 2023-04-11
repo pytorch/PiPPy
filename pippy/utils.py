@@ -4,6 +4,7 @@ import socket
 import logging
 from typing import List
 
+
 # Pinning process to a separate GPU if not yet done by launch script
 # Notes:
 # 1. Previously this env was added to work around an issue that each RPC process creates an extra CUDA context on device
@@ -26,6 +27,7 @@ if os.getenv("PIPPY_PIN_DEVICE", "0") == "1":
             print(
                 f"Pinning local process {local_rank_str} to gpu {os.getenv('CUDA_VISIBLE_DEVICES')}"
             )
+
 
 import torch
 import torch.multiprocessing as mp

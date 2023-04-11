@@ -10,7 +10,3 @@ dist
 **/*.json
 **/*.out
 **/.DS_STORE
-
-# spmd ignores
-spmd.egg-info
-spmd/version.py
