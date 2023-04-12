@@ -6,7 +6,9 @@ import sys
 
 """
 WARNING:
-make sure the "build" folder is cleaned before build
+Please make sure the "build" folder and the "dist" folder are cleaned before build.
+You can achieve that by running:
+`python setup.py clean`
 """
 
 # To help discover local modules
@@ -22,9 +24,7 @@ def build_dist_whl(args):
     print("## Started pippy build")
     create_wheel_cmd = "python setup.py bdist_wheel "
 
-    cur_dir = REPO_ROOT
-        
-    os.chdir(cur_dir)
+    os.chdir(REPO_ROOT)
 
     # Build wheel
     print(f"## In directory: {os.getcwd()} | Executing command: {create_wheel_cmd}")
@@ -37,19 +37,26 @@ def build_dist_whl(args):
 
 
 def build(args):
+    dist_dir = os.path.join(REPO_ROOT, "dist")
+
+    # Detect whether old build exists
+    # If any, stop
+    if os.path.exists(dist_dir):
+        raise RuntimeError(
+            f"dist folder already exist at {dist_dir}. Please run: "
+            "`python setup.py clean` "
+            "to clean existing builds."
+        )
 
     # Build dist wheel files
     build_dist_whl(args)
 
-    os.chdir(REPO_ROOT)
-
+    pippy_wheel_path = os.path.join(dist_dir, "*.whl")
     if not args.dry_run:
-        pippy_wheel_path = glob.glob(os.path.join(REPO_ROOT, "dist", "*.whl"))[0]
+        # `glob.glob` returns a list of files that matches the path having wildcards
+        pippy_wheel_path = glob.glob(pippy_wheel_path)
 
-    else:
-        pippy_wheel_path = os.path.join(REPO_ROOT, "dist", "*.whl")
-
-    print(f"## PiPPY wheel location: {pippy_wheel_path}")
+    print(f"## PiPPy wheel location: {pippy_wheel_path}")
 
 
 if __name__ == "__main__":
@@ -58,9 +65,9 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--dry_run",
+        "--dry-run",
         action="store_true",
-        help="dry_run will print the commands that will be run without running them",
+        help="print the commands that will be run without running them",
     )
 
     args = parser.parse_args()
