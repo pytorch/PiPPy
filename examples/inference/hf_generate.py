@@ -101,6 +101,7 @@ if __name__ == "__main__":
     parser.add_argument('--chunks', type=int, default=1)
     parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
     parser.add_argument('--pp_group_size', type=int, default=int(os.getenv("WORLD_SIZE", 4)))
+    parser.add_argument('--dtype', type=str, default="fp32", choices=["fp32", "bf16", "fp16"])
     parser.add_argument('--index_filename', type=str, default=None, help="The director of model's index.json file")
 
     args = parser.parse_args()
@@ -116,13 +117,19 @@ if __name__ == "__main__":
     #Salesforce/codegen-2B-multi
 
     # Main process loads model
+    if args.dtype == "fp32":
+        dtype = torch.float32
+    elif args.dtype == "bf16":
+        dtype = torch.bfloat16
+    else:
+        dtype = torch.float16
     if any([m in args.model_name for m in supported_model_categories]):
         print(f"Loading model {args.model_name}")
         if args.index_filename is not None:
             with init_empty_weights():
-                model = AutoModelForCausalLM.from_pretrained(args.model_name, use_cache=False)
+                model = AutoModelForCausalLM.from_pretrained(args.model_name, use_cache=False, torch_dtype=dtype)
         else:
-            model = AutoModelForCausalLM.from_pretrained(args.model_name, use_cache=False)
+            model = AutoModelForCausalLM.from_pretrained(args.model_name, use_cache=False, torch_dtype=dtype)
     else:
         raise ValueError(f"Unsupported model: {args.model_name}")
 

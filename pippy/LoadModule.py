@@ -26,11 +26,11 @@ def load_checkpoint(
             # may not in the index file, so we can only clone the shared weight to their corresponding layers.
             if param_name in ["word_embeddings.weight", "shared.weight"]:
                 if hasattr(model, "lm_head"):
-                    model.lm_head.weight = torch.nn.Parameter((param.clone()).to(device))
+                    model.lm_head.weight = torch.nn.Parameter((param.clone()).to(device).to(dtype))
                 if hasattr(model, "encoder_embed_tokens"):
-                    model.encoder_embed_tokens.weight = torch.nn.Parameter((param.clone()).to(device))
+                    model.encoder_embed_tokens.weight = torch.nn.Parameter((param.clone()).to(device).to(dtype))
                 if hasattr(model, "decoder_embed_tokens"):
-                    model.decoder_embed_tokens.weight = torch.nn.Parameter((param.clone()).to(device))
+                    model.decoder_embed_tokens.weight = torch.nn.Parameter((param.clone()).to(device).to(dtype))
             set_module_tensor_to_device(model, param_name, device, value=param, dtype=dtype)
         del checkpoint
         gc.collect()
@@ -118,4 +118,4 @@ def set_module_tensor_to_device(
                 new_value = param_cls(new_value, requires_grad=old_value.requires_grad, **kwargs).to(device)
             else:
                 new_value = param_cls(new_value, requires_grad=old_value.requires_grad).to(device)
-            module._parameters[tensor_name] = new_value
+            module._parameters[tensor_name] = new_value.to(dtype)

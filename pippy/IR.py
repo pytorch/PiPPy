@@ -1051,12 +1051,12 @@ class Pipe(torch.nn.Module):
     _stage_init_lock = threading.Lock()
     stage_init_cv = threading.Condition(_stage_init_lock)
 
-    def defer_stage_init(self, device, index_filename=None):
+    def defer_stage_init(self, device, index_filename=None, dtype=torch.float32):
         def materialize_stage(target: str) -> torch.nn.Module:
             logging.info(f"Materializing {target} on {device}")
             submodule = self.split_gm.get_submodule(target)
             if index_filename is not None:
-                submodule = load_checkpoint(model=submodule, index_filename=index_filename, device=device)
+                submodule = load_checkpoint(model=submodule, index_filename=index_filename, device=device, dtype=dtype)
             return submodule.to(device)
 
         with Pipe.stage_init_cv:
