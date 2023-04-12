@@ -101,7 +101,7 @@ if __name__ == "__main__":
     parser.add_argument('--chunks', type=int, default=1)
     parser.add_argument('--cuda', type=int, default=int(torch.cuda.is_available()))
     parser.add_argument('--pp_group_size', type=int, default=int(os.getenv("WORLD_SIZE", 4)))
-    parser.add_argument('--index_filename', type=str, default=None, help="The director or url of model's index.json file")
+    parser.add_argument('--index_filename', type=str, default=None, help="The director of model's index.json file")
 
     args = parser.parse_args()
 
