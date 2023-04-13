@@ -1051,9 +1051,7 @@ class Pipe(torch.nn.Module):
     _stage_init_lock = threading.Lock()
     stage_init_cv = threading.Condition(_stage_init_lock)
 
-    def defer_stage_init(
-        self, device, index_filename=None, dtype=torch.float32
-    ):
+    def defer_stage_init(self, device, index_filename=None, dtype=None):
         def materialize_stage(target: str) -> torch.nn.Module:
             logging.info(f"Materializing {target} on {device}")
             submodule = self.split_gm.get_submodule(target)
