@@ -89,7 +89,12 @@ def _compile(
     # We can hence ask each rank to get its own stage from the pipe, and materialize it locally.
     if all_compile:
         device = get_device()
-        pipe_model.defer_stage_init(device, index_filename, mod.config.torch_dtype)
+        pipe_model.defer_stage_init(
+            # HACK: would all models have `mod.config.torch_dtype`?
+            device,
+            index_filename,
+            mod.config.torch_dtype,  # type: ignore[union-attr]
+        )
         stage_mod = pipe_model.export(pp_rank)
 
     if pp_rank == 0:
