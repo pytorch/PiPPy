@@ -52,6 +52,7 @@ def _compile(
     output_chunk_spec=None,
     checkpoint=False,
     _debug_mask_minibatches: bool = False,
+    index_filename=None,
     **kwargs,
 ):
     if ranks is None:
@@ -88,7 +89,18 @@ def _compile(
     # We can hence ask each rank to get its own stage from the pipe, and materialize it locally.
     if all_compile:
         device = get_device()
-        pipe_model.defer_stage_init(device)
+
+        # `None` means self.dtype, i.e. no change
+        dtype = None
+        # TODO: generalize this
+        if hasattr(mod, "config") and hasattr(mod.config, "torch_dtype"):
+            dtype = mod.config.torch_dtype  # type: ignore[union-attr]
+
+        pipe_model.defer_stage_init(
+            device,
+            index_filename,
+            dtype,
+        )
         stage_mod = pipe_model.export(pp_rank)
 
     if pp_rank == 0:

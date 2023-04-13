@@ -137,3 +137,18 @@ This has been tested for [Bloom 3b](https://huggingface.co/docs/transformers/mod
 - "bigscience/bloom-3b"
 - EleutherAI/gpt-neo-2.7B
 - Salesforce/codegen-2B-multi
+
+### Handling big models
+
+If the model in HuggingFace has `pytorch_model.bin.index.json`, then you can use distributed loading to reduce the CPU memory.
+
+For example, if you want to run [bloom-7b1](https://huggingface.co/bigscience/bloom-7b1) with low CPU memory usage:
+
+```
+git lfs install
+git clone https://huggingface.co/bigscience/bloom-7b1
+
+torchrun --nproc_per_node 4 hf_generate.py --world_size 4 --model_name ./bloom-7b1 --index_filename bloom-7b1/pytorch_model.bin.index.json
+```
+
+In this case, each rank will only load a part of the model.
