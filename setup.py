@@ -27,6 +27,8 @@ except Exception:
 
 if os.getenv("BUILD_VERSION"):
     version = os.getenv("BUILD_VERSION", version)
+elif os.getenv("VERSION_NO_GIT", "0") == "1":
+    pass
 elif sha != "Unknown":
     version += "+" + sha[:7]
 
