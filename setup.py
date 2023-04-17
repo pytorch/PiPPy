@@ -5,7 +5,6 @@ import os
 import shutil
 import subprocess
 from typing import Dict
-
 from setuptools import setup, find_packages
 
 # Package name
@@ -41,9 +40,9 @@ def write_version_file():
 
 # Package requirements
 requirements = [
-    # This represents a nightly version of PyTorch.
+    # If the torch version has a ".dev" suffix, it would represent a nightly version of PyTorch.
     # It can be installed as a binary or from source.
-    "torch>=1.10.0.dev",
+    "torch>=1.13.0",
 ]
 
 extras: Dict = {}
