@@ -27,7 +27,9 @@ def build_dist_whl(args):
     os.chdir(REPO_ROOT)
 
     # Build wheel
-    print(f"## In directory: {os.getcwd()} | Executing command: {create_wheel_cmd}")
+    print(
+        f"## In directory: {os.getcwd()} | Executing command: {create_wheel_cmd}"
+    )
 
     if not args.dry_run:
         build_exit_code = os.system(create_wheel_cmd)

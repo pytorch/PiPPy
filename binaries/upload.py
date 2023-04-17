@@ -66,7 +66,7 @@ if __name__ == "__main__":
         PiPPY_WHEEL_PATH = glob.glob(os.path.join(REPO_ROOT, "dist"))[0]
     else:
         PiPPY_WHEEL_PATH = os.path.join(REPO_ROOT, "dist")
-      
+
     WHL_PATHS = [PiPPY_WHEEL_PATH]
 
     upload_pypi_packages(args, WHL_PATHS)
