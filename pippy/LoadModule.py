@@ -27,7 +27,11 @@ def load_checkpoint(
         for param_name, param in checkpoint.items():
             # Some weights like word_embeddings.weight and shared.weight will be used in different layers, but these layers
             # may not in the index file, so we can only clone the shared weight to their corresponding layers.
-            if param_name in ["word_embeddings.weight", "shared.weight"]:
+            if param_name in [
+                "word_embeddings.weight",
+                "shared.weight",
+                "wte.weight",
+            ]:
                 if hasattr(model, "lm_head"):
                     model.lm_head.weight = torch.nn.Parameter(  # type: ignore[union-attr]
                         (param.clone()).to(device).to(dtype)
@@ -51,7 +55,7 @@ def load_checkpoint(
 
 def set_module_tensor_to_device(
     module: nn.Module,
-    tensor_name: str,
+    param_name: str,
     device: Optional[torch.device] = None,
     value: Optional[torch.Tensor] = None,
     dtype: Optional[Union[str, torch.dtype]] = None,
@@ -62,7 +66,7 @@ def set_module_tensor_to_device(
     Args:
         module (`torch.nn.Module`):
             The module in which the tensor we want to move lives.
-        tensor_name (`str`):
+        param_name (`str`):
             The full name of the parameter/buffer.
         device (`torch.device`):
             The device on which to set the tensor.
@@ -75,29 +79,32 @@ def set_module_tensor_to_device(
     # Recurse if needed
     if value is None:
         return
-    model_pipe_module_name = "_".join(tensor_name.split(".")[:-1])
-    if hasattr(module, "transformer_" + model_pipe_module_name):
-        module_name = "transformer_" + model_pipe_module_name
-        module = getattr(module, module_name)
-        tensor_name = tensor_name.split(".")[-1]
-    elif hasattr(module, model_pipe_module_name):
-        module_name = model_pipe_module_name
-        module = getattr(module, module_name)
-        tensor_name = tensor_name.split(".")[-1]
-    elif (
-        "moved_" + model_pipe_module_name + "_weight"
-        in module._parameters.keys()
-    ):
-        tensor_name = "moved_" + model_pipe_module_name + "_weight"
-    elif "." in tensor_name and hasattr(module, tensor_name.split(".")[0]):
-        splits = tensor_name.split(".")
-        for split in splits[:-1]:
-            new_module = getattr(module, split)
-            if new_module is None:
-                raise ValueError(f"{module} has no attribute {split}.")
-            module = new_module
-        tensor_name = splits[-1]
-    else:
+    # Parameters are renamed by tracing
+    model_pipe_module_name = "_".join(param_name.split(".")[:-1])
+    model_pipe_tensor_name = param_name.split(".")[-1]
+    # Parameters in module
+    normal_params = [
+        "transformer_" + model_pipe_module_name,
+        model_pipe_module_name,
+    ]
+    # Parameters in module._parameters
+    moved_params = [
+        "moved_" + model_pipe_module_name,
+        "moved_transformer_" + model_pipe_module_name,
+    ]
+    tensor_name = None
+    for param in normal_params:
+        if hasattr(module, param):
+            module = getattr(module, param)
+            tensor_name = model_pipe_tensor_name
+            break
+    if tensor_name is None:
+        for param in moved_params:
+            param = param + "_" + model_pipe_tensor_name
+            if param in module._parameters.keys():
+                tensor_name = param
+                break
+    if tensor_name is None:
         return
 
     if (
