@@ -6,7 +6,6 @@ import shutil
 import subprocess
 from typing import Dict
 from setuptools import setup, find_packages
-from pathlib import Path
 
 
 # Package name
