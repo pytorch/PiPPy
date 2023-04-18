@@ -108,7 +108,7 @@ if __name__ == "__main__":
 
     assert args.world_size % args.pp_group_size == 0
 
-    supported_model_categories = ["opt", "gpt2", "bloom", "EleutherAI/gpt", "codegen"]
+    supported_model_categories = ["opt", "gpt2", "bloom", "EleutherAI/gpt", "codegen", "GPT"]
     # For example:
     # "facebook/opt-350m"
     # "gpt2"
