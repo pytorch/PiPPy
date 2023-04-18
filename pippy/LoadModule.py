@@ -44,6 +44,14 @@ def load_checkpoint(
                     model.decoder_embed_tokens.weight = torch.nn.Parameter(  # type: ignore[union-attr]
                         (param.clone()).to(device).to(dtype)
                     )
+            elif param_name in [
+                "decoder.embed_tokens.weight",
+            ]:
+                # For OPT, the lm_head weight is automatically tied to the embed tokens weight
+                if hasattr(model, "lm_head"):
+                    model.lm_head.weight = torch.nn.Parameter(  # type: ignore[union-attr]
+                        (param.clone()).to(device).to(dtype)
+                    )
             set_module_tensor_to_device(
                 model, param_name, device, value=param, dtype=dtype
             )
@@ -84,12 +92,14 @@ def set_module_tensor_to_device(
     model_pipe_tensor_name = param_name.split(".")[-1]
     # Parameters in module
     normal_params = [
-        "transformer_" + model_pipe_module_name,
         model_pipe_module_name,
+        "model_" + model_pipe_module_name,
+        "transformer_" + model_pipe_module_name,
     ]
     # Parameters in module._parameters
     moved_params = [
         "moved_" + model_pipe_module_name,
+        "moved_model_" + model_pipe_module_name,
         "moved_transformer_" + model_pipe_module_name,
     ]
     tensor_name = None

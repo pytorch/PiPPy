@@ -1062,7 +1062,19 @@ class Pipe(torch.nn.Module):
                     device=device,
                     dtype=dtype,
                 )
-            return submodule.to(device)
+            try:
+                submodule.to(device)
+            except Exception:
+                # Usually `to(device)` fails because there is still some meta
+                # tensor in submodule, potentially because the checkpoint load
+                # did not cover that parameter. And the reason is often that
+                # that parameter shares weight with another parameter.
+                for name, param in submodule.named_parameters():
+                    if param.device == torch.device("meta"):
+                        logging.warning(f"{name} is a meta tensor")
+                # Re-throw the original exception
+                raise
+            return submodule
 
         with Pipe.stage_init_cv:
             setattr(Pipe, "materialize_stage", materialize_stage)
