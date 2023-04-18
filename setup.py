@@ -8,7 +8,7 @@ from typing import Dict
 from setuptools import setup, find_packages
 
 # Package name
-package_name = "pippy"
+package_name = "torchpippy"
 
 # Version information
 cwd = os.path.dirname(os.path.abspath(__file__))
