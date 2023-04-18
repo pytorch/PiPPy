@@ -108,22 +108,35 @@ if __name__ == "__main__":
 
     assert args.world_size % args.pp_group_size == 0
 
-    supported_model_categories = ["opt", "gpt2", "bloom", "EleutherAI/gpt", "codegen"]
+    supported_model_categories = ["opt", "gpt", "bloom", "codegen"]
     # For example:
     # "facebook/opt-350m"
     # "gpt2"
     # "bigscience/bloom-3b"
-    #EleutherAI/gpt-neo-2.7B
-    #Salesforce/codegen-2B-multi
+    # "EleutherAI/gpt-neo-2.7B"
+    # "Salesforce/codegen-2B-multi"
+    # "cerebras/Cerebras-GPT-13B"
 
-    # Main process loads model
     if args.dtype == "fp32":
         dtype = torch.float32
+    elif args.dtype == "fp16":
+        dtype = torch.float16
     elif args.dtype == "bf16":
         dtype = torch.bfloat16
     else:
-        dtype = torch.float16
-    if any([m in args.model_name for m in supported_model_categories]):
+        # Using float32 as default dtype to correspond to the default "fp32"
+        # value for "--dtype"
+        print(
+            f"Unsupported data type {args.dtype}, "
+            "please submit a PR to support it. Falling back to fp32 now."
+        )
+        dtype = torch.float32
+
+    # Main process loads model
+    if any([m in args.model_name
+            # Some model names use upper case
+            or m.upper() in args.model_name
+            for m in supported_model_categories]):
         print(f"Loading model {args.model_name}")
         if args.index_filename is not None:
             with init_empty_weights():
