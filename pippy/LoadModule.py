@@ -31,6 +31,8 @@ def load_checkpoint(
                 "word_embeddings.weight",
                 "shared.weight",
                 "wte.weight",
+                "decoder.embed_tokens.weight",
+                "encoder.embed_tokens.weight",
             ]:
                 if hasattr(model, "lm_head"):
                     model.lm_head.weight = torch.nn.Parameter(  # type: ignore[union-attr]
@@ -84,12 +86,14 @@ def set_module_tensor_to_device(
     model_pipe_tensor_name = param_name.split(".")[-1]
     # Parameters in module
     normal_params = [
-        "transformer_" + model_pipe_module_name,
         model_pipe_module_name,
+        "model_" + model_pipe_module_name,
+        "transformer_" + model_pipe_module_name,
     ]
     # Parameters in module._parameters
     moved_params = [
         "moved_" + model_pipe_module_name,
+        "moved_model_" + model_pipe_module_name,
         "moved_transformer_" + model_pipe_module_name,
     ]
     tensor_name = None
