@@ -118,7 +118,7 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--log_filename",type=str,default='pippy_benchmark_logs.csv', help="",
+        "--log_filename",type=str,default='accelerate_benchmark_logs.csv', help="",
     )
     parser.add_argument(
         "--setup_config_path",type=str,default='setup_config.json', help="",
