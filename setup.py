@@ -6,6 +6,8 @@ import shutil
 import subprocess
 from typing import Dict
 from setuptools import setup, find_packages
+from pathlib import Path
+
 
 # Package name
 package_name = "torchpippy"
@@ -50,6 +52,11 @@ requirements = [
 extras: Dict = {}
 
 
+# Include README on PyPI's project page
+this_directory = Path(__file__).parent
+long_description = (this_directory / "README.md").read_text()
+
+
 class clean(distutils.command.clean.clean):  # type: ignore
     def run(self):
 
@@ -84,4 +91,6 @@ if __name__ == "__main__":
         cmdclass={
             "clean": clean,
         },
+        long_description=long_description,
+        long_description_content_type="text/x-rst",
     )
