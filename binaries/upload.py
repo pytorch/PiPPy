@@ -3,6 +3,7 @@ import argparse
 import glob
 import os
 import sys
+import subprocess
 
 
 # To help discover local modules
