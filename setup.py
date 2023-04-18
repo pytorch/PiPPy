@@ -52,9 +52,13 @@ requirements = [
 extras: Dict = {}
 
 
-# Include README on PyPI's project page
-this_directory = Path(__file__).parent
-long_description = (this_directory / "README.md").read_text()
+long_description = """
+The PiPPy project stands for Pipeline Parallelism for PyTorch. It consists of a
+compiler and runtime stack for automated parallelism and scaling of PyTorch
+models. PiPPy partitions the code of the model in a pipelined fashion and
+enables multiple micro-batches to execute different parts of the model code
+concurrently.
+"""
 
 
 class clean(distutils.command.clean.clean):  # type: ignore
@@ -92,5 +96,5 @@ if __name__ == "__main__":
             "clean": clean,
         },
         long_description=long_description,
-        long_description_content_type="text/x-rst",
+        long_description_content_type="text/markdown",
     )
