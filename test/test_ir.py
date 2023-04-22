@@ -824,11 +824,10 @@ class TestIR(unittest.TestCase):
         # Check qualname mapping
         for new_name, _ in ec_pipe.named_parameters():
             old_name = ec_pipe.remap_qualname(new_name)
-            #print(f"{new_name} -> {old_name}")
+            # print(f"{new_name} -> {old_name}")
             assert (
                 old_name in old_names
             ), f"Remapped parameter {old_name} not found in {old_names}"
-
 
     def test_remap_qualname_replicate(self):
         ec_pipe = Pipe.from_tracing(self.ec, MultiUseParameterConfig.REPLICATE)
@@ -840,7 +839,7 @@ class TestIR(unittest.TestCase):
         # Check qualname mapping
         for new_name, _ in ec_pipe.named_parameters():
             old_name = ec_pipe.remap_qualname(new_name)
-            #print(f"{new_name} -> {old_name}")
+            # print(f"{new_name} -> {old_name}")
             assert (
                 old_name in old_names
             ), f"Remapped parameter {old_name} not found in {old_names}"
