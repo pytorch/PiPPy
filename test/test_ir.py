@@ -55,16 +55,17 @@ class ExampleCode(torch.nn.Module):
 
 
 def check_qualname_mapping(old, new):
-    seen_old_qns = {}
+    old_names = {}
+    # setdefault can de-duplicate the old names in the mapping
     for _, old_qn in new.new_to_old_qualname_mapping.items():
-        seen_old_qns.setdefault(old_qn)
+        old_names.setdefault(old_qn)
 
     # Do not check recursive parameter names as they don't exist in the mapping
     # The resursive names will be checked by tests with the remap_qualname call
     for param_name, _ in old.named_parameters(recurse=False):
         assert (
-            param_name in seen_old_qns
-        ), f"Expected parameter {param_name} in {seen_old_qns}"
+            param_name in old_names
+        ), f"Expected parameter {param_name} in {old_names}"
 
 
 class TestIR(unittest.TestCase):
@@ -114,6 +115,11 @@ class TestIR(unittest.TestCase):
             "submod_0.moved_mm_param": "mm_param",
         }
         self.assertDictEqual(expected_map, ec_pipe.new_to_old_qualname_mapping)
+
+        # Check remap_qualname method
+        for k in expected_map.keys():
+            old_name = ec_pipe.remap_qualname(k)
+            self.assertEqual(expected_map[k], old_name)
 
     def test_tracing_replicate(self):
         ec_pipe_replicated = Pipe.from_tracing(
@@ -807,6 +813,36 @@ class TestIR(unittest.TestCase):
         torch.testing.assert_close(
             chunks_merged_masked["multiplied"], ref_out["multiplied"]
         )
+
+    def test_remap_qualname_transmit(self):
+        ec_pipe = Pipe.from_tracing(self.ec, MultiUseParameterConfig.TRANSMIT)
+
+        # Get the first field of all tuples, i.e. names
+        old_named_params = zip(*list(self.ec.named_parameters()))
+        old_names = list(old_named_params)[0]
+
+        # Check qualname mapping
+        for new_name, _ in ec_pipe.named_parameters():
+            old_name = ec_pipe.remap_qualname(new_name)
+            # print(f"{new_name} -> {old_name}")
+            assert (
+                old_name in old_names
+            ), f"Remapped parameter {old_name} not found in {old_names}"
+
+    def test_remap_qualname_replicate(self):
+        ec_pipe = Pipe.from_tracing(self.ec, MultiUseParameterConfig.REPLICATE)
+
+        # Get the first field of all tuples, i.e. names
+        old_named_params = zip(*list(self.ec.named_parameters()))
+        old_names = list(old_named_params)[0]
+
+        # Check qualname mapping
+        for new_name, _ in ec_pipe.named_parameters():
+            old_name = ec_pipe.remap_qualname(new_name)
+            # print(f"{new_name} -> {old_name}")
+            assert (
+                old_name in old_names
+            ), f"Remapped parameter {old_name} not found in {old_names}"
 
 
 if __name__ == "__main__":
