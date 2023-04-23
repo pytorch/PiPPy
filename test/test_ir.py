@@ -15,6 +15,7 @@ from pippy.IR import (
     annotate_split_points,
     PipeSplitWrapper,
     _null_coalesce_accumulate,
+    remap_qualname,
 )
 from pippy.microbatch import (
     TensorChunkSpec,
@@ -821,13 +822,21 @@ class TestIR(unittest.TestCase):
         old_named_params = zip(*list(self.ec.named_parameters()))
         old_names = list(old_named_params)[0]
 
-        # Check qualname mapping
+        # Check qualname mapping for pipe
         for new_name, _ in ec_pipe.named_parameters():
             old_name = ec_pipe.remap_qualname(new_name)
             # print(f"{new_name} -> {old_name}")
             assert (
                 old_name in old_names
             ), f"Remapped parameter {old_name} not found in {old_names}"
+
+        # Check qualname mapping for submodule
+        for _, stage_mod in ec_pipe.split_gm.named_children():
+            for new_name, _ in stage_mod.named_parameters():
+                old_name = remap_qualname(stage_mod, new_name)
+                assert (
+                    old_name in old_names
+                ), f"Remapped parameter {old_name} not found in {old_names}"
 
     def test_remap_qualname_replicate(self):
         ec_pipe = Pipe.from_tracing(self.ec, MultiUseParameterConfig.REPLICATE)
@@ -836,13 +845,21 @@ class TestIR(unittest.TestCase):
         old_named_params = zip(*list(self.ec.named_parameters()))
         old_names = list(old_named_params)[0]
 
-        # Check qualname mapping
+        # Check qualname mapping for pipe
         for new_name, _ in ec_pipe.named_parameters():
             old_name = ec_pipe.remap_qualname(new_name)
             # print(f"{new_name} -> {old_name}")
             assert (
                 old_name in old_names
             ), f"Remapped parameter {old_name} not found in {old_names}"
+
+        # Check qualname mapping for submodule
+        for _, stage_mod in ec_pipe.split_gm.named_children():
+            for new_name, _ in stage_mod.named_parameters():
+                old_name = remap_qualname(stage_mod, new_name)
+                assert (
+                    old_name in old_names
+                ), f"Remapped parameter {old_name} not found in {old_names}"
 
 
 if __name__ == "__main__":
