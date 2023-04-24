@@ -491,7 +491,44 @@ def _direct_serialization_reduce(self):
     )
 
 
-class Pipe(torch.nn.Module):
+class QualnameMapMixin:
+    """
+    A mixin class to provide qualname remap functionality for both Pipe object
+    and submodules
+    """
+
+    def __init__(
+        self,
+        qualname_mapping: Dict[str, str] = None,
+    ):
+        self.new_to_old_qualname_mapping: Dict[str, str] = (
+            qualname_mapping or {}
+        )
+
+    def remap_qualname(self, qualname: str):
+        # TODO: annoying
+        if qualname.startswith("split_gm."):
+            qualname = qualname[len("split_gm.") :]
+
+        # The qualname map does not store recursive items, thus,
+        # when passed a qualname with leaves, we need to perform longest prefix match
+        if qualname not in self.new_to_old_qualname_mapping:
+            # Split from the right, one each time
+            split_names = qualname.rsplit(".", 1)
+            leaf = split_names[-1]
+            while len(split_names) > 1:
+                prefix = split_names[0]
+                if prefix in self.new_to_old_qualname_mapping:
+                    old_prefix = self.new_to_old_qualname_mapping[prefix]
+                    return ".".join([old_prefix, leaf])
+                split_names = prefix.rsplit(".", 1)
+                leaf = ".".join([split_names[-1], leaf])
+
+        # Either full name match, or key not found
+        return self.new_to_old_qualname_mapping[qualname]
+
+
+class Pipe(QualnameMapMixin, torch.nn.Module):
     def __init__(
         self,
         split_gm: pippy.fx.GraphModule,
@@ -500,7 +537,9 @@ class Pipe(torch.nn.Module):
         has_loss_and_backward: bool,
         loss_spec,
     ):
-        super().__init__()
+        # TODO: is there a way not to hard wire init?
+        QualnameMapMixin.__init__(self, qualname_mapping)
+        torch.nn.Module.__init__(self)
         self.split_gm: pippy.fx.GraphModule = split_gm
         self.executor: DetachExecutor = DetachExecutor(self.split_gm)
         self.num_stages: int = num_stages
@@ -556,20 +595,21 @@ class Pipe(torch.nn.Module):
                     submod, atoms[-1], copy.deepcopy(getattr(submod, atoms[-1]))
                 )
 
-        self.new_to_old_qualname_mapping = qualname_mapping
-
         # Create qualname mapping for each submodule
         for m_qualname, mod in self.split_gm.named_children():
             # "submod_x." prefix
             mod_prefix = m_qualname + "."
-            # TODO: instead of dynamically adding attribute, add a remap mixin
-            # class to both Pipe and submodule classes
-            mod.new_to_old_qualname_mapping: Dict[str, str] = {}
+            mod_qualname_mapping: Dict[str, str] = {}
             for k, v in self.new_to_old_qualname_mapping.items():
                 if k.startswith(mod_prefix):
                     # Remove prefix
                     new_key = k[len(mod_prefix) :]
-                    mod.new_to_old_qualname_mapping.setdefault(new_key, v)
+                    mod_qualname_mapping.setdefault(new_key, v)
+            # Add a remap mixin to submodule instance
+            mod.__class__ = type(
+                "PipeStageModule", (QualnameMapMixin, mod.__class__), {}
+            )
+            setattr(mod, "new_to_old_qualname_mapping", mod_qualname_mapping)
 
         def throw(self, *args, **kwargs):
             raise RuntimeError(
@@ -626,11 +666,6 @@ class Pipe(torch.nn.Module):
             res, self.last_grads = res
 
         return res
-
-    def remap_qualname(self, qualname):
-        # Direct to an external function that supports both Pipe and submodules
-        # TODO: add a remap mixin class for both
-        return remap_qualname(self, qualname)
 
     @staticmethod
     def _number_and_count_forward_stages(gm: pippy.fx.GraphModule):
@@ -1141,34 +1176,3 @@ def annotate_split_points(
         mod_to_wrap = getattr(predecessor_module, atoms[-1])
         wrapped_mod = PipeSplitWrapper(mod_to_wrap, split_type)
         setattr(predecessor_module, atoms[-1], wrapped_mod)
-
-
-def remap_qualname(
-    pippy_mod: Union[Pipe, pippy.fx.GraphModule],
-    qualname: str,
-):
-    if not hasattr(pippy_mod, "new_to_old_qualname_mapping"):
-        raise AttributeError(
-            "pippy_mod must be a Pipe object or a stage module returned by PiPPy."
-        )
-
-    # TODO: annoying
-    if qualname.startswith("split_gm."):
-        qualname = qualname[len("split_gm.") :]
-
-    # The qualname map does not store recursive items, thus,
-    # when passed a qualname with leaves, we need to perform longest prefix match
-    if qualname not in pippy_mod.new_to_old_qualname_mapping:
-        # Split from the right, one each time
-        split_names = qualname.rsplit(".", 1)
-        leaf = split_names[-1]
-        while len(split_names) > 1:
-            prefix = split_names[0]
-            if prefix in pippy_mod.new_to_old_qualname_mapping:
-                old_prefix = pippy_mod.new_to_old_qualname_mapping[prefix]
-                return ".".join([old_prefix, leaf])
-            split_names = prefix.rsplit(".", 1)
-            leaf = ".".join([split_names[-1], leaf])
-
-    # Either full name match, or key not found
-    return pippy_mod.new_to_old_qualname_mapping[qualname]

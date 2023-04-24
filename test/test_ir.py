@@ -15,7 +15,6 @@ from pippy.IR import (
     annotate_split_points,
     PipeSplitWrapper,
     _null_coalesce_accumulate,
-    remap_qualname,
 )
 from pippy.microbatch import (
     TensorChunkSpec,
@@ -833,7 +832,7 @@ class TestIR(unittest.TestCase):
         # Check qualname mapping for submodule
         for _, stage_mod in ec_pipe.split_gm.named_children():
             for new_name, _ in stage_mod.named_parameters():
-                old_name = remap_qualname(stage_mod, new_name)
+                old_name = stage_mod.remap_qualname(new_name)
                 assert (
                     old_name in old_names
                 ), f"Remapped parameter {old_name} not found in {old_names}"
@@ -856,7 +855,7 @@ class TestIR(unittest.TestCase):
         # Check qualname mapping for submodule
         for _, stage_mod in ec_pipe.split_gm.named_children():
             for new_name, _ in stage_mod.named_parameters():
-                old_name = remap_qualname(stage_mod, new_name)
+                old_name = stage_mod.remap_qualname(new_name)
                 assert (
                     old_name in old_names
                 ), f"Remapped parameter {old_name} not found in {old_names}"
