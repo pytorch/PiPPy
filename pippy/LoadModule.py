@@ -1,7 +1,8 @@
 import os
 import json
 import gc
-from typing import Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
+import logging
 
 import torch
 from torch import nn
@@ -12,18 +13,66 @@ def load_checkpoint(
     index_filename: Union[str, os.PathLike],
     device: torch.device = None,
     dtype: torch.dtype = None,
+    prefix: str = None,
+    shared_weights: Dict[str, str] = None,
 ):
     checkpoint_folder = os.path.split(index_filename)[0]
     with open(index_filename, "r") as f:
         index = json.loads(f.read())
     if "weight_map" in index:
         index = index["weight_map"]
-    checkpoint_files = sorted(list(set(index.values())))
-    checkpoint_files = [
-        os.path.join(checkpoint_folder, f) for f in checkpoint_files
-    ]
-    for checkpoint_file in checkpoint_files:
-        checkpoint = torch.load(checkpoint_file)
+    if prefix:
+        index = {".".join([prefix, k]): v for k, v in index.items()}
+
+    file_to_param_list: Dict[str, List[Tuple]] = {}
+    for new_name, param in model.named_parameters():
+        old_name = model.remap_qualname(new_name)
+        if old_name not in index.keys():
+            if old_name in shared_weights.keys():
+                old_name = shared_weights[old_name]
+            else:
+                raise ValueError(
+                    f"Parameter {new_name} maps to {old_name}, "
+                    f"but {old_name} is not found in checkpoint index"
+                )
+        file = index[old_name]
+        param_list = file_to_param_list.setdefault(file, [])
+        param_list.append((new_name, old_name, param))
+
+    file_to_buffer_list: Dict[str, List[Tuple]] = {}
+    for new_name, buffer in model.named_buffers():
+        old_name = model.remap_qualname(new_name)
+        if old_name not in index.keys():
+            if old_name in shared_weights.keys():
+                old_name = shared_weights[old_name]
+            else:
+                raise ValueError(
+                    f"Buffer {new_name} maps to {old_name}, "
+                    f"but {old_name} is not found in checkpoint index"
+                )
+        file = index[old_name]
+        buffer_list = file_to_buffer_list.setdefault(file, [])
+        buffer_list.append((new_name, old_name, buffer))
+
+    set1 = set(file_to_param_list.keys())
+    set2 = set(file_to_buffer_list.keys())
+    used_files = sorted(set1.union(set2))
+    logging.info(
+        f"Opening checkpoint: {used_files}"
+    )
+
+    for file in used_files:
+        file_path = os.path.join(checkpoint_folder, file)
+        checkpoint = torch.load(file_path)
+        if file in file_to_param_list:
+            param_list = file_to_param_list[file]
+            for new_name, old_name, _ in param_list:
+                assert old_name in checkpoint.keys()
+                loaded_weight = checkpoint[old_name]
+                set_module_tensor_to_device(
+                    model, param_name, device, value=loaded_weight, dtype=dtype
+                )
+
         for param_name, param in checkpoint.items():
             # Some weights like word_embeddings.weight and shared.weight will be used in different layers, but these layers
             # may not in the index file, so we can only clone the shared weight to their corresponding layers.
