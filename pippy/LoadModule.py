@@ -8,13 +8,18 @@ import torch
 from torch import nn
 
 
+TYPICAL_PREFIXES = [
+    "model",  # facebook/opt-6.7b
+    "transformer",  # bigscience/bloom-7b1
+]
+
+
 def load_checkpoint(
     model: nn.Module,
     index_filename: Union[str, os.PathLike],
     device: torch.device = None,
     dtype: torch.dtype = None,
-    prefix: str = "model",
-    #shared_weights: Dict[str, str] = None,
+    checkpoint_prefix: str = None,
 ):
     checkpoint_folder = os.path.split(index_filename)[0]
     with open(index_filename, "r") as f:
@@ -22,69 +27,28 @@ def load_checkpoint(
     if "weight_map" in index:
         index = index["weight_map"]
 
-    file_to_params: Dict[str, List[Tuple]] = {}
-    for new_name, param in model.named_parameters():
-        old_name = model.remap_qualname(new_name)
-        if prefix:
-            old_name = old_name[len(prefix)+1 :]
-        if old_name not in index.keys():
-            logging.warning(
-                f"Parameter {new_name} maps to {old_name}, "
-                f"but {old_name} is not found in checkpoint index"
-            )
-            continue
-            """
-            if old_name in shared_weights.keys():
-                old_name = shared_weights[old_name]
-            else:
-            """
-        file = index[old_name]
-        param_list = file_to_params.setdefault(file, [])
-        param_list.append((new_name, old_name, param))
+    prefix_to_test = [checkpoint_prefix] if checkpoint_prefix else TYPICAL_PREFIXES
 
-    file_to_buffers: Dict[str, List[Tuple]] = {}
-    for new_name, buffer in model.named_buffers():
-        old_name = model.remap_qualname(new_name)
-        if prefix:
-            old_name = old_name[len(prefix)+1 :]
-        if old_name not in index.keys():
-            logging.warning(
-                f"Buffer {new_name} maps to {old_name}, "
-                f"but {old_name} is not found in checkpoint index"
-            )
-            continue
-            """
-            if old_name in shared_weights.keys():
-                old_name = shared_weights[old_name]
-            else:
-            """
-        file = index[old_name]
-        buffer_list = file_to_buffers.setdefault(file, [])
-        buffer_list.append((new_name, old_name, buffer))
+    file_to_weights = get_file_to_weight_map(model, index, prefix_to_test)
 
-    set1 = set(file_to_params.keys())
-    set2 = set(file_to_buffers.keys())
-    used_files = sorted(set1.union(set2))
+    used_files = file_to_weights.keys()
+    import time
     logging.info(
-        f"Opening checkpoint: {used_files}"
+        f"{time.time()} Opening checkpoint: {used_files}"
     )
 
     for file in used_files:
         file_path = os.path.join(checkpoint_folder, file)
         checkpoint = torch.load(file_path)
 
-        for file_to_weights in [file_to_params, file_to_buffers]:
-            if file in file_to_weights:
-                weights = file_to_weights[file]
-                for new_name, old_name, _ in weights:
-                    if old_name not in checkpoint.keys():
-                        raise ValueError(
-                            f"{old_name} not in {file}"
-                        )
-                    loaded_weight = checkpoint[old_name]
-                    set_module_tensor_to_device(
-                        model, new_name, device, value=loaded_weight, dtype=dtype
-                    )
+        if file in file_to_weights:
+            weights = file_to_weights[file]
+            for new_name, old_name in weights:
+                assert old_name in checkpoint.keys(), f"{old_name} not in {file}"
+                loaded_weight = checkpoint[old_name]
+                set_module_tensor_to_device(
+                    model, new_name, device, value=loaded_weight, dtype=dtype
+                )
 
         handle_shared_weights(model, checkpoint, device=device, dtype=dtype)
 
@@ -92,6 +56,50 @@ def load_checkpoint(
         gc.collect()
 
     return model
+
+
+def get_file_to_weight_map(
+    model: nn.Module,
+    index,
+    prefix_to_test: List[str],
+) -> Dict[str, List[Tuple]]:
+    file_to_weights: Dict[str, List[Tuple]] = {}
+
+    for iterator in [
+        model.named_parameters(),
+        model.named_buffers(),
+    ]:
+        for new_name, _ in iterator:
+            old_name = model.remap_qualname(new_name)
+            cp_weight_name = match_checkpoint_name(old_name, index, prefix_to_test)
+            if cp_weight_name is None:
+                logging.warning(
+                    f"Weight {new_name} maps to {old_name}, "
+                    f"but {old_name} is not found in checkpoint index"
+                )
+                continue
+            file = index[cp_weight_name]
+            weights = file_to_weights.setdefault(file, [])
+            weights.append((new_name, cp_weight_name))
+
+    return file_to_weights
+
+
+def match_checkpoint_name(
+    old_name: str,
+    index,
+    prefix_to_test: List[str],
+):
+    if old_name in index.keys():
+        return old_name
+
+    for prefix in prefix_to_test:
+        if (old_name.startswith(prefix)
+            and old_name[len(prefix)+1 :] in index.keys()
+        ):
+            return old_name[len(prefix)+1 :]
+
+    return None
 
 
 def set_module_tensor_to_device(
@@ -121,17 +129,25 @@ def set_module_tensor_to_device(
     if value is None:
         return
 
+    submod_and_weight = qualname.rsplit(".", 1)
+    if len(submod_and_weight) > 1:
+        submod = getattr(module, submod_and_weight[0])
+        weight = submod_and_weight[1]
+    else:
+        submod = module
+        weight = submod_and_weight[0]
+
     if (
-        qualname not in module._parameters
-        and qualname not in module._buffers
+        weight not in submod._parameters
+        and weight not in submod._buffers
     ):
         raise ValueError(
-            f"{module._get_name()} does not have a parameter or a buffer named {qualname}. "
-            f"Has instead: {module._parameters.keys()} and {module._buffers.keys()}"
+            f"{submod._get_name()} does not have a parameter or a buffer named {weight}. "
+            f"Has instead: {submod._parameters.keys()} and {submod._buffers.keys()}"
         )
 
-    is_buffer = qualname in module._buffers
-    old_value = getattr(module, qualname)
+    is_buffer = weight in submod._buffers
+    old_value = getattr(submod, weight)
 
     if dtype is None:
         # For compatibility with PyTorch load_state_dict which converts state
@@ -150,10 +166,10 @@ def set_module_tensor_to_device(
             new_value = torch.tensor(value, device=device, dtype=dtype)
 
         if is_buffer:
-            module._buffers[qualname] = new_value
+            submod._buffers[weight] = new_value
         else:
-            param_cls = type(module._parameters[qualname])
-            kwargs = module._parameters[qualname].__dict__
+            param_cls = type(submod._parameters[weight])
+            kwargs = submod._parameters[weight].__dict__
             if param_cls.__name__ == "Int8Params":
                 new_param = param_cls(  # type: ignore[misc]
                     new_value, requires_grad=old_value.requires_grad, **kwargs
@@ -162,7 +178,7 @@ def set_module_tensor_to_device(
                 new_param = param_cls(  # type: ignore[misc]
                     new_value, requires_grad=old_value.requires_grad
                 )
-            module._parameters[qualname] = new_param
+            submod._parameters[weight] = new_param
 
 
 # Some weights like word_embeddings.weight and shared.weight will be used in

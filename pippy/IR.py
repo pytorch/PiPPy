@@ -3,6 +3,7 @@ import copy
 import logging
 import operator
 from enum import Enum
+import os
 import threading
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
@@ -1082,7 +1083,13 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
     _stage_init_lock = threading.Lock()
     stage_init_cv = threading.Condition(_stage_init_lock)
 
-    def defer_stage_init(self, device, index_filename=None, dtype=None):
+    def defer_stage_init(
+        self,
+        device: torch.device,
+        index_filename: Union[str, os.PathLike] = None,
+        dtype: torch.dtype = None,
+        checkpoint_prefix: str = None,
+    ):
         def materialize_stage(target: str) -> torch.nn.Module:
             logging.info(f"Materializing {target} on {device}")
             submodule = self.split_gm.get_submodule(target)
@@ -1092,6 +1099,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
                     index_filename=index_filename,
                     device=device,
                     dtype=dtype,
+                    checkpoint_prefix=checkpoint_prefix,
                 )
             try:
                 submodule.to(device)
