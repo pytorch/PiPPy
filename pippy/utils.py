@@ -3,7 +3,7 @@ import os
 import socket
 import logging
 from typing import List
-
+import torch.utils._device
 
 # Pinning process to a separate GPU if not yet done by launch script
 # Notes:
@@ -280,3 +280,18 @@ def run_worker(rank, run_func, args, *extra_args):
         run_func(my_pp_ranks, args, *extra_args)
 
     rpc.shutdown()
+
+class InitEmptyOnDevice(torch.overrides.TorchFunctionMode):
+    def __init__(self, device=None):
+        self.device = device
+
+    def __torch_function__(self, func, types, args=(), kwargs=None):
+        kwargs = kwargs or {}
+        if getattr(func, '__module__', None) == 'torch.nn.init':
+            if 'tensor' in kwargs:
+                return kwargs['tensor']
+            else:
+                return args[0]
+        if self.device is not None and func in torch.utils._device._device_constructors() and kwargs.get('device') is None:
+            kwargs['device'] = self.device
+        return func(*args, **kwargs)
