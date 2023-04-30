@@ -27,15 +27,16 @@ def load_checkpoint(
     if "weight_map" in index:
         index = index["weight_map"]
 
-    prefix_to_test = [checkpoint_prefix] if checkpoint_prefix else TYPICAL_PREFIXES
+    prefix_to_test = (
+        [checkpoint_prefix] if checkpoint_prefix else TYPICAL_PREFIXES
+    )
 
     file_to_weights = _get_file_to_weight_map(model, index, prefix_to_test)
 
     used_files = file_to_weights.keys()
     import time
-    logging.info(
-        f"{time.time()} Opening checkpoint: {used_files}"
-    )
+
+    logging.info(f"{time.time()} Opening checkpoint: {used_files}")
 
     for file in used_files:
         file_path = os.path.join(checkpoint_folder, file)
@@ -44,10 +45,17 @@ def load_checkpoint(
         if file in file_to_weights:
             weights = file_to_weights[file]
             for new_name, old_name, clone in weights:
-                assert old_name in checkpoint.keys(), f"{old_name} not in {file}"
+                assert (
+                    old_name in checkpoint.keys()
+                ), f"{old_name} not in {file}"
                 loaded_weight = checkpoint[old_name]
                 _set_module_tensor_to_device(
-                    model, new_name, device, value=loaded_weight, dtype=dtype, clone=clone,
+                    model,
+                    new_name,
+                    device,
+                    value=loaded_weight,
+                    dtype=dtype,
+                    clone=clone,
                 )
 
         del checkpoint
@@ -69,14 +77,14 @@ def _get_file_to_weight_map(
     ]:
         for new_name, _ in iterator:
             old_name = model.remap_qualname(new_name)
-            cp_weight_name, clone_needed = _match_checkpoint_name(old_name, index, prefix_to_test)
+            cp_weight_name, clone_needed = _match_checkpoint_name(
+                old_name, index, prefix_to_test
+            )
             if cp_weight_name is None:
-                # Not found
-                logging.warning(
+                raise RuntimeError(
                     f"Weight {new_name} maps to {old_name}, "
                     f"but {old_name} is not found in checkpoint index"
                 )
-                continue
             file = index[cp_weight_name]
             weights = file_to_weights.setdefault(file, [])
             weights.append((new_name, cp_weight_name, clone_needed))
@@ -126,10 +134,11 @@ def _match_checkpoint_name(
         return old_name, False
 
     for prefix in prefix_to_test:
-        if (old_name.startswith(prefix)
-            and old_name[len(prefix)+1 :] in index.keys()
+        if (
+            old_name.startswith(prefix)
+            and old_name[len(prefix) + 1 :] in index.keys()
         ):
-            return old_name[len(prefix)+1 :], False
+            return old_name[len(prefix) + 1 :], False
 
     if old_name in TYPICAL_SHARER_WEIGHTS:
         for sharee in TYPICAL_SHAREE_WEIGHTS:
@@ -177,10 +186,7 @@ def _set_module_tensor_to_device(
         submod = module
         weight = submod_and_weight[0]
 
-    if (
-        weight not in submod._parameters
-        and weight not in submod._buffers
-    ):
+    if weight not in submod._parameters and weight not in submod._buffers:
         raise ValueError(
             f"{submod._get_name()} does not have a parameter or a buffer named {weight}. "
             f"Has instead: {submod._parameters.keys()} and {submod._buffers.keys()}"
@@ -193,9 +199,7 @@ def _set_module_tensor_to_device(
         # For compatibility with PyTorch load_state_dict which converts state
         # dict dtype to existing dtype in model
         dtype = old_value.dtype
-    elif str(value.dtype).startswith(
-        ("torch.uint", "torch.int", "torch.bool")
-    ):
+    elif str(value.dtype).startswith(("torch.uint", "torch.int", "torch.bool")):
         # Avoid casting these data types
         dtype = value.dtype
 
