@@ -37,8 +37,7 @@ def load_checkpoint(
     import time
 
     logging.info(
-        f"Timestamp {time.time():.2f} "
-        f"Opening checkpoint: {used_files}"
+        f"Timestamp {time.time():.2f} " f"Opening checkpoint: {used_files}"
     )
 
     for file in used_files:

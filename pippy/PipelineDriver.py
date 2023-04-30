@@ -1505,9 +1505,9 @@ class PipelineDriverBase(torch.nn.Module):
             ].confirmed_by_owner():
                 pass
 
-            self.stage_to_executor[
-                stage_id
-            ] = self.remote_stage_executor_rrefs[descr.name][1]
+            self.stage_to_executor[stage_id] = self.remote_stage_executor_rrefs[
+                descr.name
+            ][1]
 
         # Inform executors of their peers
         for stage_id, executor in self.stage_to_executor.items():
