@@ -1478,6 +1478,8 @@ class PipelineDriverBase(torch.nn.Module):
 
         self.stage_to_executor: Dict = {}
 
+        # Ask each RankWorker to create stage thereon
+        # This can involve checkpoint loading in deferred init case
         for stage_id, descr in enumerate(executor_descriptors):
             # Assign stages to rank workers in a round-robin fashion
             rank = self.all_ranks[stage_id % self.world_size]
@@ -1492,17 +1494,20 @@ class PipelineDriverBase(torch.nn.Module):
                     mod_name=descr.name,
                 ),
             )
-            if Pipe.is_stage_init_deferred():
-                logging.debug(
-                    f"[root] Waiting stage_id = {stage_id} mod to be confirmed by worker"
-                )
-                while not self.remote_stage_executor_rrefs[descr.name][
-                    1
-                ].confirmed_by_owner():
-                    pass
-            self.stage_to_executor[stage_id] = self.remote_stage_executor_rrefs[
-                descr.name
-            ][1]
+
+        # Check that each RankWorker has completed stage init
+        for stage_id, descr in enumerate(executor_descriptors):
+            logging.debug(
+                f"[root] Waiting stage_id = {stage_id} mod to be confirmed by worker"
+            )
+            while not self.remote_stage_executor_rrefs[descr.name][
+                1
+            ].confirmed_by_owner():
+                pass
+
+            self.stage_to_executor[
+                stage_id
+            ] = self.remote_stage_executor_rrefs[descr.name][1]
 
         # Inform executors of their peers
         for stage_id, executor in self.stage_to_executor.items():

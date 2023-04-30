@@ -36,7 +36,10 @@ def load_checkpoint(
     used_files = file_to_weights.keys()
     import time
 
-    logging.info(f"{time.time()} Opening checkpoint: {used_files}")
+    logging.info(
+        f"Timestamp {time.time():.2f} "
+        f"Opening checkpoint: {used_files}"
+    )
 
     for file in used_files:
         file_path = os.path.join(checkpoint_folder, file)
