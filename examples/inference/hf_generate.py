@@ -66,6 +66,7 @@ def run_all(pp_ranks, args):
         tracer=PiPPyHFTracer(),
         concrete_args=concrete_args,
         index_filename=args.index_filename,
+        checkpoint_prefix=args.checkpoint_prefix,
     )
 
     params = get_number_of_params(stage_mod)
@@ -103,6 +104,7 @@ if __name__ == "__main__":
     parser.add_argument('--pp_group_size', type=int, default=int(os.getenv("WORLD_SIZE", 4)))
     parser.add_argument('--dtype', type=str, default="fp32", choices=["fp32", "bf16", "fp16"])
     parser.add_argument('--index_filename', type=str, default=None, help="The director of model's index.json file")
+    parser.add_argument('--checkpoint_prefix', type=str, default=None, help="Prefix to add to the weight names in checkpoint map back to model structure")
 
     args = parser.parse_args()
 

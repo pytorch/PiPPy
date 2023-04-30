@@ -53,6 +53,7 @@ def _compile(
     checkpoint=False,
     _debug_mask_minibatches: bool = False,
     index_filename=None,
+    checkpoint_prefix: str = None,
     **kwargs,
 ):
     if ranks is None:
@@ -100,6 +101,7 @@ def _compile(
             device,
             index_filename,
             dtype,
+            checkpoint_prefix,
         )
         stage_mod = pipe_model.export(pp_rank)
 
