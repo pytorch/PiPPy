@@ -76,7 +76,7 @@ def _get_file_to_weight_map(
         model.named_buffers(),
     ]:
         for new_name, _ in iterator:
-            old_name = model.remap_qualname(new_name)
+            old_name = model.remap_qualname(new_name)  # type: ignore[operator]
             cp_weight_name, clone_needed = _match_checkpoint_name(
                 old_name, index, prefix_to_test
             )
@@ -113,7 +113,7 @@ def _match_checkpoint_name(
     old_name: str,
     index,
     prefix_to_test: List[str],
-) -> Tuple[str, bool]:
+) -> Tuple[Optional[str], bool]:
     """
     A helper function to match weight name against those in checkpoint index.
     Args:
@@ -153,7 +153,7 @@ def _set_module_tensor_to_device(
     qualname: str,
     device: Optional[torch.device] = None,
     value: Optional[torch.Tensor] = None,
-    dtype: Optional[Union[str, torch.dtype]] = None,
+    dtype: Optional[torch.dtype] = None,
     clone: bool = False,
 ):
     """
