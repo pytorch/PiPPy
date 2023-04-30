@@ -34,9 +34,7 @@ def load_checkpoint(
     file_to_weights = _get_file_to_weight_map(model, index, prefix_to_test)
 
     used_files = file_to_weights.keys()
-    import time
-
-    logging.info(f"{time.time()} Opening checkpoint: {used_files}")
+    logging.info(f"Opening checkpoint: {used_files}")
 
     for file in used_files:
         file_path = os.path.join(checkpoint_folder, file)
