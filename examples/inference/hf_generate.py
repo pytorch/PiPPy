@@ -8,7 +8,6 @@ import pippy.fx
 from pippy import run_pippy
 from pippy.hf import PiPPyHFTracer, inject_pipeline_forward
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from accelerate import init_empty_weights
 
 
 pippy.fx.Tracer.proxy_buffer_attributes = True
@@ -141,7 +140,7 @@ if __name__ == "__main__":
             for m in supported_model_categories]):
         print(f"Loading model {args.model_name}")
         if args.index_filename is not None:
-            with init_empty_weights():
+            with torch.device("meta"):
                 model = AutoModelForCausalLM.from_pretrained(args.model_name, use_cache=False, torch_dtype=dtype)
         else:
             model = AutoModelForCausalLM.from_pretrained(args.model_name, use_cache=False, torch_dtype=dtype)
