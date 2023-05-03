@@ -41,19 +41,11 @@ class ExampleCode(torch.nn.Module):
 
 
 def run_worker(args):
-    MULTI_USE_PARAM_CONFIG = (
-        MultiUseParameterConfig.REPLICATE
-        if args.replicate
-        else MultiUseParameterConfig.TRANSMIT
-    )
-    if args.rank == 0:
-        print(f"REPLICATE config: {args.replicate} -> {MULTI_USE_PARAM_CONFIG}")
-
     ec = ExampleCode()
     ec.to(args.device)
     ec_input = torch.randn(bs, d_hid, device=args.device)
 
-    ec_pipe = Pipe.from_tracing(ec, MULTI_USE_PARAM_CONFIG)
+    ec_pipe = Pipe.from_tracing(ec, MultiUseParameterConfig.REPLICATE)
 
     gm = ec_pipe.split_gm
     if args.rank == 0:
@@ -109,9 +101,6 @@ def main(args=None):
         "--master_port", type=str, default=os.getenv("MASTER_PORT", "29500")
     )
     parser.add_argument(
-        "--replicate", type=int, default=int(os.getenv("REPLICATE", "0"))
-    )
-    parser.add_argument(
         "--cuda", type=int, default=int(torch.cuda.is_available())
     )
     parser.add_argument(
@@ -121,8 +110,7 @@ def main(args=None):
     args = parser.parse_args(args)
 
     if args.cuda:
-        n_devs = torch.cuda.device_count()
-        dev_id = args.rank % n_devs
+        dev_id = args.rank % torch.cuda.device_count()
         args.device = f"cuda:{dev_id}"
     else:
         args.device = "cpu"
@@ -141,7 +129,7 @@ if __name__ == "__main__":
 
 
 class LocalTestC10DTest(unittest.TestCase):
-    def test_forward(self):
+    def test_c10d(self):
         import random
 
         port = random.randint(29500, 30000)
