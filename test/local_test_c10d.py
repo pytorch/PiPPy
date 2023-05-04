@@ -4,6 +4,7 @@ import os
 import unittest
 
 import torch
+from torch._subclasses.fake_tensor import FakeTensorMode
 import torch.distributed as dist
 
 from pippy.fx.passes import shape_prop
@@ -52,8 +53,13 @@ def run_worker(args):
         print(gm)
         gm.graph.print_tabular()
 
+    # Use fake tensor for shape propagation
+    # Since model itself may have been materialized, we need to use
+    # `allow_non_fake_inputs`
+    fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
+    fake_input = fake_mode.from_tensor(ec_input)
     sp = shape_prop.ShapeProp(gm)
-    sp.propagate(ec_input)
+    sp.propagate(fake_input)
 
     for i, (name, submod) in enumerate(gm.named_children()):
         if args.rank == i:
