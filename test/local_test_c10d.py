@@ -26,14 +26,14 @@ class ExampleCode(torch.nn.Module):
 
     def forward(self, x):
         x = torch.mm(x, self.mm_param)
-        #skip_connection = x
+        # skip_connection = x
         x = torch.relu(x)
         pipe_split()
         x = torch.mm(x, self.mm_param)
         x = self.lin(x)
         pipe_split()
         x = torch.relu(x)
-        #x = x + skip_connection
+        # x = x + skip_connection
         x = torch.mm(x, self.mm_param2)
         pipe_split()
         x = self.lin(x)
@@ -45,7 +45,9 @@ def make_tensor_from_meta(
     tensor_meta: shape_prop.TensorMetadata,
     device: torch.device,
 ):
-    return torch.empty(tensor_meta.shape, dtype=tensor_meta.dtype, device=device)
+    return torch.empty(
+        tensor_meta.shape, dtype=tensor_meta.dtype, device=device
+    )
 
 
 def run_worker(args):
@@ -108,7 +110,7 @@ def run_worker(args):
         ref_out = ec_pipe(ec_input)
         torch.testing.assert_close(z, ref_out)
         print(
-            f'equivalence test passed {torch.sum(z)} ref {torch.sum(ref_out)}'
+            f"equivalence test passed {torch.sum(z)} ref {torch.sum(ref_out)}"
         )
 
 
@@ -138,7 +140,9 @@ def main(args=None):
     # Init process group
     backend = "nccl" if args.cuda else "gloo"
     torch.distributed.init_process_group(
-        backend=backend, rank=args.rank, world_size=args.world_size,
+        backend=backend,
+        rank=args.rank,
+        world_size=args.world_size,
     )
 
     run_worker(args)
