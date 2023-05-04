@@ -41,6 +41,13 @@ class ExampleCode(torch.nn.Module):
         return x
 
 
+def make_tensor_from_meta(
+    tensor_meta: shape_prop.TensorMetadata,
+    device: torch.device,
+):
+    return torch.empty(tensor_meta.shape, dtype=tensor_meta.dtype, device=device)
+
+
 def run_worker(args):
     ec = ExampleCode()
     ec.to(args.device)
@@ -80,7 +87,7 @@ def run_worker(args):
     if args.rank == 0:
         x = ec_input
     else:
-        x = torch.empty(tensor_meta.shape, dtype=tensor_meta.dtype, device = args.device)
+        x = make_tensor_from_meta(tensor_meta, args.device)
         dist.recv(x, args.rank - 1)
 
     # Compute
@@ -96,7 +103,7 @@ def run_worker(args):
             if node.target == "output":
                 break
         tensor_meta = node.meta["tensor_meta"]
-        z = torch.empty(tensor_meta.shape, dtype=tensor_meta.dtype, device = args.device)
+        z = make_tensor_from_meta(tensor_meta, args.device)
         dist.recv(z, args.world_size - 1)
         ref_out = ec_pipe(ec_input)
         torch.testing.assert_close(z, ref_out)
