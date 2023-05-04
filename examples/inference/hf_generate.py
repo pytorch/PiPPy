@@ -85,7 +85,7 @@ def run_all(pp_ranks, args):
     prompt = "Hey, are you conscious? Can you talk to me?"
     input = tokenizer(prompt, return_tensors="pt")
     input_ids = input["input_ids"].to(args.device)
-    outputs = model.generate(input_ids, max_length=30)
+    outputs = model.generate(input_ids, max_new_tokens=30)
     response = tokenizer.batch_decode(outputs, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
     print(response)
 
@@ -109,7 +109,7 @@ if __name__ == "__main__":
 
     assert args.world_size % args.pp_group_size == 0
 
-    supported_model_categories = ["opt", "gpt", "bloom", "codegen"]
+    supported_model_categories = ["opt", "gpt", "bloom", "codegen", "llama"]
     # For example:
     # "facebook/opt-350m"
     # "gpt2"
