@@ -46,8 +46,8 @@ def run_worker(args):
     ec.to(args.device)
     ec_input = torch.randn(bs, d_hid, device=args.device)
 
+    # Trace and cut
     ec_pipe = Pipe.from_tracing(ec, MultiUseParameterConfig.REPLICATE)
-
     gm = ec_pipe.split_gm
     if args.rank == 0:
         print(gm)
@@ -57,16 +57,18 @@ def run_worker(args):
     # Since model itself may have been materialized, we need to use
     # `allow_non_fake_inputs`
     fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
+    # In reality, the fake input should be created from shape info (potentially
+    # broadcast from Rank 0)
     fake_input = fake_mode.from_tensor(ec_input)
     sp = shape_prop.ShapeProp(gm)
     sp.propagate(fake_input)
 
-    for i, (name, submod) in enumerate(gm.named_children()):
-        if args.rank == i:
-            break
-    print(name)
-    print(submod)
+    # Find my submodule
+    named_children = list(gm.named_children())
+    name, submod = named_children[args.rank]
+    print(f"{name}: {submod}")
 
+    # Find my input size
     for node in gm.graph.nodes:
         if node.name == name:
             input = node.args[0]  # args is a tuple
@@ -74,23 +76,32 @@ def run_worker(args):
     tensor_meta = input.meta["tensor_meta"]
     print(tensor_meta)
 
+    # Get input
     if args.rank == 0:
         x = ec_input
     else:
         x = torch.empty(tensor_meta.shape, dtype=tensor_meta.dtype, device = args.device)
         dist.recv(x, args.rank - 1)
 
+    # Compute
     y = submod(x)
 
+    # Send to next stage
     dist.send(y, (args.rank + 1) % args.world_size)
 
+    # Rank 0 checks result
     if args.rank == 0:
-        # Assuming size does not change
-        dist.recv(y, args.world_size - 1)
+        # Get final output shape
+        for node in gm.graph.nodes:
+            if node.target == "output":
+                break
+        tensor_meta = node.meta["tensor_meta"]
+        z = torch.empty(tensor_meta.shape, dtype=tensor_meta.dtype, device = args.device)
+        dist.recv(z, args.world_size - 1)
         ref_out = ec_pipe(ec_input)
-        torch.testing.assert_close(y, ref_out)
+        torch.testing.assert_close(z, ref_out)
         print(
-            f'equivalence test passed {torch.sum(y)} ref {torch.sum(ref_out)}'
+            f'equivalence test passed {torch.sum(z)} ref {torch.sum(ref_out)}'
         )
 
 
@@ -109,10 +120,6 @@ def main(args=None):
     parser.add_argument(
         "--cuda", type=int, default=int(torch.cuda.is_available())
     )
-    parser.add_argument(
-        "--record_mem_dumps", type=int, default=0, choices=[0, 1]
-    )
-    parser.add_argument("--checkpoint", type=int, default=0, choices=[0, 1])
     args = parser.parse_args(args)
 
     if args.cuda:
@@ -121,7 +128,7 @@ def main(args=None):
     else:
         args.device = "cpu"
 
-    # Init DDP process group
+    # Init process group
     backend = "nccl" if args.cuda else "gloo"
     torch.distributed.init_process_group(
         backend=backend, rank=args.rank, world_size=args.world_size,
