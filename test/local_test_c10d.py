@@ -41,15 +41,6 @@ class ExampleCode(torch.nn.Module):
         return x
 
 
-def make_tensor_from_meta(
-    tensor_meta: shape_prop.TensorMetadata,
-    device: torch.device,
-):
-    return torch.empty(
-        tensor_meta.shape, dtype=tensor_meta.dtype, device=device
-    )
-
-
 def run_worker(args):
     ec = ExampleCode()
     ec.to(args.device)
@@ -72,25 +63,10 @@ def run_worker(args):
     sp = shape_prop.ShapeProp(gm)
     sp.propagate(fake_input)
 
-    # Find my submodule
-    named_children = list(gm.named_children())
-    name, submod = named_children[args.rank]
-    print(f"{name}: {submod}")
-
-    # Find my input size
-    for node in gm.graph.nodes:
-        if node.name == name:
-            input = node.args[0]  # args is a tuple
-            break
-    tensor_meta = input.meta["tensor_meta"]
-    print(tensor_meta)
-
     # Get input
     if args.rank == 0:
         x = ec_input
     else:
-        x = make_tensor_from_meta(tensor_meta, args.device)
-        dist.recv(x, args.rank - 1)
 
     # Compute
     y = submod(x)
