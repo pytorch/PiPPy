@@ -1,6 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import logging
 from typing import Any
+import warnings
 from pippy.IR import TrivialLossWrapper
 import torch
 
@@ -50,8 +51,10 @@ def shard_dict_of_args(
 
     # args_sharded_replicated : [num args, num flat values, num chunks]
     args_sharded_replicated = {}
-
     arg_specs = []
+
+    real_num_chunks = num_chunks
+    first_tensor = True
 
     assert len(args_dict) == len(
         args_chunk_spec
@@ -77,15 +80,34 @@ def shard_dict_of_args(
 
         for v, chunk_v in zip(flat, chunk_spec_flat):
             if chunk_v is Replicate or not isinstance(v, torch.Tensor):
-                sharded_arg_flat.append([v] * num_chunks)
+                sharded_arg_flat.append([v] * real_num_chunks)
             elif isinstance(chunk_v, TensorChunkSpec):
                 # TODO: check type of v. If it's a tensor, use chunk (or debug mask).
                 # If it's a collection type, split it as you would expect. Otherwise,
                 # Throw an error
                 assert isinstance(v, torch.Tensor), f"{v} is not a tensor"
 
+                v_split_dim_size = v.size(chunk_v.split_dim)
+                if v_split_dim_size < real_num_chunks:
+                    if first_tensor:
+                        # We can only adjust number of chunks when we hit this
+                        # issue at the first tensor encountered
+                        warnings.warn(
+                            f"Tensor size on chunking dimension is {v_split_dim_size}, "
+                            f"downsizing the number of chunks from {num_chunks} to {v_split_dim_size}."
+                        )
+                        real_num_chunks = v_split_dim_size
+                    else:
+                        raise RuntimeError(
+                            f"Arg {arg_key} on chunking dimension has a size of {v_split_dim_size}, "
+                            f"smaller than the number of chunks {num_chunks}. "
+                            "PiPPy cannot reduce the number of chunks because "
+                            "other arguments have bigger chunk-dimension sizes. "
+                            "Please adjust your num_chunks setting."
+                        )
+
                 chunk_tensors = torch.tensor_split(
-                    v, num_chunks, chunk_v.split_dim
+                    v, real_num_chunks, chunk_v.split_dim
                 )
 
                 if _debug_mask_minibatches:
@@ -111,6 +133,8 @@ def shard_dict_of_args(
                     sharded_arg_flat.append(expanded_chunks)
                 else:
                     sharded_arg_flat.append(chunk_tensors)
+
+                first_tensor = False
             else:
                 raise TypeError(f"Unrecognized chunk spec: {chunk_v}")
 
@@ -118,7 +142,7 @@ def shard_dict_of_args(
 
     # chunks_flat : [num chunks, num args, num flat values]
     chunks_flat = []
-    for chunk_idx in range(num_chunks):
+    for chunk_idx in range(real_num_chunks):
         chunk_args = {}
         for key, arg in args_sharded_replicated.items():
             arg_single_chunk = []
@@ -196,10 +220,29 @@ def split_args_kwargs_into_chunks(
         chunks,
         _debug_mask_minibatches,
     )
+    real_num_chunks = len(args_split_dict)
 
     kwargs_split = shard_dict_of_args(
-        kwargs, kwargs_chunk_spec, chunks, _debug_mask_minibatches
+        kwargs, kwargs_chunk_spec, real_num_chunks, _debug_mask_minibatches
     )
+
+    if len(kwargs_split) < real_num_chunks:
+        # In case kwargs are sharded into less chunks
+        # e.g. when `args` has no tensor, just values
+        real_num_chunks = len(kwargs_split)
+        # Re-shard args
+        args_split_dict = shard_dict_of_args(
+            dict(enumerate(args)),
+            dict(enumerate(args_chunk_spec)),
+            real_num_chunks,
+            _debug_mask_minibatches,
+        )
+
+    if len(args_split_dict) != len(kwargs_split):
+        raise RuntimeError(
+            "args and kwargs are split into different number of chunks: "
+            f"{len(args_split_dict)}, {len(kwargs_split)}"
+        )
 
     args_split = []
     for chunk_args in args_split_dict:
