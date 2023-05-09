@@ -2090,9 +2090,6 @@ class PipelineDriverFillDrain(PipelineDriverBase):
         if self.single_loss:
             raise NotImplementedError("Single minibatch loss not implemented")
 
-        logging.info(
-            f"[root] Running pipeline with {self.chunks} micro-batches"
-        )
         # Roadmap:
         # 1) Micro-batch splitting - divide input arguments out into concrete chunk values
         # 2) Interpreter tiling - one interpreter per micro-batch
@@ -2108,12 +2105,24 @@ class PipelineDriverFillDrain(PipelineDriverBase):
             self._debug_mask_minibatches,
         )
 
+        real_num_chunks = self.chunks
+        if len(args_split) < self.chunks:
+            real_num_chunks = len(args_split)
+            warnings.warn(
+                f"Reducing micro-batch numbers from {self.chunks} to "
+                f"{real_num_chunks}."
+            )
+
+        logging.info(
+            f"[root] Running pipeline with {real_num_chunks} micro-batches"
+        )
+
         self.microbatch_interpreters = []
 
         batch_id = self.batch_id
         self.batch_id += 1
 
-        for chunk in range(self.chunks):
+        for chunk in range(real_num_chunks):
             logging.debug(
                 f"[root] Instantiating microbatch interpreter for chunk {chunk}"
             )
@@ -2125,7 +2134,7 @@ class PipelineDriverFillDrain(PipelineDriverBase):
                 args=args_split[chunk],
                 kwargs=kwargs_split[chunk],
                 batch_id=batch_id,
-                num_microbatches=self.chunks,
+                num_microbatches=real_num_chunks,
             )
             # If user wants to use c10d for P2P, we would perform the shape propagation here. The shape prop is
             # performed per batch, thus supporting dynamic shape in batch dimension. Dynamic shape in microbatch
