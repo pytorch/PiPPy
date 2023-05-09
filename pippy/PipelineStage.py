@@ -4,6 +4,7 @@ from typing import Dict, Tuple
 
 import torch
 import torch.distributed as dist
+import pippy
 
 from pippy.fx.passes import shape_prop
 from pippy.IR import Pipe
@@ -16,6 +17,18 @@ def _make_tensor_from_meta(
     return torch.empty(
         tensor_meta.shape, dtype=tensor_meta.dtype, device=device
     )
+
+
+class RecvInfo:
+    def __init__(
+        self,
+        input_name: str,
+        source: int,
+        buffer: torch.Tensor,
+    ):
+        self.input_name = input_name
+        self.source = source
+        self.buffer = buffer
 
 
 class PipelineStage(torch.nn.Module):
@@ -38,8 +51,8 @@ class PipelineStage(torch.nn.Module):
         self.split_gm = self.pipe.split_gm
         named_children = list(self.split_gm.named_children())
         self.name, self.submod = named_children[rank]
-        logging.info(f"[{self.rank}] "
-            f"Creating PipelineStage {self.name}: {self.submod}"
+        logging.info(f"[{self.rank}][{self.name}] "
+            f"Creating PipelineStage: {self.submod}"
         )
 
         # Find my node in graph
@@ -53,42 +66,57 @@ class PipelineStage(torch.nn.Module):
                 f"Cannot find {self.name} in graph"
             )
 
-        # name : (source, tensor)
-        self.recv_buffers: Dict[str, Tuple[int, torch.tensor]] = {}
         self.create_recv_buffers()
 
 
     def create_recv_buffers(
         self,
     ):
-        input = self.node.args[0]  # args is a tuple
-        tensor_meta = input.meta["tensor_meta"]
-        logging.info(f"[{self.rank}] "
-            f"Creating recv buffer for {input.name} : {tensor_meta}"
-        )
-        self.recv_buffers.setdefault(
-            input.name,
-            (
-                self.rank - 1,  #TODO
+        def create_recv_tensor(input_node):
+            # TODO: do not create buffer for placeholder etc
+            tensor_meta = input_node.meta["tensor_meta"]
+            logging.info(f"[{self.rank}][{self.name}] "
+                f"Creating recv buffer for input '{input_node.name}' : {tensor_meta.shape}"
+            )
+            return RecvInfo(
+                input_node.name,
+                self.rank - 1,  #TODO: find source rank
                 _make_tensor_from_meta(tensor_meta, self.device),
             )
+
+        # Tuple[Tuple[source, tensor]]
+        self.args_recv_info = pippy.fx.node.map_arg(
+            self.node.args, create_recv_tensor
+        )
+
+        # Dict[keyword, Tuple[source, tensor]]
+        self.kwargs_recv_info = pippy.fx.node.map_arg(
+            self.node.kwargs, create_recv_tensor
         )
 
 
     def forward(self, *args, **kwargs):
-        if not args:
-            inputs = []
-            for name, recv_info in self.recv_buffers.items():
-                (src, buf) = recv_info
-                logging.info(f"[{self.rank}] "
-                    f"Receiving {name} from Rank {src}"
+        def recv_tensor(info):
+            if isinstance(info, RecvInfo):
+                logging.info(f"[{self.rank}][{self.name}] "
+                    f"Receiving tensor '{info.input_name}' from Rank {info.source}"
                 )
-                dist.recv(buf, src, group=self.group)
-                inputs.append(buf)
-        else:
-            inputs = args
+                dist.recv(info.buffer, info.source, group=self.group)
+                return info.buffer
+            else:
+                return info
 
-        output = self.submod(*inputs)
+        if not args:
+            args = pippy.fx.node.map_aggregate(
+                self.args_recv_info, recv_tensor,
+            )
+
+        if not kwargs:
+            kwargs = pippy.fx.node.map_aggregate(
+                self.kwargs_recv_info, recv_tensor,
+            )
+
+        output = self.submod(*args, **kwargs)
 
         dist.send(
             output,
