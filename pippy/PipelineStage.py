@@ -18,18 +18,21 @@ def _make_tensor_from_meta(
     )
 
 
-class PipelineStage:
+class PipelineStage(torch.nn.Module):
     def __init__(
         self,
         pipe: Pipe,
         rank: int,
         nstages: int,
         device: torch.device,
+        group: dist.ProcessGroup = None,
     ):
+        super().__init__()
         self.pipe = pipe
         self.rank = rank
         self.nstages = nstages
         self.device = device
+        self.group = group
 
         # Find my submodule
         self.split_gm = self.pipe.split_gm
@@ -40,10 +43,15 @@ class PipelineStage:
         )
 
         # Find my node in graph
+        self.node = None
         for node in self.split_gm.graph.nodes:
             if node.name == self.name:
                  self.node = node
                  break
+        if not self.node:
+            raise AssertionError(
+                f"Cannot find {self.name} in graph"
+            )
 
         # name : (source, tensor)
         self.recv_buffers: Dict[str, Tuple[int, torch.tensor]] = {}
@@ -67,25 +75,26 @@ class PipelineStage:
         )
 
 
-    def run(
-        self,
-        *args,
-        **kwargs,
-    ):
+    def forward(self, *args, **kwargs):
         if not args:
             inputs = []
-            for name, (src, buf) in self.recv_buffers:
+            for name, recv_info in self.recv_buffers.items():
+                (src, buf) = recv_info
                 logging.info(f"[{self.rank}] "
                     f"Receiving {name} from Rank {src}"
                 )
-                dist.recv(buf, src)
+                dist.recv(buf, src, group=self.group)
                 inputs.append(buf)
-            output = self.submod(*inputs)
         else:
-            output = self.submod(args)
+            inputs = args
+
+        output = self.submod(*inputs)
 
         dist.send(
             output,
             (self.rank + 1) % self.nstages,  #TODO
+            group=self.group
         )
+
+        return output
             

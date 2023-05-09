@@ -6,6 +6,7 @@ import unittest
 import torch
 from torch._subclasses.fake_tensor import FakeTensorMode
 import torch.distributed as dist
+from pippy.PipelineStage import PipelineStage, _make_tensor_from_meta
 
 from pippy.fx.passes import shape_prop
 from pippy.IR import MultiUseParameterConfig, Pipe, pipe_split
@@ -63,16 +64,19 @@ def run_worker(args):
     sp = shape_prop.ShapeProp(gm)
     sp.propagate(fake_input)
 
+    # Create pipeline stage
+    stage = PipelineStage(
+        ec_pipe,
+        args.rank,
+        args.world_size,
+        args.device,
+    )
+
     # Get input
     if args.rank == 0:
-        x = ec_input
+        stage(ec_input)
     else:
-
-    # Compute
-    y = submod(x)
-
-    # Send to next stage
-    dist.send(y, (args.rank + 1) % args.world_size)
+        stage()
 
     # Rank 0 checks result
     if args.rank == 0:
@@ -81,7 +85,7 @@ def run_worker(args):
             if node.target == "output":
                 break
         tensor_meta = node.meta["tensor_meta"]
-        z = make_tensor_from_meta(tensor_meta, args.device)
+        z = _make_tensor_from_meta(tensor_meta, args.device)
         dist.recv(z, args.world_size - 1)
         ref_out = ec_pipe(ec_input)
         torch.testing.assert_close(z, ref_out)
