@@ -4,11 +4,9 @@ import os
 import unittest
 
 import torch
-from torch._subclasses.fake_tensor import FakeTensorMode
 import torch.distributed as dist
-from pippy.PipelineStage import PipelineStage, _make_tensor_from_meta
+from pippy.PipelineStage import compile_stage, _make_tensor_from_meta
 
-from pippy.fx.passes import shape_prop
 from pippy.IR import MultiUseParameterConfig, Pipe, pipe_split
 
 
@@ -47,50 +45,28 @@ def run_worker(args):
     ec.to(args.device)
     ec_input = torch.randn(bs, d_hid, device=args.device)
 
-    # Trace and cut
-    ec_pipe = Pipe.from_tracing(ec, MultiUseParameterConfig.REPLICATE)
-    gm = ec_pipe.split_gm
-    if args.rank == 0:
-        print(gm)
-        gm.graph.print_tabular()
-
-    # Use fake tensor for shape propagation
-    # Since model itself may have been materialized, we need to use
-    # `allow_non_fake_inputs`
-    fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
-    # In reality, the fake input should be created from shape info (potentially
-    # broadcast from Rank 0)
-    fake_input = fake_mode.from_tensor(ec_input)
-    sp = shape_prop.ShapeProp(gm)
-    sp.propagate(fake_input)
-
-    # Create pipeline stage
-    stage = PipelineStage(
-        ec_pipe,
+    stage = compile_stage(
+        ec,
         args.rank,
         args.world_size,
         args.device,
+        example_input=ec_input,
     )
 
-    # Get input
+    # Run
     if args.rank == 0:
-        stage(ec_input)
+        out = stage(ec_input)
+    elif args.rank == args.world_size - 1:
+        out = stage()
     else:
         stage()
 
-    # Rank 0 checks result
-    if args.rank == 0:
-        # Get final output shape
-        for node in gm.graph.nodes:
-            if node.target == "output":
-                break
-        tensor_meta = node.meta["tensor_meta"]
-        z = _make_tensor_from_meta(tensor_meta, args.device)
-        dist.recv(z, args.world_size - 1)
-        ref_out = ec_pipe(ec_input)
-        torch.testing.assert_close(z, ref_out)
+    # Last rank checks result
+    if args.rank == args.world_size - 1:
+        ref_out = ec(ec_input)
+        torch.testing.assert_close(out, ref_out)
         print(
-            f"equivalence test passed {torch.sum(z)} ref {torch.sum(ref_out)}"
+            f"equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}"
         )
 
 
@@ -113,9 +89,9 @@ def main(args=None):
 
     if args.cuda:
         dev_id = args.rank % torch.cuda.device_count()
-        args.device = f"cuda:{dev_id}"
+        args.device = torch.device(f"cuda:{dev_id}")
     else:
-        args.device = "cpu"
+        args.device = torch.device("cpu")
 
     # Init process group
     backend = "nccl" if args.cuda else "gloo"

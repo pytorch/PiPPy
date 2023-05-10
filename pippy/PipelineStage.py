@@ -4,10 +4,12 @@ from typing import Dict, Tuple
 
 import torch
 import torch.distributed as dist
+from torch._subclasses.fake_tensor import FakeTensorMode
 import pippy
 
 from pippy.fx.passes import shape_prop
-from pippy.IR import Pipe
+from pippy.IR import MultiUseParameterConfig, Pipe
+from pippy.utils import PIPPY_VERBOSITY
 
 
 def _make_tensor_from_meta(
@@ -39,6 +41,7 @@ class PipelineStage(torch.nn.Module):
         nstages: int,
         device: torch.device,
         group: dist.ProcessGroup = None,
+        return_to_0: bool = False,
     ):
         super().__init__()
         self.pipe = pipe
@@ -46,6 +49,7 @@ class PipelineStage(torch.nn.Module):
         self.nstages = nstages
         self.device = device
         self.group = group
+        self.return_to_0 = return_to_0
 
         # Find my submodule
         self.split_gm = self.pipe.split_gm
@@ -101,7 +105,11 @@ class PipelineStage(torch.nn.Module):
                 logging.info(f"[{self.rank}][{self.name}] "
                     f"Receiving tensor '{info.input_name}' from Rank {info.source}"
                 )
-                dist.recv(info.buffer, info.source, group=self.group)
+                dist.recv(
+                    info.buffer,
+                    info.source if self.group is None else dist.get_global_rank(self.group, info.source),
+                    group=self.group
+                )
                 return info.buffer
             else:
                 return info
@@ -118,11 +126,51 @@ class PipelineStage(torch.nn.Module):
 
         output = self.submod(*args, **kwargs)
 
-        dist.send(
-            output,
-            (self.rank + 1) % self.nstages,  #TODO
-            group=self.group
-        )
+        if (self.rank + 1 < self.nstages
+            or self.return_to_0
+        ):
+            dst = (self.rank + 1) % self.nstages
+            dist.send(
+                output,
+                dst if self.group is None else dist.get_global_rank(self.group, dst),  #TODO
+                group=self.group
+            )
 
         return output
-            
+
+
+def compile_stage(
+    mod: torch.nn.Module,
+    rank: int,
+    num_ranks: int,
+    device: torch.device,
+    group: dist.ProcessGroup = None,
+    example_input = None,
+) -> PipelineStage:
+    # Trace and cut
+    pipe = Pipe.from_tracing(mod, MultiUseParameterConfig.REPLICATE)
+    gm = pipe.split_gm
+    if rank == 0:
+        logging.info(gm)
+        if PIPPY_VERBOSITY == "INFO":
+            gm.graph.print_tabular()
+
+    # Use fake tensor for shape propagation
+    # Since model itself may have been materialized, we need to use
+    # `allow_non_fake_inputs`
+    fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
+    # In reality, the fake input should be created from shape info (potentially
+    # broadcast from Rank 0)
+    fake_input = fake_mode.from_tensor(example_input)  # TODO: map
+    sp = shape_prop.ShapeProp(gm)
+    sp.propagate(fake_input)
+
+    # Create pipeline stage
+    return PipelineStage(
+        pipe,
+        rank,
+        num_ranks,
+        device,
+        group,
+    )
+

@@ -6,10 +6,11 @@ import unittest
 import torch
 
 import pippy
+from pippy.PipelineStage import compile_stage
 import pippy.fx
-from pippy import run_pippy
 from pippy.IR import pipe_split
 
+import torch.distributed as dist
 from torch.distributed._tensor import (
     DeviceMesh,
 )
@@ -55,75 +56,71 @@ class ExampleCode(torch.nn.Module):
         return x
 
 
-def run_all(pp_ranks, args):
-    chunks = args.pp_group_size
-    device_type = "cuda" if args.cuda else "cpu"
+d_hid = 256
+batch_size_per_chunk = 8
 
-    # Figure out my PP rank
-    pp_rank = args.rank // args.tp_group_size
-    print(f"Global rank {args.rank}, pipeline: {pp_ranks}, my rank in pipe: {pp_rank}")
 
-    d_hid = 256
-    batch_size_per_chunk = 8
-    inp_size = [chunks * batch_size_per_chunk, d_hid]
-
-    # Ensure all tp ranks have same input.
+def run_all(args):
+    # The seed here has two purposes:
+    # - Ensure all TP ranks have same input
+    # - Ensure the model (ec) created are the same, as if it comes from a
+    # single, big model before partitioning
     torch.manual_seed(0)
-    inp = torch.rand(*inp_size, device=device_type)
 
-    """
-    # Reference run
-    # `torchrun --nproc_per_node=2 pippy_tp_mlp.py --world_size=2 --pp_group_size=1`
-    ec_tp = ExampleCode(d_hid)
-    ec_tp.to(args.device)
-
-    start_idx = 0
-    device_mesh = DeviceMesh(
-        device_type,
-        list(range(start_idx, start_idx + args.tp_group_size)),
-    )
-    print(f"Rank {args.rank} calling parallelize_module with {device_mesh}")
-    parallelize_module(ec_tp, device_mesh, PairwiseParallel())
-    print(f"Rank {args.rank} sharding complete")
-
-    ref_out = ec_tp(inp)
-    print(f"Ref out: {ref_out.size()}")
-    """
-
-    # PiPPy run
+    # Create original model
     ec = ExampleCode(d_hid)
     ec.to(args.device)
 
-    # Get:
-    # - pipeline driver (for pipeline head rank)
-    # - stage submodule (for all ranks)
-    pipe_driver, submod = pippy.all_compile(
-        ec,
-        args.pp_group_size,
-        chunks,
-        ranks=pp_ranks,
+    # Create input
+    chunks = args.pp_group_size
+    inp_size = [chunks * batch_size_per_chunk, d_hid]
+    device_type = args.device.type
+    inp = torch.rand(*inp_size, device=device_type)
+
+    # Create global DeviceMesh
+    ranks = torch.arange(args.world_size)
+    rank_mesh = ranks.reshape(args.pp_group_size, args.tp_group_size)
+    pp_dim = 0
+    tp_dim = 1
+    dm = DeviceMesh(
+        device_type,
+        rank_mesh,
     )
 
-    # Create TP device mesh
-    my_device_mesh = None
-    for stage in range(args.pp_group_size):
-        start_rank = stage * args.tp_group_size
-        tp_ranks = list(range(start_rank, start_rank + args.tp_group_size))
-        tp_device_mesh = DeviceMesh(
-            device_type,
-            tp_ranks,
-        )
-        if stage == pp_rank:
-            my_device_mesh = tp_device_mesh
+    # Figure out my PP and TP rank
+    pp_rank = args.rank // args.tp_group_size
+    tp_rank = args.rank % args.tp_group_size
+    print(f"Global rank {args.rank}, pp rank: {pp_rank}, tp rank: {tp_rank}")
+
+    # Get pp group
+    # `tp_rank` can serve as pipeline id
+    print(f"Rank {args.rank} Instantiating pipeline with ranks {dm.mesh[:, tp_rank]}")
+    pp_group = dm.get_dim_groups()[pp_dim]
+
+    # Get stage module (on all pp ranks)
+    stage = compile_stage(
+        ec,
+        pp_rank,
+        args.pp_group_size,
+        args.device,
+        group=pp_group,
+        example_input=inp,
+    )
 
     # Tensor parallelize submodules
-    print(f"Rank {args.rank} calling parallelize_module with {my_device_mesh}")
-    parallelize_module(submod, my_device_mesh, PairwiseParallel())
+    print(f"Rank {args.rank} TP-lize submodule with {dm.mesh[pp_rank]}")
+    parallelize_module(stage.submod, dm, PairwiseParallel(), tp_mesh_dim = tp_dim)
 
     if pp_rank == 0:
-        print(f"Rank {args.rank} Instantiated pipeline with ranks {pp_ranks}")
-        out = pipe_driver(inp)
-        print(f"Pipeline {args.rank} output: {out.size()}")
+        out = stage(inp)
+    elif pp_rank == args.pp_group_size - 1:
+        out = stage()
+    else:
+        stage()
+
+    # Last rank checks result
+    if pp_rank == args.pp_group_size - 1:
+        print(f"Pipeline {tp_rank} output: {out}")
 
 
 def main(args=None):
@@ -155,12 +152,6 @@ def main(args=None):
         "--master_port", type=str, default=os.getenv("MASTER_PORT", "29500")
     )
     parser.add_argument(
-        "-s",
-        "--schedule",
-        type=str,
-        default="FillDrain",
-    )
-    parser.add_argument(
         "--cuda", type=int, default=int(torch.cuda.is_available())
     )
     args = parser.parse_args(args)
@@ -168,11 +159,27 @@ def main(args=None):
     # Use world size to determine TP group size
     assert args.world_size % args.pp_group_size == 0
     args.tp_group_size = args.world_size // args.pp_group_size
-    print(f"Using tensor parallel group size: {args.tp_group_size}")
+    if args.rank == 0:
+        print(
+            f"Pipeline parallel size: {args.pp_group_size}\n"
+            f"Tensor parallel size: {args.tp_group_size}"
+        )
 
-    # All ranks participate
-    args.gspmd = 1
-    run_pippy(run_all, args)
+    if args.cuda:
+        dev_id = args.rank % torch.cuda.device_count()
+        args.device = torch.device(f"cuda:{dev_id}")
+    else:
+        args.device = torch.device("cpu")
+
+    # Init process group
+    backend = "nccl" if args.cuda else "gloo"
+    dist.init_process_group(
+        backend=backend,
+        rank=args.rank,
+        world_size=args.world_size,
+    )
+
+    run_all(args)
 
 
 if __name__ == "__main__":
