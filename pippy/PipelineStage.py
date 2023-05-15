@@ -9,6 +9,7 @@ import pippy
 
 from pippy.fx.passes import shape_prop
 from pippy.IR import MultiUseParameterConfig, Pipe
+from pippy.microbatch import merge_chunks, split_args_kwargs_into_chunks
 from pippy.utils import PIPPY_VERBOSITY
 
 
@@ -39,6 +40,7 @@ class PipelineStage(torch.nn.Module):
         pipe: Pipe,
         rank: int,
         nstages: int,
+        chunks: int,
         device: torch.device,
         group: dist.ProcessGroup = None,
         return_to_0: bool = False,
@@ -47,6 +49,7 @@ class PipelineStage(torch.nn.Module):
         self.pipe = pipe
         self.rank = rank
         self.nstages = nstages
+        self.chunks = chunks
         self.device = device
         self.group = group
         self.return_to_0 = return_to_0
@@ -100,6 +103,16 @@ class PipelineStage(torch.nn.Module):
 
 
     def forward(self, *args, **kwargs):
+        if args or kwargs:
+            args_split, kwargs_split = split_args_kwargs_into_chunks(
+                args,
+                kwargs,
+                self.chunks,
+                None, #self.args_chunk_spec,
+                None, #self.kwargs_chunk_spec,
+                False, #self._debug_mask_minibatches,
+            )
+
         def recv_tensor(info):
             if isinstance(info, RecvInfo):
                 logging.info(f"[{self.rank}][{self.name}] "
@@ -114,35 +127,49 @@ class PipelineStage(torch.nn.Module):
             else:
                 return info
 
-        if not args:
-            args = pippy.fx.node.map_aggregate(
-                self.args_recv_info, recv_tensor,
-            )
+        output_chunks = []
 
-        if not kwargs:
-            kwargs = pippy.fx.node.map_aggregate(
-                self.kwargs_recv_info, recv_tensor,
-            )
+        for chunk in range(self.chunks):
+            if args:
+                chunk_args = args_split[chunk]
+            else:
+                chunk_args = pippy.fx.node.map_aggregate(
+                    self.args_recv_info, recv_tensor,
+                )
 
-        output = self.submod(*args, **kwargs)
+            if kwargs:
+                chunk_kwargs = kwargs_split[chunk]
+            else:
+                chunk_kwargs = pippy.fx.node.map_aggregate(
+                    self.kwargs_recv_info, recv_tensor,
+                )
 
-        if (self.rank + 1 < self.nstages
-            or self.return_to_0
-        ):
-            dst = (self.rank + 1) % self.nstages
-            dist.send(
-                output,
-                dst if self.group is None else dist.get_global_rank(self.group, dst),  #TODO
-                group=self.group
-            )
+            output = self.submod(*chunk_args, **chunk_kwargs)
 
-        return output
+            if (self.rank + 1 < self.nstages
+                or self.return_to_0
+            ):
+                dst = (self.rank + 1) % self.nstages
+                dist.send(
+                    output,
+                    dst if self.group is None else dist.get_global_rank(self.group, dst),  #TODO
+                    group=self.group
+                )
+
+            output_chunks.append(output)
+
+        return merge_chunks(
+            output_chunks,
+            None, #self.output_chunk_spec,
+            False, #self._debug_mask_minibatches
+        )
 
 
 def compile_stage(
     mod: torch.nn.Module,
     rank: int,
     num_ranks: int,
+    num_chunks: int,
     device: torch.device,
     group: dist.ProcessGroup = None,
     example_input = None,
@@ -170,6 +197,7 @@ def compile_stage(
         pipe,
         rank,
         num_ranks,
+        num_chunks,
         device,
         group,
     )

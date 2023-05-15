@@ -11,7 +11,7 @@ from pippy.IR import MultiUseParameterConfig, Pipe, pipe_split
 
 
 d_hid = 512
-bs = 256
+chunk_size = 256
 
 torch.manual_seed(0)
 
@@ -43,14 +43,18 @@ class ExampleCode(torch.nn.Module):
 def run_worker(args):
     ec = ExampleCode()
     ec.to(args.device)
-    ec_input = torch.randn(bs, d_hid, device=args.device)
+
+    chunks = 64
+    ec_input_chunk = torch.randn(chunk_size, d_hid, device=args.device)
+    ec_input = torch.cat([ec_input_chunk] * chunks)
 
     stage = compile_stage(
         ec,
         args.rank,
         args.world_size,
+        chunks,
         args.device,
-        example_input=ec_input,
+        example_input=ec_input_chunk,
     )
 
     # Run
