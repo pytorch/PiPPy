@@ -1,5 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import logging
+from typing import Dict
 
 import torch
 import torch.distributed as dist
@@ -75,21 +76,40 @@ class PipelineStage(torch.nn.Module):
         if not self.node:
             raise AssertionError(f"Cannot find {self.name} in graph")
 
+        # Create submod name to rank mapping
+        self.submod_to_rank: Dict[str, int] = {}
+        for i, (name, _) in enumerate(self.split_gm.named_children()):
+            self.submod_to_rank.setdefault(name, i)
+
         self.create_recv_buffers()
+
+    def get_rank_of_submod(
+        self,
+        submod_name: str,
+    ):
+        try:
+            return self.submod_to_rank[submod_name]
+        except:
+            raise AssertionError(f"Rank of {submod_name} not found")
 
     def create_recv_buffers(
         self,
     ):
         def create_recv_tensor(input_node):
-            # TODO: do not create buffer for placeholder etc
+            if input_node.op == "placeholder":
+                # Do not create buffer for placeholder
+                return None
+
             tensor_meta = input_node.meta["tensor_meta"]
             logging.info(
                 f"[{self.rank}][{self.name}] "
                 f"Creating recv buffer for input '{input_node.name}' : {tensor_meta.shape}"
             )
+            # TODO: handle getitem (maybe recursively?)
+            src_rank = self.get_rank_of_submod(input_node.name)
             return RecvInfo(
                 input_node.name,
-                self.rank - 1,  # TODO: find source rank
+                src_rank,
                 _make_tensor_from_meta(tensor_meta, self.device),
             )
 
@@ -132,6 +152,17 @@ class PipelineStage(torch.nn.Module):
 
         output_chunks = []
 
+        # Find send destinations
+        # TODO: map to each output
+        dst_ranks: int = []
+        for user in self.node.users:
+            if user.op == "output":
+                if self.return_to_0:
+                    # Send result back to pp rank 0
+                    dst_ranks.append(0)
+            else:
+                dst_ranks.append(self.get_rank_of_submod(user.name))
+
         for chunk in range(self.chunks):
             if args:
                 chunk_args = args_split[chunk]
@@ -151,8 +182,7 @@ class PipelineStage(torch.nn.Module):
 
             output = self.submod(*chunk_args, **chunk_kwargs)
 
-            if self.rank + 1 < self.nstages or self.return_to_0:
-                dst = (self.rank + 1) % self.nstages
+            for dst in dst_ranks:
                 dist.send(
                     output,
                     dst
