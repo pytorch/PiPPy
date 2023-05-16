@@ -6,9 +6,9 @@ import unittest
 import torch
 
 import pippy
-from pippy.PipelineStage import compile_stage
 import pippy.fx
 from pippy.IR import pipe_split
+from pippy.compile import compile_stage
 
 import torch.distributed as dist
 from torch.distributed._tensor import (
@@ -72,8 +72,7 @@ def run_all(args):
     ec.to(args.device)
 
     # Create input
-    chunks = args.pp_group_size
-    inp_size = [chunks * batch_size_per_chunk, d_hid]
+    inp_size = [args.chunks * batch_size_per_chunk, d_hid]
     device_type = args.device.type
     inp = torch.rand(*inp_size, device=device_type)
 
@@ -102,9 +101,10 @@ def run_all(args):
         ec,
         pp_rank,
         args.pp_group_size,
+        args.chunks,
         args.device,
-        group=pp_group,
-        example_input=inp,
+        pp_group,
+        example_inputs=[inp],
     )
 
     # Tensor parallelize submodules
@@ -120,7 +120,11 @@ def run_all(args):
 
     # Last rank checks result
     if pp_rank == args.pp_group_size - 1:
-        print(f"Pipeline {tp_rank} output: {out}")
+        ref_out = ec(inp)
+        torch.testing.assert_close(out, ref_out)
+        print(
+            f"Pipeline {tp_rank} equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}"
+        )
 
 
 def main(args=None):
@@ -128,7 +132,7 @@ def main(args=None):
     parser.add_argument(
         "--world_size", type=int, default=int(os.getenv("WORLD_SIZE", 8))
     )
-    # ExampleCode has two stages
+    # ExampleCode has 4 stages
     parser.add_argument(
         "--pp_group_size", type=int, default=4,
     )
@@ -153,6 +157,9 @@ def main(args=None):
     )
     parser.add_argument(
         "--cuda", type=int, default=int(torch.cuda.is_available())
+    )
+    parser.add_argument(
+        "--chunks", type=int, default=4,
     )
     args = parser.parse_args(args)
 

@@ -257,6 +257,7 @@ def compile_stage(
         if PIPPY_VERBOSITY == "INFO":
             gm.graph.print_tabular()
 
+    # Get shape of chunked arguments
     args_split, _ = split_args_kwargs_into_chunks(
         example_inputs,
         {},  # kwargs included in `example_inputs`
