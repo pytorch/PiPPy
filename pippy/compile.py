@@ -219,6 +219,7 @@ def compile_stage(
     group: dist.ProcessGroup,
     example_inputs: List[torch.Tensor],
     split_policy: Optional[Callable[[fx.GraphModule], fx.GraphModule]] = None,
+    return_to_0: bool = False,
     tracer=None,
     args_chunk_spec=None,
     kwargs_chunk_spec=None,
@@ -285,4 +286,7 @@ def compile_stage(
         num_chunks,
         device,
         group,
+        return_to_0,
+        args_chunk_spec,
+        kwargs_chunk_spec,
     )

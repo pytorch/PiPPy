@@ -41,6 +41,8 @@ class PipelineStage(torch.nn.Module):
         device: torch.device,
         group: dist.ProcessGroup = None,
         return_to_0: bool = False,
+        args_chunk_spec=None,
+        kwargs_chunk_spec=None,
     ):
         super().__init__()
         self.pipe = pipe
@@ -50,6 +52,8 @@ class PipelineStage(torch.nn.Module):
         self.device = device
         self.group = group
         self.return_to_0 = return_to_0
+        self.args_chunk_spec = args_chunk_spec
+        self.kwargs_chunk_spec = kwargs_chunk_spec
 
         # Find my submodule
         self.split_gm = self.pipe.split_gm
@@ -105,9 +109,8 @@ class PipelineStage(torch.nn.Module):
                 args,
                 kwargs,
                 self.chunks,
-                None, #self.args_chunk_spec,
-                None, #self.kwargs_chunk_spec,
-                False, #self._debug_mask_minibatches,
+                self.args_chunk_spec,
+                self.kwargs_chunk_spec,
             )
 
         def recv_tensor(info):
