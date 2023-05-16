@@ -4,7 +4,7 @@ import os
 import unittest
 
 import torch
-from pippy.PipelineStage import compile_stage
+from pippy.compile import compile_stage
 
 from pippy.IR import pipe_split
 
