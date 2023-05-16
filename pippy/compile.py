@@ -293,4 +293,5 @@ def compile_stage(
         return_to_0,
         args_chunk_spec,
         kwargs_chunk_spec,
+        output_chunk_spec,
     )

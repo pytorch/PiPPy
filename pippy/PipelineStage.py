@@ -43,6 +43,7 @@ class PipelineStage(torch.nn.Module):
         return_to_0: bool = False,
         args_chunk_spec=None,
         kwargs_chunk_spec=None,
+        output_chunk_spec=None,
     ):
         super().__init__()
         self.pipe = pipe
@@ -54,6 +55,7 @@ class PipelineStage(torch.nn.Module):
         self.return_to_0 = return_to_0
         self.args_chunk_spec = args_chunk_spec
         self.kwargs_chunk_spec = kwargs_chunk_spec
+        self.output_chunk_spec = output_chunk_spec
 
         # Find my submodule
         self.split_gm = self.pipe.split_gm
@@ -161,8 +163,11 @@ class PipelineStage(torch.nn.Module):
 
             output_chunks.append(output)
 
-        return merge_chunks(
-            output_chunks,
-            None,  # self.output_chunk_spec,
-            False,  # self._debug_mask_minibatches
-        )
+        # Last rank return merged results per original format
+        if self.rank == self.nstages - 1:
+            return merge_chunks(
+                output_chunks,
+                self.output_chunk_spec,
+            )
+        else:
+            return None
