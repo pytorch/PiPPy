@@ -11,7 +11,11 @@ from pippy.PipelineStage import PipelineStage
 import pippy.fx as fx
 from pippy.IR import MultiUseParameterConfig, Pipe
 from pippy.fx.passes import shape_prop
-from pippy.microbatch import LossReducer, split_args_kwargs_into_chunks, sum_reducer
+from pippy.microbatch import (
+    LossReducer,
+    split_args_kwargs_into_chunks,
+    sum_reducer,
+)
 from pippy.utils import get_device, get_pp_rank, get_rank, PIPPY_VERBOSITY
 
 import torch
@@ -268,8 +272,7 @@ def compile_stage(
     # In reality, the fake input should be created from shape info (potentially
     # broadcast from Rank 0)
     fake_args_split = fx.node.map_aggregate(
-        args_split,
-        lambda a: fake_mode.from_tensor(a)
+        args_split, lambda a: fake_mode.from_tensor(a)
     )
 
     # Use 1st chunk of args for shape propagation
