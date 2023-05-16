@@ -4,10 +4,9 @@ import os
 import unittest
 
 import torch
-import torch.distributed as dist
-from pippy.PipelineStage import compile_stage, _make_tensor_from_meta
+from pippy.PipelineStage import compile_stage
 
-from pippy.IR import MultiUseParameterConfig, Pipe, pipe_split
+from pippy.IR import pipe_split
 
 
 d_hid = 512
@@ -23,9 +22,10 @@ class ExampleCode(torch.nn.Module):
         self.mm_param2 = torch.nn.Parameter(torch.randn(d_hid, d_hid))
         self.lin = torch.nn.Linear(d_hid, d_hid)
 
-    def forward(self, x):
+    def forward(self, x, y):
         x = torch.mm(x, self.mm_param)
         # skip_connection = x
+        x = x + y
         x = torch.relu(x)
         pipe_split()
         x = torch.mm(x, self.mm_param)
@@ -45,8 +45,8 @@ def run_worker(args):
     ec.to(args.device)
 
     chunks = 64
-    ec_input_chunk = torch.randn(chunk_size, d_hid, device=args.device)
-    ec_input = torch.cat([ec_input_chunk] * chunks)
+    ec_x = torch.randn(chunks * chunk_size, d_hid, device=args.device)
+    ec_y = torch.randn(chunks * chunk_size, d_hid, device=args.device)
 
     stage = compile_stage(
         ec,
@@ -54,12 +54,13 @@ def run_worker(args):
         args.world_size,
         chunks,
         args.device,
-        example_input=ec_input_chunk,
+        None,
+        [ec_x, ec_y],
     )
 
     # Run
     if args.rank == 0:
-        out = stage(ec_input)
+        out = stage(ec_x, ec_y)
     elif args.rank == args.world_size - 1:
         out = stage()
     else:
@@ -67,7 +68,7 @@ def run_worker(args):
 
     # Last rank checks result
     if args.rank == args.world_size - 1:
-        ref_out = ec(ec_input)
+        ref_out = ec(ec_x, ec_y)
         torch.testing.assert_close(out, ref_out)
         print(
             f"equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}"

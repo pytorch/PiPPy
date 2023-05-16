@@ -1,6 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import logging
-from typing import Dict, Tuple
+from typing import Dict, List, Tuple
 
 import torch
 import torch.distributed as dist
@@ -171,8 +171,8 @@ def compile_stage(
     num_ranks: int,
     num_chunks: int,
     device: torch.device,
-    group: dist.ProcessGroup = None,
-    example_input = None,
+    group: dist.ProcessGroup,
+    example_inputs: List[torch.Tensor],
 ) -> PipelineStage:
     # Trace and cut
     pipe = Pipe.from_tracing(mod, MultiUseParameterConfig.REPLICATE)
@@ -182,15 +182,31 @@ def compile_stage(
         if PIPPY_VERBOSITY == "INFO":
             gm.graph.print_tabular()
 
+    args_split, _ = split_args_kwargs_into_chunks(
+        example_inputs,
+        {},  # kwargs included in `example_inputs`
+        num_chunks,
+        None, #self.args_chunk_spec,
+        None, #self.kwargs_chunk_spec,
+        False, #self._debug_mask_minibatches,
+    )
+
     # Use fake tensor for shape propagation
     # Since model itself may have been materialized, we need to use
     # `allow_non_fake_inputs`
     fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
     # In reality, the fake input should be created from shape info (potentially
     # broadcast from Rank 0)
-    fake_input = fake_mode.from_tensor(example_input)  # TODO: map
+    fake_args_split = pippy.fx.node.map_aggregate(
+        args_split,
+        lambda a: fake_mode.from_tensor(a)
+    )
+
+    # Use 1st chunk of args for shape propagation
+    chunk0 = fake_args_split[0]
+
     sp = shape_prop.ShapeProp(gm)
-    sp.propagate(fake_input)
+    sp.propagate(*chunk0)
 
     # Create pipeline stage
     return PipelineStage(
