@@ -24,7 +24,7 @@ class ExampleCode(torch.nn.Module):
 
     def forward(self, x, y):
         x = torch.mm(x, self.mm_param)
-        # skip_connection = x
+        skip_connection = x
         x = x + y
         x = torch.relu(x)
         pipe_split()
@@ -32,7 +32,7 @@ class ExampleCode(torch.nn.Module):
         x = self.lin(x)
         pipe_split()
         x = torch.relu(x)
-        # x = x + skip_connection
+        x = x + skip_connection
         x = torch.mm(x, self.mm_param2)
         pipe_split()
         x = self.lin(x)

@@ -116,13 +116,13 @@ class PipelineStage(torch.nn.Module):
             # Here `submod0` is args[0], 1 is args[1]
             if input_node.target is operator.getitem:
                 if "tensor_meta" in input_node.meta:
-                    input_node = input_node.args[0]
+                    real_input_node = input_node.args[0]
                     out_idx = input_node.args[1]
-                    return create_recv_tensor(input_node, out_idx)
+                    return create_recv_tensor(real_input_node, out_idx)
                 else:
                     return None
 
-            if output_idx:
+            if output_idx is not None:
                 # If a node has multiple output values, "tensor_meta" is a list
                 # of tensor meta
                 tensor_meta = input_node.meta["tensor_meta"][output_idx]
