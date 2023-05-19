@@ -42,17 +42,17 @@ mconf = GPTConfig(
 
 d_hid = 4
 
-#parallelize_plan={
+# parallelize_plan={
 #    f"blocks_{pp_rank}_mlp_0": ColwiseParallel(),
 #    f"blocks_{pp_rank}_mlp_2": RowwiseParallel(),
-#}
+# }
 
 
 def run_all(args):
     # initialize a baby GPT model
-    min_gpt = GPT(mconf)
-    min_gpt.eval()
-    min_gpt.to(args.device)
+    model = GPT(mconf)
+    model.eval()
+    model.to(args.device)
 
     # Specify split points
     sp_spec = {
@@ -60,7 +60,7 @@ def run_all(args):
         "blocks.1.mlp.3": PipeSplitWrapper.SplitPoint.END,
         "blocks.2.mlp.3": PipeSplitWrapper.SplitPoint.END,
     }
-    annotate_split_points(min_gpt, sp_spec)
+    annotate_split_points(model, sp_spec)
 
     # Create input
     x = torch.tensor([1, 2, 3, 4], dtype=torch.long)
@@ -85,12 +85,14 @@ def run_all(args):
 
     # Get pp group
     # `tp_rank` can serve as pipeline id
-    print(f"Rank {args.rank} Instantiating pipeline with ranks {dev_mesh.mesh[:, tp_rank]}")
+    print(
+        f"Rank {args.rank} Instantiating pipeline with ranks {dev_mesh.mesh[:, tp_rank]}"
+    )
     pp_group = dev_mesh.get_dim_groups()[pp_dim]
 
     # Get stage module (on all pp ranks)
     stage = pippy.compile_stage(
-        min_gpt,
+        model,
         pp_rank,
         args.pp_group_size,
         args.chunks,
@@ -105,7 +107,7 @@ def run_all(args):
         stage.submod,
         dev_mesh,
         tp.PairwiseParallel(),
-        tp_mesh_dim = tp_dim,
+        tp_mesh_dim=tp_dim,
     )
 
     if pp_rank == 0:
@@ -115,7 +117,7 @@ def run_all(args):
 
     # Last rank checks result
     if pp_rank == args.pp_group_size - 1:
-        ref_out = min_gpt(inp)
+        ref_out = model(inp)
         torch.testing.assert_close(out, ref_out)
         print(
             f"Pipeline {tp_rank} equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}"
@@ -129,7 +131,9 @@ def main(args=None):
     )
     # ExampleCode has 4 stages
     parser.add_argument(
-        "--pp_group_size", type=int, default=4,
+        "--pp_group_size",
+        type=int,
+        default=4,
     )
     # in row-major
     # TP ranks are contiguous rows of size `args.tp_group_size`
@@ -154,7 +158,9 @@ def main(args=None):
         "--cuda", type=int, default=int(torch.cuda.is_available())
     )
     parser.add_argument(
-        "--chunks", type=int, default=4,
+        "--chunks",
+        type=int,
+        default=4,
     )
     args = parser.parse_args(args)
 
