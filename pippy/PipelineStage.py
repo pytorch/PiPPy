@@ -1,6 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import logging
-from typing import Dict
+import operator
+from typing import Dict, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -64,7 +65,8 @@ class PipelineStage(torch.nn.Module):
         self.name, self.submod = named_children[rank]
         logging.info(
             f"[{self.rank}][{self.name}] "
-            f"Creating PipelineStage: {self.submod}"
+            f"Creating PipelineStage:\n"
+            f"{self.submod}"
         )
 
         # Find my node in graph
@@ -81,7 +83,9 @@ class PipelineStage(torch.nn.Module):
         for i, (name, _) in enumerate(self.split_gm.named_children()):
             self.submod_to_rank.setdefault(name, i)
 
-        self.create_recv_buffers()
+        # Prepare send/recv infrastructure
+        self._create_recv_buffers()
+        self._create_send_info()
 
     def get_rank_of_submod(
         self,
@@ -92,20 +96,45 @@ class PipelineStage(torch.nn.Module):
         except:
             raise AssertionError(f"Rank of {submod_name} not found")
 
-    def create_recv_buffers(
+    def _create_recv_buffers(
         self,
     ):
-        def create_recv_tensor(input_node):
+        def create_recv_tensor(
+            input_node,
+            output_idx: Optional[int] = None,
+        ):
+            """
+            Create a tensor for receiving the `output_idx`-th value from
+            `input_node`
+            """
             if input_node.op == "placeholder":
                 # Do not create buffer for placeholder
                 return None
 
-            tensor_meta = input_node.meta["tensor_meta"]
+            # In case the input is a `getitem` node, we recursively find the
+            # real source e.g. getitem1 = submod0[1]
+            # Here `submod0` is args[0], 1 is args[1]
+            if input_node.target is operator.getitem:
+                if "tensor_meta" in input_node.meta:
+                    input_node = input_node.args[0]
+                    out_idx = input_node.args[1]
+                    return create_recv_tensor(input_node, out_idx)
+                else:
+                    return None
+
+            if output_idx:
+                # If a node has multiple output values, "tensor_meta" is a list
+                # of tensor meta
+                tensor_meta = input_node.meta["tensor_meta"][output_idx]
+            else:
+                tensor_meta = input_node.meta["tensor_meta"]
+
             logging.info(
                 f"[{self.rank}][{self.name}] "
-                f"Creating recv buffer for input '{input_node.name}' : {tensor_meta.shape}"
+                f"Creating recv buffer for input '{input_node.name}' "
+                f"value index {output_idx}: {tensor_meta.shape}"
             )
-            # TODO: handle getitem (maybe recursively?)
+
             src_rank = self.get_rank_of_submod(input_node.name)
             return RecvInfo(
                 input_node.name,
@@ -113,14 +142,50 @@ class PipelineStage(torch.nn.Module):
                 _make_tensor_from_meta(tensor_meta, self.device),
             )
 
-        # Tuple[Tuple[source, tensor]]
+        # `args` is a Tuple, hence we will have:
+        # Tuple[RecvInfo]
         self.args_recv_info = pippy.fx.node.map_arg(
             self.node.args, create_recv_tensor
         )
 
-        # Dict[keyword, Tuple[source, tensor]]
+        # `kwargs` is a Dict, hence we will have:
+        # Dict[keyword, RecvInfo]
         self.kwargs_recv_info = pippy.fx.node.map_arg(
             self.node.kwargs, create_recv_tensor
+        )
+
+    def _create_send_info(self):
+        # Find send destinations
+        def find_dst_rank(user) -> Optional[int]:
+            if user.op == "output":
+                if self.return_to_0:
+                    # Send result back to pp rank 0
+                    return 0
+                else:
+                    return None
+            else:
+                # User is a stage (`call_module`)
+                return self.get_rank_of_submod(user.name)
+
+        # Output index: List of receivers
+        self.dst_infos: Dict[int, List] = {}
+        out_idx = 0
+
+        for user in self.node.users:
+            if user.target is operator.getitem:
+                # Recursively find the real destination
+                gi_dsts = self.dst_infos.setdefault(out_idx, [])
+                for gi_user in user.users:
+                    gi_dsts.append(find_dst_rank(gi_user))
+                # Next `getitem` will point to the next output index
+                out_idx += 1
+            else:
+                # In case of single output value, `out_idx` will not increase
+                dsts = self.dst_infos.setdefault(out_idx, [])
+                dsts.append(find_dst_rank(user))
+
+        logging.info(
+            f"[{self.rank}][{self.name}] " f"Send info: {self.dst_infos}"
         )
 
     def forward(self, *args, **kwargs):
@@ -152,17 +217,6 @@ class PipelineStage(torch.nn.Module):
 
         output_chunks = []
 
-        # Find send destinations
-        # TODO: map to each output
-        dst_ranks: int = []
-        for user in self.node.users:
-            if user.op == "output":
-                if self.return_to_0:
-                    # Send result back to pp rank 0
-                    dst_ranks.append(0)
-            else:
-                dst_ranks.append(self.get_rank_of_submod(user.name))
-
         for chunk in range(self.chunks):
             if args:
                 chunk_args = args_split[chunk]
@@ -182,14 +236,24 @@ class PipelineStage(torch.nn.Module):
 
             output = self.submod(*chunk_args, **chunk_kwargs)
 
-            for dst in dst_ranks:
-                dist.send(
-                    output,
-                    dst
-                    if self.group is None
-                    else dist.get_global_rank(self.group, dst),  # TODO
-                    group=self.group,
-                )
+            # Unify output form to tuple for easy correspondance with
+            # `dst_infos`
+            output_tuple = output if isinstance(output, Tuple) else (output,)
+
+            for idx, out in enumerate(output_tuple):
+                dst_ranks = self.dst_infos[idx]
+                for dst in dst_ranks:
+                    if dst is None:
+                        # If dst is a `output` node, we don't need to send
+                        # (unless `return_to_0` is required)
+                        continue
+                    dist.send(
+                        out,
+                        dst
+                        if self.group is None
+                        else dist.get_global_rank(self.group, dst),  # TODO
+                        group=self.group,
+                    )
 
             output_chunks.append(output)
 
