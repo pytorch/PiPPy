@@ -198,19 +198,26 @@ class PipelineStage(torch.nn.Module):
                 self.kwargs_chunk_spec,
             )
 
+        # Receive requests of a chunk
+        recv_reqs : List[dist.Work] = []
+        # Send requests of a chunk
+        send_reqs : List[dist.Work] = []
+
         def recv_tensor(info):
             if isinstance(info, RecvInfo):
                 logging.info(
                     f"[{self.rank}][{self.name}] "
                     f"Receiving tensor '{info.input_name}' from Rank {info.source}"
                 )
-                dist.recv(
+                # Use async to parallelize recv of tensors
+                work = dist.irecv(
                     info.buffer,
                     info.source
                     if self.group is None
                     else dist.get_global_rank(self.group, info.source),
                     group=self.group,
                 )
+                recv_reqs.append(work)
                 return info.buffer
             else:
                 return info
@@ -218,6 +225,7 @@ class PipelineStage(torch.nn.Module):
         output_chunks = []
 
         for chunk in range(self.chunks):
+            recv_reqs.clear()
             if args:
                 chunk_args = args_split[chunk]
             else:
@@ -234,6 +242,11 @@ class PipelineStage(torch.nn.Module):
                     recv_tensor,
                 )
 
+            # Wait for all recvs to finish
+            for work in recv_reqs:
+                work.wait()
+
+            # Compute
             output = self.submod(*chunk_args, **chunk_kwargs)
 
             # Unify output form to tuple for easy correspondance with
@@ -247,15 +260,21 @@ class PipelineStage(torch.nn.Module):
                         # If dst is a `output` node, we don't need to send
                         # (unless `return_to_0` is required)
                         continue
-                    dist.send(
+                    work = dist.isend(
                         out,
                         dst
                         if self.group is None
                         else dist.get_global_rank(self.group, dst),  # TODO
                         group=self.group,
                     )
+                    send_reqs.append(work)
 
             output_chunks.append(output)
+
+        # Wait for all sends to finish
+        # TODO: okay to delay the sync till completion of all chunks?
+        for work in send_reqs:
+            work.wait()
 
         # Last rank return merged results per original format
         if self.rank == self.nstages - 1:
