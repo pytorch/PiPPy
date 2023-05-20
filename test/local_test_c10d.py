@@ -44,15 +44,14 @@ def run_worker(args):
     ec = ExampleCode()
     ec.to(args.device)
 
-    chunks = 64
-    ec_x = torch.randn(chunks * chunk_size, d_hid, device=args.device)
-    ec_y = torch.randn(chunks * chunk_size, d_hid, device=args.device)
+    ec_x = torch.randn(args.chunks * chunk_size, d_hid, device=args.device)
+    ec_y = torch.randn(args.chunks * chunk_size, d_hid, device=args.device)
 
     stage = compile_stage(
         ec,
         args.rank,
         args.world_size,
-        chunks,
+        args.chunks,
         args.device,
         None,
         [ec_x, ec_y],
@@ -89,6 +88,11 @@ def main(args=None):
     )
     parser.add_argument(
         "--cuda", type=int, default=int(torch.cuda.is_available())
+    )
+    parser.add_argument(
+        "--chunks",
+        type=int,
+        default=4,
     )
     args = parser.parse_args(args)
 
