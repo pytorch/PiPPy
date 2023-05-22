@@ -4,8 +4,9 @@ import os
 import unittest
 
 import torch
-from pippy.compile import compile_stage
+import torch.distributed as dist
 
+from pippy.compile import compile_stage
 from pippy.IR import pipe_split
 
 
@@ -65,6 +66,9 @@ def run_worker(args):
     else:
         stage()
 
+    dist.barrier()
+    print(f"Rank {args.rank} completes")
+
     # Last rank checks result
     if args.rank == args.world_size - 1:
         ref_out = ec(ec_x, ec_y)
@@ -104,7 +108,7 @@ def main(args=None):
 
     # Init process group
     backend = "nccl" if args.cuda else "gloo"
-    torch.distributed.init_process_group(
+    dist.init_process_group(
         backend=backend,
         rank=args.rank,
         world_size=args.world_size,
