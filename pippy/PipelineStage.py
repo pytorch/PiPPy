@@ -84,7 +84,13 @@ class PipelineStage(torch.nn.Module):
             self.submod_to_rank.setdefault(name, i)
 
         # Prepare send/recv infrastructure
-        self._create_recv_buffers()
+        self.args_recv_info = []
+        self.kwargs_recv_info = []
+        for _ in range(chunks):
+            args_recv, kwargs_recv = self._create_recv_buffers()
+            self.args_recv_info.append(args_recv)
+            self.kwargs_recv_info.append(kwargs_recv)
+
         self._create_send_info()
 
     def get_rank_of_submod(
@@ -144,15 +150,17 @@ class PipelineStage(torch.nn.Module):
 
         # `args` is a Tuple, hence we will have:
         # Tuple[RecvInfo]
-        self.args_recv_info = pippy.fx.node.map_arg(
+        args_recv_info = pippy.fx.node.map_arg(
             self.node.args, create_recv_tensor
         )
 
         # `kwargs` is a Dict, hence we will have:
         # Dict[keyword, RecvInfo]
-        self.kwargs_recv_info = pippy.fx.node.map_arg(
+        kwargs_recv_info = pippy.fx.node.map_arg(
             self.node.kwargs, create_recv_tensor
         )
+
+        return args_recv_info, kwargs_recv_info
 
     def _create_send_info(self):
         # Find send destinations
@@ -207,7 +215,8 @@ class PipelineStage(torch.nn.Module):
             if isinstance(info, RecvInfo):
                 logging.info(
                     f"[{self.rank}][{self.name}] "
-                    f"Receiving tensor '{info.input_name}' from Rank {info.source}"
+                    f"Receiving tensor '{info.input_name}' from Rank {info.source}: "
+                    f"{info.buffer.size()}"
                 )
                 # Use async to parallelize recv of tensors
                 work = dist.irecv(
@@ -230,7 +239,7 @@ class PipelineStage(torch.nn.Module):
                 chunk_args = args_split[chunk]
             else:
                 chunk_args = pippy.fx.node.map_aggregate(
-                    self.args_recv_info,
+                    self.args_recv_info[chunk],
                     recv_tensor,
                 )
 
@@ -238,7 +247,7 @@ class PipelineStage(torch.nn.Module):
                 chunk_kwargs = kwargs_split[chunk]
             else:
                 chunk_kwargs = pippy.fx.node.map_aggregate(
-                    self.kwargs_recv_info,
+                    self.kwargs_recv_info[chunk],
                     recv_tensor,
                 )
 
@@ -260,6 +269,10 @@ class PipelineStage(torch.nn.Module):
                         # If dst is a `output` node, we don't need to send
                         # (unless `return_to_0` is required)
                         continue
+                    logging.info(
+                        f"[{self.rank}][{self.name}] "
+                        f"Sending tensor to Rank {dst}: {out.size()}"
+                    )
                     work = dist.isend(
                         out,
                         dst
