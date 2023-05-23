@@ -99,6 +99,7 @@ def run_all(args):
         args.device,
         pp_group,
         example_inputs=[inp],
+        concrete_args={"targets": None},
     )
 
     # Tensor parallelize submodules
@@ -111,13 +112,13 @@ def run_all(args):
     )
 
     if pp_rank == 0:
-        out = stage(inp)
+        out = stage(None, inp)
     else:
         out = stage()
 
     # Last rank checks result
     if pp_rank == args.pp_group_size - 1:
-        ref_out = model(inp)
+        ref_out = model(inp)[0]  # [0] is logits, [1] is loss (None)
         torch.testing.assert_close(out, ref_out)
         print(
             f"Pipeline {tp_rank} equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}"
