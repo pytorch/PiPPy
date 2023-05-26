@@ -42,11 +42,6 @@ mconf = GPTConfig(
 
 d_hid = 4
 
-# parallelize_plan={
-#    f"blocks_{pp_rank}_mlp_0": ColwiseParallel(),
-#    f"blocks_{pp_rank}_mlp_2": RowwiseParallel(),
-# }
-
 
 def run_all(args):
     # initialize a baby GPT model
@@ -107,7 +102,10 @@ def run_all(args):
     tp.parallelize_module(
         stage.submod,
         dev_mesh,
-        tp.PairwiseParallel(),
+        parallelize_plan={
+           f"blocks_{pp_rank}_mlp_0": tp.ColwiseParallel(),
+           f"blocks_{pp_rank}_mlp_2": tp.RowwiseParallel(),
+        },
         tp_mesh_dim=tp_dim,
     )
 
