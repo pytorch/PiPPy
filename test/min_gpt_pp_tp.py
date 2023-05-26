@@ -61,7 +61,7 @@ def run_all(args):
     x = torch.tensor([1, 2, 3, 4], dtype=torch.long)
     batch_size = args.chunks * batch_size_per_chunk
     device_type = args.device.type
-    inp = x.repeat(batch_size, 1).to(device_type)
+    inp = x.repeat(batch_size, 1).to(args.device)
 
     # Create global DeviceMesh
     ranks = torch.arange(args.world_size)
@@ -76,7 +76,7 @@ def run_all(args):
     # Figure out my PP and TP rank
     pp_rank = args.rank // args.tp_group_size
     tp_rank = args.rank % args.tp_group_size
-    print(f"Global rank {args.rank}, pp rank: {pp_rank}, tp rank: {tp_rank}")
+    print(f"Global rank {args.rank}, pp rank: {pp_rank}, tp rank: {tp_rank}, device: {args.device}")
 
     # Get pp group
     # `tp_rank` can serve as pipeline id
@@ -175,6 +175,10 @@ def main(args=None):
     if args.cuda:
         dev_id = args.rank % torch.cuda.device_count()
         args.device = torch.device(f"cuda:{dev_id}")
+        # HACK: we need to pin device here because `DeviceMesh` currently does
+        # an all_gather with device_type only, without device id
+        # https://github.com/pytorch/pytorch/blob/main/torch/distributed/_tensor/device_mesh.py#L191-L192
+        torch.cuda.set_device(args.device)
     else:
         args.device = torch.device("cpu")
 

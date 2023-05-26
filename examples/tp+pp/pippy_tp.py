@@ -74,7 +74,7 @@ def run_all(args):
     # Create input
     inp_size = [args.chunks * batch_size_per_chunk, d_hid]
     device_type = args.device.type
-    inp = torch.rand(*inp_size, device=device_type)
+    inp = torch.rand(*inp_size, device=args.device)
 
     # Create global DeviceMesh
     ranks = torch.arange(args.world_size)
@@ -175,6 +175,10 @@ def main(args=None):
     if args.cuda:
         dev_id = args.rank % torch.cuda.device_count()
         args.device = torch.device(f"cuda:{dev_id}")
+        # HACK: we need to pin device here because `DeviceMesh` currently does
+        # an all_gather with device_type only, without device id
+        # https://github.com/pytorch/pytorch/blob/main/torch/distributed/_tensor/device_mesh.py#L191-L192
+        torch.cuda.set_device(args.device)
     else:
         args.device = torch.device("cpu")
 
