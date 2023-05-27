@@ -1,7 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import logging
 import operator
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import torch
 import torch.distributed as dist
@@ -70,12 +70,13 @@ class PipelineStage(torch.nn.Module):
         )
 
         # Find my node in graph
-        self.node = None
+        found_node = False
         for node in self.split_gm.graph.nodes:
             if node.name == self.name:
                 self.node = node
+                found_node = True
                 break
-        if not self.node:
+        if not found_node:
             raise AssertionError(f"Cannot find {self.name} in graph")
 
         # Create submod name to rank mapping
@@ -97,10 +98,10 @@ class PipelineStage(torch.nn.Module):
         self,
         submod_name: str,
     ):
-        try:
-            return self.submod_to_rank[submod_name]
-        except:
+        if submod_name not in self.submod_to_rank:
             raise AssertionError(f"Rank of {submod_name} not found")
+
+        return self.submod_to_rank[submod_name]
 
     def _create_recv_buffers(
         self,
@@ -207,9 +208,9 @@ class PipelineStage(torch.nn.Module):
             )
 
         # Receive requests of a chunk
-        recv_reqs : List[dist.Work] = []
+        recv_reqs: List[dist.Work] = []
         # Send requests of a chunk
-        send_reqs : List[dist.Work] = []
+        send_reqs: List[dist.Work] = []
 
         def recv_tensor(info):
             if isinstance(info, RecvInfo):
@@ -260,7 +261,7 @@ class PipelineStage(torch.nn.Module):
 
             # Unify output form to tuple for easy correspondance with
             # `dst_infos`
-            output_tuple = output if isinstance(output, Tuple) else (output,)
+            output_tuple = output if type(output) is tuple else (output,)
 
             for idx, out in enumerate(output_tuple):
                 dst_ranks = self.dst_infos[idx]

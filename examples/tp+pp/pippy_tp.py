@@ -118,6 +118,9 @@ def run_all(args):
     else:
         stage()
 
+    dist.barrier()
+    print(f"Rank {args.rank} completes")
+
     # Last rank checks result
     if pp_rank == args.pp_group_size - 1:
         ref_out = ec(inp)

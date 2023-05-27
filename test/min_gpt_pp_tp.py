@@ -1,7 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import argparse
 import os
-import unittest
 
 import torch
 import torch.distributed.tensor.parallel as tp
@@ -76,7 +75,9 @@ def run_all(args):
     # Figure out my PP and TP rank
     pp_rank = args.rank // args.tp_group_size
     tp_rank = args.rank % args.tp_group_size
-    print(f"Global rank {args.rank}, pp rank: {pp_rank}, tp rank: {tp_rank}, device: {args.device}")
+    print(
+        f"Global rank {args.rank}, pp rank: {pp_rank}, tp rank: {tp_rank}, device: {args.device}"
+    )
 
     # Get pp group
     # `tp_rank` can serve as pipeline id
@@ -103,8 +104,8 @@ def run_all(args):
         stage.submod,
         dev_mesh,
         parallelize_plan={
-           f"blocks_{pp_rank}_mlp_0": tp.ColwiseParallel(),
-           f"blocks_{pp_rank}_mlp_2": tp.RowwiseParallel(),
+            f"blocks_{pp_rank}_mlp_0": tp.ColwiseParallel(),
+            f"blocks_{pp_rank}_mlp_2": tp.RowwiseParallel(),
         },
         tp_mesh_dim=tp_dim,
     )
@@ -113,6 +114,9 @@ def run_all(args):
         out = stage(None, inp)
     else:
         out = stage()
+
+    dist.barrier()
+    print(f"Rank {args.rank} completes")
 
     # Last rank checks result
     if pp_rank == args.pp_group_size - 1:
