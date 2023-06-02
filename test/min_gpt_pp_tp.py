@@ -1,87 +1,73 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import argparse
 import os
-import unittest
 
 import torch
+import torch.distributed.tensor.parallel as tp
 
 import pippy
 import pippy.fx
-from pippy.IR import pipe_split
-from pippy.compile import compile_stage
+from pippy.IR import PipeSplitWrapper, annotate_split_points
 
 import torch.distributed as dist
 from torch.distributed._tensor import (
     DeviceMesh,
 )
-from torch.distributed.tensor.parallel import (
-    PairwiseParallel,
-    parallelize_module,
-)
 
+from minGPT.mingpt.model import GPT, GPTConfig
+from min_gpt_tracing import AdditionDataset  # type: ignore
 
 pippy.fx.Tracer.proxy_buffer_attributes = True
 
-
-class MLPModule(torch.nn.Module):
-    def __init__(self, d_hid):
-        super(MLPModule, self).__init__()
-        self.net1 = torch.nn.Linear(d_hid, d_hid)
-        self.relu = torch.nn.ReLU()
-        self.net2 = torch.nn.Linear(d_hid, d_hid)
-
-    def forward(self, x):
-        x = self.net1(x)
-        x = self.relu(x)
-        x = self.net2(x)
-        return x
-
-
-class ExampleCode(torch.nn.Module):
-    def __init__(self, d_hid):
-        super().__init__()
-        self.mlp0 = MLPModule(d_hid)
-        self.mlp1 = MLPModule(d_hid)
-        self.mlp2 = MLPModule(d_hid)
-        self.mlp3 = MLPModule(d_hid)
-
-    def forward(self, x):
-        x = self.mlp0(x)
-        pipe_split()
-        x = self.mlp1(x)
-        pipe_split()
-        x = self.mlp2(x)
-        pipe_split()
-        x = self.mlp3(x)
-        return x
-
-
-d_hid = 256
 batch_size_per_chunk = 8
+
+# The seed here has two purposes:
+# - Ensure all TP ranks have same input
+# - Ensure the model (ec) created are the same, as if it comes from a
+# single, big model before partitioning
+torch.manual_seed(0)
+
+ndigit = 2
+train_dataset = AdditionDataset(ndigit=ndigit, split="train")
+test_dataset = AdditionDataset(ndigit=ndigit, split="test")
+
+mconf = GPTConfig(
+    train_dataset.vocab_size,
+    train_dataset.block_size,
+    n_layer=4,
+    n_head=4,
+    n_embd=128,
+)
+
+d_hid = 4
 
 
 def run_all(args):
-    # The seed here has two purposes:
-    # - Ensure all TP ranks have same input
-    # - Ensure the model (ec) created are the same, as if it comes from a
-    # single, big model before partitioning
-    torch.manual_seed(0)
+    # initialize a baby GPT model
+    model = GPT(mconf)
+    model.eval()
+    model.to(args.device)
 
-    # Create original model
-    ec = ExampleCode(d_hid)
-    ec.to(args.device)
+    # Specify split points
+    sp_spec = {
+        "blocks.0.mlp.3": PipeSplitWrapper.SplitPoint.END,
+        "blocks.1.mlp.3": PipeSplitWrapper.SplitPoint.END,
+        "blocks.2.mlp.3": PipeSplitWrapper.SplitPoint.END,
+    }
+    annotate_split_points(model, sp_spec)
 
     # Create input
-    inp_size = [args.chunks * batch_size_per_chunk, d_hid]
+    x = torch.tensor([1, 2, 3, 4], dtype=torch.long)
+    batch_size = args.chunks * batch_size_per_chunk
     device_type = args.device.type
-    inp = torch.rand(*inp_size, device=args.device)
+    inp = x.repeat(batch_size, 1).to(args.device)
 
     # Create global DeviceMesh
     ranks = torch.arange(args.world_size)
     rank_mesh = ranks.reshape(args.pp_group_size, args.tp_group_size)
     pp_dim = 0
     tp_dim = 1
-    dm = DeviceMesh(
+    dev_mesh = DeviceMesh(
         device_type,
         rank_mesh,
     )
@@ -89,41 +75,52 @@ def run_all(args):
     # Figure out my PP and TP rank
     pp_rank = args.rank // args.tp_group_size
     tp_rank = args.rank % args.tp_group_size
-    print(f"Global rank {args.rank}, pp rank: {pp_rank}, tp rank: {tp_rank}")
+    print(
+        f"Global rank {args.rank}, pp rank: {pp_rank}, tp rank: {tp_rank}, device: {args.device}"
+    )
 
     # Get pp group
     # `tp_rank` can serve as pipeline id
-    print(f"Rank {args.rank} Instantiating pipeline with ranks {dm.mesh[:, tp_rank]}")
-    pp_group = dm.get_dim_groups()[pp_dim]
+    print(
+        f"Rank {args.rank} Instantiating pipeline with ranks {dev_mesh.mesh[:, tp_rank]}"
+    )
+    pp_group = dev_mesh.get_dim_groups()[pp_dim]
 
     # Get stage module (on all pp ranks)
-    stage = compile_stage(
-        ec,
+    stage = pippy.compile_stage(
+        model,
         pp_rank,
         args.pp_group_size,
         args.chunks,
         args.device,
         pp_group,
         example_inputs=[inp],
+        concrete_args={"targets": None},
     )
 
     # Tensor parallelize submodules
-    print(f"Rank {args.rank} TP-lize submodule with {dm.mesh[pp_rank]}")
-    parallelize_module(stage.submod, dm, PairwiseParallel(), tp_mesh_dim = tp_dim)
+    print(f"Rank {args.rank} TP-lize submodule with {dev_mesh.mesh[pp_rank]}")
+    tp.parallelize_module(
+        stage.submod,
+        dev_mesh,
+        parallelize_plan={
+            f"blocks_{pp_rank}_mlp_0": tp.ColwiseParallel(),
+            f"blocks_{pp_rank}_mlp_2": tp.RowwiseParallel(),
+        },
+        tp_mesh_dim=tp_dim,
+    )
 
     if pp_rank == 0:
-        out = stage(inp)
-    elif pp_rank == args.pp_group_size - 1:
-        out = stage()
+        out = stage(None, inp)
     else:
-        stage()
+        out = stage()
 
     dist.barrier()
     print(f"Rank {args.rank} completes")
 
     # Last rank checks result
     if pp_rank == args.pp_group_size - 1:
-        ref_out = ec(inp)
+        ref_out = model(inp)[0]  # [0] is logits, [1] is loss (None)
         torch.testing.assert_close(out, ref_out)
         print(
             f"Pipeline {tp_rank} equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}"
@@ -137,7 +134,9 @@ def main(args=None):
     )
     # ExampleCode has 4 stages
     parser.add_argument(
-        "--pp_group_size", type=int, default=4,
+        "--pp_group_size",
+        type=int,
+        default=4,
     )
     # in row-major
     # TP ranks are contiguous rows of size `args.tp_group_size`
@@ -162,7 +161,9 @@ def main(args=None):
         "--cuda", type=int, default=int(torch.cuda.is_available())
     )
     parser.add_argument(
-        "--chunks", type=int, default=4,
+        "--chunks",
+        type=int,
+        default=4,
     )
     args = parser.parse_args(args)
 
@@ -198,15 +199,3 @@ def main(args=None):
 
 if __name__ == "__main__":
     main()
-
-
-class LocalTestPiPPyTP(unittest.TestCase):
-    def test_pp_tp(self):
-        import random
-
-        port = random.randint(29500, 30000)
-        args = [
-            "--master_port",
-            str(port),
-        ]
-        main(args)

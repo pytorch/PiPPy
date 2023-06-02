@@ -56,7 +56,8 @@ The PiPPy project stands for Pipeline Parallelism for PyTorch. It consists of a
 compiler and runtime stack for automated parallelism and scaling of PyTorch
 models. PiPPy partitions the code of the model in a pipelined fashion and
 enables multiple micro-batches to execute different parts of the model code
-concurrently.
+concurrently. For details, please visit PiPPy's [GitHub
+page](https://github.com/pytorch/PiPPy).
 """
 
 

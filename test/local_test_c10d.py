@@ -4,15 +4,14 @@ import os
 import unittest
 
 import torch
-from torch._subclasses.fake_tensor import FakeTensorMode
 import torch.distributed as dist
 
-from pippy.fx.passes import shape_prop
-from pippy.IR import MultiUseParameterConfig, Pipe, pipe_split
+from pippy.compile import compile_stage
+from pippy.IR import pipe_split
 
 
 d_hid = 512
-bs = 256
+chunk_size = 256
 
 torch.manual_seed(0)
 
@@ -24,16 +23,17 @@ class ExampleCode(torch.nn.Module):
         self.mm_param2 = torch.nn.Parameter(torch.randn(d_hid, d_hid))
         self.lin = torch.nn.Linear(d_hid, d_hid)
 
-    def forward(self, x):
+    def forward(self, x, y):
         x = torch.mm(x, self.mm_param)
-        # skip_connection = x
+        skip_connection = x
+        x = x + y
         x = torch.relu(x)
         pipe_split()
         x = torch.mm(x, self.mm_param)
         x = self.lin(x)
         pipe_split()
         x = torch.relu(x)
-        # x = x + skip_connection
+        x = x + skip_connection
         x = torch.mm(x, self.mm_param2)
         pipe_split()
         x = self.lin(x)
@@ -41,76 +41,40 @@ class ExampleCode(torch.nn.Module):
         return x
 
 
-def make_tensor_from_meta(
-    tensor_meta: shape_prop.TensorMetadata,
-    device: torch.device,
-):
-    return torch.empty(
-        tensor_meta.shape, dtype=tensor_meta.dtype, device=device
-    )
-
-
 def run_worker(args):
     ec = ExampleCode()
     ec.to(args.device)
-    ec_input = torch.randn(bs, d_hid, device=args.device)
 
-    # Trace and cut
-    ec_pipe = Pipe.from_tracing(ec, MultiUseParameterConfig.REPLICATE)
-    gm = ec_pipe.split_gm
+    ec_x = torch.randn(args.chunks * chunk_size, d_hid, device=args.device)
+    ec_y = torch.randn(args.chunks * chunk_size, d_hid, device=args.device)
+
+    stage = compile_stage(
+        ec,
+        args.rank,
+        args.world_size,
+        args.chunks,
+        args.device,
+        None,
+        [ec_x, ec_y],
+    )
+
+    # Run
     if args.rank == 0:
-        print(gm)
-        gm.graph.print_tabular()
-
-    # Use fake tensor for shape propagation
-    # Since model itself may have been materialized, we need to use
-    # `allow_non_fake_inputs`
-    fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
-    # In reality, the fake input should be created from shape info (potentially
-    # broadcast from Rank 0)
-    fake_input = fake_mode.from_tensor(ec_input)
-    sp = shape_prop.ShapeProp(gm)
-    sp.propagate(fake_input)
-
-    # Find my submodule
-    named_children = list(gm.named_children())
-    name, submod = named_children[args.rank]
-    print(f"{name}: {submod}")
-
-    # Find my input size
-    for node in gm.graph.nodes:
-        if node.name == name:
-            input = node.args[0]  # args is a tuple
-            break
-    tensor_meta = input.meta["tensor_meta"]
-    print(tensor_meta)
-
-    # Get input
-    if args.rank == 0:
-        x = ec_input
+        out = stage(ec_x, ec_y)
+    elif args.rank == args.world_size - 1:
+        out = stage()
     else:
-        x = make_tensor_from_meta(tensor_meta, args.device)
-        dist.recv(x, args.rank - 1)
+        stage()
 
-    # Compute
-    y = submod(x)
+    dist.barrier()
+    print(f"Rank {args.rank} completes")
 
-    # Send to next stage
-    dist.send(y, (args.rank + 1) % args.world_size)
-
-    # Rank 0 checks result
-    if args.rank == 0:
-        # Get final output shape
-        for node in gm.graph.nodes:
-            if node.target == "output":
-                break
-        tensor_meta = node.meta["tensor_meta"]
-        z = make_tensor_from_meta(tensor_meta, args.device)
-        dist.recv(z, args.world_size - 1)
-        ref_out = ec_pipe(ec_input)
-        torch.testing.assert_close(z, ref_out)
+    # Last rank checks result
+    if args.rank == args.world_size - 1:
+        ref_out = ec(ec_x, ec_y)
+        torch.testing.assert_close(out, ref_out)
         print(
-            f"equivalence test passed {torch.sum(z)} ref {torch.sum(ref_out)}"
+            f"equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}"
         )
 
 
@@ -129,17 +93,22 @@ def main(args=None):
     parser.add_argument(
         "--cuda", type=int, default=int(torch.cuda.is_available())
     )
+    parser.add_argument(
+        "--chunks",
+        type=int,
+        default=4,
+    )
     args = parser.parse_args(args)
 
     if args.cuda:
         dev_id = args.rank % torch.cuda.device_count()
-        args.device = f"cuda:{dev_id}"
+        args.device = torch.device(f"cuda:{dev_id}")
     else:
-        args.device = "cpu"
+        args.device = torch.device("cpu")
 
     # Init process group
     backend = "nccl" if args.cuda else "gloo"
-    torch.distributed.init_process_group(
+    dist.init_process_group(
         backend=backend,
         rank=args.rank,
         world_size=args.world_size,

@@ -7,12 +7,20 @@ from pippy.PipelineDriver import (
     PipelineDriverFillDrain,
     PipelineDriverInterleaved1F1B,
 )
+from pippy.PipelineStage import PipelineStage
 import pippy.fx as fx
 from pippy.IR import MultiUseParameterConfig, Pipe
-from pippy.microbatch import LossReducer, sum_reducer
-from pippy.utils import get_device, get_pp_rank, get_rank
+from pippy.fx.passes import shape_prop
+from pippy.microbatch import (
+    LossReducer,
+    split_args_kwargs_into_chunks,
+    sum_reducer,
+)
+from pippy.utils import get_device, get_pp_rank, get_rank, PIPPY_VERBOSITY
 
 import torch
+import torch.distributed as dist
+from torch._subclasses.fake_tensor import FakeTensorMode
 
 
 PIPELINE_SCHEDULE_DRIVERS = {
@@ -203,4 +211,87 @@ def all_compile(
         checkpoint=checkpoint,
         _debug_mask_minibatches=_debug_mask_minibatches,
         **kwargs,
+    )
+
+
+def compile_stage(
+    mod: torch.nn.Module,
+    rank: int,
+    num_ranks: int,
+    num_chunks: int,
+    device: torch.device,
+    group: dist.ProcessGroup,
+    example_inputs: List[torch.Tensor],
+    split_policy: Optional[Callable[[fx.GraphModule], fx.GraphModule]] = None,
+    return_to_0: bool = False,
+    tracer=None,
+    args_chunk_spec=None,
+    kwargs_chunk_spec=None,
+    output_chunk_spec=None,
+    **kwargs,
+) -> PipelineStage:
+    # If a param will be used in multiple pipeline stages, we default the strategy to REPLICATE'ing the param across
+    # stages instead of TRANSMIT'ting it
+    multi_use_param_spec = MultiUseParameterConfig.REPLICATE
+
+    # Figure out which output is loss from output_chunk_spec
+    output_loss_value_spec: Any = None
+    if isinstance(output_chunk_spec, dict):
+        output_loss_value_spec = {
+            k: isinstance(v, LossReducer) for k, v in output_chunk_spec.items()
+        }
+
+    logging.info("[PiPPy] Tracing model ...")
+    pipe = Pipe.from_tracing(
+        mod,
+        multi_use_param_spec=multi_use_param_spec,
+        tracer=tracer,
+        output_loss_value_spec=output_loss_value_spec,
+        split_policy=split_policy,
+        **kwargs,
+    )
+
+    gm = pipe.split_gm
+    if rank == 0:
+        logging.info(gm)
+        if PIPPY_VERBOSITY == "INFO":
+            gm.graph.print_tabular()
+
+    # Get shape of chunked arguments
+    args_split, _ = split_args_kwargs_into_chunks(
+        example_inputs,
+        {},  # kwargs included in `example_inputs`
+        num_chunks,
+        args_chunk_spec,
+        kwargs_chunk_spec,  # TODO: merge into args_chunk_spec
+    )
+
+    # Use fake tensor for shape propagation
+    # Since model itself may have been materialized, we need to use
+    # `allow_non_fake_inputs`
+    fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
+    # In reality, the fake input should be created from shape info (potentially
+    # broadcast from Rank 0)
+    fake_args_split = fx.node.map_aggregate(
+        args_split, lambda a: fake_mode.from_tensor(a)
+    )
+
+    # Use 1st chunk of args for shape propagation
+    chunk0 = fake_args_split[0]
+
+    sp = shape_prop.ShapeProp(gm)
+    sp.propagate(*chunk0)
+
+    # Create pipeline stage
+    return PipelineStage(
+        pipe,
+        rank,
+        num_ranks,
+        num_chunks,
+        device,
+        group,
+        return_to_0,
+        args_chunk_spec,
+        kwargs_chunk_spec,
+        output_chunk_spec,
     )
