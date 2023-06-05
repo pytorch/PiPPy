@@ -68,8 +68,6 @@ class PipelineStage(torch.nn.Module):
         # Find my submodule
         self.split_gm = self.pipe.split_gm
         named_children = list(self.split_gm.named_children())
-        if self.rank == 0:
-            logging.info(f"Named children: {named_children}")
         self.name, self.submod = named_children[rank]
         logging.info(
             f"[{self.rank}][{self.name}] "
