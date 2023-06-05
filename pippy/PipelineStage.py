@@ -254,16 +254,13 @@ class PipelineStage(torch.nn.Module):
             recv_reqs.clear()
             if args:
                 chunk_args = args_split[chunk]
-
-            chunk_arg_idx = -1
+                chunk_args_list = list(chunk_args)
 
             def recv_args(info):
-                nonlocal chunk_arg_idx
                 if isinstance(info, RecvInfo):
                     return recv_tensor(info)
                 else:
-                    chunk_arg_idx += 1
-                    return chunk_args[chunk_arg_idx]
+                    return chunk_args_list.pop(0)
 
             composite_args = pippy.fx.node.map_aggregate(
                 self.args_recv_info[chunk],
