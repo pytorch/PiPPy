@@ -9,10 +9,10 @@ from pippy.PipelineDriver import (
 )
 from pippy.PipelineStage import PipelineStage
 import pippy.fx as fx
-from pippy.IR import MultiUseParameterConfig, Pipe
-from pippy.fx.passes import shape_prop
+from pippy.IR import MultiUseParameterConfig, Pipe, PiPPyShapeProp
 from pippy.microbatch import (
     LossReducer,
+    gen_output_chunk_spec,
     split_args_kwargs_into_chunks,
     sum_reducer,
 )
@@ -225,6 +225,7 @@ def compile_stage(
     split_policy: Optional[Callable[[fx.GraphModule], fx.GraphModule]] = None,
     return_to_0: bool = False,
     tracer=None,
+    loss_reducer: LossReducer = sum_reducer,
     args_chunk_spec=None,
     kwargs_chunk_spec=None,
     output_chunk_spec=None,
@@ -279,8 +280,15 @@ def compile_stage(
     # Use 1st chunk of args for shape propagation
     chunk0 = fake_args_split[0]
 
-    sp = shape_prop.ShapeProp(gm)
+    sp = PiPPyShapeProp(gm)
     sp.propagate(*chunk0)
+
+    # Prepare output chunk/reduce spec for merging/reducing final outputs
+    output_chunk_spec = (
+        output_chunk_spec
+        if output_chunk_spec
+        else gen_output_chunk_spec(pipe.loss_spec, loss_reducer)
+    )
 
     # Create pipeline stage
     return PipelineStage(

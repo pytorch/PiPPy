@@ -2,6 +2,7 @@
 from typing import List
 
 import torch
+from pippy.debug import map_debug_info
 import pippy.fx
 
 
@@ -18,12 +19,6 @@ def stage_backward(
     in the autograd trace) as well as return a list of the gradients for the
     input values
     """
-
-    def friendly_debug_info(v):
-        if isinstance(v, torch.Tensor):
-            return f"Tensor(size={v.shape})"
-        else:
-            return str(v)
 
     try:
         stage_output_with_grads = [
@@ -85,9 +80,9 @@ def stage_backward(
     except Exception as e:
         exc_msg = f"""
         Failed to run backward stage {stage_info}
-        Stage output value: {pippy.fx.node.map_aggregate(stage_output, friendly_debug_info)}
-        Output gradient values: {pippy.fx.node.map_aggregate(output_grads, friendly_debug_info)}
-        Input values: {pippy.fx.node.map_aggregate(input_values, friendly_debug_info)}
+        Stage output: {map_debug_info(stage_output)}
+        Output gradient: {map_debug_info(output_grads)}
+        Input: {map_debug_info(input_values)}
         """
         raise RuntimeError(exc_msg) from e
 

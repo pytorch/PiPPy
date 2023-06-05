@@ -6,6 +6,8 @@ from typing import Dict, List, Optional
 import torch
 import torch.distributed as dist
 import pippy
+from pippy.backward import stage_backward, sync_barrier
+from pippy.debug import map_debug_info
 
 from pippy.fx.passes import shape_prop
 from pippy.IR import Pipe
@@ -31,6 +33,10 @@ class RecvInfo:
         self.input_name = input_name
         self.source = source
         self.buffer = buffer
+
+
+class StageArgPlaceholder:
+    pass
 
 
 class PipelineStage(torch.nn.Module):
@@ -62,6 +68,8 @@ class PipelineStage(torch.nn.Module):
         # Find my submodule
         self.split_gm = self.pipe.split_gm
         named_children = list(self.split_gm.named_children())
+        if self.rank == 0:
+            logging.info(f"Named children: {named_children}")
         self.name, self.submod = named_children[rank]
         logging.info(
             f"[{self.rank}][{self.name}] "
@@ -116,7 +124,7 @@ class PipelineStage(torch.nn.Module):
             """
             if input_node.op == "placeholder":
                 # Do not create buffer for placeholder
-                return None
+                return StageArgPlaceholder()
 
             # In case the input is a `getitem` node, we recursively find the
             # real source e.g. getitem1 = submod0[1]
@@ -127,7 +135,10 @@ class PipelineStage(torch.nn.Module):
                     out_idx = input_node.args[1]
                     return create_recv_tensor(real_input_node, out_idx)
                 else:
-                    return None
+                    raise NotImplementedError(
+                        f"getitem gets a non-Tensor value, this is not yet supported. "
+                        f"Node: {input_node.format_node()}"
+                    )
 
             if output_idx is not None:
                 # If a node has multiple output values, "tensor_meta" is a list
@@ -172,6 +183,12 @@ class PipelineStage(torch.nn.Module):
                     return 0
                 else:
                     return None
+            elif user.target is sync_barrier:
+                # TODO
+                return None
+            elif user.target is stage_backward:
+                # No need to send assuming submod output is stored locally
+                return None
             else:
                 # User is a stage (`call_module`)
                 return self.get_rank_of_submod(user.name)
@@ -185,13 +202,17 @@ class PipelineStage(torch.nn.Module):
                 # Recursively find the real destination
                 gi_dsts = self.dst_infos.setdefault(out_idx, [])
                 for gi_user in user.users:
-                    gi_dsts.append(find_dst_rank(gi_user))
+                    dst_rank = find_dst_rank(gi_user)
+                    if dst_rank is not None:
+                        gi_dsts.append(dst_rank)
                 # Next `getitem` will point to the next output index
                 out_idx += 1
             else:
                 # In case of single output value, `out_idx` will not increase
                 dsts = self.dst_infos.setdefault(out_idx, [])
-                dsts.append(find_dst_rank(user))
+                dst_rank = find_dst_rank(user)
+                if dst_rank is not None:
+                    dsts.append(dst_rank)
 
         logging.info(
             f"[{self.rank}][{self.name}] " f"Send info: {self.dst_infos}"
@@ -213,24 +234,21 @@ class PipelineStage(torch.nn.Module):
         send_reqs: List[dist.Work] = []
 
         def recv_tensor(info):
-            if isinstance(info, RecvInfo):
-                logging.info(
-                    f"[{self.rank}][{self.name}] "
-                    f"Receiving tensor '{info.input_name}' from Rank {info.source}: "
-                    f"{info.buffer.size()}"
-                )
-                # Use async to parallelize recv of tensors
-                work = dist.irecv(
-                    info.buffer,
-                    info.source
-                    if self.group is None
-                    else dist.get_global_rank(self.group, info.source),
-                    group=self.group,
-                )
-                recv_reqs.append(work)
-                return info.buffer
-            else:
-                return info
+            logging.info(
+                f"[{self.rank}][{self.name}] "
+                f"Receiving tensor '{info.input_name}' from Rank {info.source}: "
+                f"{info.buffer.size()}"
+            )
+            # Use async to parallelize recv of tensors
+            work = dist.irecv(
+                info.buffer,
+                info.source
+                if self.group is None
+                else dist.get_global_rank(self.group, info.source),
+                group=self.group,
+            )
+            recv_reqs.append(work)
+            return info.buffer
 
         output_chunks = []
 
@@ -238,26 +256,51 @@ class PipelineStage(torch.nn.Module):
             recv_reqs.clear()
             if args:
                 chunk_args = args_split[chunk]
-            else:
-                chunk_args = pippy.fx.node.map_aggregate(
-                    self.args_recv_info[chunk],
-                    recv_tensor,
-                )
+
+            chunk_arg_idx = -1
+
+            def recv_args(info):
+                nonlocal chunk_arg_idx
+                if isinstance(info, RecvInfo):
+                    return recv_tensor(info)
+                else:
+                    chunk_arg_idx += 1
+                    return chunk_args[chunk_arg_idx]
+
+            composite_args = pippy.fx.node.map_aggregate(
+                self.args_recv_info[chunk],
+                recv_args,
+            )
 
             if kwargs:
                 chunk_kwargs = kwargs_split[chunk]
-            else:
-                chunk_kwargs = pippy.fx.node.map_aggregate(
-                    self.kwargs_recv_info[chunk],
-                    recv_tensor,
-                )
+
+            def recv_kwargs(info):
+                if isinstance(info, RecvInfo):
+                    return recv_tensor(info)
+                else:
+                    k = next(iter(chunk_kwargs))
+                    return chunk_kwargs.pop(k)
+
+            composite_kwargs = pippy.fx.node.map_aggregate(
+                self.kwargs_recv_info[chunk],
+                recv_kwargs,
+            )
 
             # Wait for all recvs to finish
             for work in recv_reqs:
                 work.wait()
 
             # Compute
-            output = self.submod(*chunk_args, **chunk_kwargs)
+            try:
+                output = self.submod(*composite_args, **composite_kwargs)
+            except Exception as e:
+                exc_msg = f"""
+                Rank {self.rank} failed to run forward stage: {self.name}
+                args: {map_debug_info(composite_args)}
+                kwargs: {map_debug_info(composite_kwargs)}
+                """
+                raise RuntimeError(exc_msg) from e
 
             # Unify output form to tuple for easy correspondance with
             # `dst_infos`

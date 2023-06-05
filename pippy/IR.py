@@ -11,6 +11,7 @@ import torch
 import torch.fx as torch_fx
 import pippy.fx
 from packaging import version
+from pippy.fx.passes import shape_prop
 from pippy.fx.passes.split_module import split_module
 from pippy.backward import (
     stage_backward,
@@ -1184,3 +1185,20 @@ def annotate_split_points(
         mod_to_wrap = getattr(predecessor_module, atoms[-1])
         wrapped_mod = PipeSplitWrapper(mod_to_wrap, split_type)
         setattr(predecessor_module, atoms[-1], wrapped_mod)
+
+
+class PiPPyShapeProp(shape_prop.ShapeProp):
+    def __init__(
+        self, module: pippy.fx.GraphModule, garbage_collect_values: bool = True
+    ):
+        super().__init__(module, garbage_collect_values)
+        self.stop_prop = False
+
+    def run_node(self, n: pippy.fx.Node) -> Any:
+        if (n.op, n.target) == ("call_function", stage_backward):
+            self.stop_prop = True
+
+        if self.stop_prop:
+            return None
+
+        return super().run_node(n)
