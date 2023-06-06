@@ -14,7 +14,7 @@ def stage_backward(
     outputs_with_grads_idxs: List[int],
 ):
     """
-    Given the input value(s) and the corresponding gradient for those/that input
+    Given the input value(s) and the corresponding gradient for the output
     value(s), compute and accumulate gradients for all parameter values (leaves
     in the autograd trace) as well as return a list of the gradients for the
     input values

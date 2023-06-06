@@ -33,6 +33,8 @@ import torch
 import torch.multiprocessing as mp
 import torch.distributed.rpc as rpc
 
+import pippy.fx
+
 
 PIPPY_VERBOSITY = os.environ.get("PIPPY_VERBOSITY", "OFF")
 
@@ -280,3 +282,26 @@ def run_worker(rank, run_func, args, *extra_args):
         run_func(my_pp_ranks, args, *extra_args)
 
     rpc.shutdown()
+
+
+def flatten_args(args):
+    flat_args = []
+
+    def extract_tensor_args(a):
+        nonlocal flat_args
+        if isinstance(a, torch.Tensor):
+            val = a.detach().requires_grad_(a.requires_grad)
+            flat_args.append(val)
+            return val
+        else:
+            flat_args.append(a)
+            return a
+
+    def dont_traverse_size(a):
+        return type(a) != torch.Size
+
+    new_args = pippy.fx.node.map_aggregate(
+        args, extract_tensor_args, dont_traverse_size
+    )
+
+    return new_args, flat_args

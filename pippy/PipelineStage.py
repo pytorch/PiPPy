@@ -1,7 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import logging
 import operator
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -12,6 +12,7 @@ from pippy.debug import map_debug_info
 from pippy.fx.passes import shape_prop
 from pippy.IR import Pipe
 from pippy.microbatch import merge_chunks, split_args_kwargs_into_chunks
+from pippy.utils import flatten_args
 
 
 def _make_tensor_from_meta(
@@ -75,7 +76,7 @@ class PipelineStage(torch.nn.Module):
             f"{self.submod}"
         )
 
-        # Find my node in graph
+        # Find my forward node in graph
         found_node = False
         for node in self.split_gm.graph.nodes:
             if node.name == self.name:
@@ -85,20 +86,34 @@ class PipelineStage(torch.nn.Module):
         if not found_node:
             raise AssertionError(f"Cannot find {self.name} in graph")
 
+        # Find my backward node in graph
+        found_bwd = False
+        seen_bwd = -1
+        for node in reversed(self.split_gm.graph.nodes):
+            if (node.op, node.target) == ("call_function", stage_backward):
+                seen_bwd += 1
+                if seen_bwd == self.rank:
+                    found_bwd = True
+                    self.bwd_node = node
+                    break
+        if not found_bwd:
+            raise AssertionError(f"Cannot find backward for {self.name} in graph")
+
         # Create submod name to rank mapping
         self.submod_to_rank: Dict[str, int] = {}
         for i, (name, _) in enumerate(self.split_gm.named_children()):
             self.submod_to_rank.setdefault(name, i)
 
         # Prepare send/recv infrastructure
-        self.args_recv_info = []
-        self.kwargs_recv_info = []
-        for _ in range(chunks):
+        self.args_recv_info: Dict = {}
+        self.kwargs_recv_info: Dict = {}
+        for chunk in range(chunks):
             args_recv, kwargs_recv = self._create_recv_buffers()
-            self.args_recv_info.append(args_recv)
-            self.kwargs_recv_info.append(kwargs_recv)
+            self.args_recv_info[chunk] = args_recv
+            self.kwargs_recv_info[chunk] = kwargs_recv
 
-        self._create_send_info()
+        self.dst_infos = self._create_send_info()
+        self.grad_recv_infos = self._create_grad_recv_info(self.dst_infos)
 
     def get_rank_of_submod(
         self,
@@ -191,14 +206,14 @@ class PipelineStage(torch.nn.Module):
                 # User is a stage (`call_module`)
                 return self.get_rank_of_submod(user.name)
 
-        # Output index: List of receivers
-        self.dst_infos: Dict[int, List] = {}
+        # Output index: List of receiver ranks
+        dst_infos: Dict[int, List] = {}
         out_idx = 0
 
         for user in self.node.users:
             if user.target is operator.getitem:
                 # Recursively find the real destination
-                gi_dsts = self.dst_infos.setdefault(out_idx, [])
+                gi_dsts = dst_infos.setdefault(out_idx, [])
                 for gi_user in user.users:
                     dst_rank = find_dst_rank(gi_user)
                     if dst_rank is not None:
@@ -207,16 +222,50 @@ class PipelineStage(torch.nn.Module):
                 out_idx += 1
             else:
                 # In case of single output value, `out_idx` will not increase
-                dsts = self.dst_infos.setdefault(out_idx, [])
+                dsts = dst_infos.setdefault(out_idx, [])
                 dst_rank = find_dst_rank(user)
                 if dst_rank is not None:
                     dsts.append(dst_rank)
 
         logging.info(
-            f"[{self.rank}][{self.name}] " f"Send info: {self.dst_infos}"
+            f"[{self.rank}][{self.name}] " f"Send info: {dst_infos}"
         )
+        return dst_infos
+
+    def _create_grad_recv_info(
+        self,
+        dst_infos : Dict,
+    ):
+        # Dict[output_index, RecvInfo]
+        grad_recv_infos : Dict = {}
+        my_tensor_meta = self.node.meta["tensor_meta"]
+
+        for out_idx, dst_list in dst_infos.items():
+            if not dst_list:
+                # No actual receiver for activation so no grad coming back
+                continue
+
+            # TODO: clean way
+            if len(dst_infos) > 1:
+                tensor_meta = my_tensor_meta[out_idx]
+            else:
+                tensor_meta = my_tensor_meta
+
+            # TODO: otherwise needs grad accumulation
+            assert len(dst_list) == 1
+            grad_src = dst_list[0]
+            grad_recv_infos[out_idx] = RecvInfo(
+                f"{grad_src}",
+                grad_src,
+                _make_tensor_from_meta(tensor_meta, self.device),
+            )
+
+        return grad_recv_infos
 
     def forward(self, *args, **kwargs):
+        # map microbatch ID to list of forward tensor args
+        fwd_cache: Dict[int, Tuple[Any, List[torch.Tensor]]] = {}
+
         if args or kwargs:
             args_split, kwargs_split = split_args_kwargs_into_chunks(
                 args,
@@ -321,12 +370,33 @@ class PipelineStage(torch.nn.Module):
                     )
                     send_reqs.append(work)
 
+            # Prepare for final output merge or reduction
             output_chunks.append(output)
+
+            # Save activations and inputs for backward
+            _, flat_args = flatten_args(composite_args)
+            _, flat_kwargs = flatten_args(composite_kwargs)
+            flatten_input_tensors = flat_args + flat_kwargs
+            fwd_cache[chunk] = (
+                output_tuple,  # stage_output
+                flatten_input_tensors,  # input_values
+            )
 
         # Wait for all sends to finish
         # TODO: okay to delay the sync till completion of all chunks?
         for work in send_reqs:
             work.wait()
+
+        # Backward starts here
+        for bwd_chunk in range(self.chunks):
+            bwd_kwargs = dict(self.bwd_node.kwargs)
+            (
+                bwd_kwargs["stage_output"],
+                bwd_kwargs["input_values"],
+            ) = fwd_cache.pop(bwd_chunk)
+            if self.rank == self.nstages - 1:
+                # `stage_backward` node does not have `args`, only `kwargs`
+                grad_inputs, _ = stage_backward(**bwd_kwargs)
 
         # Last rank return merged results per original format
         if self.rank == self.nstages - 1:
