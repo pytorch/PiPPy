@@ -132,7 +132,7 @@ assert list(dict(traced_pipe.split_gm.named_children()).keys()) == [
     "submod_2",
 ]
 
-print(traced_pipe.split_gm.code)
+print(traced_pipe.split_gm)
 """
 def forward(self, idx, targets_1 = None):
     submod_0 = self.submod_0(idx);  idx = None
