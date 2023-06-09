@@ -27,7 +27,7 @@ from pippy.microbatch import (
     split_args_kwargs_into_chunks,
     merge_chunks,
 )
-from pippy.utils import flatten_args
+from pippy.utils import flatten_args_detach
 
 # TODO: Define the strategy for replicating the computation. In particular, we will likely make the assumption
 # that the operations in the program are batch-wise commutative (my term), i.e. we can guarantee equivalence
@@ -397,8 +397,8 @@ class RankWorker(EventRecorder):
             )
 
             def forward(args, kwargs, no_grad):
-                args, flat_args = flatten_args(args)
-                kwargs, flat_kwargs = flatten_args(kwargs)
+                args, flat_args = flatten_args_detach(args)
+                kwargs, flat_kwargs = flatten_args_detach(kwargs)
                 # Contains all tensors from args and kwargs, in flattened form
                 flat_args += flat_kwargs
 

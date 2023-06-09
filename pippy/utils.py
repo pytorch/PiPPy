@@ -36,18 +36,6 @@ import torch.distributed.rpc as rpc
 import pippy.fx
 
 
-PIPPY_VERBOSITY = os.environ.get("PIPPY_VERBOSITY", "OFF")
-
-if PIPPY_VERBOSITY == "DEBUG":
-    logging.getLogger().setLevel(logging.DEBUG)
-elif PIPPY_VERBOSITY == "INFO":
-    logging.getLogger().setLevel(logging.INFO)
-elif PIPPY_VERBOSITY == "OFF":
-    pass
-else:
-    print(f"Unsupported PIPPY_VERBOSITY level: {PIPPY_VERBOSITY}")
-
-
 def get_rank() -> int:
     worker_info = rpc.get_worker_info()
     logging.debug(worker_info)
@@ -284,17 +272,17 @@ def run_worker(rank, run_func, args, *extra_args):
     rpc.shutdown()
 
 
-def flatten_args(args):
-    flat_args = []
+def flatten_args_detach(args):
+    flat_detached_args = []
 
     def extract_tensor_args(a):
-        nonlocal flat_args
+        nonlocal flat_detached_args
         if isinstance(a, torch.Tensor):
             val = a.detach().requires_grad_(a.requires_grad)
-            flat_args.append(val)
+            flat_detached_args.append(val)
             return val
         else:
-            flat_args.append(a)
+            flat_detached_args.append(a)
             return a
 
     def dont_traverse_size(a):
@@ -304,4 +292,20 @@ def flatten_args(args):
         args, extract_tensor_args, dont_traverse_size
     )
 
-    return new_args, flat_args
+    return new_args, flat_detached_args
+
+
+def flatten_args(args):
+    flat_args = []
+
+    def extract_tensor_args(a):
+        nonlocal flat_args
+        flat_args.append(a)
+        return a
+
+    def dont_traverse_size(a):
+        return type(a) != torch.Size
+
+    pippy.fx.node.map_aggregate(args, extract_tensor_args, dont_traverse_size)
+
+    return flat_args

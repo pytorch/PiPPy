@@ -16,7 +16,8 @@ from pippy.microbatch import (
     split_args_kwargs_into_chunks,
     sum_reducer,
 )
-from pippy.utils import get_device, get_pp_rank, get_rank, PIPPY_VERBOSITY
+from pippy.utils import get_device, get_pp_rank, get_rank
+from pippy.debug import PIPPY_VERBOSITY
 
 import torch
 import torch.distributed as dist

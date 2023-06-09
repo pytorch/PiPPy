@@ -77,6 +77,18 @@ def stage_backward(
             else:
                 grad_inputs.append(None)
 
+        # TODO: use `torch.autograd.grad`
+        """
+        inputs_with_grad = []
+        for val in input_values:
+            if isinstance(val, torch.Tensor) and val.requires_grad:
+                inputs_with_grad.append(val)
+        
+        grad_inputs = torch.autograd.grad(
+            stage_output_tensors, inputs_with_grad, output_grad_tensors,  # type: ignore[arg-type]
+        )
+        """
+
     except Exception as e:
         exc_msg = f"""
         Failed to run backward stage {stage_info}

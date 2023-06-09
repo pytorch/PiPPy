@@ -18,7 +18,7 @@ from pippy.utils import flatten_args
 def _make_tensor_from_meta(
     tensor_meta: shape_prop.TensorMetadata,
     device: torch.device,
-):
+) -> torch.Tensor:
     return torch.empty(
         tensor_meta.shape, dtype=tensor_meta.dtype, device=device
     )
@@ -34,6 +34,9 @@ class RecvInfo:
         self.input_name = input_name
         self.source = source
         self.buffer = buffer
+
+    def __repr__(self):
+        return f"RecvInfo(input={self.input_name}, source={self.source}, buffer={self.buffer.size()})"
 
 
 class StageArgPlaceholder:
@@ -97,23 +100,52 @@ class PipelineStage(torch.nn.Module):
                     self.bwd_node = node
                     break
         if not found_bwd:
-            raise AssertionError(f"Cannot find backward for {self.name} in graph")
+            raise AssertionError(
+                f"Cannot find backward for {self.name} in graph"
+            )
 
-        # Create submod name to rank mapping
+        # Create submod to rank mapping
         self.submod_to_rank: Dict[str, int] = {}
         for i, (name, _) in enumerate(self.split_gm.named_children()):
             self.submod_to_rank.setdefault(name, i)
 
         # Prepare send/recv infrastructure
-        self.args_recv_info: Dict = {}
-        self.kwargs_recv_info: Dict = {}
-        for chunk in range(chunks):
-            args_recv, kwargs_recv = self._create_recv_buffers()
-            self.args_recv_info[chunk] = args_recv
-            self.kwargs_recv_info[chunk] = kwargs_recv
+        self._prepare_send_recv_infra()
 
-        self.dst_infos = self._create_send_info()
-        self.grad_recv_infos = self._create_grad_recv_info(self.dst_infos)
+    def _prepare_send_recv_infra(self):
+        """
+        Create send/recv infrastructures for activations (during forward) and
+        gradients (during backward)
+        """
+        # chunk : Tuple of arg buffers
+        self.args_recv_info: Dict[int, Tuple] = {}
+        # chunk : Dict of kwarg buffers
+        self.kwargs_recv_info: Dict[int, Dict] = {}
+        for chunk in range(self.chunks):
+            (
+                self.args_recv_info[chunk],
+                self.kwargs_recv_info[chunk],
+            ) = self._create_act_recv_buffers()
+
+        # Send info during forward for each activation
+        self.act_send_info = self._create_act_send_info()
+
+        # chunk : List of output grad buffers
+        # `grad_recv_info` is a mirror of `act_send_info`
+        self.grad_recv_info: Dict = {}
+        for chunk in range(self.chunks):
+            self.grad_recv_info[chunk] = self._create_grad_recv_info(
+                self.act_send_info
+            )
+
+        # Send info for input grads during backward
+        # List of destinations corresponding to input grads
+        # Can be None if an input has no grad
+        # `grad_send_info` is a mirror of `args_recv_info` + `kwargs_recv_info`
+        self.grad_send_info = self._create_grad_send_info(
+            self.args_recv_info[0],
+            self.kwargs_recv_info[0],
+        )
 
     def get_rank_of_submod(
         self,
@@ -124,7 +156,7 @@ class PipelineStage(torch.nn.Module):
 
         return self.submod_to_rank[submod_name]
 
-    def _create_recv_buffers(
+    def _create_act_recv_buffers(
         self,
     ):
         def create_recv_tensor(
@@ -167,10 +199,14 @@ class PipelineStage(torch.nn.Module):
             )
 
             src_rank = self.get_rank_of_submod(input_node.name)
+            buffer = _make_tensor_from_meta(tensor_meta, self.device)
+            # Enable gradient in training mode
+            if self.pipe.has_loss_and_backwards:
+                buffer.requires_grad_(True)
             return RecvInfo(
                 input_node.name,
                 src_rank,
-                _make_tensor_from_meta(tensor_meta, self.device),
+                buffer,
             )
 
         # `args` is a Tuple, hence we will have:
@@ -185,68 +221,78 @@ class PipelineStage(torch.nn.Module):
             self.node.kwargs, create_recv_tensor
         )
 
+        logging.info(
+            f"[{self.rank}][{self.name}] "
+            f"Activation recv info: {args_recv_info}"
+        )
         return args_recv_info, kwargs_recv_info
 
-    def _create_send_info(self):
-        # Find send destinations
-        def find_dst_rank(user) -> Optional[int]:
-            if user.op == "output":
-                if self.return_to_0:
-                    # Send result back to pp rank 0
-                    return 0
-                else:
-                    return None
-            elif user.target is sync_barrier:
-                # TODO
-                return None
-            elif user.target is stage_backward:
-                # No need to send assuming submod output is stored locally
-                return None
+    def find_dst_rank(
+        self,
+        user: pippy.fx.node,
+    ) -> Optional[int]:
+        """
+        Find the destination rank of a `user` node.
+        If the `user` is not a submod, `None` may be returned.
+        """
+        if user.op == "output":
+            if self.return_to_0:
+                # Send result back to pp rank 0
+                return 0
             else:
-                # User is a stage (`call_module`)
-                return self.get_rank_of_submod(user.name)
+                return None
+        elif user.target is sync_barrier:
+            # TODO
+            return None
+        elif user.target is stage_backward:
+            # No need to send assuming submod output is stored locally
+            return None
+        else:
+            # User is a stage (`call_module`)
+            return self.get_rank_of_submod(user.name)
 
+    def _create_act_send_info(self):
         # Output index: List of receiver ranks
-        dst_infos: Dict[int, List] = {}
+        act_send_info: Dict[int, List] = {}
         out_idx = 0
 
         for user in self.node.users:
             if user.target is operator.getitem:
                 # Recursively find the real destination
-                gi_dsts = dst_infos.setdefault(out_idx, [])
+                gi_dsts = act_send_info.setdefault(out_idx, [])
                 for gi_user in user.users:
-                    dst_rank = find_dst_rank(gi_user)
+                    dst_rank = self.find_dst_rank(gi_user)
                     if dst_rank is not None:
                         gi_dsts.append(dst_rank)
                 # Next `getitem` will point to the next output index
                 out_idx += 1
             else:
                 # In case of single output value, `out_idx` will not increase
-                dsts = dst_infos.setdefault(out_idx, [])
-                dst_rank = find_dst_rank(user)
+                dsts = act_send_info.setdefault(out_idx, [])
+                dst_rank = self.find_dst_rank(user)
                 if dst_rank is not None:
                     dsts.append(dst_rank)
 
         logging.info(
-            f"[{self.rank}][{self.name}] " f"Send info: {dst_infos}"
+            f"[{self.rank}][{self.name}] " f"Send info: {act_send_info}"
         )
-        return dst_infos
+        return act_send_info
 
     def _create_grad_recv_info(
         self,
-        dst_infos : Dict,
-    ):
+        act_send_info: Dict,
+    ) -> Dict[int, RecvInfo]:
         # Dict[output_index, RecvInfo]
-        grad_recv_infos : Dict = {}
+        grad_recv_info: Dict = {}
         my_tensor_meta = self.node.meta["tensor_meta"]
 
-        for out_idx, dst_list in dst_infos.items():
+        for out_idx, dst_list in act_send_info.items():
             if not dst_list:
                 # No actual receiver for activation so no grad coming back
                 continue
 
             # TODO: clean way
-            if len(dst_infos) > 1:
+            if len(act_send_info) > 1:
                 tensor_meta = my_tensor_meta[out_idx]
             else:
                 tensor_meta = my_tensor_meta
@@ -254,13 +300,57 @@ class PipelineStage(torch.nn.Module):
             # TODO: otherwise needs grad accumulation
             assert len(dst_list) == 1
             grad_src = dst_list[0]
-            grad_recv_infos[out_idx] = RecvInfo(
+            grad_recv_info[out_idx] = RecvInfo(
                 f"{grad_src}",
                 grad_src,
                 _make_tensor_from_meta(tensor_meta, self.device),
             )
 
-        return grad_recv_infos
+        logging.info(
+            f"[{self.rank}][{self.name}] " f"Grad recv info: {grad_recv_info}"
+        )
+        return grad_recv_info
+
+    def _create_grad_send_info(
+        self,
+        args_recv_info: Tuple,
+        kwargs_recv_info: Dict,
+    ) -> List[Optional[int]]:
+        grad_send_info = []
+
+        def map_recv_to_send(a):
+            if isinstance(a, RecvInfo):
+                grad_send_info.append(a.source)
+                return a.source
+            else:
+                grad_send_info.append(None)
+                return None
+
+        pippy.fx.node.map_aggregate(args_recv_info, map_recv_to_send)
+
+        pippy.fx.node.map_aggregate(kwargs_recv_info, map_recv_to_send)
+
+        logging.info(
+            f"[{self.rank}][{self.name}] " f"Grad send info: {grad_send_info}"
+        )
+        return grad_send_info
+
+    def _recv_tensor(self, info, recv_reqs):
+        logging.debug(
+            f"[{self.rank}][{self.name}] "
+            f"Receiving tensor '{info.input_name}' from Rank {info.source}: "
+            f"{info.buffer.size()}"
+        )
+        # Use async to parallelize recv of tensors
+        work = dist.irecv(
+            info.buffer,
+            info.source
+            if self.group is None
+            else dist.get_global_rank(self.group, info.source),
+            group=self.group,
+        )
+        recv_reqs.append(work)
+        return info.buffer
 
     def forward(self, *args, **kwargs):
         # map microbatch ID to list of forward tensor args
@@ -280,22 +370,10 @@ class PipelineStage(torch.nn.Module):
         # Send requests of a chunk
         send_reqs: List[dist.Work] = []
 
-        def recv_tensor(info):
-            logging.info(
-                f"[{self.rank}][{self.name}] "
-                f"Receiving tensor '{info.input_name}' from Rank {info.source}: "
-                f"{info.buffer.size()}"
-            )
-            # Use async to parallelize recv of tensors
-            work = dist.irecv(
-                info.buffer,
-                info.source
-                if self.group is None
-                else dist.get_global_rank(self.group, info.source),
-                group=self.group,
-            )
-            recv_reqs.append(work)
-            return info.buffer
+        def recv_tensor_fn(reqs):
+            return lambda info: self._recv_tensor(info, reqs)
+
+        act_recv = recv_tensor_fn(recv_reqs)
 
         output_chunks = []
 
@@ -307,7 +385,7 @@ class PipelineStage(torch.nn.Module):
 
             def recv_args(info):
                 if isinstance(info, RecvInfo):
-                    return recv_tensor(info)
+                    return act_recv(info)
                 else:
                     return chunk_args_list.pop(0)
 
@@ -321,7 +399,7 @@ class PipelineStage(torch.nn.Module):
 
             def recv_kwargs(info):
                 if isinstance(info, RecvInfo):
-                    return recv_tensor(info)
+                    return act_recv(info)
                 else:
                     k = next(iter(chunk_kwargs))
                     return chunk_kwargs.pop(k)
@@ -338,6 +416,7 @@ class PipelineStage(torch.nn.Module):
             # Compute
             try:
                 output = self.submod(*composite_args, **composite_kwargs)
+
             except Exception as e:
                 exc_msg = f"""
                 Rank {self.rank} failed to run forward stage: {self.name}
@@ -347,17 +426,17 @@ class PipelineStage(torch.nn.Module):
                 raise RuntimeError(exc_msg) from e
 
             # Unify output form to tuple for easy correspondance with
-            # `dst_infos`
+            # `act_send_info`
             output_tuple = output if type(output) is tuple else (output,)
 
             for idx, out in enumerate(output_tuple):
-                dst_ranks = self.dst_infos[idx]
+                dst_ranks = self.act_send_info[idx]
                 for dst in dst_ranks:
                     if dst is None:
                         # If dst is a `output` node, we don't need to send
                         # (unless `return_to_0` is required)
                         continue
-                    logging.info(
+                    logging.debug(
                         f"[{self.rank}][{self.name}] "
                         f"Sending tensor to Rank {dst}: {out.size()}"
                     )
@@ -374,8 +453,8 @@ class PipelineStage(torch.nn.Module):
             output_chunks.append(output)
 
             # Save activations and inputs for backward
-            _, flat_args = flatten_args(composite_args)
-            _, flat_kwargs = flatten_args(composite_kwargs)
+            flat_args = flatten_args(composite_args)
+            flat_kwargs = flatten_args(composite_kwargs)
             flatten_input_tensors = flat_args + flat_kwargs
             fwd_cache[chunk] = (
                 output_tuple,  # stage_output
@@ -388,15 +467,63 @@ class PipelineStage(torch.nn.Module):
             work.wait()
 
         # Backward starts here
+        # Receive requests of a chunk
+        grad_recv_reqs: List[dist.Work] = []
+        # Send requests of a chunk
+        grad_send_reqs: List[dist.Work] = []
+
+        recv_grad = recv_tensor_fn(grad_recv_reqs)
+
         for bwd_chunk in range(self.chunks):
+            # Receive gradients
+            grad_recv_reqs.clear()
+            grads = pippy.fx.node.map_aggregate(
+                self.grad_recv_info[bwd_chunk],
+                recv_grad,
+            )
+            # Wait for all recvs to finish
+            for work in grad_recv_reqs:
+                work.wait()
+
+            logging.debug(
+                f"[{self.rank}][{self.name}] "
+                f"Received output grads of chunk {bwd_chunk}: {map_debug_info(grads)}"
+            )
+            # Pack args for `stage_backward``
             bwd_kwargs = dict(self.bwd_node.kwargs)
             (
                 bwd_kwargs["stage_output"],
                 bwd_kwargs["input_values"],
             ) = fwd_cache.pop(bwd_chunk)
-            if self.rank == self.nstages - 1:
-                # `stage_backward` node does not have `args`, only `kwargs`
-                grad_inputs, _ = stage_backward(**bwd_kwargs)
+            # (None,) is for `stage_backward` signature
+            bwd_kwargs["output_grads"] = grads if len(grads) > 0 else (None,)
+
+            # `stage_backward` node does not have `args`, only `kwargs`
+            grads_input, _ = stage_backward(**bwd_kwargs)
+
+            for grad, grad_receiver in zip(grads_input, self.grad_send_info):
+                if isinstance(grad, torch.Tensor) and grad_receiver is not None:
+                    logging.debug(
+                        f"[{self.rank}][{self.name}] "
+                        f"Sending gradient to Rank {grad_receiver}: {grad.size()}"
+                    )
+                    work = dist.isend(
+                        grad,
+                        grad_receiver
+                        if self.group is None
+                        else dist.get_global_rank(
+                            self.group, grad_receiver
+                        ),  # TODO
+                        group=self.group,
+                    )
+                    grad_send_reqs.append(work)
+                else:
+                    assert grad is None and grad_receiver is None
+
+        # Wait for all sends to finish
+        # TODO: okay to delay the sync till completion of all chunks?
+        for work in grad_send_reqs:
+            work.wait()
 
         # Last rank return merged results per original format
         if self.rank == self.nstages - 1:
