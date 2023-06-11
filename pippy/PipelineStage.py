@@ -352,10 +352,146 @@ class PipelineStage(torch.nn.Module):
         recv_reqs.append(work)
         return info.buffer
 
+    def recv_tensor_fn(
+        self,
+        reqs,
+    ):
+        return lambda info: self._recv_tensor(info, reqs)
+
+    def _recv_and_fill_inputs(
+        self,
+        chunk: int,
+        args_split,
+        kwargs_split,
+    ):
+        # Receive requests of a chunk
+        recv_reqs: List[dist.Work] = []
+
+        act_recv = self.recv_tensor_fn(recv_reqs)
+
+        if args_split:
+            chunk_args = args_split[chunk]
+            chunk_args_list = list(chunk_args)
+
+        def recv_args(info):
+            if isinstance(info, RecvInfo):
+                return act_recv(info)
+            else:
+                return chunk_args_list.pop(0)
+
+        composite_args = pippy.fx.node.map_aggregate(
+            self.args_recv_info[chunk],
+            recv_args,
+        )
+
+        if kwargs_split:
+            chunk_kwargs = kwargs_split[chunk]
+
+        def recv_kwargs(info):
+            if isinstance(info, RecvInfo):
+                return act_recv(info)
+            else:
+                k = next(iter(chunk_kwargs))
+                return chunk_kwargs.pop(k)
+
+        composite_kwargs = pippy.fx.node.map_aggregate(
+            self.kwargs_recv_info[chunk],
+            recv_kwargs,
+        )
+
+        # Wait for all recvs to finish
+        for work in recv_reqs:
+            work.wait()
+
+        return composite_args, composite_kwargs
+
+    def _send_activations(
+        self,
+        output_tuple,
+    ) -> List[dist.Work]:
+        # Send requests of a chunk
+        send_reqs: List[dist.Work] = []
+
+        for idx, out in enumerate(output_tuple):
+            dst_ranks = self.act_send_info[idx]
+            for dst in dst_ranks:
+                if dst is None:
+                    # If dst is a `output` node, we don't need to send
+                    # (unless `return_to_0` is required)
+                    continue
+                logging.debug(
+                    f"[{self.rank}][{self.name}] "
+                    f"Sending tensor to Rank {dst}: {out.size()}"
+                )
+                work = dist.isend(
+                    out,
+                    dst
+                    if self.group is None
+                    else dist.get_global_rank(self.group, dst),  # TODO
+                    group=self.group,
+                )
+                send_reqs.append(work)
+
+        return send_reqs
+
+    def _recv_grads(
+        self,
+        bwd_chunk,
+    ):
+        # Receive requests of a chunk
+        grad_recv_reqs: List[dist.Work] = []
+
+        recv_grad = self.recv_tensor_fn(grad_recv_reqs)
+
+        # Receive gradients
+        grads = pippy.fx.node.map_aggregate(
+            self.grad_recv_info[bwd_chunk],
+            recv_grad,
+        )
+        # Wait for all recvs to finish
+        for work in grad_recv_reqs:
+            work.wait()
+
+        logging.debug(
+            f"[{self.rank}][{self.name}] "
+            f"Received output grads of chunk {bwd_chunk}: {map_debug_info(grads)}"
+        )
+        return grads
+
+    def _send_grads(
+        self,
+        grads_input,
+    ) -> List[dist.Work]:
+        # Send requests of a chunk
+        grad_send_reqs: List[dist.Work] = []
+
+        for grad, grad_receiver in zip(grads_input, self.grad_send_info):
+            if isinstance(grad, torch.Tensor) and grad_receiver is not None:
+                logging.debug(
+                    f"[{self.rank}][{self.name}] "
+                    f"Sending gradient to Rank {grad_receiver}: {grad.size()}"
+                )
+                work = dist.isend(
+                    grad,
+                    grad_receiver
+                    if self.group is None
+                    else dist.get_global_rank(
+                        self.group, grad_receiver
+                    ),  # TODO
+                    group=self.group,
+                )
+                grad_send_reqs.append(work)
+            else:
+                assert grad is None and grad_receiver is None
+
+        return grad_send_reqs
+
     def forward(self, *args, **kwargs):
         # map microbatch ID to list of forward tensor args
         fwd_cache: Dict[int, Tuple[Any, List[torch.Tensor]]] = {}
 
+        args_split = None
+        kwargs_split = None
         if args or kwargs:
             args_split, kwargs_split = split_args_kwargs_into_chunks(
                 args,
@@ -365,55 +501,19 @@ class PipelineStage(torch.nn.Module):
                 self.kwargs_chunk_spec,
             )
 
-        # Receive requests of a chunk
-        recv_reqs: List[dist.Work] = []
-        # Send requests of a chunk
-        send_reqs: List[dist.Work] = []
-
-        def recv_tensor_fn(reqs):
-            return lambda info: self._recv_tensor(info, reqs)
-
-        act_recv = recv_tensor_fn(recv_reqs)
+        # Activation send requests of all chunk
+        all_send_reqs: List[dist.Work] = []
 
         output_chunks = []
 
         for chunk in range(self.chunks):
-            recv_reqs.clear()
-            if args:
-                chunk_args = args_split[chunk]
-                chunk_args_list = list(chunk_args)
-
-            def recv_args(info):
-                if isinstance(info, RecvInfo):
-                    return act_recv(info)
-                else:
-                    return chunk_args_list.pop(0)
-
-            composite_args = pippy.fx.node.map_aggregate(
-                self.args_recv_info[chunk],
-                recv_args,
+            composite_args, composite_kwargs = self._recv_and_fill_inputs(
+                chunk,
+                args_split,
+                kwargs_split,
             )
 
-            if kwargs:
-                chunk_kwargs = kwargs_split[chunk]
-
-            def recv_kwargs(info):
-                if isinstance(info, RecvInfo):
-                    return act_recv(info)
-                else:
-                    k = next(iter(chunk_kwargs))
-                    return chunk_kwargs.pop(k)
-
-            composite_kwargs = pippy.fx.node.map_aggregate(
-                self.kwargs_recv_info[chunk],
-                recv_kwargs,
-            )
-
-            # Wait for all recvs to finish
-            for work in recv_reqs:
-                work.wait()
-
-            # Compute
+            # Compute forward
             try:
                 output = self.submod(*composite_args, **composite_kwargs)
 
@@ -429,25 +529,8 @@ class PipelineStage(torch.nn.Module):
             # `act_send_info`
             output_tuple = output if type(output) is tuple else (output,)
 
-            for idx, out in enumerate(output_tuple):
-                dst_ranks = self.act_send_info[idx]
-                for dst in dst_ranks:
-                    if dst is None:
-                        # If dst is a `output` node, we don't need to send
-                        # (unless `return_to_0` is required)
-                        continue
-                    logging.debug(
-                        f"[{self.rank}][{self.name}] "
-                        f"Sending tensor to Rank {dst}: {out.size()}"
-                    )
-                    work = dist.isend(
-                        out,
-                        dst
-                        if self.group is None
-                        else dist.get_global_rank(self.group, dst),  # TODO
-                        group=self.group,
-                    )
-                    send_reqs.append(work)
+            send_reqs = self._send_activations(output_tuple)
+            all_send_reqs += send_reqs
 
             # Prepare for final output merge or reduction
             output_chunks.append(output)
@@ -463,32 +546,16 @@ class PipelineStage(torch.nn.Module):
 
         # Wait for all sends to finish
         # TODO: okay to delay the sync till completion of all chunks?
-        for work in send_reqs:
+        for work in all_send_reqs:
             work.wait()
 
         # Backward starts here
-        # Receive requests of a chunk
-        grad_recv_reqs: List[dist.Work] = []
-        # Send requests of a chunk
-        grad_send_reqs: List[dist.Work] = []
-
-        recv_grad = recv_tensor_fn(grad_recv_reqs)
+        # Grad send requests of all chunk
+        all_grad_send_reqs: List[dist.Work] = []
 
         for bwd_chunk in range(self.chunks):
-            # Receive gradients
-            grad_recv_reqs.clear()
-            grads = pippy.fx.node.map_aggregate(
-                self.grad_recv_info[bwd_chunk],
-                recv_grad,
-            )
-            # Wait for all recvs to finish
-            for work in grad_recv_reqs:
-                work.wait()
+            grads = self._recv_grads(bwd_chunk)
 
-            logging.debug(
-                f"[{self.rank}][{self.name}] "
-                f"Received output grads of chunk {bwd_chunk}: {map_debug_info(grads)}"
-            )
             # Pack args for `stage_backward``
             bwd_kwargs = dict(self.bwd_node.kwargs)
             (
@@ -501,28 +568,12 @@ class PipelineStage(torch.nn.Module):
             # `stage_backward` node does not have `args`, only `kwargs`
             grads_input, _ = stage_backward(**bwd_kwargs)
 
-            for grad, grad_receiver in zip(grads_input, self.grad_send_info):
-                if isinstance(grad, torch.Tensor) and grad_receiver is not None:
-                    logging.debug(
-                        f"[{self.rank}][{self.name}] "
-                        f"Sending gradient to Rank {grad_receiver}: {grad.size()}"
-                    )
-                    work = dist.isend(
-                        grad,
-                        grad_receiver
-                        if self.group is None
-                        else dist.get_global_rank(
-                            self.group, grad_receiver
-                        ),  # TODO
-                        group=self.group,
-                    )
-                    grad_send_reqs.append(work)
-                else:
-                    assert grad is None and grad_receiver is None
+            grad_send_reqs = self._send_grads(grads_input)
+            all_grad_send_reqs += grad_send_reqs
 
         # Wait for all sends to finish
         # TODO: okay to delay the sync till completion of all chunks?
-        for work in grad_send_reqs:
+        for work in all_grad_send_reqs:
             work.wait()
 
         # Last rank return merged results per original format
