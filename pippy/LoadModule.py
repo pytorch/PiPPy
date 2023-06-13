@@ -24,11 +24,11 @@ def load_checkpoint(
     """
     Load a checkpoint from a model file.
     Args:
-        model: the model to load the checkpoint into
-        index_filename: path to the checkpoint's index (metadata file)
-        device: the device on which to load the checkpoint
-        dtype: the dtype on which to load the checkpoint
-        checkpoint_prefix: the prefix of the checkpoint to load
+        model (`torch.nn.Module`): the model to load the checkpoint into
+        index_filename (`Union[str, os.PathLike]`): path to the checkpoint's index (metadata file)
+        device (`torch.device`): the device on which to load the checkpoint
+        dtype (`torch.dtype`): the dtype on which to load the checkpoint
+        checkpoint_prefix (`str`): the prefix of the checkpoint to load
     Returns:
         The loaded checkpoint model
     Example:
@@ -89,7 +89,7 @@ def _get_file_to_weight_map(
     """
     A helper function to create a mapping from binary checkpoint filename to parameter names
     Args:
-        model (`torch.nn.Module`): The model to load weights from
+        model (`torch.nn.Module`): The model to load weights into
         index (`Dict[str, str]`): The checkpoint index mapping parameter name to binary checkpoint filename
         prefix_to_test (`List[str]`): prefix to try if direct match is not found
     Returns:
@@ -242,7 +242,7 @@ def _set_module_tensor_to_device(
             # Note: `torch.tensor()` allocates new memory to copy the data of
             # tensor, so clone is taken care of
             new_value = torch.tensor(value, device=device, dtype=dtype)
-            
+
         if is_buffer:
             submod._buffers[weight] = new_value
         else:
