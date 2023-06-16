@@ -88,19 +88,20 @@ class PipelineStage(torch.nn.Module):
             raise AssertionError(f"Cannot find {self.name} in graph")
 
         # Find my backward node in graph
-        found_bwd = False
-        seen_bwd = -1
-        for node in reversed(self.split_gm.graph.nodes):
-            if (node.op, node.target) == ("call_function", stage_backward):
-                seen_bwd += 1
-                if seen_bwd == self.rank:
-                    found_bwd = True
-                    self.bwd_node = node
-                    break
-        if not found_bwd:
-            raise AssertionError(
-                f"Cannot find backward for {self.name} in graph"
-            )
+        if self.pipe.has_loss_and_backwards:
+            found_bwd = False
+            seen_bwd = -1
+            for node in reversed(self.split_gm.graph.nodes):
+                if (node.op, node.target) == ("call_function", stage_backward):
+                    seen_bwd += 1
+                    if seen_bwd == self.rank:
+                        found_bwd = True
+                        self.bwd_node = node
+                        break
+            if not found_bwd:
+                raise AssertionError(
+                    f"Cannot find backward for {self.name} in graph"
+                )
 
         # Create submod to rank mapping
         self.submod_to_rank: Dict[str, int] = {}
@@ -128,22 +129,23 @@ class PipelineStage(torch.nn.Module):
         # Send info during forward for each activation
         self.act_send_info = self._create_act_send_info()
 
-        # chunk : List of output grad buffers
-        # `grad_recv_info` is a mirror of `act_send_info`
-        self.grad_recv_info: Dict = {}
-        for chunk in range(self.chunks):
-            self.grad_recv_info[chunk] = self._create_grad_recv_info(
-                self.act_send_info
-            )
+        if self.pipe.has_loss_and_backwards:
+            # chunk : List of output grad buffers
+            # `grad_recv_info` is a mirror of `act_send_info`
+            self.grad_recv_info: Dict = {}
+            for chunk in range(self.chunks):
+                self.grad_recv_info[chunk] = self._create_grad_recv_info(
+                    self.act_send_info
+                )
 
-        # Send info for input grads during backward
-        # List of destinations corresponding to input grads
-        # Can be None if an input has no grad
-        # `grad_send_info` is a mirror of `args_recv_info` + `kwargs_recv_info`
-        self.grad_send_info = self._create_grad_send_info(
-            self.args_recv_info[0],
-            self.kwargs_recv_info[0],
-        )
+            # Send info for input grads during backward
+            # List of destinations corresponding to input grads
+            # Can be None if an input has no grad
+            # `grad_send_info` is a mirror of `args_recv_info` + `kwargs_recv_info`
+            self.grad_send_info = self._create_grad_send_info(
+                self.args_recv_info[0],
+                self.kwargs_recv_info[0],
+            )
 
     def get_rank_of_submod(
         self,
@@ -543,32 +545,35 @@ class PipelineStage(torch.nn.Module):
         for work in all_send_reqs:
             work.wait()
 
-        # Backward starts here
-        # Grad send requests of all chunk
-        all_grad_send_reqs: List[dist.Work] = []
+        if self.pipe.has_loss_and_backwards:
+            # Backward starts here
+            # Grad send requests of all chunk
+            all_grad_send_reqs: List[dist.Work] = []
 
-        for bwd_chunk in range(self.chunks):
-            grads = self._recv_grads(bwd_chunk)
+            for bwd_chunk in range(self.chunks):
+                grads = self._recv_grads(bwd_chunk)
 
-            # Pack args for `stage_backward``
-            bwd_kwargs = dict(self.bwd_node.kwargs)
-            (
-                bwd_kwargs["stage_output"],
-                bwd_kwargs["input_values"],
-            ) = fwd_cache.pop(bwd_chunk)
-            # (None,) is for `stage_backward` signature
-            bwd_kwargs["output_grads"] = grads if len(grads) > 0 else (None,)
+                # Pack args for `stage_backward``
+                bwd_kwargs = dict(self.bwd_node.kwargs)
+                (
+                    bwd_kwargs["stage_output"],
+                    bwd_kwargs["input_values"],
+                ) = fwd_cache.pop(bwd_chunk)
+                # (None,) is for `stage_backward` signature
+                bwd_kwargs["output_grads"] = (
+                    grads if len(grads) > 0 else (None,)
+                )
 
-            # `stage_backward` node does not have `args`, only `kwargs`
-            grads_input, _ = stage_backward(**bwd_kwargs)
+                # `stage_backward` node does not have `args`, only `kwargs`
+                grads_input, _ = stage_backward(**bwd_kwargs)
 
-            grad_send_reqs = self._send_grads(grads_input)
-            all_grad_send_reqs += grad_send_reqs
+                grad_send_reqs = self._send_grads(grads_input)
+                all_grad_send_reqs += grad_send_reqs
 
-        # Wait for all sends to finish
-        # TODO: okay to delay the sync till completion of all chunks?
-        for work in all_grad_send_reqs:
-            work.wait()
+            # Wait for all sends to finish
+            # TODO: okay to delay the sync till completion of all chunks?
+            for work in all_grad_send_reqs:
+                work.wait()
 
         # Last rank return merged results per original format
         if self.rank == self.nstages - 1:
