@@ -3,7 +3,6 @@ from typing import List
 
 import torch
 from pippy.debug import map_debug_info
-import pippy.fx
 
 
 def stage_backward(
@@ -83,7 +82,7 @@ def stage_backward(
         for val in input_values:
             if isinstance(val, torch.Tensor) and val.requires_grad:
                 inputs_with_grad.append(val)
-        
+
         grad_inputs = torch.autograd.grad(
             stage_output_tensors, inputs_with_grad, output_grad_tensors,  # type: ignore[arg-type]
         )
