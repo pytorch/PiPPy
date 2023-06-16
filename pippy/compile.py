@@ -250,6 +250,7 @@ def compile_stage(
         tracer=tracer,
         output_loss_value_spec=output_loss_value_spec,
         split_policy=split_policy,
+        return_to_0=return_to_0,
         **kwargs,
     )
 
@@ -299,7 +300,6 @@ def compile_stage(
         num_chunks,
         device,
         group,
-        return_to_0,
         args_chunk_spec,
         kwargs_chunk_spec,
         output_chunk_spec,

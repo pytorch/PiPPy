@@ -52,7 +52,6 @@ class PipelineStage(torch.nn.Module):
         chunks: int,
         device: torch.device,
         group: dist.ProcessGroup = None,
-        return_to_0: bool = False,
         args_chunk_spec=None,
         kwargs_chunk_spec=None,
         output_chunk_spec=None,
@@ -64,7 +63,6 @@ class PipelineStage(torch.nn.Module):
         self.chunks = chunks
         self.device = device
         self.group = group
-        self.return_to_0 = return_to_0
         self.args_chunk_spec = args_chunk_spec
         self.kwargs_chunk_spec = kwargs_chunk_spec
         self.output_chunk_spec = output_chunk_spec
@@ -235,21 +233,19 @@ class PipelineStage(torch.nn.Module):
         Find the destination rank of a `user` node.
         If the `user` is not a submod, `None` may be returned.
         """
-        if user.op == "output":
-            if self.return_to_0:
-                # Send result back to pp rank 0
-                return 0
-            else:
-                return None
-        elif user.target is sync_barrier:
-            # TODO
-            return None
-        elif user.target is stage_backward:
-            # No need to send assuming submod output is stored locally
-            return None
-        else:
+        if user.op == "call_module":
             # User is a stage (`call_module`)
             return self.get_rank_of_submod(user.name)
+        elif user.target is sync_barrier:
+            # Send result back to pp rank 0
+            return 0
+        else:
+            # - If user.op == "output":
+            #   No need to send back to rank 0
+            # - If user.target is stage_backward:
+            #   No need to send assuming submod output is stored locally or
+            #   should be re-calucated in case of activation checkpointing
+            return None
 
     def _create_act_send_info(self):
         # Output index: List of receiver ranks
@@ -416,8 +412,6 @@ class PipelineStage(torch.nn.Module):
             dst_ranks = self.act_send_info[idx]
             for dst in dst_ranks:
                 if dst is None:
-                    # If dst is a `output` node, we don't need to send
-                    # (unless `return_to_0` is required)
                     continue
                 logging.debug(
                     f"[{self.rank}][{self.name}] "
