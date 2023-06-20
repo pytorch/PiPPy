@@ -2,10 +2,13 @@ import torch.distributed as dist
 import pippy
 
 from itertools import chain
+import logging
 import json
 import os
 
 CKPT_INDEX_JSON_FILENAME = "pytorch_model.bin.index.json"
+
+logger = logging.getLogger(__name__)
 
 
 def _save_index(
@@ -48,6 +51,8 @@ def _save_index(
 
     with open(filepath, "w") as f:
         f.write(json_str)
+
+    logger.info(f"Saved index file to {filepath}")
 
 
 def _get_binary_filename(cur_idx: int) -> str:
