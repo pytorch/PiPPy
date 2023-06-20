@@ -51,7 +51,7 @@ def _atomic_write(file_contents: str, target_file_path: str, mode="w") -> None:
         if os.path.exists(temp_file.name):
             try:
                 os.unlink(temp_file.name)
-            except:
+            except Exception:
                 pass
 
 
