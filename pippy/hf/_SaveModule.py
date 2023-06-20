@@ -2,45 +2,13 @@ import torch.distributed as dist
 import pippy
 
 from itertools import chain
-import tempfile
 import logging
-import shutil
 import json
 import os
 
 CKPT_INDEX_JSON_FILENAME = "pytorch_model.bin.index.json"
 
 logger = logging.getLogger(__name__)
-
-def _atomic_write(file_contents: str, target_file_path: str, mode="w") -> None:
-    """
-    Atomically writes `file_contents` into `target_file_path`.
-
-    Args:
-        file_contents (str): contents to write to file
-        target_file_path (str): path to write to
-        mode (str, optional): mode to write file with. Defaults to "w". Only "w" and "a" are supported.
-    """
-    # create tempfile as `move` ops aren't guaranteed to be atomic when between different file systems
-    temp_file = tempfile.NamedTemporaryFile(
-        delete=False, dir=os.path.dirname(target_file_path)
-    )
-    try:
-        with open(temp_file.name, mode) as f:
-            f.write(file_contents)
-            # sync in-memory state with storage device
-            f.flush()
-            os.fsync(f.fileno())
-
-        os.replace(temp_file.name, target_file_path)
-    finally:
-        if os.path.exists(temp_file.name):
-            try:
-                os.unlink(
-                    temp_file.name
-                )  # get rid of the tempfile if it still exists after replacing with target file name
-            except Exception:
-                pass  # add pass for try/except block completion
 
 
 def _save_index(
@@ -85,6 +53,8 @@ def _save_index(
 
     # write index file atomically to avoid partial/corrupted writes
     _atomic_write(json_str, filepath)
+
+    logger.info(f"Saved index file to {filepath}")
 
     logger.info(f"Saved index file to {filepath}")
 
