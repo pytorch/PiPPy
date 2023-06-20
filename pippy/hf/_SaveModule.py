@@ -1,6 +1,7 @@
 import torch.distributed as dist
 import pippy
 
+from itertools import chain
 import json
 import os
 
@@ -26,11 +27,13 @@ def _save_index(
 
     weight_map = {}
     for idx, (submod_name, submod) in enumerate(pipe.split_gm.named_children()):
-        for param_name, _ in submod.named_parameters():
+        params_buffers = chain(submod.named_parameters(), submod.named_buffers())
+        for param_name, _ in params_buffers:
             old_name = submod.remap_qualname(param_name)
 
-            binary_filename = _create_binary_filename(idx)
+            binary_filename = _get_binary_filename(idx)
             weight_map[old_name] = binary_filename
+
     index_dict["weight_map"] = weight_map
 
     json_str = json.dumps(index_dict, indent=4)
@@ -45,7 +48,7 @@ def _save_index(
         f.write(json_str)
 
 
-def _create_binary_filename(cur_idx: int) -> str:
+def _get_binary_filename(cur_idx: int) -> str:
     """
     Gets filename for pytorch checkpoint binary based on current index and world size.
 
