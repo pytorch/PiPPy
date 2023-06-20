@@ -29,7 +29,7 @@ def _save_index(
         for param_name, _ in submod.named_parameters():
             old_name = submod.remap_qualname(param_name)
 
-            binary_filename = create_binary_filename(idx)
+            binary_filename = _create_binary_filename(idx)
             weight_map[old_name] = binary_filename
     index_dict["weight_map"] = weight_map
 
@@ -45,7 +45,7 @@ def _save_index(
         f.write(json_str)
 
 
-def create_binary_filename(cur_idx: int) -> str:
+def _create_binary_filename(cur_idx: int) -> str:
     """
     Creates filename for pytorch checkpoint binary based on current index and world size.
 
