@@ -47,7 +47,7 @@ def _save_index(
 
 def _create_binary_filename(cur_idx: int) -> str:
     """
-    Creates filename for pytorch checkpoint binary based on current index and world size.
+    Gets filename for pytorch checkpoint binary based on current index and world size.
 
     Args:
         cur_idx (int): current device index
