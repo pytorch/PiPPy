@@ -27,7 +27,9 @@ def _save_index(
 
     weight_map = {}
     for idx, (submod_name, submod) in enumerate(pipe.split_gm.named_children()):
-        params_buffers = chain(submod.named_parameters(), submod.named_buffers())
+        params_buffers = chain(
+            submod.named_parameters(), submod.named_buffers()
+        )
         for param_name, _ in params_buffers:
             old_name = submod.remap_qualname(param_name)
 
