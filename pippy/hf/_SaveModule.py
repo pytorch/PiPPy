@@ -23,6 +23,9 @@ def _copy_with_metadata(source: str, target: str) -> None:
     """
     shutil.copy2(source, target)
     st = os.stat(source)
+    # copy over permissions in case source file needs them
+    # for this purpose, of writing ckpt to file,
+    # permissions shouldn't be necessary but just in case
     os.chown(target, st.st_uid, st.st_gid)
 
 
@@ -35,6 +38,7 @@ def _atomic_write(file_contents: str, target_file_path: str, mode="w") -> None:
         target_file_path (str): path to write to
         mode (str, optional): mode to write file with. Defaults to "w". Only "w" and "a" are supported.
     """
+    # create tempfile as `move` ops aren't guaranteed to be atomic when between different file systems
     temp_file = tempfile.NamedTemporaryFile(
         delete=False, dir=os.path.dirname(target_file_path)
     )
@@ -43,6 +47,7 @@ def _atomic_write(file_contents: str, target_file_path: str, mode="w") -> None:
             _copy_with_metadata(target_file_path, temp_file.name)
         with open(temp_file.name, mode) as f:
             f.write(file_contents)
+            # sync in-memory state with storage device
             f.flush()
             os.fsync(f.fileno())
 
@@ -50,9 +55,11 @@ def _atomic_write(file_contents: str, target_file_path: str, mode="w") -> None:
     finally:
         if os.path.exists(temp_file.name):
             try:
-                os.unlink(temp_file.name)
+                os.unlink(
+                    temp_file.name
+                )  # get rid of the tempfile if it still exists after replacing with target file name
             except Exception:
-                pass
+                pass  # add pass for try/except block completion
 
 
 def _save_index(
@@ -69,11 +76,12 @@ def _save_index(
         checkpoint_dir (str, optional): directory to save checkpoint to. Defaults to "checkpoints".
     """
     index_dict = {}
-    total_size = 0
+    total_size = 0  # set to zero for now
     index_dict["metadata"] = {"total_size": total_size}
 
     weight_map = {}
-    for idx, (submod_name, submod) in enumerate(pipe.split_gm.named_children()):
+    for idx, (_, submod) in enumerate(pipe.split_gm.named_children()):
+        # chain both params and buffers generators together
         params_buffers = chain(
             submod.named_parameters(), submod.named_buffers()
         )
@@ -85,6 +93,7 @@ def _save_index(
 
     index_dict["weight_map"] = weight_map
 
+    # serialize json
     json_str = json.dumps(index_dict, indent=4)
 
     filepath = os.path.join(checkpoint_dir, ckpt_index_filename)
@@ -93,6 +102,7 @@ def _save_index(
     if not os.path.exists(checkpoint_dir):
         os.mkdir(checkpoint_dir)
 
+    # write index file atomically to avoid partial/corrupted writes
     _atomic_write(json_str, filepath)
 
     logger.info(f"Saved index file to {filepath}")
