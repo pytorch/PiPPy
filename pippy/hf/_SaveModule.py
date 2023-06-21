@@ -12,23 +12,6 @@ CKPT_INDEX_JSON_FILENAME = "pytorch_model.bin.index.json"
 
 logger = logging.getLogger(__name__)
 
-
-def _copy_with_metadata(source: str, target: str) -> None:
-    """
-    Copy file with all its permisions and metadata.
-
-    Args:
-        source (str): path to source file
-        target (str): path to copy to
-    """
-    shutil.copy2(source, target)
-    st = os.stat(source)
-    # copy over permissions in case source file needs them
-    # for this purpose, of writing ckpt to file,
-    # permissions shouldn't be necessary but just in case
-    os.chown(target, st.st_uid, st.st_gid)
-
-
 def _atomic_write(file_contents: str, target_file_path: str, mode="w") -> None:
     """
     Atomically writes `file_contents` into `target_file_path`.
@@ -43,8 +26,6 @@ def _atomic_write(file_contents: str, target_file_path: str, mode="w") -> None:
         delete=False, dir=os.path.dirname(target_file_path)
     )
     try:
-        if os.path.exists(target_file_path):
-            _copy_with_metadata(target_file_path, temp_file.name)
         with open(temp_file.name, mode) as f:
             f.write(file_contents)
             # sync in-memory state with storage device
