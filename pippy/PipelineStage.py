@@ -315,7 +315,7 @@ class PipelineStage(torch.nn.Module):
         args_recv_info: Tuple,
         kwargs_recv_info: Dict,
     ) -> List[Optional[int]]:
-        grad_send_info : List[Optional[int]] = []
+        grad_send_info: List[Optional[int]] = []
 
         def map_recv_to_send(a):
             if isinstance(a, RecvInfo):
