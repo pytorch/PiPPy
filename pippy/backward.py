@@ -2,7 +2,7 @@
 from typing import List
 
 import torch
-import pippy.fx
+from pippy.debug import map_debug_info
 
 
 def stage_backward(
@@ -13,17 +13,11 @@ def stage_backward(
     outputs_with_grads_idxs: List[int],
 ):
     """
-    Given the input value(s) and the corresponding gradient for those/that input
+    Given the input value(s) and the corresponding gradient for the output
     value(s), compute and accumulate gradients for all parameter values (leaves
     in the autograd trace) as well as return a list of the gradients for the
     input values
     """
-
-    def friendly_debug_info(v):
-        if isinstance(v, torch.Tensor):
-            return f"Tensor(size={v.shape})"
-        else:
-            return str(v)
 
     try:
         stage_output_with_grads = [
@@ -82,12 +76,24 @@ def stage_backward(
             else:
                 grad_inputs.append(None)
 
+        # TODO: use `torch.autograd.grad`
+        """
+        inputs_with_grad = []
+        for val in input_values:
+            if isinstance(val, torch.Tensor) and val.requires_grad:
+                inputs_with_grad.append(val)
+
+        grad_inputs = torch.autograd.grad(
+            stage_output_tensors, inputs_with_grad, output_grad_tensors,  # type: ignore[arg-type]
+        )
+        """
+
     except Exception as e:
         exc_msg = f"""
         Failed to run backward stage {stage_info}
-        Stage output value: {pippy.fx.node.map_aggregate(stage_output, friendly_debug_info)}
-        Output gradient values: {pippy.fx.node.map_aggregate(output_grads, friendly_debug_info)}
-        Input values: {pippy.fx.node.map_aggregate(input_values, friendly_debug_info)}
+        Stage output: {map_debug_info(stage_output)}
+        Output gradient: {map_debug_info(output_grads)}
+        Input: {map_debug_info(input_values)}
         """
         raise RuntimeError(exc_msg) from e
 
