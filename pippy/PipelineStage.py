@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import torch
 import torch.distributed as dist
 import pippy
+import pippy.fx
 from pippy.backward import stage_backward, sync_barrier
 from pippy.debug import map_debug_info
 
@@ -229,7 +230,7 @@ class PipelineStage(torch.nn.Module):
 
     def find_dst_rank(
         self,
-        user: pippy.fx.node,
+        user: pippy.fx.Node,
     ) -> Optional[int]:
         """
         Find the destination rank of a `user` node.
@@ -314,7 +315,7 @@ class PipelineStage(torch.nn.Module):
         args_recv_info: Tuple,
         kwargs_recv_info: Dict,
     ) -> List[Optional[int]]:
-        grad_send_info = []
+        grad_send_info : List[Optional[int]] = []
 
         def map_recv_to_send(a):
             if isinstance(a, RecvInfo):
