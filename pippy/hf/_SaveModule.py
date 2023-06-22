@@ -63,6 +63,34 @@ def _get_module_size(pipe: Pipe) -> int:
     )
 
 
+def _atomic_write(file_contents: str, target_file_path: str, mode="w") -> None:
+    """
+    Atomically writes `file_contents` into `target_file_path`.
+    Args:
+        file_contents (str): contents to write to file
+        target_file_path (str): path to write to
+        mode (str, optional): mode to write file with. Defaults to "w". Only "w" and "a" are supported.
+    """
+    # create tempfile as `move` ops aren't guaranteed to be atomic when between different file systems
+    temp_file = tempfile.NamedTemporaryFile(
+        delete=False,
+        dir=os.path.dirname(target_file_path),
+    )
+    try:
+        with open(temp_file.name, mode) as f:
+            f.write(file_contents)
+            # sync in-memory state with storage device
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_file.name, target_file_path)
+    finally:
+        if os.path.exists(temp_file.name):
+            try:
+                os.unlink(temp_file.name)
+            except Exception:
+                raise RuntimeError(f"Failed to delete {temp_file.name}")
+
+
 def _save_index(
     pipe: Pipe,
     ckpt_index_filename: str = CKPT_INDEX_JSON_FILENAME,
@@ -86,7 +114,7 @@ def _save_index(
     weight_map = {}
     for idx, (_, submod) in enumerate(pipe.split_gm.named_children()):  # type: ignore
         index_dict["metadata"]["total_size"] += _get_module_size(submod)
-
+        
         # chain both params and buffers generators together
         params_buffers = chain(
             submod.named_parameters(), submod.named_buffers()
