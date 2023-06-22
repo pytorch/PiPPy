@@ -1,6 +1,5 @@
 import torch.distributed as dist
 from pippy.IR import Pipe
-from pippy.fx import GraphModule
 import torch
 
 from itertools import chain
@@ -47,23 +46,6 @@ def _atomic_write(file_contents: str, target_file_path: str, mode="w") -> None:
                 raise RuntimeError(f"Failed to delete {temp_file.name}")
 
 
-def _get_module_size(graph_module: GraphModule) -> int:
-    """
-    Returns the size of a module in bytes
-
-    Args:
-        pipe(`GraphModule`): pipeline graph module
-
-    Returns:
-        int: size of the module in bytes
-    """
-    return sum(
-        param.numel() * DTYPE_SIZES[param.dtype]
-        for param in graph_module.parameters()
-        if param.requires_grad is True
-    )
-
-
 def _save_index(
     pipe: Pipe,
     ckpt_index_filename: str = CKPT_INDEX_JSON_FILENAME,
@@ -86,17 +68,20 @@ def _save_index(
 
     weight_map = {}
     for idx, (_, submod) in enumerate(pipe.split_gm.named_children()):  # type: ignore
-        index_dict["metadata"]["total_size"] += _get_module_size(submod)  # type: ignore
-
         # chain both params and buffers generators together
         params_buffers = chain(
             submod.named_parameters(), submod.named_buffers()
         )
-        for param_name, _ in params_buffers:
+        for param_name, param in params_buffers:
             old_name = submod.remap_qualname(param_name)  # type: ignore
 
             binary_filename = _get_binary_filename(idx)
             weight_map[old_name] = binary_filename
+
+            # calculate param size
+            param_size = param.numel() * DTYPE_SIZES[param.dtype]
+
+            index_dict["metadata"]["total_size"] += param_size  # type: ignore
 
     index_dict["weight_map"] = weight_map
 
