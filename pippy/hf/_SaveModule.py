@@ -1,5 +1,5 @@
 import torch.distributed as dist
-import pippy
+from pippy.IR import Pipe
 
 from itertools import chain
 import logging
@@ -19,18 +19,18 @@ def _atomic_write(file_contents: str, target_file_path: str, mode="w") -> None:
         mode (str, optional): mode to write file with. Defaults to "w". Only "w" and "a" are supported.
     """
     try:
-        with open(temp_file.name, mode) as f:
+        with open(target_file_path, mode) as f:
             f.write(file_contents)
             # sync in-memory state with storage device
-            f.flush()
             os.fsync(f.fileno())
     except Exception:
         raise RuntimeError(
-            f"Failed to write {file_contents} to {target_file_path}")
+            f"Failed to write {file_contents} to {target_file_path}"
+        )
 
 
 def _save_index(
-    pipe: pippy.fx.GraphModule,
+    pipe: Pipe,
     ckpt_index_filename: str = CKPT_INDEX_JSON_FILENAME,
     checkpoint_dir: str = "checkpoints",
 ) -> None:
@@ -38,14 +38,16 @@ def _save_index(
     Saves index file describing location of weights in checkpoint.
 
     Args:
-        pipe (pippy.fx.GraphModule): pipeline graph module with weights to save
+        pipe (Pipe): pipeline graph module with weights to save
         ckpt_index_filename (str, optional): name of index file. Defaults to "pytorch_model.bin.index.json".
         checkpoint_dir (str, optional): directory to save checkpoint to. Defaults to "checkpoints".
     """
-    index_dict = {}
-
-    total_size = 0  # set to zero for now
-    index_dict["metadata"] = {"total_size": total_size}
+    index_dict = {
+        "metadata": {
+            "total_size": 0,
+        },
+        "weight_map": {},
+    }
 
     weight_map = {}
     for idx, (_, submod) in enumerate(pipe.split_gm.named_children()):
