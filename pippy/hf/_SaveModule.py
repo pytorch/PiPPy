@@ -1,5 +1,6 @@
 import torch.distributed as dist
 from pippy.IR import Pipe
+import torch
 
 from itertools import chain
 import tempfile
@@ -9,6 +10,12 @@ import json
 import os
 
 CKPT_INDEX_JSON_FILENAME = "pytorch_model.bin.index.json"
+
+DTYPE_SIZES = {
+    torch.float32: 4,
+    torch.float16: 2,
+    torch.bfloat16: 2,
+}
 
 
 def _atomic_write(file_contents: str, target_file_path: str, mode="w") -> None:
@@ -39,6 +46,23 @@ def _atomic_write(file_contents: str, target_file_path: str, mode="w") -> None:
                 raise RuntimeError(f"Failed to delete {temp_file.name}")
 
 
+def _get_module_size(pipe: Pipe) -> int:
+    """
+    Returns the size of a module in bytes
+
+    Args:
+        pipe(`Pipe`): pipeline graph module
+
+    Returns:
+        int: size of the module in bytes
+    """
+    return sum(
+        param.numel() * DTYPE_SIZES[param.dtype]
+        for param in pipe.parameters()
+        if param.requires_grad is True
+    )
+
+
 def _save_index(
     pipe: Pipe,
     ckpt_index_filename: str = CKPT_INDEX_JSON_FILENAME,
@@ -61,6 +85,8 @@ def _save_index(
 
     weight_map = {}
     for idx, (_, submod) in enumerate(pipe.split_gm.named_children()):  # type: ignore
+        index_dict["metadata"]["total_size"] += _get_module_size(submod)
+
         # chain both params and buffers generators together
         params_buffers = chain(
             submod.named_parameters(), submod.named_buffers()
