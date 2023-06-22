@@ -18,6 +18,10 @@ DTYPE_SIZES = {
 }
 
 
+def _get_param_size(param: torch.Tensor) -> int:
+    return param.numel() * DTYPE_SIZES[param.dtype]
+
+
 def _atomic_write(file_contents: str, target_file_path: str, mode="w") -> None:
     """
     Atomically writes `file_contents` into `target_file_path`.
@@ -78,10 +82,7 @@ def _save_index(
             binary_filename = _get_binary_filename(idx)
             weight_map[old_name] = binary_filename
 
-            # calculate param size
-            param_size = param.numel() * DTYPE_SIZES[param.dtype]
-
-            index_dict["metadata"]["total_size"] += param_size  # type: ignore
+            index_dict["metadata"]["total_size"] += _get_param_size(param)  # type: ignore
 
     index_dict["weight_map"] = weight_map
 
