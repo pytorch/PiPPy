@@ -34,13 +34,9 @@ def _atomic_write(file_contents: str, target_file_path: str, mode="w") -> None:
     finally:
         if os.path.exists(temp_file.name):
             try:
-                os.unlink(
-                    temp_file.name
-                )
+                os.unlink(temp_file.name)
             except Exception:
-                raise RuntimeError(
-                    f"Failed to delete {temp_file.name}"
-                )
+                raise RuntimeError(f"Failed to delete {temp_file.name}")
 
 
 def _save_index(
@@ -70,7 +66,7 @@ def _save_index(
             submod.named_parameters(), submod.named_buffers()
         )
         for param_name, _ in params_buffers:
-            old_name = submod.remap_qualname(param_name)
+            old_name = submod.remap_qualname(param_name)  # type: ignore
 
             binary_filename = _get_binary_filename(idx)
             weight_map[old_name] = binary_filename
