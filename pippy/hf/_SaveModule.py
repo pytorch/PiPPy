@@ -18,26 +18,15 @@ def _atomic_write(file_contents: str, target_file_path: str, mode="w") -> None:
         target_file_path (str): path to write to
         mode (str, optional): mode to write file with. Defaults to "w". Only "w" and "a" are supported.
     """
-    # create tempfile as `move` ops aren't guaranteed to be atomic when between different file systems
-    temp_file = tempfile.NamedTemporaryFile(
-        delete=False, dir=os.path.dirname(target_file_path)
-    )
     try:
         with open(temp_file.name, mode) as f:
             f.write(file_contents)
             # sync in-memory state with storage device
             f.flush()
             os.fsync(f.fileno())
-
-        os.replace(temp_file.name, target_file_path)
-    finally:
-        if os.path.exists(temp_file.name):
-            try:
-                os.unlink(
-                    temp_file.name
-                )  # get rid of the tempfile if it still exists after replacing with target file name
-            except Exception:
-                pass  # add pass for try/except block completion
+    except Exception:
+        raise RuntimeError(
+            f"Failed to write {file_contents} to {target_file_path}")
 
 
 def _save_index(
