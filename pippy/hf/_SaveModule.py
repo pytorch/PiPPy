@@ -40,7 +40,7 @@ def _atomic_write(file_contents: str, target_file_path: str, mode="w") -> None:
                 )  # get rid of the tempfile if it still exists after replacing with target file name
             except Exception:
                 pass  # add pass for try/except block completion
-              
+
 
 def _save_index(
     pipe: pippy.fx.GraphModule,
