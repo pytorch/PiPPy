@@ -1,5 +1,6 @@
 import torch.distributed as dist
 from pippy.IR import Pipe
+import torch
 
 from itertools import chain
 import tempfile
@@ -9,6 +10,16 @@ import json
 import os
 
 CKPT_INDEX_JSON_FILENAME = "pytorch_model.bin.index.json"
+
+DTYPE_SIZES = {
+    torch.float32: 4,
+    torch.float16: 2,
+    torch.bfloat16: 2,
+}
+
+
+def _get_param_size(param: torch.Tensor) -> int:
+    return param.numel() * DTYPE_SIZES[param.dtype]
 
 
 def _atomic_write(file_contents: str, target_file_path: str, mode="w") -> None:
@@ -65,11 +76,13 @@ def _save_index(
         params_buffers = chain(
             submod.named_parameters(), submod.named_buffers()
         )
-        for param_name, _ in params_buffers:
+        for param_name, param in params_buffers:
             old_name = submod.remap_qualname(param_name)  # type: ignore
 
             binary_filename = _get_binary_filename(idx)
             weight_map[old_name] = binary_filename
+
+            index_dict["metadata"]["total_size"] += _get_param_size(param)  # type: ignore
 
     index_dict["weight_map"] = weight_map
 
