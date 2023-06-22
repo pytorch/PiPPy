@@ -2,6 +2,7 @@ import torch.distributed as dist
 from pippy.IR import Pipe
 
 from itertools import chain
+import tempfile
 import logging
 
 import json
@@ -18,15 +19,28 @@ def _atomic_write(file_contents: str, target_file_path: str, mode="w") -> None:
         target_file_path (str): path to write to
         mode (str, optional): mode to write file with. Defaults to "w". Only "w" and "a" are supported.
     """
+    # create tempfile as `move` ops aren't guaranteed to be atomic when between different file systems
+    temp_file = tempfile.NamedTemporaryFile(
+        delete=False,
+        dir=os.path.dirname(target_file_path),
+    )
     try:
-        with open(target_file_path, mode) as f:
+        with open(temp_file.name, mode) as f:
             f.write(file_contents)
             # sync in-memory state with storage device
+            f.flush()
             os.fsync(f.fileno())
-    except Exception:
-        raise RuntimeError(
-            f"Failed to write {file_contents} to {target_file_path}"
-        )
+        os.replace(temp_file.name, target_file_path)
+    finally:
+        if os.path.exists(temp_file.name):
+            try:
+                os.unlink(
+                    temp_file.name
+                )
+            except Exception:
+                raise RuntimeError(
+                    f"Failed to delete {temp_file.name}"
+                )
 
 
 def _save_index(
@@ -50,7 +64,7 @@ def _save_index(
     }
 
     weight_map = {}
-    for idx, (_, submod) in enumerate(pipe.split_gm.named_children()):
+    for idx, (_, submod) in enumerate(pipe.split_gm.named_children()):  # type: ignore
         # chain both params and buffers generators together
         params_buffers = chain(
             submod.named_parameters(), submod.named_buffers()
@@ -78,7 +92,7 @@ def _save_index(
     logging.info(f"Saved index file to {filepath}")
 
 
-def _get_binary_filename(cur_idx: int) -> str:
+def _get_binary_filename(cur_idx: int) -> str:  # type: ignore[valid-type]
     """
     Gets filename for pytorch checkpoint binary based on current index and world size.
 
@@ -88,7 +102,7 @@ def _get_binary_filename(cur_idx: int) -> str:
     Returns:
         str: checkpoint filename
     """
-    cur_idx = str(cur_idx + 1).zfill(5)
+    idx = str(cur_idx + 1).zfill(5)
     world_size = str(dist.get_world_size()).zfill(5)
 
-    return f"pytorch_model-{cur_idx}-of-{world_size}.bin"
+    return f"pytorch_model-{idx}-of-{world_size}.bin"
