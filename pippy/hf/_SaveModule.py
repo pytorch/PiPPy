@@ -71,6 +71,7 @@ def _save_index(
     }
 
     weight_map = {}
+    total_size = 0
     for idx, (_, submod) in enumerate(pipe.split_gm.named_children()):  # type: ignore
         # chain both params and buffers generators together
         params_buffers = chain(
@@ -82,9 +83,10 @@ def _save_index(
             binary_filename = _get_binary_filename(idx)
             weight_map[old_name] = binary_filename
 
-            index_dict["metadata"]["total_size"] += _get_param_size(param)  # type: ignore
+            total_size += _get_param_size(param)
 
     index_dict["weight_map"] = weight_map
+    index_dict["metadata"]["total_size"] = total_size  # type: ignore
 
     # serialize json
     json_str = json.dumps(index_dict, indent=4)
