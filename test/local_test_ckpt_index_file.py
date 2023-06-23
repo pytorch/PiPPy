@@ -1,27 +1,42 @@
 from typing import List
 import unittest
 import argparse
+import shutil
 import json
 import os
 
 from pippy.IR import pipe_split, TrivialLossWrapper
+from pippy.hf._SaveModule import _save_index
 from pippy.compile import compile_stage
 import torch.distributed as dist
 import torch.optim as optim
 import torch
 
-d_hid = 512
-chunk_size = 256
+DEFAULT_FILENAME = "pytorch_model.bin.index.json"
+CKPT_DIR = "test_ckpts"
+WEIGHT_MAP = set(
+    [
+        "module.mm_param0",
+        "module.mm_param1",
+        "module.mm_param2",
+        "module.lin0.weight",
+        "module.lin0.bias",
+        "module.lin1.weight",
+        "module.lin1.bias",
+    ]
+)
+D_HID = 512
+CHUNK_SIZE = 256
 
 
 class ExampleCode(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        self.mm_param0 = torch.nn.Parameter(torch.randn(d_hid, d_hid))
-        self.mm_param1 = torch.nn.Parameter(torch.randn(d_hid, d_hid))
-        self.mm_param2 = torch.nn.Parameter(torch.randn(d_hid, d_hid))
-        self.lin0 = torch.nn.Linear(d_hid, d_hid)
-        self.lin1 = torch.nn.Linear(d_hid, d_hid)
+        self.mm_param0 = torch.nn.Parameter(torch.randn(D_HID, D_HID))
+        self.mm_param1 = torch.nn.Parameter(torch.randn(D_HID, D_HID))
+        self.mm_param2 = torch.nn.Parameter(torch.randn(D_HID, D_HID))
+        self.lin0 = torch.nn.Linear(D_HID, D_HID)
+        self.lin1 = torch.nn.Linear(D_HID, D_HID)
 
     def forward(self, x):
         x = torch.mm(x, self.mm_param0)
@@ -46,8 +61,8 @@ def run_worker(args: List[str | int]) -> None:
     ec_with_loss = TrivialLossWrapper(ec, loss_fn)
     ec_with_loss.to(args.device)
 
-    ec_x = torch.randn(args.chunks * chunk_size, d_hid, device=args.device)
-    target = torch.randn(args.chunks * chunk_size, d_hid, device=args.device)
+    ec_x = torch.randn(args.chunks * CHUNK_SIZE, D_HID, device=args.device)
+    target = torch.randn(args.chunks * CHUNK_SIZE, D_HID, device=args.device)
 
     stage = compile_stage(
         ec_with_loss,
@@ -80,12 +95,8 @@ def run_worker(args: List[str | int]) -> None:
     dist.barrier()
     print(f"Rank {args.rank} completes")
 
-    # Last rank checks index file
-    if args.rank == args.world_size - 1:
-        from pippy.hf._SaveModule import _save_index
-
-        CKPT_DIR = "test_ckpts"
-        DEFAULT_FILENAME = "pytorch_model.bin.index.json"
+    # save index file in rank 0
+    if args.rank == 0:
         _save_index(stage, checkpoint_dir=CKPT_DIR)
 
         filepath = os.path.join(CKPT_DIR, DEFAULT_FILENAME)
@@ -102,13 +113,11 @@ def run_worker(args: List[str | int]) -> None:
 
         # check all params present
         assert len(data["weight_map"]) == 7
-        assert "module.mm_param0" in data["weight_map"]
-        assert "module.mm_param1" in data["weight_map"]
-        assert "module.mm_param2" in data["weight_map"]
-        assert "module.lin0.weight" in data["weight_map"]
-        assert "module.lin0.bias" in data["weight_map"]
-        assert "module.lin1.weight" in data["weight_map"]
-        assert "module.lin1.bias" in data["weight_map"]
+        for param in WEIGHT_MAP:
+            assert param in data["weight_map"]
+
+        # remove test directory
+        shutil.rmtree(CKPT_DIR)
 
 
 def main(args: List[str | int] = None) -> None:
