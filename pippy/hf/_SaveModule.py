@@ -73,7 +73,7 @@ def _save_index(
     }
 
     weight_map: Dict[str, str] = {}
-    state_dict: Dict[str, Dict[str, torch.Tensor]] = {}
+    state_dict: Dict[str, torch.Tensor] = {}
     file_to_param_names = defaultdict(  # type: ignore
         list
     )  # map binary filename to param_name(s) stored therein
@@ -92,7 +92,7 @@ def _save_index(
             # and now it's changing, remove the previous mapping from `file_to_param_names`
             if old_name in weight_map:
                 fn = weight_map.get(old_name)
-                if len(file_to_param_names[fn]) == 1:
+                if len(file_to_param_names[fn]) == 1:  # type: ignore
                     del file_to_param_names[fn]  # type: ignore
                 else:
                     file_to_param_names[fn].remove(  # type: ignore
