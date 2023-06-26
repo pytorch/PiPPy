@@ -104,6 +104,7 @@ def _save_index(
 
     _save_weights(state_dict, file_to_param_names, checkpoint_dir)
     index_dict["weight_map"] = weight_map
+    index_dict["metadata"]["total_size"] = total_size  # type: ignore
 
     # serialize json
     json_str = json.dumps(index_dict, indent=4)
