@@ -2,7 +2,6 @@ import torch.distributed as dist
 from pippy.IR import Pipe
 import torch
 
-from typing import Dict
 from itertools import chain
 import tempfile
 import logging
