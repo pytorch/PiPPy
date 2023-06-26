@@ -9,4 +9,5 @@ dist
 .watchmanconfig
 **/*.json
 **/*.out
+**/*.bin
 **/.DS_STORE
