@@ -3,6 +3,7 @@ from pippy.IR import Pipe
 import torch
 
 from collections import defaultdict
+from typing import Dict
 from itertools import chain
 import tempfile
 import logging
@@ -71,9 +72,11 @@ def _save_index(
         "weight_map": {},
     }
 
-    weight_map = {}
-    state_dict = {}
-    file_to_param_names = defaultdict(list)  # map binary filename to param_name(s) stored therein
+    weight_map: Dict[str, str] = {}
+    state_dict: Dict[str, Dict[str, torch.Tensor]] = {}
+    file_to_param_names = defaultdict(  # type: ignore
+        list
+    )  # map binary filename to param_name(s) stored therein
     for idx, (_, submod) in enumerate(pipe.split_gm.named_children()):  # type: ignore
         # chain both params and buffers generators together
         params_buffers = chain(
@@ -90,9 +93,11 @@ def _save_index(
             if old_name in weight_map:
                 fn = weight_map.get(old_name)
                 if len(file_to_param_names[fn]) == 1:
-                    del file_to_param_names[fn]
+                    del file_to_param_names[fn]  # type: ignore
                 else:
-                    file_to_param_names[fn].remove(old_name)  # slow, find better way
+                    file_to_param_names[fn].remove(  # type: ignore
+                        old_name
+                    )  # slow, find better way
 
             #  add ckpt size once
             if old_name not in weight_map:
@@ -104,7 +109,6 @@ def _save_index(
 
     _save_weights(state_dict, file_to_param_names, checkpoint_dir)
     index_dict["weight_map"] = weight_map
-    index_dict["metadata"]["total_size"] = total_size  # type: ignore
 
     # serialize json
     json_str = json.dumps(index_dict, indent=4)
@@ -137,16 +141,21 @@ def _get_binary_filename(cur_idx: int) -> str:  # type: ignore[valid-type]
     return f"pytorch_model-{idx}-of-{world_size}.bin"
 
 
-def _save_weights(state_dict: dict, file_to_param_names: dict, checkpoint_dir: str) -> None:
+def _save_weights(
+    state_dict: dict, file_to_param_names: dict, checkpoint_dir: str
+) -> None:
     """
     Write params in `state_dict` to files mapped in the `weight_map`
 
     Args:
-        state_dict(`dict`): dictionary mapping a parameter name to a parameter tensor, which will
+        state_dict(`dict`): mapping from a parameter name to a parameter tensor which will
                             be saved on disk.
-        weight_map(`dict`): dictionary mapping a parameter name to a binary filename where it's stored.
+        file_to_param_names(`dict`): maps a parameter name to a binary filename where it's stored.
+        checkpoint_dir(`str`): directory to store checkpoint binaries
     """
     for filename, param_names in file_to_param_names.items():
         filepath = os.path.join(checkpoint_dir, filename)
-        torch.save({param_name: state_dict[param_name] for param_name
-                    in param_names}, filepath)
+        torch.save(
+            {param_name: state_dict[param_name] for param_name in param_names},
+            filepath,
+        )
