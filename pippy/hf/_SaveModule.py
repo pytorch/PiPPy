@@ -64,12 +64,8 @@ def _save_index(
         ckpt_index_filename (str, optional): name of index file. Defaults to "pytorch_model.bin.index.json".
         checkpoint_dir (str, optional): directory to save checkpoint to. Defaults to "checkpoints".
     """
-    index_dict = {
-        "metadata": {
-            "total_size": 0,
-        },
-        "weight_map": {},
-    }
+    index_dict = {}
+    total_size = 0
 
     weight_map: Dict[str, str] = {}
     for idx, (_, submod) in enumerate(pipe.split_gm.named_children()):  # type: ignore
@@ -84,10 +80,11 @@ def _save_index(
 
             #  add ckpt size once
             if old_name not in weight_map:
-                index_dict["metadata"]["total_size"] += _get_param_size(param)  # type: ignore
+                total_size += _get_param_size(param)  # type: ignore
 
             weight_map[old_name] = binary_filename
 
+    index_dict["metadata"] = {"total_size": total_size}
     index_dict["weight_map"] = weight_map
 
     # serialize json
