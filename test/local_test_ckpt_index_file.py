@@ -9,7 +9,6 @@ import os
 from pippy.hf._SaveModule import (
     _save_index,
     _save_checkpoint,
-    _get_binary_filename,
 )
 from pippy.IR import pipe_split, TrivialLossWrapper
 from pippy.LoadModule import load_checkpoint
@@ -95,45 +94,6 @@ def run_worker(args: List[str | int]) -> None:
     else:
         stage()
 
-    # Take an optimization step
-    optimizer.step()
-    ref = deepcopy(stage.submod.state_dict())
-    print(f"######### reference (rank: {dist.get_rank()})", ref)
-    _save_checkpoint(stage.submod, CKPT_DIR)
-
-    # second run
-    # Zero gradients
-    optimizer.zero_grad()
-
-    # Run
-    if args.rank == 0:
-        stage(ec_x)
-    elif args.rank == args.world_size - 1:
-        stage(target)
-    else:
-        stage()
-
-    # Take an optimization step
-    optimizer.step()
-    print(
-        f"######### 2nd iter (rank: {dist.get_rank()})",
-        stage.submod.state_dict(),
-    )
-
-    # load ckpt
-    mod = load_checkpoint(
-        stage.submod,
-        os.path.join(CKPT_DIR, "pytorch_model.bin.index.json"),
-        args.device,
-    )
-    print(
-        f"*******what i've loaded********: (rank: {dist.get_rank()})",
-        mod.state_dict(),
-    )
-
-    dist.barrier()
-    print(f"Rank {args.rank} completes")
-
     # save index file in rank 0
     if args.rank == 0:
         _save_index(stage, checkpoint_dir=CKPT_DIR)
@@ -154,6 +114,38 @@ def run_worker(args: List[str | int]) -> None:
         assert len(data["weight_map"]) == 7
         for param in WEIGHT_MAP:
             assert param in data["weight_map"]
+
+    # Take an optimization step
+    optimizer.step()
+    ref = deepcopy(stage.submod.state_dict())
+    _save_checkpoint(stage.submod, CKPT_DIR)
+
+    # second run
+    # Zero gradients
+    optimizer.zero_grad()
+
+    # Run
+    if args.rank == 0:
+        stage(ec_x)
+    elif args.rank == args.world_size - 1:
+        stage(target)
+    else:
+        stage()
+
+    # Take an optimization step
+    optimizer.step()
+
+    # load ckpt
+    mod = load_checkpoint(
+        stage.submod,
+        os.path.join(CKPT_DIR, "pytorch_model.bin.index.json"),
+        args.device,
+    )
+
+    torch.testing.assert_close(mod.state_dict(), ref)
+
+    dist.barrier()
+    print(f"Rank {args.rank} completes")
 
     # remove test ckpt directory in last rank
     if args.rank == args.world_size - 1:
