@@ -2,6 +2,7 @@ import torch.distributed as dist
 from pippy.IR import Pipe
 import torch
 
+from typing import Dict
 from itertools import chain
 import tempfile
 import logging
@@ -83,8 +84,8 @@ def _save_index(
 
             weight_map[old_name] = binary_filename
 
-    index_dict["metadata"] = {"total_size": total_size}
-    index_dict["weight_map"] = weight_map
+    index_dict["metadata"] = {"total_size": total_size}  # type: ignore
+    index_dict["weight_map"] = weight_map  # type: ignore
 
     # serialize json
     json_str = json.dumps(index_dict, indent=4)
