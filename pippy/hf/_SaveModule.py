@@ -118,26 +118,6 @@ def _get_binary_filename(cur_idx: int) -> str:  # type: ignore[valid-type]
     return f"pytorch_model-{idx}-of-{world_size}.bin"
 
 
-def _save_weights(
-    state_dict: dict, file_to_param_names: dict, checkpoint_dir: str
-) -> None:
-    """
-    Write params in `state_dict` to files mapped in the `weight_map`
-
-    Args:
-        state_dict(`dict`): mapping from a parameter name to a parameter tensor which will
-                            be saved on disk.
-        file_to_param_names(`dict`): maps a parameter name to a binary filename where it's stored.
-        checkpoint_dir(`str`): directory to store checkpoint binaries
-    """
-    for filename, param_names in file_to_param_names.items():
-        filepath = os.path.join(checkpoint_dir, filename)
-        torch.save(
-            {param_name: state_dict[param_name] for param_name in param_names},
-            filepath,
-        )
-
-
 def _save_checkpoint(submod: Pipe, checkpoint_dir: str) -> None:
     """
     writes `module`'s parameters and buffers to disk.
