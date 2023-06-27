@@ -6,7 +6,11 @@ import shutil
 import json
 import os
 
-from pippy.hf._SaveModule import _save_index, _save_checkpoint, _get_binary_filename
+from pippy.hf._SaveModule import (
+    _save_index,
+    _save_checkpoint,
+    _get_binary_filename,
+)
 from pippy.IR import pipe_split, TrivialLossWrapper
 from pippy.LoadModule import load_checkpoint
 from pippy.compile import compile_stage
@@ -97,7 +101,6 @@ def run_worker(args: List[str | int]) -> None:
     print(f"######### reference (rank: {dist.get_rank()})", ref)
     _save_checkpoint(stage.submod, CKPT_DIR)
 
-
     # second run
     # Zero gradients
     optimizer.zero_grad()
@@ -112,11 +115,21 @@ def run_worker(args: List[str | int]) -> None:
 
     # Take an optimization step
     optimizer.step()
-    print(f"######### 2nd iter (rank: {dist.get_rank()})", stage.submod.state_dict())
+    print(
+        f"######### 2nd iter (rank: {dist.get_rank()})",
+        stage.submod.state_dict(),
+    )
 
     # load ckpt
-    mod = load_checkpoint(stage.submod, os.path.join(CKPT_DIR, "pytorch_model.bin.index.json"), args.device)
-    print(f"*******what i've loaded********: (rank: {dist.get_rank()})", mod.state_dict())
+    mod = load_checkpoint(
+        stage.submod,
+        os.path.join(CKPT_DIR, "pytorch_model.bin.index.json"),
+        args.device,
+    )
+    print(
+        f"*******what i've loaded********: (rank: {dist.get_rank()})",
+        mod.state_dict(),
+    )
 
     dist.barrier()
     print(f"Rank {args.rank} completes")
