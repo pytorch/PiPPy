@@ -2,7 +2,6 @@ import torch.distributed as dist
 from pippy.IR import Pipe
 import torch
 
-from collections import defaultdict
 from typing import Dict
 from itertools import chain
 import tempfile
@@ -73,10 +72,6 @@ def _save_index(
     }
 
     weight_map: Dict[str, str] = {}
-    state_dict: Dict[str, torch.Tensor] = {}
-    file_to_param_names = defaultdict(  # type: ignore
-        list
-    )  # map binary filename to param_name(s) stored therein
     for idx, (_, submod) in enumerate(pipe.split_gm.named_children()):  # type: ignore
         # chain both params and buffers generators together
         params_buffers = chain(
@@ -87,27 +82,12 @@ def _save_index(
 
             binary_filename = _get_binary_filename(idx)
 
-            file_to_param_names[binary_filename].append(old_name)
-            # if `param_name` was previously mapped to another binary_filename
-            # and now it's changing, remove the previous mapping from `file_to_param_names`
-            if old_name in weight_map:
-                fn = weight_map.get(old_name)
-                if len(file_to_param_names[fn]) == 1:  # type: ignore
-                    del file_to_param_names[fn]  # type: ignore
-                else:
-                    file_to_param_names[fn].remove(  # type: ignore
-                        old_name
-                    )  # slow, find better way
-
             #  add ckpt size once
             if old_name not in weight_map:
                 index_dict["metadata"]["total_size"] += _get_param_size(param)  # type: ignore
 
             weight_map[old_name] = binary_filename
 
-            state_dict[old_name] = param
-
-    _save_weights(state_dict, file_to_param_names, checkpoint_dir)
     index_dict["weight_map"] = weight_map
 
     # serialize json
@@ -159,3 +139,25 @@ def _save_weights(
             {param_name: state_dict[param_name] for param_name in param_names},
             filepath,
         )
+
+
+def _save_checkpoint(submod: Pipe, checkpoint_dir: str) -> None:
+    """
+    writes `module`'s parameters and buffers to disk.
+
+    Args:
+        submod(`Pipe`): a submodule of the model's graph
+        checkpoint_dir(`str`): where to keep the checkpoint binaries
+    """
+    if not os.path.exists(checkpoint_dir):
+        os.mkdir(checkpoint_dir)
+    filepath = os.path.join(
+        checkpoint_dir, _get_binary_filename(dist.get_rank())
+    )
+    torch.save(
+        {
+            submod.remap_qualname(param_name): param
+            for param_name, param in submod.state_dict().items()
+        },
+        filepath,
+    )
