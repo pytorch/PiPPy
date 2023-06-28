@@ -1,21 +1,19 @@
-from copy import deepcopy
-from typing import List
-import unittest
 import argparse
-import shutil
 import json
 import os
+import shutil
+import unittest
+from copy import deepcopy
+from typing import List
 
-from pippy.hf._SaveModule import (
-    _save_index,
-    _save_checkpoint,
-)
-from pippy.IR import pipe_split, TrivialLossWrapper
-from pippy.LoadModule import load_checkpoint
-from pippy.compile import compile_stage
+import torch
 import torch.distributed as dist
 import torch.optim as optim
-import torch
+from pippy.compile import compile_stage
+
+from pippy.hf._SaveModule import _save_checkpoint, _save_index
+from pippy.IR import pipe_split, TrivialLossWrapper
+from pippy.LoadModule import load_checkpoint
 
 DEFAULT_FILENAME = "pytorch_model.bin.index.json"
 CKPT_DIR = "test_ckpts"

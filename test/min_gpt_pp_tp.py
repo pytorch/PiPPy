@@ -2,20 +2,18 @@
 import argparse
 import os
 
-import torch
-import torch.distributed.tensor.parallel as tp
-
 import pippy
 import pippy.fx
-from pippy.IR import PipeSplitWrapper, annotate_split_points
+
+import torch
 
 import torch.distributed as dist
-from torch.distributed._tensor import (
-    DeviceMesh,
-)
+import torch.distributed.tensor.parallel as tp
+from min_gpt_tracing import AdditionDataset  # type: ignore
 
 from minGPT.mingpt.model import GPT, GPTConfig
-from min_gpt_tracing import AdditionDataset  # type: ignore
+from pippy.IR import annotate_split_points, PipeSplitWrapper
+from torch.distributed._tensor import DeviceMesh
 
 pippy.fx.Tracer.proxy_buffer_attributes = True
 

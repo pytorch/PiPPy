@@ -4,25 +4,23 @@ import copy
 import os
 import unittest
 
+import pippy.fx
+
 import torch
 import torch.distributed.rpc as rpc
-
-import pippy.fx
 from pippy import run_pippy
 from pippy.IR import (
     MultiUseParameterConfig,
     Pipe,
-    TrivialLossWrapper,
     pipe_split,
+    TrivialLossWrapper,
 )
+from pippy.microbatch import split_args_kwargs_into_chunks
 from pippy.PipelineDriver import (
+    PipelineDriver1F1B,
     PipelineDriverBase,
     PipelineDriverFillDrain,
-    PipelineDriver1F1B,
     PipelineDriverInterleaved1F1B,
-)
-from pippy.microbatch import (
-    split_args_kwargs_into_chunks,
 )
 
 # TODOs for implementing forward/backward/loss with schedules:

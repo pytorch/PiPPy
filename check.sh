@@ -49,7 +49,7 @@ RETVAL=0
 
 if (( SKIP_FORMAT == 0 )); then
   echo; echo "Running format check ..."
-  ./format.sh --check
+  ufmt diff pippy/*.py pippy/hf/*.py test
   (( RETVAL |= $? ))
 fi
 

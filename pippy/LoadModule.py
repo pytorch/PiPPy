@@ -1,8 +1,8 @@
-import os
-import json
 import gc
-from typing import Dict, List, Optional, Tuple, Union
+import json
 import logging
+import os
+from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 from torch import nn
