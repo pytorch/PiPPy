@@ -2,22 +2,23 @@
 import copy
 import logging
 import operator
-from enum import Enum
 import os
 import threading
+from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.fx as torch_fx
-import pippy.fx
 from packaging import version
-from pippy.fx.passes import shape_prop
-from pippy.fx.passes.split_module import split_module
+
+import pippy.fx
 from pippy.backward import (
+    _null_coalesce_accumulate,
     stage_backward,
     sync_barrier,
-    _null_coalesce_accumulate,
 )
+from pippy.fx.passes import shape_prop
+from pippy.fx.passes.split_module import split_module
 from pippy.LoadModule import load_checkpoint
 
 # Because split_module with 4 arguments is available only in PT 1.12+
@@ -638,7 +639,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
     def forward(self, *args, **kwargs):
         executor_args = args
         if len(kwargs) > 0:
-            from inspect import Signature, Parameter
+            from inspect import Parameter, Signature
 
             parameters = []
             for node in self.split_gm.graph.nodes:
@@ -840,7 +841,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
                 to_delete.append((mod_itr, atoms))
 
         # deferral deletion
-        for (mod_itr, atoms) in to_delete:
+        for mod_itr, atoms in to_delete:
             delattr(mod_itr, atoms[-1])
 
         split.graph.lint()

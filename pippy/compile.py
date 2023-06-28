@@ -2,26 +2,27 @@
 import inspect
 import logging
 from typing import Any, Callable, List, Optional
+
+import torch
+import torch.distributed as dist
+from torch._subclasses.fake_tensor import FakeTensorMode
+
+import pippy.fx as fx
+from pippy.debug import PIPPY_VERBOSITY
+from pippy.IR import MultiUseParameterConfig, Pipe, PiPPyShapeProp
+from pippy.microbatch import (
+    gen_output_chunk_spec,
+    LossReducer,
+    split_args_kwargs_into_chunks,
+    sum_reducer,
+)
 from pippy.PipelineDriver import (
     PipelineDriver1F1B,
     PipelineDriverFillDrain,
     PipelineDriverInterleaved1F1B,
 )
 from pippy.PipelineStage import PipelineStage
-import pippy.fx as fx
-from pippy.IR import MultiUseParameterConfig, Pipe, PiPPyShapeProp
-from pippy.microbatch import (
-    LossReducer,
-    gen_output_chunk_spec,
-    split_args_kwargs_into_chunks,
-    sum_reducer,
-)
 from pippy.utils import get_device, get_pp_rank, get_rank
-from pippy.debug import PIPPY_VERBOSITY
-
-import torch
-import torch.distributed as dist
-from torch._subclasses.fake_tensor import FakeTensorMode
 
 
 PIPELINE_SCHEDULE_DRIVERS = {

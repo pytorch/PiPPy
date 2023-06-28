@@ -1,14 +1,15 @@
-import torch.distributed as dist
-from pippy.IR import Pipe
-import torch
+import json
+import logging
+import os
+import tempfile
+from itertools import chain
 
 from typing import Dict
-from itertools import chain
-import tempfile
-import logging
 
-import json
-import os
+import torch
+import torch.distributed as dist
+
+from pippy.IR import Pipe
 
 CKPT_INDEX_JSON_FILENAME = "pytorch_model.bin.index.json"
 

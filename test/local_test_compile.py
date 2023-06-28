@@ -2,11 +2,12 @@
 import argparse
 import os
 import unittest
+
 import pippy
-from pippy import run_pippy
-from pippy.IR import pipe_split
 
 import torch
+from pippy import run_pippy
+from pippy.IR import pipe_split
 
 d_hid = 512
 bs = 256

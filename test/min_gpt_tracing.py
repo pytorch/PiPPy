@@ -1,8 +1,8 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from pippy.IR import Pipe, annotate_split_points, PipeSplitWrapper
-import pippy.fx
-
 import logging
+
+import pippy.fx
+from pippy.IR import annotate_split_points, Pipe, PipeSplitWrapper
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",

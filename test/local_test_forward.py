@@ -3,16 +3,16 @@ import argparse
 import os
 import unittest
 
+import pippy.fx
+
 import torch
 import torch.autograd.profiler_legacy
-
-import pippy.fx
 from pippy import run_pippy
 from pippy.IR import MultiUseParameterConfig, Pipe, pipe_split
 from pippy.PipelineDriver import (
+    PipelineDriver1F1B,
     PipelineDriverBase,
     PipelineDriverFillDrain,
-    PipelineDriver1F1B,
     PipelineDriverInterleaved1F1B,
 )
 
