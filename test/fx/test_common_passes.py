@@ -1,20 +1,15 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 # Owner(s): ["oncall: fx"]
 
-import itertools
-
 import torch
-from pippy.fx.experimental.proxy_tensor import make_fx
-from pippy.fx.graph_module import GraphModule
-from pippy.fx.passes.dialect.common.cse_pass import CSEPass
 
 from torch.testing._internal.common_utils import (
-    instantiate_parametrized_tests,
-    parametrize,
-    run_tests,
-    TestCase,
-)
+    TestCase, parametrize, instantiate_parametrized_tests, run_tests)
+from pippy.fx.experimental.proxy_tensor import make_fx
+from pippy.fx.passes.dialect.common.cse_pass import CSEPass
+from pippy.fx.graph_module import GraphModule
 
+import itertools
 
 def FactoryFunctionCall(x, device):
     y = torch.full(x.shape, 3, device=device)
@@ -68,25 +63,21 @@ def MutationMetadata(x):
 
 
 Passes = [CSEPass]
-Test_Cases = [
-    TakeList,
-    ReturnList,
-    Mutation,
-    MutationInput,
-    MutationMetadata,
-    MutationTorchTensorCall,
-]
+Test_Cases = [TakeList,
+              ReturnList,
+              Mutation,
+              MutationInput,
+              MutationMetadata,
+              MutationTorchTensorCall]
 Factory_Test_Cases = [FactoryFunctionCall, MutationFactory]
 Devices = ["cpu"]
 if torch.cuda.is_available():
     Devices.append("cuda")
 
-
 @instantiate_parametrized_tests
 class TestCommonPass(TestCase):
-    @parametrize(
-        "common_pass,f,device", itertools.product(Passes, Test_Cases, Devices)
-    )
+
+    @parametrize("common_pass,f,device", itertools.product(Passes, Test_Cases, Devices))
     def test_correctness(self, common_pass, f, device):
         inp = torch.randn(10, device=device)
 
@@ -103,10 +94,8 @@ class TestCommonPass(TestCase):
 
         self.assertEqual(result, expected)
 
-    @parametrize(
-        "common_pass,f,device",
-        itertools.product(Passes, Factory_Test_Cases, Devices),
-    )
+
+    @parametrize("common_pass,f,device", itertools.product(Passes, Factory_Test_Cases, Devices))
     def test_correctness_factory(self, common_pass, f, device):
         inp = torch.randn(10, device=device)
         traced_m = make_fx(f)(inp, device)
@@ -123,5 +112,5 @@ class TestCommonPass(TestCase):
         self.assertEqual(result, expected)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     run_tests()

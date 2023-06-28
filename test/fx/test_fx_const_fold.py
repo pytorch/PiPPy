@@ -3,9 +3,8 @@
 
 import operator
 
-import pippy.fx
-
 import torch
+import pippy.fx
 from pippy.fx.experimental import const_fold
 from pippy.fx.passes.shape_prop import _extract_tensor_metadata, ShapeProp
 from torch.testing._internal.common_utils import TestCase
@@ -33,9 +32,7 @@ class TestConstFold(TestCase):
         # that we do have the const folded get_attr.
         found_folded_attrs = False
         for n in mod_folded.graph.nodes:
-            if n.op == "get_attr" and n.target.startswith(
-                "_FX_CONST_FOLDED_ATTRS"
-            ):
+            if n.op == "get_attr" and n.target.startswith("_FX_CONST_FOLDED_ATTRS"):
                 found_folded_attrs = True
             elif n.op == "call_module":
                 self.assertTrue(n.target not in {"submod_0", "submod_1"})
@@ -76,9 +73,7 @@ class TestConstFold(TestCase):
                 return x * y + self.attr_2
 
         mod = ConstFoldTestModule()
-        mod_folded: const_fold.FoldedGraphModule = (
-            const_fold.split_const_subgraphs(mod)
-        )
+        mod_folded: const_fold.FoldedGraphModule = const_fold.split_const_subgraphs(mod)
         self._verify_const_fold_mod(mod_folded)
 
         # Now run both folded and non-folded to check results equal.
@@ -124,9 +119,7 @@ class TestConstFold(TestCase):
                 return x * y + self.add_2__CF
 
         mod = ConstFoldTestModule()
-        mod_folded: const_fold.FoldedGraphModule = (
-            const_fold.split_const_subgraphs(mod)
-        )
+        mod_folded: const_fold.FoldedGraphModule = const_fold.split_const_subgraphs(mod)
         self._verify_const_fold_mod(mod_folded)
 
         # Now run both folded and non-folded to check results equal.
@@ -157,9 +150,7 @@ class TestConstFold(TestCase):
                 yy.prepend(n)
                 break
 
-        mod_folded: const_fold.FoldedGraphModule = (
-            const_fold.split_const_subgraphs(mod)
-        )
+        mod_folded: const_fold.FoldedGraphModule = const_fold.split_const_subgraphs(mod)
 
         self.assertTrue(mod_folded.const_subgraph_module is None)
         # Now run both folded and non-folded to check results equal.
@@ -189,9 +180,7 @@ class TestConstFold(TestCase):
                 return x - self.attr1
 
         mod = ConstFoldTestModule()
-        mod_folded: const_fold.FoldedGraphModule = (
-            const_fold.split_const_subgraphs(mod)
-        )
+        mod_folded: const_fold.FoldedGraphModule = const_fold.split_const_subgraphs(mod)
 
         # Check that the folded graph module is None, since there was no folding to do.
         self.assertTrue(mod_folded.const_subgraph_module is None)
@@ -238,9 +227,7 @@ class TestConstFold(TestCase):
                 return mul / z
 
         mod = ConstFoldTestModule()
-        mod_folded: const_fold.FoldedGraphModule = (
-            const_fold.split_const_subgraphs(mod)
-        )
+        mod_folded: const_fold.FoldedGraphModule = const_fold.split_const_subgraphs(mod)
         self._verify_const_fold_mod(mod_folded)
 
         # Now run both folded and non-folded to check results equal.
@@ -281,9 +268,7 @@ class TestConstFold(TestCase):
                 return x + y
 
         mod = ConstFoldTestModule()
-        mod_folded: const_fold.FoldedGraphModule = (
-            const_fold.split_const_subgraphs(mod)
-        )
+        mod_folded: const_fold.FoldedGraphModule = const_fold.split_const_subgraphs(mod)
         self._verify_const_fold_mod(mod_folded)
 
         # Now run both folded and non-folded to check results equal.
@@ -334,9 +319,7 @@ class TestConstFold(TestCase):
                 return torch.sigmoid(self.lin(x + y))
 
         mod = ConstFoldTestModule()
-        mod_folded: const_fold.FoldedGraphModule = (
-            const_fold.split_const_subgraphs(mod)
-        )
+        mod_folded: const_fold.FoldedGraphModule = const_fold.split_const_subgraphs(mod)
         self._verify_const_fold_mod(mod_folded)
 
         # Now run both folded and non-folded to check results equal.
@@ -370,9 +353,7 @@ class TestConstFold(TestCase):
                 return self.attr + self.my_mod() + x
 
         mod = ConstFoldTestModule()
-        mod_folded: const_fold.FoldedGraphModule = (
-            const_fold.split_const_subgraphs(mod)
-        )
+        mod_folded: const_fold.FoldedGraphModule = const_fold.split_const_subgraphs(mod)
         self._verify_const_fold_mod(mod_folded)
 
         # Now run both folded and non-folded to check results equal.
@@ -409,9 +390,7 @@ class TestConstFold(TestCase):
         # idx 2: add (will be folded into a get_attr)
         # idx 3: sub
 
-        gm_folded: const_fold.FoldedGraphModule = (
-            const_fold.split_const_subgraphs(gm)
-        )
+        gm_folded: const_fold.FoldedGraphModule = const_fold.split_const_subgraphs(gm)
         self._verify_const_fold_mod(gm_folded)
 
         # Post-folding:
@@ -515,9 +494,7 @@ class TestConstFold(TestCase):
         in_x = torch.randn(2, 3)
         fold_result = gm_folded(in_x)
         base_result = mod(in_x)
-        self.assertTrue(
-            torch.equal(fold_result["result"], base_result["result"])
-        )
+        self.assertTrue(torch.equal(fold_result["result"], base_result["result"]))
 
     def test_two_outputs(self):
         class ConstFoldTestModule(torch.nn.Module):
@@ -578,9 +555,7 @@ class TestConstFold(TestCase):
         mod = ConstFoldTestModule()
         gm = pippy.fx.symbolic_trace(mod)
 
-        gm_folded: const_fold.FoldedGraphModule = (
-            const_fold.split_const_subgraphs(gm)
-        )
+        gm_folded: const_fold.FoldedGraphModule = const_fold.split_const_subgraphs(gm)
         self._verify_const_fold_mod(gm_folded)
 
         # Check there are no call modules, because they've been inlined or extracted for
@@ -612,9 +587,7 @@ class TestConstFold(TestCase):
         mod = ConstFoldTestModule()
         gm = pippy.fx.symbolic_trace(mod)
 
-        gm_folded: const_fold.FoldedGraphModule = (
-            const_fold.split_const_subgraphs(gm)
-        )
+        gm_folded: const_fold.FoldedGraphModule = const_fold.split_const_subgraphs(gm)
         self._verify_const_fold_mod(gm_folded)
 
         # Check there are no call modules, because they've been inlined or extracted for
@@ -647,9 +620,7 @@ class TestConstFold(TestCase):
                     self.weight, 0.5, 3, torch.quint8
                 )
                 dequant_weight = torch.dequantize(quant_weight)
-                output = torch.nn.functional.linear(
-                    x, dequant_weight, self.bias
-                )
+                output = torch.nn.functional.linear(x, dequant_weight, self.bias)
                 return self.relu(output)
 
         mod = ConstFoldTestModule()
@@ -665,10 +636,8 @@ class TestConstFold(TestCase):
                     return True
             return False
 
-        gm_folded: const_fold.FoldedGraphModule = (
-            const_fold.split_const_subgraphs(
-                gm, skip_folding_node_fn=skip_folding_quant_dequant
-            )
+        gm_folded: const_fold.FoldedGraphModule = const_fold.split_const_subgraphs(
+            gm, skip_folding_node_fn=skip_folding_quant_dequant
         )
 
         # Check that the folded graph module is None, since there was no folding to do.
@@ -694,9 +663,7 @@ class TestConstFold(TestCase):
                 return self.lin(self.lin_input) + x
 
         mod = ConstFoldTestModule()
-        mod_folded: const_fold.FoldedGraphModule = (
-            const_fold.split_const_subgraphs(mod)
-        )
+        mod_folded: const_fold.FoldedGraphModule = const_fold.split_const_subgraphs(mod)
         self._verify_const_fold_mod(mod_folded)
 
         # Now run both folded and non-folded to check results equal.
@@ -715,12 +682,8 @@ class TestConstFold(TestCase):
         class ConstFoldTestModule(torch.nn.Module):
             def __init__(self):
                 super().__init__()
-                self.attr_1 = torch.nn.Parameter(
-                    torch.tensor([[-0.9]]), requires_grad
-                )
-                self.attr_2 = torch.nn.Parameter(
-                    torch.tensor([[17.1]]), requires_grad
-                )
+                self.attr_1 = torch.nn.Parameter(torch.tensor([[-0.9]]), requires_grad)
+                self.attr_2 = torch.nn.Parameter(torch.tensor([[17.1]]), requires_grad)
 
             def forward(self, x, y):
                 a = self.attr_1 + self.attr_1
@@ -731,8 +694,8 @@ class TestConstFold(TestCase):
         gm = pippy.fx.symbolic_trace(mod)
         in_x, in_y = torch.tensor([[-0.45]]), torch.tensor([0.9])
         ShapeProp(gm).propagate(in_x, in_y)
-        mod_folded: const_fold.FoldedGraphModule = (
-            const_fold.split_const_subgraphs(gm, device_for_folded_attrs="cpu")
+        mod_folded: const_fold.FoldedGraphModule = const_fold.split_const_subgraphs(
+            gm, device_for_folded_attrs="cpu"
         )
         self._verify_const_fold_mod(mod_folded)
 
@@ -741,9 +704,7 @@ class TestConstFold(TestCase):
         for n in mod_folded.graph.nodes:
             if n.op == "get_attr":
                 attr = self._get_attr(n)
-                self.assertEquals(
-                    _extract_tensor_metadata(attr), n.meta["tensor_meta"]
-                )
+                self.assertEquals(_extract_tensor_metadata(attr), n.meta["tensor_meta"])
 
         # Now run both folded and non-folded to check results equal.
         base_result = mod(in_x, in_y)
