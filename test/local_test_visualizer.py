@@ -5,14 +5,14 @@ import time
 import unittest
 from collections import defaultdict
 from functools import reduce
-from typing import List, Dict, Any
+from typing import Any, Dict, List
+
+import pippy.fx
 
 import torch
 import torch.nn as nn
-from torch.autograd import Function
-
-import pippy.fx
 from pippy import run_pippy
+from pippy.events import Event
 from pippy.IR import (
     MultiUseParameterConfig,
     Pipe,
@@ -20,15 +20,15 @@ from pippy.IR import (
     TrivialLossWrapper,
 )
 from pippy.PipelineDriver import (
-    PipelineDriverFillDrain,
-    PipelineDriver1F1B,
-    Phase,
-    PipelineDriverBase,
     EventsContext,
+    Phase,
+    PipelineDriver1F1B,
+    PipelineDriverBase,
+    PipelineDriverFillDrain,
     PipelineDriverInterleaved1F1B,
 )
-from pippy.events import Event
 from pippy.visualizer import events_to_json
+from torch.autograd import Function
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
@@ -55,7 +55,6 @@ class SlowMSELoss(nn.MSELoss):
 
 # Inherit from Function
 class MyLinearFunction(Function):
-
     # Note that both forward and backward are @staticmethods
     @staticmethod
     # bias is an optional argument

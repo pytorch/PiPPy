@@ -3,17 +3,17 @@ import argparse
 import os
 import unittest
 
-import torch
-import torch.autograd.profiler_legacy
-
 import pippy.fx
 import pippy.ModelSplit
+
+import torch
+import torch.autograd.profiler_legacy
 from pippy import run_pippy
 from pippy.IR import MultiUseParameterConfig, Pipe
 from pippy.PipelineDriver import (
+    PipelineDriver1F1B,
     PipelineDriverBase,
     PipelineDriverFillDrain,
-    PipelineDriver1F1B,
     PipelineDriverInterleaved1F1B,
 )
 
@@ -80,7 +80,6 @@ def inspect_split_module(
 
 # Common function to run pipeline with input and check equivalence
 def run_pipe_driver(ec_pipe, args):
-
     nstages = len(list(ec_pipe.split_gm.children()))
 
     pipe_driver: PipelineDriverBase = schedules[args.schedule](

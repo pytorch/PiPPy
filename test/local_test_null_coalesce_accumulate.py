@@ -3,20 +3,20 @@ import argparse
 import os
 import unittest
 
-import torch
-
 import pippy.fx
+
+import torch
 from pippy import run_pippy
 from pippy.IR import (
-    Pipe,
-    TrivialLossWrapper,
-    pipe_split,
     _null_coalesce_accumulate,
+    Pipe,
+    pipe_split,
+    TrivialLossWrapper,
 )
 from pippy.PipelineDriver import (
+    PipelineDriver1F1B,
     PipelineDriverBase,
     PipelineDriverFillDrain,
-    PipelineDriver1F1B,
 )
 
 PROFILING_ENABLED = True

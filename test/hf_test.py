@@ -10,9 +10,9 @@ import torch
 
 import transformers.utils.fx as fx
 from pippy.IR import (
+    annotate_split_points,
     MultiUseParameterConfig,
     Pipe,
-    annotate_split_points,
     PipeSplitWrapper,
     stage_backward,
 )

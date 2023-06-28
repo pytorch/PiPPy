@@ -3,24 +3,24 @@ import argparse
 import inspect
 import os
 
+import pippy.fx
+
 import torch
 import torch.autograd.profiler_legacy
-from transformers import BertModel, BertConfig
-
-import pippy.fx
 from pippy import run_pippy
+from pippy.hf import PiPPyHFTracer
 from pippy.IR import (
+    annotate_split_points,
     MultiUseParameterConfig,
     Pipe,
     PipeSplitWrapper,
-    annotate_split_points,
 )
 from pippy.PipelineDriver import (
-    PipelineDriverFillDrain,
     PipelineDriver1F1B,
     PipelineDriverBase,
+    PipelineDriverFillDrain,
 )
-from pippy.hf import PiPPyHFTracer
+from transformers import BertConfig, BertModel
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
