@@ -2,6 +2,7 @@ import torch.distributed as dist
 from pippy.IR import Pipe
 import torch
 
+from typing import Dict
 from itertools import chain
 import tempfile
 import logging
@@ -63,15 +64,10 @@ def _save_index(
         ckpt_index_filename (str, optional): name of index file. Defaults to "pytorch_model.bin.index.json".
         checkpoint_dir (str, optional): directory to save checkpoint to. Defaults to "checkpoints".
     """
-    index_dict = {
-        "metadata": {
-            "total_size": 0,
-        },
-        "weight_map": {},
-    }
-
-    weight_map = {}
+    index_dict = {}
     total_size = 0
+
+    weight_map: Dict[str, str] = {}
     for idx, (_, submod) in enumerate(pipe.split_gm.named_children()):  # type: ignore
         # chain both params and buffers generators together
         params_buffers = chain(
@@ -81,12 +77,15 @@ def _save_index(
             old_name = submod.remap_qualname(param_name)  # type: ignore
 
             binary_filename = _get_binary_filename(idx)
+
+            #  add ckpt size once
+            if old_name not in weight_map:
+                total_size += _get_param_size(param)  # type: ignore
+
             weight_map[old_name] = binary_filename
 
-            total_size += _get_param_size(param)
-
-    index_dict["weight_map"] = weight_map
-    index_dict["metadata"]["total_size"] = total_size  # type: ignore
+    index_dict["metadata"] = {"total_size": total_size}  # type: ignore
+    index_dict["weight_map"] = weight_map  # type: ignore
 
     # serialize json
     json_str = json.dumps(index_dict, indent=4)
@@ -117,3 +116,25 @@ def _get_binary_filename(cur_idx: int) -> str:  # type: ignore[valid-type]
     world_size = str(dist.get_world_size()).zfill(5)
 
     return f"pytorch_model-{idx}-of-{world_size}.bin"
+
+
+def _save_checkpoint(submod: Pipe, checkpoint_dir: str) -> None:
+    """
+    writes `module`'s parameters and buffers to disk.
+
+    Args:
+        submod(`Pipe`): a submodule of the model's graph
+        checkpoint_dir(`str`): where to keep the checkpoint binaries
+    """
+    if not os.path.exists(checkpoint_dir):
+        os.mkdir(checkpoint_dir)
+    filepath = os.path.join(
+        checkpoint_dir, _get_binary_filename(dist.get_rank())
+    )
+    torch.save(
+        {
+            submod.remap_qualname(param_name): param
+            for param_name, param in submod.state_dict().items()
+        },
+        filepath,
+    )

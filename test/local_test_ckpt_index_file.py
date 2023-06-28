@@ -1,3 +1,4 @@
+from copy import deepcopy
 from typing import List
 import unittest
 import argparse
@@ -5,8 +6,12 @@ import shutil
 import json
 import os
 
+from pippy.hf._SaveModule import (
+    _save_index,
+    _save_checkpoint,
+)
 from pippy.IR import pipe_split, TrivialLossWrapper
-from pippy.hf._SaveModule import _save_index
+from pippy.LoadModule import load_checkpoint
 from pippy.compile import compile_stage
 import torch.distributed as dist
 import torch.optim as optim
@@ -77,23 +82,17 @@ def run_worker(args: List[str | int]) -> None:
     # Create an optimizer for stage submodule's parameters
     optimizer = optim.SGD(stage.submod.parameters(), lr=1e-3, momentum=0.9)
 
-    for _ in range(2):
-        # Zero gradients
-        optimizer.zero_grad()
+    # first run
+    # Zero gradients
+    optimizer.zero_grad()
 
-        # Run
-        if args.rank == 0:
-            stage(ec_x)
-        elif args.rank == args.world_size - 1:
-            stage(target)
-        else:
-            stage()
-
-        # Take an optimization step
-        optimizer.step()
-
-    dist.barrier()
-    print(f"Rank {args.rank} completes")
+    # Run
+    if args.rank == 0:
+        stage(ec_x)
+    elif args.rank == args.world_size - 1:
+        stage(target)
+    else:
+        stage()
 
     # save index file in rank 0
     if args.rank == 0:
@@ -107,7 +106,7 @@ def run_worker(args: List[str | int]) -> None:
         # check file written on disk to given location
         assert os.path.exists(filepath)
 
-        # check total_size correct
+        # check total_size is correct
         size_calc = sum(param.numel() for param in ec.parameters()) * 4
         assert size_calc == data["metadata"]["total_size"]
 
@@ -116,7 +115,40 @@ def run_worker(args: List[str | int]) -> None:
         for param in WEIGHT_MAP:
             assert param in data["weight_map"]
 
-        # remove test directory
+    # Take an optimization step
+    optimizer.step()
+    ref = deepcopy(stage.submod.state_dict())
+    _save_checkpoint(stage.submod, CKPT_DIR)
+
+    # second run
+    # Zero gradients
+    optimizer.zero_grad()
+
+    # Run
+    if args.rank == 0:
+        stage(ec_x)
+    elif args.rank == args.world_size - 1:
+        stage(target)
+    else:
+        stage()
+
+    # Take an optimization step
+    optimizer.step()
+
+    # load ckpt
+    mod = load_checkpoint(
+        stage.submod,
+        os.path.join(CKPT_DIR, "pytorch_model.bin.index.json"),
+        args.device,
+    )
+
+    torch.testing.assert_close(mod.state_dict(), ref)
+
+    dist.barrier()
+    print(f"Rank {args.rank} completes")
+
+    # remove test ckpt directory in last rank
+    if args.rank == args.world_size - 1:
         shutil.rmtree(CKPT_DIR)
 
 
