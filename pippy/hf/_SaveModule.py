@@ -140,7 +140,9 @@ def _save_params(submod: Pipe, checkpoint_dir: str) -> None:
     )
 
 
-def save_checkpoint(stage: Pipe, submod: torch.nn.Module, checkpoint_dir: str) -> None:
+def save_checkpoint(
+    stage: Pipe, submod: Pipe, checkpoint_dir: str
+) -> None:
     """
     Save the entire model's(`stage`) metadata in an index file and the `submod`
     parameters in `checkpoint_dir`

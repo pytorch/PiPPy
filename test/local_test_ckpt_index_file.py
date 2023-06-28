@@ -6,10 +6,7 @@ import shutil
 import json
 import os
 
-from pippy.hf._SaveModule import (
-    _save_index,
-    _save_checkpoint,
-)
+from pippy.hf._SaveModule import save_checkpoint
 from pippy.IR import pipe_split, TrivialLossWrapper
 from pippy.LoadModule import load_checkpoint
 from pippy.compile import compile_stage
@@ -94,10 +91,13 @@ def run_worker(args: List[str | int]) -> None:
     else:
         stage()
 
+    # Take an optimization step
+    optimizer.step()
+    ref = deepcopy(stage.submod.state_dict())
+    save_checkpoint(stage, stage.submod, CKPT_DIR)
+
     # save index file in rank 0
     if args.rank == 0:
-        _save_index(stage, checkpoint_dir=CKPT_DIR)
-
         filepath = os.path.join(CKPT_DIR, DEFAULT_FILENAME)
         with open(filepath) as f:
             content = f.read()
@@ -114,11 +114,6 @@ def run_worker(args: List[str | int]) -> None:
         assert len(data["weight_map"]) == 7
         for param in WEIGHT_MAP:
             assert param in data["weight_map"]
-
-    # Take an optimization step
-    optimizer.step()
-    ref = deepcopy(stage.submod.state_dict())
-    _save_checkpoint(stage.submod, CKPT_DIR)
 
     # second run
     # Zero gradients
