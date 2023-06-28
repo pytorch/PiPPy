@@ -6,26 +6,27 @@ import time
 import warnings
 from enum import Enum
 from inspect import Parameter, Signature
-from typing import Any, Callable, Dict, List, Tuple, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import torch
 import torch.distributed.rpc as rpc
+
 import pippy.fx
+from pippy.backward import (
+    _null_coalesce_accumulate,
+    stage_backward,
+    sync_barrier,
+)
+from pippy.events import Allocator, Event, EventRecorder, EventsContext
 from pippy.fx.passes import shape_prop
 
 from pippy.IR import Pipe
-from pippy.backward import (
-    stage_backward,
-    sync_barrier,
-    _null_coalesce_accumulate,
-)
-from pippy.events import EventRecorder, EventsContext, Event, Allocator
 from pippy.microbatch import (
-    LossReducer,
-    sum_reducer,
     gen_output_chunk_spec,
-    split_args_kwargs_into_chunks,
+    LossReducer,
     merge_chunks,
+    split_args_kwargs_into_chunks,
+    sum_reducer,
 )
 from pippy.utils import flatten_args_detach
 

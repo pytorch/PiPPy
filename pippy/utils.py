@@ -1,7 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+import logging
 import os
 import socket
-import logging
 from typing import List
 
 
@@ -30,8 +30,8 @@ if os.getenv("PIPPY_PIN_DEVICE", "0") == "1":
 
 
 import torch
-import torch.multiprocessing as mp
 import torch.distributed.rpc as rpc
+import torch.multiprocessing as mp
 
 import pippy.fx
 
