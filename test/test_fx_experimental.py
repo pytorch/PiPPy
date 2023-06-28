@@ -1499,12 +1499,7 @@ class {test_classname}(torch.nn.Module):
             def forward(self, x):
                 return self.model(x) + self.model2(x)
 
-        (
-            N,
-            C,
-            H,
-            W,
-        ) = (
+        (N, C, H, W) = (
             1,
             3,
             224,
@@ -1537,11 +1532,7 @@ class {test_classname}(torch.nn.Module):
         with torch.no_grad():
             for model_type in models:
                 model = model_type()
-                (
-                    C,
-                    H,
-                    W,
-                ) = (
+                (C, H, W) = (
                     3,
                     224,
                     224,
