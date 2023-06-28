@@ -190,6 +190,7 @@ jobs:
     runs-on: linux.16xlarge.nvidia.gpu
     strategy:
       matrix:
+        python-version: ["3.8", "3.9"]
         replicate: ["0", "1"]
         schedule: ["FillDrain", "1F1B"]
     env:
