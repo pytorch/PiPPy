@@ -133,7 +133,7 @@ def _save_params(submod: torch.nn.Module, checkpoint_dir: str) -> None:
     )
     torch.save(
         {
-            submod.remap_qualname(param_name): param
+            submod.remap_qualname(param_name): param  # type: ignore
             for param_name, param in submod.state_dict().items()
         },
         filepath,
@@ -154,4 +154,4 @@ def save_checkpoint(stage: Pipe, checkpoint_dir: str) -> None:
     if dist.get_rank() == 0:
         _save_index(stage, checkpoint_dir=checkpoint_dir)
 
-    _save_params(stage.submod, checkpoint_dir)
+    _save_params(stage.submod, checkpoint_dir)  # type: ignore
