@@ -118,7 +118,7 @@ def _get_binary_filename(cur_idx: int) -> str:  # type: ignore[valid-type]
     return f"pytorch_model-{idx}-of-{world_size}.bin"
 
 
-def _save_params(submod: Pipe, checkpoint_dir: str) -> None:
+def _save_params(submod: torch.nn.Module, checkpoint_dir: str) -> None:
     """
     writes `module`'s parameters and buffers to disk.
 
@@ -140,9 +140,7 @@ def _save_params(submod: Pipe, checkpoint_dir: str) -> None:
     )
 
 
-def save_checkpoint(
-    stage: Pipe, submod: Pipe, checkpoint_dir: str
-) -> None:
+def save_checkpoint(stage: Pipe, checkpoint_dir: str) -> None:
     """
     Save the entire model's(`stage`) metadata in an index file and the `submod`
     parameters in `checkpoint_dir`
@@ -156,4 +154,4 @@ def save_checkpoint(
     if dist.get_rank() == 0:
         _save_index(stage, checkpoint_dir=checkpoint_dir)
 
-    _save_params(submod, checkpoint_dir)
+    _save_params(stage.submod, checkpoint_dir)
