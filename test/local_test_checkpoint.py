@@ -12,7 +12,7 @@ import torch.distributed as dist
 import torch.optim as optim
 from pippy.compile import compile_stage
 
-from pippy.hf._SaveModule import save_checkpoint
+from pippy.hf._SaveModule import save_checkpoint, _get_binary_filename
 from pippy.IR import pipe_split, TrivialLossWrapper
 from pippy.LoadModule import load_checkpoint
 
@@ -96,8 +96,9 @@ def run_worker(args: List[str | int]) -> None:
 
     # Take an optimization step
     optimizer.step()
-    ref = deepcopy(stage.submod.state_dict())
-    save_checkpoint(stage, CKPT_DIR)
+    submod_ref = deepcopy(stage.submod.state_dict())
+    optim_ref = deepcopy(optimizer.state_dict())
+    save_checkpoint(stage, CKPT_DIR, optimizer)
 
     # save index file in rank 0
     if args.rank == 0:
@@ -139,8 +140,11 @@ def run_worker(args: List[str | int]) -> None:
         os.path.join(CKPT_DIR, "pytorch_model.bin.index.json"),
         args.device,
     )
+    # load optim
+    optimizer.load_state_dict(torch.load(os.path.join(CKPT_DIR, _get_binary_filename(dist.get_rank(), is_optim=True))))
 
-    torch.testing.assert_close(mod.state_dict(), ref)
+    torch.testing.assert_close(mod.state_dict(), submod_ref)
+    torch.testing.assert_close(optimizer.state_dict(), optim_ref)
 
     dist.barrier()
     print(f"Rank {args.rank} completes")
