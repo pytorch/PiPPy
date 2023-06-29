@@ -193,7 +193,7 @@ if __name__ == "__main__":
     main()
 
 
-class LocalIndexMetadataTest(unittest.TestCase):
+class LocalCheckpointTest(unittest.TestCase):
     def test_index_file(self):
         import random
 
