@@ -158,13 +158,8 @@ def _save_optim_state(
     filepath = os.path.join(
         checkpoint_dir, _get_binary_filename(dist.get_rank(), is_optim=True)
     )
-    torch.save(
-        {
-            param_name: param  # type: ignore
-            for param_name, param in optimizer.state_dict().items()
-        },
-        filepath,
-    )
+    # save optimizer state directly
+    torch.save(optimizer.state_dict(), filepath)
 
 
 def save_checkpoint(
