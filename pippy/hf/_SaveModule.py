@@ -103,7 +103,7 @@ def _save_index(
     logging.info(f"Saved index file to {filepath}")
 
 
-def _get_binary_filename(cur_idx: int) -> str:  # type: ignore[valid-type]
+def _get_binary_filename(cur_idx: int, is_optim: bool = False) -> str:  # type: ignore[valid-type]
     """
     Gets filename for pytorch checkpoint binary based on current index and world size.
 
@@ -116,7 +116,9 @@ def _get_binary_filename(cur_idx: int) -> str:  # type: ignore[valid-type]
     idx = str(cur_idx + 1).zfill(5)
     world_size = str(dist.get_world_size()).zfill(5)
 
-    return f"pytorch_model-{idx}-of-{world_size}.bin"
+    state_type = "optim" if is_optim else "model"
+
+    return f"pytorch_{state_type}-{idx}-of-{world_size}.bin"
 
 
 def _save_params(submod: torch.nn.Module, checkpoint_dir: str) -> None:
@@ -141,7 +143,33 @@ def _save_params(submod: torch.nn.Module, checkpoint_dir: str) -> None:
     )
 
 
-def save_checkpoint(stage: Pipe, checkpoint_dir: str) -> None:
+def _save_optim_state(
+    optimizer: torch.optim.Optimizer, checkpoint_dir: str
+) -> None:
+    """
+    saves `optimizer`'s state_dict to disk.
+
+    Args:
+        optimizer(`torch.optim.Optimizer`): pytorch optimizer
+        checkpoint_dir(`str`): where to keep the checkpoint binaries
+    """
+    if not os.path.exists(checkpoint_dir):
+        os.mkdir(checkpoint_dir)
+    filepath = os.path.join(
+        checkpoint_dir, _get_binary_filename(dist.get_rank(), is_optim=True)
+    )
+    torch.save(
+        {
+            param_name: param  # type: ignore
+            for param_name, param in optimizer.state_dict().items()
+        },
+        filepath,
+    )
+
+
+def save_checkpoint(
+    stage: Pipe, checkpoint_dir: str, optimizer: torch.optim.Optimizer = None
+) -> None:
     """
     Save the entire model's(`stage`) metadata in an index file and the `submod`
     parameters in `checkpoint_dir`
@@ -156,3 +184,6 @@ def save_checkpoint(stage: Pipe, checkpoint_dir: str) -> None:
         _save_index(stage, checkpoint_dir=checkpoint_dir)
 
     _save_params(stage.submod, checkpoint_dir)  # type: ignore
+    # save optimizer state, if passed
+    if optimizer:
+        _save_optim_state(optimizer, checkpoint_dir)  # type: ignore
