@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel
 
 import pippy
 import pippy.fx
@@ -485,6 +486,14 @@ class PipelineStage(torch.nn.Module):
         return grad_send_reqs
 
     def forward(self, *args, **kwargs):
+        def forward_maybe_with_ddp(*args, **kwargs):
+            if isinstance(self.submod, DistributedDataParallel):
+                with self.submod.no_sync():  # type: ignore[operator]
+                    out_val = self.submod(*args, **kwargs)
+            else:
+                out_val = self.submod(*args, **kwargs)
+            return out_val
+
         # map microbatch ID to list of forward tensor args
         fwd_cache: Dict[int, Tuple[Any, List[torch.Tensor]]] = {}
 
@@ -513,7 +522,9 @@ class PipelineStage(torch.nn.Module):
 
             # Compute forward
             try:
-                output = self.submod(*composite_args, **composite_kwargs)
+                output = forward_maybe_with_ddp(
+                    *composite_args, **composite_kwargs
+                )
 
             except Exception as e:
                 exc_msg = f"""
@@ -565,6 +576,19 @@ class PipelineStage(torch.nn.Module):
                 bwd_kwargs["output_grads"] = (
                     grads if len(grads) > 0 else (None,)
                 )
+
+                if (
+                    isinstance(self.submod, DistributedDataParallel)
+                    and bwd_chunk == self.chunks - 1
+                ):
+                    # HACK: reaching into DDP implementation details here. Is there a better way?
+                    self.submod.reducer.prepare_for_backward(  # type: ignore[union-attr, operator]
+                        list(
+                            torch.nn.parallel.distributed._find_tensors(  # type: ignore[attr-defined]
+                                bwd_kwargs["stage_output"]
+                            )
+                        )
+                    )
 
                 # `stage_backward` node does not have `args`, only `kwargs`
                 grads_input, _ = stage_backward(**bwd_kwargs)
