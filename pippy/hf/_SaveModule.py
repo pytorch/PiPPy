@@ -21,12 +21,19 @@ DTYPE_SIZES = {
 
 
 def _get_param_size(param: torch.Tensor) -> int:
+    """
+    Returns a tensor's size in bytes
+
+    Args:
+        param(`torch.Tensor`): torch tensor
+    """
     return param.numel() * DTYPE_SIZES[param.dtype]
 
 
 def _atomic_write(file_contents: str, target_file_path: str, mode="w") -> None:
     """
     Atomically writes `file_contents` into `target_file_path`.
+
     Args:
         file_contents (str): contents to write to file
         target_file_path (str): path to write to
@@ -109,6 +116,8 @@ def _get_binary_filename(cur_idx: int, is_optim: bool = False) -> str:  # type: 
 
     Args:
         cur_idx (int): current device index
+        is_optim (bool): True if generating binary filename for optimizer,
+                         False otherwise
 
     Returns:
         str: checkpoint filename
@@ -163,7 +172,9 @@ def _save_optim_state(
 
 
 def save_checkpoint(
-    stage: Pipe, checkpoint_dir: str, optimizer: torch.optim.Optimizer = None
+    stage: Pipe,
+    checkpoint_dir: str = "checkpoints",
+    optimizer: torch.optim.Optimizer = None,
 ) -> None:
     """
     Save the entire model's(`stage`) metadata in an index file and the `submod`
@@ -171,8 +182,9 @@ def save_checkpoint(
 
     Args:
         stage(`Pipe`): model pipeline graph
-        submod(`torch.nn.Module`): submod whose params are to be saved
-        checkpoin_dir(`str`): directory where to save the index file and params binaries
+        checkpoint_dir(`str`): directory where to save the index file and params binaries
+                              defaults to `checkpoints`
+        optimizer(`torch.optim.Optimizer`): optimizer whose state dict is to be saved
     """
     # write index file in rank 0
     if dist.get_rank() == 0:
