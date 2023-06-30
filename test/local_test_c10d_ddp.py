@@ -83,6 +83,7 @@ def run_worker(args):
     ec_x = torch.randn(args.chunks * chunk_size, d_hid, device=args.device)
     target = torch.randn(args.chunks * chunk_size, d_hid, device=args.device)
 
+    # Get DP and PP sub process groups
     dp_group, dp_rank = get_dp_subgroup(args)
     pp_group, pp_rank = get_pp_subgroup(args)
 
@@ -96,6 +97,7 @@ def run_worker(args):
         [ec_x, target],
     )
 
+    # Wrap stage module with DDP
     stage.submod = DistributedDataParallel(
         stage.submod,
         process_group=dp_group,

@@ -486,6 +486,8 @@ class PipelineStage(torch.nn.Module):
         return grad_send_reqs
 
     def forward(self, *args, **kwargs):
+        # If submod is wrapped with DDP, we use the `no_sync` context manager to
+        # avoid gradient all-reduce per microbatch
         def forward_maybe_with_ddp(*args, **kwargs):
             if isinstance(self.submod, DistributedDataParallel):
                 with self.submod.no_sync():  # type: ignore[operator]
@@ -510,6 +512,7 @@ class PipelineStage(torch.nn.Module):
                     with self.submod.no_sync():  # type: ignore[operator]
                         grads_input, _ = stage_backward(**bwd_kwargs)
             else:
+                # Non-DDP submodule, regular backward
                 grads_input, _ = stage_backward(**bwd_kwargs)
             return grads_input
 
