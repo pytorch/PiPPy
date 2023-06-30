@@ -3,13 +3,13 @@ import argparse
 import os
 import unittest
 
+import pippy
+
 import torch
 import torch.distributed as dist
 import torch.optim as optim
-from torch.nn.parallel import DistributedDataParallel
-
-import pippy
 from pippy.IR import pipe_split, TrivialLossWrapper
+from torch.nn.parallel import DistributedDataParallel
 
 
 d_hid = 512
