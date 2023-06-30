@@ -494,6 +494,25 @@ class PipelineStage(torch.nn.Module):
                 out_val = self.submod(*args, **kwargs)
             return out_val
 
+        def backward_maybe_with_ddp(bwd_kwargs: Dict, is_last_chunk: bool):
+            if isinstance(self.submod, DistributedDataParallel):
+                if is_last_chunk:
+                    # HACK: reaching into DDP implementation details here. Is there a better way?
+                    self.submod.reducer.prepare_for_backward(  # type: ignore[union-attr, operator]
+                        list(
+                            torch.nn.parallel.distributed._find_tensors(  # type: ignore[attr-defined]
+                                bwd_kwargs["stage_output"]
+                            )
+                        )
+                    )
+                    grads_input, _ = stage_backward(**bwd_kwargs)
+                else:
+                    with self.submod.no_sync():  # type: ignore[operator]
+                        grads_input, _ = stage_backward(**bwd_kwargs)
+            else:
+                grads_input, _ = stage_backward(**bwd_kwargs)
+            return grads_input
+
         # map microbatch ID to list of forward tensor args
         fwd_cache: Dict[int, Tuple[Any, List[torch.Tensor]]] = {}
 
@@ -577,21 +596,11 @@ class PipelineStage(torch.nn.Module):
                     grads if len(grads) > 0 else (None,)
                 )
 
-                if (
-                    isinstance(self.submod, DistributedDataParallel)
-                    and bwd_chunk == self.chunks - 1
-                ):
-                    # HACK: reaching into DDP implementation details here. Is there a better way?
-                    self.submod.reducer.prepare_for_backward(  # type: ignore[union-attr, operator]
-                        list(
-                            torch.nn.parallel.distributed._find_tensors(  # type: ignore[attr-defined]
-                                bwd_kwargs["stage_output"]
-                            )
-                        )
-                    )
-
                 # `stage_backward` node does not have `args`, only `kwargs`
-                grads_input, _ = stage_backward(**bwd_kwargs)
+                grads_input = backward_maybe_with_ddp(
+                    bwd_kwargs,
+                    bwd_chunk == self.chunks - 1,
+                )
 
                 grad_send_reqs = self._send_grads(grads_input)
                 all_grad_send_reqs += grad_send_reqs
