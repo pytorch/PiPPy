@@ -488,7 +488,7 @@ class PipelineStage(torch.nn.Module):
     def forward(self, *args, **kwargs):
         # If submod is wrapped with DDP, we use the `no_sync` context manager to
         # avoid gradient all-reduce per microbatch
-        def forward_maybe_with_ddp(*args, **kwargs):
+        def forward_maybe_with_nosync(*args, **kwargs):
             if isinstance(self.submod, DistributedDataParallel):
                 with self.submod.no_sync():  # type: ignore[operator]
                     out_val = self.submod(*args, **kwargs)
@@ -496,7 +496,7 @@ class PipelineStage(torch.nn.Module):
                 out_val = self.submod(*args, **kwargs)
             return out_val
 
-        def backward_maybe_with_ddp(bwd_kwargs: Dict, is_last_chunk: bool):
+        def backward_maybe_with_nosync(bwd_kwargs: Dict, is_last_chunk: bool):
             if isinstance(self.submod, DistributedDataParallel):
                 if is_last_chunk:
                     # HACK: reaching into DDP implementation details here. Is there a better way?
@@ -544,7 +544,7 @@ class PipelineStage(torch.nn.Module):
 
             # Compute forward
             try:
-                output = forward_maybe_with_ddp(
+                output = forward_maybe_with_nosync(
                     *composite_args, **composite_kwargs
                 )
 
@@ -600,7 +600,7 @@ class PipelineStage(torch.nn.Module):
                 )
 
                 # `stage_backward` node does not have `args`, only `kwargs`
-                grads_input = backward_maybe_with_ddp(
+                grads_input = backward_maybe_with_nosync(
                     bwd_kwargs,
                     bwd_chunk == self.chunks - 1,
                 )
