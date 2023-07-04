@@ -176,6 +176,16 @@ def even_cut(model, args, pp_size, cut={}):
 
   annotate_split_points(model, cut)
 
+def after_ar_cut(model, args, pp_size, cut={}):
+  from pippy.IR import annotate_split_points, PipeSplitWrapper 
+  cutpoint = args.n_layer // pp_size
+  for i in range(args.n_layer):
+    name = f'transformer.h.{i}'
+    if i != args.n_layer - 1 and i % cutpoint == cutpoint - 1:
+      cut[f'{name}.mlp.dropout'] = PipeSplitWrapper.SplitPoint.BEGINNING
+
+  annotate_split_points(model, cut)
+
 def pp_and_tp_fg(model, mesh, args, tp_attn_layers=None, tp_mlp_layers=None, cut_fn=even_cut):
   from pippy.compile import compile_stage
   from pippy.microbatch import TensorChunkSpec, sum_reducer
