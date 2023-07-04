@@ -17,17 +17,6 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-import torch.distributed as dist
-from torch.distributed._tensor import DeviceMesh, Shard, Replicate, distribute_tensor
-from torch.distributed.tensor.parallel import (
-    ColwiseParallel,
-    PairwiseParallel,
-    RowwiseParallel,
-    parallelize_module,
-)
-
-from pippy.IR import pipe_split
-
 # @torch.jit.script # good to enable when not using torch.compile, disable when using (our default)
 def new_gelu(x):
     """

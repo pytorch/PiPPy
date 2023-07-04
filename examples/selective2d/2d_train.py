@@ -5,14 +5,11 @@ gpurun4 torchrun --nproc-per-node 4 2d_train.py
 """
 
 import argparse
-import math
 import os
 import time
 
-import numpy as np
 import torch
 import torch.distributed as dist
-import torch.nn as nn
 
 from model import GPT, GPTConfig
 
@@ -23,8 +20,6 @@ from torch.distributed.tensor.parallel import (
     RowwiseParallel,
     parallelize_module,
 )
-
-from torch.nn import functional as F
 
 def get_args():
   # default config values designed to train a gpt2 (124M) on OpenWebText
