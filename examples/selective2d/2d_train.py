@@ -151,7 +151,7 @@ def pp_and_tp(model, mesh, args):
   from pippy.microbatch import TensorChunkSpec, sum_reducer
 
   pp_dim, tp_dim = 0, 1
-  pp_rank, tp_rank = args.local_rank // args.tp_size, args.local_rank % args.tp_size
+  pp_rank, tp_rank = args.rank // args.tp_size, args.rank % args.tp_size
   pp_groups = mesh.get_dim_groups()[pp_dim]
 
   # TP
@@ -191,7 +191,7 @@ def pp_and_tp_fg(model, mesh, args, tp_attn_layers=None, tp_mlp_layers=None, cut
   from pippy.microbatch import TensorChunkSpec, sum_reducer
 
   pp_dim, tp_dim = 0, 1
-  pp_rank, tp_rank = args.local_rank // args.tp_size, args.local_rank % args.tp_size
+  pp_rank, tp_rank = args.rank // args.tp_size, args.rank % args.tp_size
   pp_groups = mesh.get_dim_groups()[pp_dim]
 
   # TP
@@ -215,7 +215,7 @@ def pp_and_tp_fg(model, mesh, args, tp_attn_layers=None, tp_mlp_layers=None, cut
 
 def pp_tp_train(stage, mesh, args):
   pp_dim, tp_dim = 0, 1
-  pp_rank, tp_rank = args.local_rank // args.tp_size, args.local_rank % args.tp_size
+  pp_rank, tp_rank = args.rank // args.tp_size, args.rank % args.tp_size
   pp_groups = mesh.get_dim_groups()[pp_dim]
 
   train_iters = 10 if args.debug else args.train_iters

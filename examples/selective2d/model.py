@@ -42,8 +42,11 @@ class CausalSelfAttention(nn.Module):
 
     def __init__(self, mesh, config):
         super().__init__()
+        tp_size = mesh.mesh.size(0)
+        assert config.n_head % tp_size == 0
         assert config.n_embd % config.n_head == 0
         self.mesh = mesh
+        self.tp_size = tp_size 
         # key, query, value projections for all heads, but in a batch
         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
         self.q = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
@@ -60,7 +63,6 @@ class CausalSelfAttention(nn.Module):
         # flash attention make GPU go brrrrr but support is only in PyTorch nightly and still a bit scary
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention') and self.dropout == 0.0
 
-        self.tp_size = self.mesh.mesh.size(0)
 
         if not self.flash:
             print("WARNING: using slow attention. Flash Attention atm needs PyTorch nightly and dropout=0.0")
