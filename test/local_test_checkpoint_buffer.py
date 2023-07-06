@@ -33,8 +33,6 @@ WEIGHT_MAP = set(
 D_HID = 512
 CHUNK_SIZE = 256
 
-bs = 503
-
 
 class ExampleCode(torch.nn.Module):
     def __init__(self):
