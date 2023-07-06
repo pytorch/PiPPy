@@ -42,8 +42,8 @@ class ExampleCode(torch.nn.Module):
         self.mm_param2 = torch.nn.Parameter(torch.randn(D_HID, D_HID))
         self.lin0 = torch.nn.Linear(D_HID, D_HID)
         self.lin1 = torch.nn.Linear(D_HID, D_HID)
-        self.register_buffer("buffer", torch.randn(CHUNK_SIZE, D_HID))
-        self.register_buffer("buffer2", torch.randn(CHUNK_SIZE, D_HID))
+        self.register_buffer("buffer", torch.randn(CHUNK_SIZE, D_HID), persistent=False)
+        self.register_buffer("buffer2", torch.randn(CHUNK_SIZE, D_HID), persistent=False)
 
     def forward(self, x):
         x = torch.mm(x, self.mm_param0)
@@ -75,6 +75,12 @@ def run_worker(args: List[str | int]) -> None:
                           None,
                           [ec_x])
 
+    save_checkpoint(stage, CKPT_DIR)
+
+    module = load_checkpoint(stage.submod, os.path.join(CKPT_DIR, DEFAULT_FILENAME), args.device)
+
+    assert module.state_dict().keys(), stage.submod.state_dict().keys() == module.state_dict().keys()  # should fail when buffer is in stage.submod
+    
 
 def main(args: List[str | int] = None) -> None:
     parser = argparse.ArgumentParser()
