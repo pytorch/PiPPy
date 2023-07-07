@@ -53,11 +53,8 @@ def run_worker(args):
     wrapper.to(args.device)
 
     # sample input
-    x = torch.randn(args.batch_size * args.chunks, 28, 28, device=args.device)
-    target = torch.randn(args.chunks * args.batch_size, device=args.device)
-    # images, labels = list(train_dataloader)[0] #data_iter.next()
-    # chunk = torch.chunk(images, args.chunks, dim=0)
-    # x = chunk[0]
+    x = torch.randint(0, 5, (args.batch_size * args.chunks, 28, 28), device=args.device)
+    target = torch.randint(0, 9, (args.chunks * args.batch_size, ), device=args.device)
 
     # setup compile stage
     stage = compile_stage(
