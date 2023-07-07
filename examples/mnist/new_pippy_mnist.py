@@ -67,7 +67,7 @@ def run_worker(args):
         example_inputs=[x, target],
         # output_chunk_spec={
         #     "loss": sum_reducer,
-        #     # "logits": TensorChunkSpec(0),
+        #     "logits": TensorChunkSpec(0),
         # },
     )
 
@@ -84,6 +84,12 @@ def main(args=None):
     # set up arguments
     parser.add_argument("--rank", type=int, default=int(os.getenv("RANK", -1)))
     parser.add_argument("--world_size", type=int, default=int(os.getenv("WORLD_SIZE", 4)))
+    parser.add_argument(
+        "--master_addr", type=str, default=os.getenv("MASTER_ADDR", "localhost")
+    )
+    parser.add_argument(
+        "--master_port", type=str, default=os.getenv("MASTER_PORT", "29500")
+    )
     parser.add_argument("--cuda", type=int, default=int(torch.cuda.is_available()))
     parser.add_argument("--batch_size", type=int, default=10)
     parser.add_argument("--chunks", type=int, default=4)
