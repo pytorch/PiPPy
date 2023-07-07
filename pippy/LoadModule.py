@@ -104,7 +104,8 @@ def _get_file_to_weight_map(
         model.named_buffers(),
     ]:
         for new_name, _ in iterator:
-            old_name = model.remap_qualname(new_name)  # type: ignore[operator]
+            # old_name = model.remap_qualname(new_name)  # type: ignore[operator]
+            old_name = new_name
             cp_weight_name, clone_needed = _match_checkpoint_name(
                 old_name, index, prefix_to_test
             )
