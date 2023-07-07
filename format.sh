@@ -8,29 +8,29 @@ DEFAULT_TARGETS=()
 for f in $(git ls-files | grep '\.py$'); do
   case "$f" in
     'pippy/fx/'*)
-	    # ignore
-	    ;;
+      # ignore
+      ;;
 
     'pippy/'*)
-	    DEFAULT_TARGETS+=( "$f" )
-	    ;;
+      DEFAULT_TARGETS+=( "$f" )
+      ;;
 
     'examples/'*)
-	    # ignore
-	    ;;
+      # ignore
+      ;;
 
     'docs/'*)
-	    # ignore
-	    ;;
+      # ignore
+      ;;
 
     'test/'*fx*)
-	    # ignore
-	    ;;
+      # ignore
+      ;;
 
     *)
-	    # include
-	    DEFAULT_TARGETS+=( "$f" )
-	    ;;
+      # include
+      DEFAULT_TARGETS+=( "$f" )
+      ;;
   esac
 done
 
@@ -100,10 +100,10 @@ function main() {
   for x in "$@"; do
     case "$x" in
       '--show-targets')
-	for f in ${DEFAULT_TARGETS[@]}; do
-	  echo $f;
-	done
-	exit 0;
+  for f in "${DEFAULT_TARGETS[@]}"; do
+    echo $f;
+  done
+  exit 0;
         ;;
 
       '--check')
@@ -129,7 +129,7 @@ function main() {
       case "$x" in
         *.py)
           PY_TARGETS+=( "$x" );
-	  ;;
+    ;;
       esac
     fi
   done
