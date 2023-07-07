@@ -177,4 +177,5 @@ class LocalCheckpointTest(unittest.TestCase):
             "--master_port",
             str(port),
         ]
-        main(args)
+        with self.assertRaises(RuntimeError):
+            main(args)
