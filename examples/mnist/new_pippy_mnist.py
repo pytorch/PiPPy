@@ -11,6 +11,7 @@ from torch.nn.functional import cross_entropy
 from torch.utils.data import DataLoader
 
 from pippy.IR import LossWrapper, PipeSplitWrapper
+from pippy.microbatch import sum_reducer, TensorChunkSpec
 from pippy.compile import compile_stage
 
 USE_TQDM = bool(int(os.getenv("USE_TQDM", 1)))
@@ -30,6 +31,7 @@ def run_worker(args):
     # train_sampler = DistributedSampler(train_data, num_replicas)
     train_dataloader = DataLoader(train_data, batch_size=args.batch_size * args.chunks)
     valid_dataloader = DataLoader(valid_data, batch_size=args.batch_size * args.chunks)
+
     # define custom loss wrapper
     class OutputLossWrapper(LossWrapper):
         def __init__(self, module, loss_fn):
@@ -39,6 +41,7 @@ def run_worker(args):
             output = self.module(input)
 
             return output, self.loss_fn(output, target)
+
     # define model
     model = nn.Sequential(
         nn.Flatten(),
@@ -52,6 +55,7 @@ def run_worker(args):
         ),
         PipeSplitWrapper(nn.Linear(64, 10)),
     )
+
     # define model wrapper
     wrapper = OutputLossWrapper(model, cross_entropy)
     wrapper.to(args.device)
@@ -59,6 +63,8 @@ def run_worker(args):
     # sample input
     x = torch.randint(0, 5, (args.batch_size * args.chunks, 28, 28), device=args.device)
     target = torch.randint(0, 9, (args.chunks * args.batch_size, ), device=args.device)
+
+    output_chunk_spec = (TensorChunkSpec(0), sum_reducer)
 
     # setup compile stage
     stage = compile_stage(
@@ -69,6 +75,7 @@ def run_worker(args):
         device=args.device,
         group=None,
         example_inputs=[x, target],
+        output_chunk_spec=output_chunk_spec,
     )
 
     # setup optimizer
@@ -97,35 +104,40 @@ def run_worker(args):
                     stage.train()
                     optimizer.zero_grad()
 
+                    out = None
+
                     if args.rank == 0:
-                        out = stage(x_batch)
+                        stage(x_batch)
                     elif args.rank == args.world_size - 1:
                         out = stage(y_batch)
                     else:
                         stage()
 
                     # outp, loss = stage(x_batch, y_batch)
-                    preds = out.argmax(-1)
-                    correct = (preds == y_batch).sum()
-                    all = len(y_batch)
-                    epoch_correct += correct.item()
-                    epoch_all += all
-                    optimizer.step()
-                else:
-                    stage.eval()
-                    with torch.no_grad():
-                        if args.rank == 0:
-                            out = stage(x_batch, y_batch)
-                        elif args.rank == args.world_size - 1:
-                            out = stage()
-                        else:
-                            stage()
-                        # outp, _ = stage(x_batch, y_batch)
+                    if out:
                         preds = out.argmax(-1)
                         correct = (preds == y_batch).sum()
                         all = len(y_batch)
                         epoch_correct += correct.item()
                         epoch_all += all
+
+                    optimizer.step()
+                # else:
+                #     # stage.eval()
+                #     with torch.no_grad():
+                #         if args.rank == 0:
+                #             stage(x_batch, y_batch)
+                #         elif args.rank == args.world_size - 1:
+                #             out = stage()
+                #         else:
+                #             stage()
+                #         # outp, _ = stage(x_batch, y_batch)
+
+                #             preds = out.argmax(-1)
+                #             correct = (preds == y_batch).sum()
+                #             all = len(y_batch)
+                #             epoch_correct += correct.item()
+                #             epoch_all += all
 
             print(f"Loader: {k} Accuracy: {epoch_correct / epoch_all}")
 
