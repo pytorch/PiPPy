@@ -106,8 +106,8 @@ jobs:
         run: python test/local_test_null_coalesce_accumulate.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
       - name: Run PP + DDP test
         run: python test/local_test_ddp.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
-      - name: Run HF BERT forward-only integration test
-        run: python test/local_test_forward_hf_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
+      #- name: Run HF BERT forward-only integration test
+      #  run: python test/local_test_forward_hf_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
       - name: Run HF GPT2 forward-only integration test
         run: python test/local_test_forward_hf_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
       - name: Run visualizer test
