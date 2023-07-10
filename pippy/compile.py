@@ -81,10 +81,10 @@ def _compile(
 
     # Figure out which output is loss from output_chunk_spec
     output_loss_value_spec: Any = None
-    if isinstance(output_chunk_spec, dict):
-        output_loss_value_spec = {
-            k: isinstance(v, LossReducer) for k, v in output_chunk_spec.items()
-        }
+    if output_chunk_spec is not None:
+        output_loss_value_spec = fx.node.map_aggregate(
+            output_chunk_spec, lambda v: isinstance(v, LossReducer)
+        )
 
     logging.info("[PiPPy] Tracing model ...")
     pipe_model = Pipe.from_tracing(
@@ -239,10 +239,10 @@ def compile_stage(
 
     # Figure out which output is loss from output_chunk_spec
     output_loss_value_spec: Any = None
-    if isinstance(output_chunk_spec, dict):
-        output_loss_value_spec = {
-            k: isinstance(v, LossReducer) for k, v in output_chunk_spec.items()
-        }
+    if output_chunk_spec is not None:
+        output_loss_value_spec = fx.node.map_aggregate(
+            output_chunk_spec, lambda v: isinstance(v, LossReducer)
+        )
 
     logging.info("[PiPPy] Tracing model ...")
     pipe = Pipe.from_tracing(
