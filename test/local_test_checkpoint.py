@@ -96,8 +96,8 @@ def run_worker(args: List[str | int]) -> None:
 
     # Take an optimization step
     optimizer.step()
-    submod_ref = deepcopy(stage.submod.state_dict())
-    optim_ref = deepcopy(optimizer.state_dict())
+    ref_state_dict = deepcopy(stage.submod.state_dict())
+    ref_optim_state_dict = deepcopy(optimizer.state_dict())
     save_checkpoint(stage, CKPT_DIR, optimizer)
 
     # save index file in rank 0
