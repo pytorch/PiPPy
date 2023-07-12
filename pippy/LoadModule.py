@@ -20,16 +20,17 @@ TYPICAL_PREFIXES = [
 def load_checkpoint(
     model: nn.Module,
     index_filename: Union[str, os.PathLike],
+    optim: torch.optim.Optimizer = None,
     device: torch.device = None,
     dtype: torch.dtype = None,
     checkpoint_prefix: str = None,
-    optim: torch.optim.Optimizer = None,
 ) -> tuple[nn.Module, torch.optim.Optimizer] | nn.Module:
     """
     Load a checkpoint from a model file.
     Args:
         model (`torch.nn.Module`): the model to load the checkpoint into
         index_filename (`Union[str, os.PathLike]`): path to the checkpoint's index (metadata file)
+        optim (`torch.optim.Optimizer`): optimizer object to load ckpt state dict into
         device (`torch.device`): the device on which to load the checkpoint
         dtype (`torch.dtype`): the dtype on which to load the checkpoint
         checkpoint_prefix (`str`): the prefix of the checkpoint to load
