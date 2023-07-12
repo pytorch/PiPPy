@@ -5,8 +5,8 @@ import os
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
-from torch import nn
 import torch.distributed as dist
+from torch import nn
 
 from pippy.utils import _get_binary_filename
 
@@ -24,7 +24,7 @@ def load_checkpoint(
     device: torch.device = None,
     dtype: torch.dtype = None,
     checkpoint_prefix: str = None,
-) -> tuple[nn.Module, torch.optim.Optimizer] | nn.Module:
+):
     """
     Load a checkpoint from a model file.
     Args:
@@ -47,7 +47,8 @@ def load_checkpoint(
         optim.load_state_dict(
             torch.load(
                 os.path.join(
-                    checkpoint_folder, _get_binary_filename(dist.get_rank(), is_optim=True)
+                    checkpoint_folder,
+                    _get_binary_filename(dist.get_rank(), is_optim=True),
                 )
             )
         )

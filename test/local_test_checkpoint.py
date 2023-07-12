@@ -13,7 +13,6 @@ import torch.optim as optim
 from pippy.compile import compile_stage
 
 from pippy.hf._SaveModule import save_checkpoint
-from pippy.utils import _get_binary_filename
 from pippy.IR import pipe_split, TrivialLossWrapper
 from pippy.LoadModule import load_checkpoint
 
