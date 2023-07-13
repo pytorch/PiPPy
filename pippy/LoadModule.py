@@ -24,7 +24,7 @@ def load_checkpoint(
     device: torch.device = None,
     dtype: torch.dtype = None,
     checkpoint_prefix: str = None,
-):
+) -> Union[nn.Module, Tuple[nn.Module, torch.optim.Optimizer]]:
     """
     Load a checkpoint from a model file.
     Args:
