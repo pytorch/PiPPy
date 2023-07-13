@@ -43,16 +43,6 @@ def load_checkpoint(
     """
     checkpoint_folder = os.path.split(index_filename)[0]
 
-    if optim:
-        optim.load_state_dict(
-            torch.load(
-                os.path.join(
-                    checkpoint_folder,
-                    _get_binary_filename(dist.get_rank(), is_optim=True),
-                )
-            )
-        )
-
     with open(index_filename, "r") as f:
         index = json.loads(f.read())
     if "weight_map" in index:
@@ -93,6 +83,16 @@ def load_checkpoint(
 
         del checkpoint
         gc.collect()
+
+    if optim:
+        optim.load_state_dict(
+            torch.load(
+                os.path.join(
+                    checkpoint_folder,
+                    _get_binary_filename(dist.get_rank(), is_optim=True),
+                )
+            )
+        )
 
     if optim:
         return model, optim
