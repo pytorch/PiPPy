@@ -33,33 +33,33 @@ class RandomCustomDataset(Dataset):
 class ExampleCode(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        self.mm_param0 = torch.nn.Parameter(torch.randn(d_hid, d_hid))
-        self.mm_param1 = torch.nn.Parameter(torch.randn(d_hid, d_hid))
+        self.mm_param = torch.nn.Parameter(torch.randn(d_hid, d_hid))
         self.mm_param2 = torch.nn.Parameter(torch.randn(d_hid, d_hid))
-        self.lin0 = torch.nn.Linear(d_hid, d_hid)
-        self.lin1 = torch.nn.Linear(d_hid, d_hid)
+        self.lin = torch.nn.Linear(d_hid, d_hid)
+        self.mse_loss = torch.nn.MSELoss(reduction="sum")
 
-    def forward(self, x):
-        x = torch.mm(x, self.mm_param0)
+    def forward(self, x, target):
+        x = torch.mm(x, self.mm_param)
+        skip_connection = x
         x = torch.relu(x)
         pipe_split()
-        x = torch.mm(x, self.mm_param1)
-        x = self.lin0(x)
+        x = torch.mm(x, self.mm_param)
+        x = self.lin(x)
         pipe_split()
         x = torch.relu(x)
+        x = x + skip_connection
         x = torch.mm(x, self.mm_param2)
         pipe_split()
-        x = self.lin1(x)
+        x = self.lin(x)
         x = torch.relu(x)
-
-        return x
+        loss = self.mse_loss(x, target)
+        return {"loss": loss}
 
 
 def run_worker(args):
     ec = ExampleCode()
-    loss_fn = torch.nn.MSELoss(reduction="sum")
-    ec_with_loss = TrivialLossWrapper(ec, loss_fn)
-    ec_with_loss.to(args.device)
+    ec.to(args.device)
+    ec.train()
 
     ec_x = torch.randn(args.chunks * chunk_size, d_hid, device=args.device)
     target = torch.randn(args.chunks * chunk_size, d_hid, device=args.device)
@@ -68,14 +68,14 @@ def run_worker(args):
     train_size = int(0.7*len(ds))
     test_size = len(ds) - train_size
     train_ds, test_ds = random_split(ds, [train_size, test_size])
-    train_dl, test_dl = DataLoader(train_ds), DataLoader(test_ds)
+    train_dl, test_dl = DataLoader(train_ds, batch_size=1), DataLoader(test_ds, batch_size=1)
     loaders = {
         "train": train_dl,
         "test": test_dl,
     }
 
     stage = compile_stage(
-        ec_with_loss,
+        ec,
         args.rank,
         args.world_size,
         args.chunks,
@@ -87,16 +87,16 @@ def run_worker(args):
     # Create an optimizer for stage submodule's parameters
     optimizer = optim.SGD(stage.submod.parameters(), lr=1e-3, momentum=0.9)
 
-    for epoch in range(2):
+    for epoch in range(2):  # change to no. epochs
         print(f"Epoch: {epoch + 1}")
 
         for k, loader in loaders.items():
             epoch_correct = 0
             epoch_all = 0
 
-            for i, (x, y) in enumerate(loader):
-                x = x.to(args.device)
-                y = y.to(args.device)
+            for i, (x_batch, y_batch) in enumerate(loader):
+                x_batch = x_batch.to(args.device)
+                y_batch = y_batch.to(args.device)
 
                 if k == "train":
                     # Zero gradients
@@ -104,19 +104,33 @@ def run_worker(args):
 
                     # Run
                     if args.rank == 0:
-                        stage(ec_x)
+                        out = stage(ec_x)
                     elif args.rank == args.world_size - 1:
                         out = stage(target)
 
-                        print("###################################")
-                        print(out)
-                        print("###################################")
+                        out_tensor = out['loss']
 
+                        preds = out_tensor.argmax(-1)
+                        correct = (preds == y_batch).sum()
+                        all = len(y_batch)
+                        epoch_correct += correct.item()
+                        epoch_all += all
+
+                        # Take an optimization step
+                        optimizer.step()
                     else:
                         stage()
+                else:
+                    stage.eval()
+                    with torch.no_grad():
+                        out = stage(x_batch)
+                        preds = out.argmax(-1)
+                        correct = (preds == y_batch).sum()
+                        all = len(y_batch)
+                        epoch_correct += correct.item()
+                        epoch_all += all
 
-                    # Take an optimization step
-                    optimizer.step()
+            print(f"Loader: {k}. Accuracy: {epoch_correct / epoch_all}")
 
     dist.barrier()
     print(f"Rank {args.rank} completes")
@@ -163,5 +177,3 @@ def main(args=None):
 
 if __name__ == "__main__":
     main()
-
-## setup model, optimizer, lr-scheduler
