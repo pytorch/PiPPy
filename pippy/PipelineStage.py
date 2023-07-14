@@ -561,10 +561,13 @@ class PipelineStage(torch.nn.Module):
                     bwd_kwargs["stage_output"],
                     bwd_kwargs["input_values"],
                 ) = fwd_cache.pop(bwd_chunk)
-                # (None,) is for `stage_backward` signature
-                bwd_kwargs["output_grads"] = (
-                    grads if len(grads) > 0 else (None,)
-                )
+                # Fill actual gradients received for outputs
+                # If nothing received, as in the case of last stage, then we
+                # would use the default `output_grads` prepared in the IR phase,
+                # i.e. from `bwd_node.kwargs`. For example, it may look like
+                # this if there are two outputs: ('None', 'None')
+                if len(grads) > 0:
+                    bwd_kwargs["output_grads"] = grads
 
                 # `stage_backward` node does not have `args`, only `kwargs`
                 grads_input, _ = stage_backward(**bwd_kwargs)

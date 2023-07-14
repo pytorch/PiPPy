@@ -39,7 +39,7 @@ class ExampleCode(torch.nn.Module):
         x = self.lin(x)
         x = torch.relu(x)
         loss = self.mse_loss(x, target)
-        return {"loss": loss}
+        return {"logits": x, "loss": loss}
 
 
 def run_worker(args):
@@ -74,7 +74,7 @@ def run_worker(args):
     # Last rank checks result
     if args.rank == args.world_size - 1:
         ref_out = ec(ec_x, target)
-        torch.testing.assert_close(out["loss"], ref_out["loss"])
+        torch.testing.assert_close(out, ref_out)
         print(
             f"equivalence test passed, loss = {out['loss']}, ref loss = {ref_out['loss']}"
         )
