@@ -1,15 +1,14 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import argparse
 import os
-import unittest
 
 import torch
-from torch.utils.data import Dataset, random_split, DataLoader
+from torch.utils.data import Dataset, random_split
 import torch.distributed as dist
 import torch.optim as optim
 
 from pippy.compile import compile_stage
-from pippy.IR import pipe_split, TrivialLossWrapper
+from pippy.IR import pipe_split
 
 
 d_hid = 512
@@ -68,11 +67,6 @@ def run_worker(args):
     train_size = int(0.7*len(ds))
     test_size = len(ds) - train_size
     train_ds, test_ds = random_split(ds, [train_size, test_size])
-    # train_dl, test_dl = DataLoader(train_ds), DataLoader(test_ds)
-    # loaders = {
-    #     "train": train_dl,
-    #     "test": test_dl,
-    # }
     datasets = {
         "train": train_ds,
         "test": test_ds,
