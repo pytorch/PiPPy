@@ -12,7 +12,7 @@ import torch.distributed as dist
 import torch.optim as optim
 from pippy.compile import compile_stage
 
-from pippy.hf._SaveModule import _get_binary_filename, save_checkpoint
+from pippy.hf._SaveModule import save_checkpoint
 from pippy.IR import pipe_split, TrivialLossWrapper
 from pippy.LoadModule import load_checkpoint
 
@@ -134,19 +134,12 @@ def run_worker(args: List[str | int]) -> None:
     # Take an optimization step
     optimizer.step()
 
-    # load ckpt
-    mod = load_checkpoint(
+    # new api
+    mod, optimizer = load_checkpoint(
         stage.submod,
         os.path.join(CKPT_DIR, "pytorch_model.bin.index.json"),
         args.device,
-    )
-    # load optim
-    optimizer.load_state_dict(
-        torch.load(
-            os.path.join(
-                CKPT_DIR, _get_binary_filename(dist.get_rank(), is_optim=True)
-            )
-        )
+        optim=optimizer,
     )
 
     torch.testing.assert_close(mod.state_dict(), submod_ref)

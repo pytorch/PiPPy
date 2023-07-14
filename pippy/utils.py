@@ -4,6 +4,8 @@ import os
 import socket
 from typing import List
 
+import torch.distributed as dist
+
 
 # Pinning process to a separate GPU if not yet done by launch script
 # Notes:
@@ -309,3 +311,23 @@ def flatten_args(args):
     pippy.fx.node.map_aggregate(args, extract_tensor_args, dont_traverse_size)
 
     return flat_args
+
+
+def _get_binary_filename(cur_idx: int, is_optim: bool = False) -> str:  # type: ignore[valid-type]
+    """
+    Gets filename for pytorch checkpoint binary based on current index and world size.
+
+    Args:
+        cur_idx (int): current device index
+        is_optim (bool): True if generating binary filename for optimizer,
+                         False otherwise
+
+    Returns:
+        str: checkpoint filename
+    """
+    idx = str(cur_idx + 1).zfill(5)
+    world_size = str(dist.get_world_size()).zfill(5)
+
+    state_type = "optim" if is_optim else "model"
+
+    return f"pytorch_{state_type}-{idx}-of-{world_size}.bin"
