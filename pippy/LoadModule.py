@@ -24,9 +24,9 @@ def load_checkpoint(
     device: torch.device = None,
     dtype: torch.dtype = None,
     checkpoint_prefix: str = None,
-) -> Union[nn.Module, Tuple[nn.Module, torch.optim.Optimizer]]:  # type: ignore
+):
     """
-    Load a checkpoint from a model file.
+    Load a checkpoint from a model (and optimizer) file.
     Args:
         model (`torch.nn.Module`): the model to load the checkpoint into
         index_filename (`Union[str, os.PathLike]`): path to the checkpoint's index (metadata file)
@@ -35,7 +35,8 @@ def load_checkpoint(
         dtype (`torch.dtype`): the dtype on which to load the checkpoint
         checkpoint_prefix (`str`): the prefix of the checkpoint to load
     Returns:
-        The loaded checkpoint model
+        The loaded checkpoint model, or, if an optimizer is passed as an argument,
+        both the loaded checkpoint model and a optimizer
     Example:
         ```
         checkpoint = load_checkpoint(model, index_filename, device, dtype)
