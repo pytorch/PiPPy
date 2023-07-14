@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel
 
 import pippy
 import pippy.fx
@@ -485,6 +486,36 @@ class PipelineStage(torch.nn.Module):
         return grad_send_reqs
 
     def forward(self, *args, **kwargs):
+        # If submod is wrapped with DDP, we use the `no_sync` context manager to
+        # avoid gradient all-reduce per microbatch
+        def forward_maybe_with_nosync(*args, **kwargs):
+            if isinstance(self.submod, DistributedDataParallel):
+                with self.submod.no_sync():  # type: ignore[operator]
+                    out_val = self.submod(*args, **kwargs)
+            else:
+                out_val = self.submod(*args, **kwargs)
+            return out_val
+
+        def backward_maybe_with_nosync(bwd_kwargs: Dict, is_last_chunk: bool):
+            if isinstance(self.submod, DistributedDataParallel):
+                if is_last_chunk:
+                    # HACK: reaching into DDP implementation details here. Is there a better way?
+                    self.submod.reducer.prepare_for_backward(  # type: ignore[union-attr, operator]
+                        list(
+                            torch.nn.parallel.distributed._find_tensors(  # type: ignore[attr-defined]
+                                bwd_kwargs["stage_output"]
+                            )
+                        )
+                    )
+                    grads_input, _ = stage_backward(**bwd_kwargs)
+                else:
+                    with self.submod.no_sync():  # type: ignore[operator]
+                        grads_input, _ = stage_backward(**bwd_kwargs)
+            else:
+                # Non-DDP submodule, regular backward
+                grads_input, _ = stage_backward(**bwd_kwargs)
+            return grads_input
+
         # map microbatch ID to list of forward tensor args
         fwd_cache: Dict[int, Tuple[Any, List[torch.Tensor]]] = {}
 
@@ -513,7 +544,9 @@ class PipelineStage(torch.nn.Module):
 
             # Compute forward
             try:
-                output = self.submod(*composite_args, **composite_kwargs)
+                output = forward_maybe_with_nosync(
+                    *composite_args, **composite_kwargs
+                )
 
             except Exception as e:
                 exc_msg = f"""
@@ -567,7 +600,10 @@ class PipelineStage(torch.nn.Module):
                 )
 
                 # `stage_backward` node does not have `args`, only `kwargs`
-                grads_input, _ = stage_backward(**bwd_kwargs)
+                grads_input = backward_maybe_with_nosync(
+                    bwd_kwargs,
+                    bwd_chunk == self.chunks - 1,
+                )
 
                 grad_send_reqs = self._send_grads(grads_input)
                 all_grad_send_reqs += grad_send_reqs
