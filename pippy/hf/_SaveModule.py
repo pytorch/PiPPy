@@ -1,9 +1,9 @@
 import json
 import logging
 import os
+import pathlib
 import tempfile
 from itertools import chain
-import pathlib
 
 from typing import Dict
 
