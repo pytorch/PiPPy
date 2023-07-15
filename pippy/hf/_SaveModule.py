@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import pathlib
 import tempfile
 from itertools import chain
 
@@ -103,7 +104,8 @@ def _save_index(
 
     # create checkpoint directory if it doesn't exist
     if not os.path.exists(checkpoint_dir):
-        os.mkdir(checkpoint_dir)
+        pathlib.Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
+        # os.mkdir(checkpoint_dir)
 
     # write index file atomically to avoid partial/corrupted writes
     _atomic_write(json_str, filepath)
@@ -120,7 +122,8 @@ def _save_params(submod: torch.nn.Module, checkpoint_dir: str) -> None:
         checkpoint_dir(`str`): where to keep the checkpoint binaries
     """
     if not os.path.exists(checkpoint_dir):
-        os.mkdir(checkpoint_dir)
+        pathlib.Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
+        # os.mkdir(checkpoint_dir)
     filepath = os.path.join(
         checkpoint_dir, _get_binary_filename(dist.get_rank())
     )
@@ -144,7 +147,8 @@ def _save_optim_state(
         checkpoint_dir(`str`): where to keep the checkpoint binaries
     """
     if not os.path.exists(checkpoint_dir):
-        os.mkdir(checkpoint_dir)
+        pathlib.Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
+        # os.mkdir(checkpoint_dir)
     filepath = os.path.join(
         checkpoint_dir, _get_binary_filename(dist.get_rank(), is_optim=True)
     )
