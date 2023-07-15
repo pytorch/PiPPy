@@ -22,7 +22,7 @@ class RandomCustomDataset(Dataset):
     """
     Setup random inputs and outputs for a desired dataset size.
     """
-    def __init__(self, chunks=1, size=10000):
+    def __init__(self, chunks=1, size=100):  # TODO: reset size to 10000
         self.samples = [torch.randn(chunks * chunk_size, d_hid) for _ in range(size)]
         self.targets = [torch.randn(chunks * chunk_size, d_hid) for _ in range(size)]
 
@@ -147,7 +147,6 @@ def run_worker(args):
                             epoch_all += len(y)
                         else:
                             stage(x)
-
             # print(f"Loader: {k}. Accuracy: {epoch_correct / epoch_all}")
 
     dist.barrier()
