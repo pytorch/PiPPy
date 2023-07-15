@@ -7,6 +7,7 @@ from torch.utils.data import Dataset, random_split
 import torch.distributed as dist
 import torch.optim as optim
 
+from pippy.hf._SaveModule import save_checkpoint
 from pippy.compile import compile_stage
 from pippy.IR import pipe_split
 
@@ -18,6 +19,9 @@ torch.manual_seed(0)
 
 
 class RandomCustomDataset(Dataset):
+    """
+    Setup random inputs and outputs for a desired dataset size.
+    """
     def __init__(self, chunks=1, size=10000):
         self.samples = [torch.randn(chunks * chunk_size, d_hid) for _ in range(size)]
         self.targets = [torch.randn(chunks * chunk_size, d_hid) for _ in range(size)]
@@ -30,6 +34,12 @@ class RandomCustomDataset(Dataset):
 
 
 class ExampleCode(torch.nn.Module):
+    """
+    A normal pytorch model(nn.Module) with a loss.
+    The loss is calculated in the `forward` function which lets pippy
+    automatically run a .backward(). Pippy handles this backward call
+    because of the nontrivial structure(FillDrain schedule) of the model pipeline.
+    """
     def __init__(self):
         super().__init__()
         self.mm_param = torch.nn.Parameter(torch.randn(d_hid, d_hid))
@@ -51,18 +61,20 @@ class ExampleCode(torch.nn.Module):
         pipe_split()
         x = self.lin(x)
         x = torch.relu(x)
-        loss = self.mse_loss(x, target)
+        loss = self.mse_loss(x, target)  # loss called here in forward, triggers backward call
         return {"loss": loss}
 
 
 def run_worker(args):
     ec = ExampleCode()
     ec.to(args.device)
-    ec.train()
+    # ec.train()
 
+    # sample input and output for compile_stage func call
     ec_x = torch.randn(args.chunks * chunk_size, d_hid, device=args.device)
     target = torch.randn(args.chunks * chunk_size, d_hid, device=args.device)
 
+    # setup data
     ds = RandomCustomDataset(chunks=args.chunks)
     train_size = int(0.7*len(ds))
     test_size = len(ds) - train_size
@@ -166,7 +178,7 @@ def main(args=None):
         "--epochs", type=int, default=2,
     )
     parser.add_argument(
-        "--checkpoint_epochs", type=int, default=5
+        "--checkpoint_epochs", type=int, default=1
     )
     args = parser.parse_args(args)
 
