@@ -535,7 +535,16 @@ class PipelineStage(torch.nn.Module):
 
         output_chunks = []
 
+        even = torch.cuda.Stream()
+        odd = torch.cuda.Stream()
+
+        chunk_id=0
         for chunk in range(self.chunks):
+            if chunk_id % 2 == 1:
+              s = odd
+            else:
+              s = even
+
             composite_args, composite_kwargs = self._recv_and_fill_inputs(
                 chunk,
                 args_split,
@@ -574,6 +583,8 @@ class PipelineStage(torch.nn.Module):
                 output_tuple,  # stage_output
                 flatten_input_tensors,  # input_values
             )
+
+            chunk_id+=1
 
         # Wait for all sends to finish
         # TODO: okay to delay the sync till completion of all chunks?
