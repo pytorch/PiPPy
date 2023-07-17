@@ -3,13 +3,13 @@ import argparse
 import os
 
 import torch
-from torch.utils.data import Dataset, random_split
 import torch.distributed as dist
 import torch.optim as optim
+from pippy.compile import compile_stage
 
 from pippy.hf._SaveModule import save_checkpoint
-from pippy.compile import compile_stage
 from pippy.IR import pipe_split
+from torch.utils.data import Dataset, random_split
 
 
 d_hid = 512
@@ -19,9 +19,17 @@ torch.manual_seed(0)
 
 
 class RandomCustomDataset(Dataset):
+    """
+    Setup random inputs and outputs for a desired dataset size.
+    """
+
     def __init__(self, chunks=1, size=100):  # TODO: reset size to 10000
-        self.samples = [torch.randn(chunks * chunk_size, d_hid) for _ in range(size)]
-        self.targets = [torch.randn(chunks * chunk_size, d_hid) for _ in range(size)]
+        self.samples = [
+            torch.randn(chunks * chunk_size, d_hid) for _ in range(size)
+        ]
+        self.targets = [
+            torch.randn(chunks * chunk_size, d_hid) for _ in range(size)
+        ]
 
     def __len__(self):
         return len(self.samples)
@@ -31,6 +39,13 @@ class RandomCustomDataset(Dataset):
 
 
 class ExampleCode(torch.nn.Module):
+    """
+    A normal pytorch model(nn.Module) with a loss.
+    The loss is calculated in the `forward` function which lets pippy
+    automatically run a .backward(). Pippy handles this backward call
+    because of the nontrivial structure(FillDrain schedule) of the model pipeline.
+    """
+
     def __init__(self):
         super().__init__()
         self.mm_param = torch.nn.Parameter(torch.randn(d_hid, d_hid))
@@ -52,20 +67,24 @@ class ExampleCode(torch.nn.Module):
         pipe_split()
         x = self.lin(x)
         x = torch.relu(x)
-        loss = self.mse_loss(x, target)
+        loss = self.mse_loss(
+            x, target
+        )  # loss called here in forward, triggers backward call
         return {"loss": loss}
 
 
 def run_worker(args):
     ec = ExampleCode()
     ec.to(args.device)
-    ec.train()
+    # ec.train()
 
+    # sample input and output for compile_stage func call
     ec_x = torch.randn(args.chunks * chunk_size, d_hid, device=args.device)
     target = torch.randn(args.chunks * chunk_size, d_hid, device=args.device)
 
+    # setup data
     ds = RandomCustomDataset(chunks=args.chunks)
-    train_size = int(0.7*len(ds))
+    train_size = int(0.7 * len(ds))
     test_size = len(ds) - train_size
     train_ds, test_ds = random_split(ds, [train_size, test_size])
     datasets = {
@@ -89,31 +108,37 @@ def run_worker(args):
     for epoch in range(args.epochs):  # change to no. epochs
         print(f"Epoch: {epoch + 1}")
 
-        # save checkpoint
-        if (epoch + 1) % args.checkpoint_epochs == 0:  # save ckpt after every `args.checkpoint_epochs` epochs
-            print("RUuuuuuuuuuuunnnnnnnnnninngggggggggg")
-            save_checkpoint(stage, checkpoint_dir=os.path.join("checkpoints", str(epoch + 1)), optimizer=optimizer)
-            print("Doooooooooooonnnnnnnnnnnnnneeeeeeeeeee")
+        # save checkpoints
+        if (epoch + 1) % args.checkpoint_epochs == 0:
+            save_checkpoint(
+                stage,
+                checkpoint_dir=os.path.join("checkpoints", f"{epoch + 1}"),
+                optimizer=optimizer,
+            )
 
         for k, dataset in datasets.items():
             epoch_correct = 0
             epoch_all = 0
+
             for i, (x, y) in enumerate(dataset):
                 x = x.to(args.device)
                 y = y.to(args.device)
+
                 if k == "train":
                     # Zero gradients
                     optimizer.zero_grad()
+
                     # Run
                     if args.rank == 0:
                         out = stage(x)
                     elif args.rank == args.world_size - 1:
                         out = stage(target)
-                        out_tensor = out['loss']
+                        out_tensor = out["loss"]
                         preds = out_tensor.argmax(-1)
                         correct = (preds == y).sum()
-                        epoch_all += len(y)
                         epoch_correct += correct.item()
+                        epoch_all += len(y)
+
                         # Take an optimization step
                         optimizer.step()
                     else:
@@ -124,11 +149,12 @@ def run_worker(args):
                         if args.rank == 0:
                             out = stage(x)
                         elif args.rank == args.world_size - 1:
-                            out = stage(x)['loss']
-                            preds = out.argmax(-1)
+                            out = stage(x)
+                            out_tensor = out["loss"]
+                            preds = out_tensor.argmax(-1)
                             correct = (preds == y).sum()
-                            epoch_all += len(y)
                             epoch_correct += correct.item()
+                            epoch_all += len(y)
                         else:
                             stage(x)
             # print(f"Loader: {k}. Accuracy: {epoch_correct / epoch_all}")
@@ -152,11 +178,15 @@ def main(args=None):
     parser.add_argument(
         "--cuda", type=int, default=int(torch.cuda.is_available())
     )
-    parser.add_argument("--epochs", type=int, default=2)
     parser.add_argument(
         "--chunks",
         type=int,
         default=4,
+    )
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=2,
     )
     parser.add_argument("--checkpoint_epochs", type=int, default=1)
     args = parser.parse_args(args)
