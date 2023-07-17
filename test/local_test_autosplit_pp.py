@@ -12,25 +12,11 @@ import torch.autograd.profiler_legacy
 from pippy import run_pippy
 from pippy.compile import compile_stage
 from pippy.IR import MultiUseParameterConfig, Pipe
-# from pippy.PipelineDriver import (
-#     PipelineDriver1F1B,
-#     PipelineDriverBase,
-#     PipelineDriverFillDrain,
-#     PipelineDriverInterleaved1F1B,
-# )
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
 
-# schedules = {
-#     "FillDrain": PipelineDriverFillDrain,
-#     "1F1B": PipelineDriver1F1B,
-#     "Interleaved1F1B": PipelineDriverInterleaved1F1B,
-# }
-
 pippy.fx.Tracer.proxy_buffer_attributes = True
-
-# MULTI_USE_PARAM_CONFIG = MultiUseParameterConfig.TRANSMIT
 
 
 # Example model definition
@@ -81,16 +67,16 @@ def inspect_split_module(
         print(submod)
 
 
-# Common function to run pipeline with input and check equivalence
+# Common function to run pipeline stage with input and check equivalence
 def run_compile_stage(mod: torch.nn.Module, stage: Pipe, args):
     nstages = len(list(stage.split_gm.children()))
     ec_input = torch.randn(bs, d_hid, device=args.device)
-    # Warm up and correctness runs
 
+    # Warm up and correctness runs
     if args.rank == 0:
         stage(ec_input)
     elif args.rank == args.world_size - 1:
-        out = stage(ec_input)
+        out = stage()
     else:
         stage()
 
@@ -111,20 +97,32 @@ def run_compile_stage(mod: torch.nn.Module, stage: Pipe, args):
                 f'equivalence test passed {torch.sum(out["out"])} ref {torch.sum(ref_out["out"])}'
             )
 
-    # # # Profiling runs
-    # with torch.autograd.profiler_legacy.profile(
-    #     enabled=PROFILING_ENABLED
-    # ) as prof:
-    #     pipe_driver.chunks = nstages
-    #     out = pipe_driver(ec_input)
-    #     ref_out = ec_pipe(ec_input)
-    #     print(
-    #         f'profiling run completed {torch.sum(out["out"])} ref {torch.sum(ref_out["out"])}'
-    #     )
-    # if PROFILING_ENABLED:
-    #     prof.export_chrome_trace(
-    #         f"{os.path.splitext(os.path.basename(__file__))[0]}.json"
-    #     )
+    # Profiling runs
+    with torch.autograd.profiler_legacy.profile(
+        enabled=PROFILING_ENABLED
+    ) as prof:
+        stage.chunks = nstages
+
+        if args.rank == 0:
+            stage(ec_input)
+        elif args.rank == args.world_size - 1:
+            out = stage(ec_input)
+        else:
+            stage()
+
+        ref_out = mod(ec_input)
+
+        if args.rank == args.world_size - 1:
+            print(f"#############{out.shape}################")
+            print(
+                f'profiling run completed {torch.sum(out)} ref {torch.sum(ref_out)}'  #TODO: bug in square brackets: I get `profiling run completed [nan/inf] ref 188975536.0`
+            )
+    if PROFILING_ENABLED:
+        prof.export_chrome_trace(
+            f"{os.path.splitext(os.path.basename(__file__))[0]}.json"
+        )
+
+    dist.barrier()
 
 
 def test_split_on_size_threshold(args):
@@ -136,6 +134,8 @@ def test_split_on_size_threshold(args):
     split_policy = pippy.ModelSplit.split_on_size_threshold(threshold)
 
     ec_input = torch.randn(bs, d_hid, device=args.device)
+    target = torch.randn(bs, d_hid, device=args.device)
+
     stage = compile_stage(  # default multi_use_param_spec to REPLICATE'ing param(if used in multiple stages) across stages instead of TRANSMI'ing it
         ec,
         args.rank,
@@ -144,13 +144,11 @@ def test_split_on_size_threshold(args):
         args.device,
         None,
         [ec_input,],
-        split_policy=split_policy
+    #     split_policy=split_policy
     )
 
-    inspect_split_module(stage, expected_stages=5)
-    run_compile_stage(ec, stage, args)
-
-    dist.barrier()
+    # inspect_split_module(stage, expected_stages=5)
+    # run_compile_stage(ec, stage, args)
 
 
 def test_split_into_equal_size(args):
@@ -162,6 +160,7 @@ def test_split_into_equal_size(args):
     split_policy = pippy.ModelSplit.split_into_equal_size(nstages)
 
     ec_input = torch.randn(bs, d_hid, device=args.device)
+    target = torch.randn(bs, d_hid, device=args.device)
     stage = compile_stage(  # default multi_use_param_spec to REPLICATE'ing param(if used in multiple stages) across stages instead of TRANSMI'ing it
         ec,
         args.rank,
@@ -169,15 +168,12 @@ def test_split_into_equal_size(args):
         args.chunks,
         args.device,
         None,
-        [ec_input,],
+        [ec_input, ],
         split_policy=split_policy
     )
 
-    inspect_split_module(stage, expected_stages=nstages)
+    # inspect_split_module(stage, expected_stages=nstages)
     run_compile_stage(ec, stage, args)
-
-    dist.barrier()
-
 
 
 def main(args=None):
@@ -189,7 +185,7 @@ def main(args=None):
         "--rank", type=int, default=int(os.getenv("RANK", -1))
     )
     parser.add_argument(
-        "--chunks", type=int, default=4,
+        "--chunks", type=int, default=5,
     )
     parser.add_argument(
         "--master_addr", type=str, default=os.getenv("MASTER_ADDR", "localhost")
