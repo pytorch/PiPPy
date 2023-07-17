@@ -553,9 +553,10 @@ class PipelineStage(torch.nn.Module):
 
             # Compute forward
             try:
-                output = forward_maybe_with_nosync(
-                    *composite_args, **composite_kwargs
-                )
+                with torch.cuda.stream(s):
+                  output = forward_maybe_with_nosync(
+                      *composite_args, **composite_kwargs
+                  )
 
             except Exception as e:
                 exc_msg = f"""
