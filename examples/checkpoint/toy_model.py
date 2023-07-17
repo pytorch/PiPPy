@@ -3,13 +3,13 @@ import argparse
 import os
 
 import torch
-from torch.utils.data import Dataset, random_split
 import torch.distributed as dist
 import torch.optim as optim
+from pippy.compile import compile_stage
 
 from pippy.hf._SaveModule import save_checkpoint
-from pippy.compile import compile_stage
 from pippy.IR import pipe_split
+from torch.utils.data import Dataset, random_split
 
 
 d_hid = 512
@@ -22,9 +22,14 @@ class RandomCustomDataset(Dataset):
     """
     Setup random inputs and outputs for a desired dataset size.
     """
+
     def __init__(self, chunks=1, size=100):  # TODO: reset size to 10000
-        self.samples = [torch.randn(chunks * chunk_size, d_hid) for _ in range(size)]
-        self.targets = [torch.randn(chunks * chunk_size, d_hid) for _ in range(size)]
+        self.samples = [
+            torch.randn(chunks * chunk_size, d_hid) for _ in range(size)
+        ]
+        self.targets = [
+            torch.randn(chunks * chunk_size, d_hid) for _ in range(size)
+        ]
 
     def __len__(self):
         return len(self.samples)
@@ -40,6 +45,7 @@ class ExampleCode(torch.nn.Module):
     automatically run a .backward(). Pippy handles this backward call
     because of the nontrivial structure(FillDrain schedule) of the model pipeline.
     """
+
     def __init__(self):
         super().__init__()
         self.mm_param = torch.nn.Parameter(torch.randn(d_hid, d_hid))
@@ -61,7 +67,9 @@ class ExampleCode(torch.nn.Module):
         pipe_split()
         x = self.lin(x)
         x = torch.relu(x)
-        loss = self.mse_loss(x, target)  # loss called here in forward, triggers backward call
+        loss = self.mse_loss(
+            x, target
+        )  # loss called here in forward, triggers backward call
         return {"loss": loss}
 
 
@@ -76,7 +84,7 @@ def run_worker(args):
 
     # setup data
     ds = RandomCustomDataset(chunks=args.chunks)
-    train_size = int(0.7*len(ds))
+    train_size = int(0.7 * len(ds))
     test_size = len(ds) - train_size
     train_ds, test_ds = random_split(ds, [train_size, test_size])
     datasets = {
@@ -102,9 +110,11 @@ def run_worker(args):
 
         # save checkpoints
         if (epoch + 1) % args.checkpoint_epochs == 0:
-            save_checkpoint(stage,
-                            checkpoint_dir=os.path.join("checkpoints", f"{epoch + 1}"),
-                            optimizer=optimizer)
+            save_checkpoint(
+                stage,
+                checkpoint_dir=os.path.join("checkpoints", f"{epoch + 1}"),
+                optimizer=optimizer,
+            )
 
         for k, dataset in datasets.items():
             epoch_correct = 0
@@ -123,7 +133,7 @@ def run_worker(args):
                         out = stage(x)
                     elif args.rank == args.world_size - 1:
                         out = stage(target)
-                        out_tensor = out['loss']
+                        out_tensor = out["loss"]
                         preds = out_tensor.argmax(-1)
                         correct = (preds == y).sum()
                         epoch_correct += correct.item()
@@ -140,7 +150,7 @@ def run_worker(args):
                             out = stage(x)
                         elif args.rank == args.world_size - 1:
                             out = stage(x)
-                            out_tensor = out['loss']
+                            out_tensor = out["loss"]
                             preds = out_tensor.argmax(-1)
                             correct = (preds == y).sum()
                             epoch_correct += correct.item()
@@ -158,9 +168,7 @@ def main(args=None):
     parser.add_argument(
         "--world_size", type=int, default=int(os.getenv("WORLD_SIZE", 4))
     )
-    parser.add_argument(
-        "--rank", type=int, default=int(os.getenv("RANK", -1))
-    )
+    parser.add_argument("--rank", type=int, default=int(os.getenv("RANK", -1)))
     parser.add_argument(
         "--master_addr", type=str, default=os.getenv("MASTER_ADDR", "localhost")
     )
@@ -171,14 +179,16 @@ def main(args=None):
         "--cuda", type=int, default=int(torch.cuda.is_available())
     )
     parser.add_argument(
-        "--chunks", type=int, default=4,
+        "--chunks",
+        type=int,
+        default=4,
     )
     parser.add_argument(
-        "--epochs", type=int, default=2,
+        "--epochs",
+        type=int,
+        default=2,
     )
-    parser.add_argument(
-        "--checkpoint_epochs", type=int, default=1
-    )
+    parser.add_argument("--checkpoint_epochs", type=int, default=1)
     args = parser.parse_args(args)
 
     if args.cuda:
