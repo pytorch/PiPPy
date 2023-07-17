@@ -80,6 +80,9 @@ class PipelineStage(torch.nn.Module):
             f"{self.submod}"
         )
 
+        self.even = torch.cuda.Stream()
+        self.odd = torch.cuda.Stream()
+
         # Find my forward node in graph
         found_node = False
         for node in self.split_gm.graph.nodes:
@@ -535,15 +538,12 @@ class PipelineStage(torch.nn.Module):
 
         output_chunks = []
 
-        even = torch.cuda.Stream()
-        odd = torch.cuda.Stream()
-
         chunk_id=0
         for chunk in range(self.chunks):
             if chunk_id % 2 == 1:
-              s = odd
+              s = self.odd
             else:
-              s = even
+              s = self.even
 
             composite_args, composite_kwargs = self._recv_and_fill_inputs(
                 chunk,
