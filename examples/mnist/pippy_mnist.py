@@ -7,8 +7,11 @@ import pippy.fx
 
 import torch
 import torch.distributed as dist
+
+from pippy.hf._SaveModule import save_checkpoint
 from pippy.IR import LossWrapper, PipeSplitWrapper
 from pippy.microbatch import sum_reducer, TensorChunkSpec
+
 from torch import nn, optim
 from torch.nn.functional import cross_entropy
 from torch.utils.data import DistributedSampler
@@ -163,6 +166,16 @@ def run_worker(args):
                         all = len(y_batch)
                         epoch_correct += correct.item()
                         epoch_all += all
+
+                    # save checkpoint - after training epoch
+                    if (epoch + 1) % args.checkpoint_epochs == 0:
+                        save_checkpoint(
+                            stage,
+                            checkpoint_dir=os.path.join(
+                                "checkpoints", str(epoch + 1)
+                            ),
+                            optimizer=optimizer,
+                        )
                 else:
                     # TODO: add evaluation support in PiPPy
                     pass
@@ -200,6 +213,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--visualize", type=int, default=0, choices=[0, 1])
     parser.add_argument("--checkpoint", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--checkpoint_epochs", type=int, default=5)
     parser.add_argument(
         "--chunks",
         type=int,
