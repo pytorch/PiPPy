@@ -82,12 +82,6 @@ def run_compile_stage(mod: torch.nn.Module, stage: Pipe, args):
 
     print(f"Rank {args.rank} completes")
 
-    # run with different chunk size to exercise microbatch and scheduling components
-    # stage.chunks = 1
-    # stage(ec_input)
-    # stage.chunks = 100
-    # stage(ec_input)
-
     # check numeric equivalence in the last rank
     if args.rank == args.world_size - 1:
         if CHECK_NUMERIC_EQUIVALENCE:
@@ -101,7 +95,6 @@ def run_compile_stage(mod: torch.nn.Module, stage: Pipe, args):
     with torch.autograd.profiler_legacy.profile(
         enabled=PROFILING_ENABLED
     ) as prof:
-        stage.chunks = nstages
 
         if args.rank == 0:
             stage(ec_input)
