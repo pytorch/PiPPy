@@ -7,11 +7,10 @@ import pippy.fx
 import pippy.ModelSplit
 
 import torch
-import torch.distributed as dist
 import torch.autograd.profiler_legacy
-from pippy import run_pippy
+import torch.distributed as dist
 from pippy.compile import compile_stage
-from pippy.IR import MultiUseParameterConfig, Pipe
+from pippy.IR import Pipe
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True
@@ -106,9 +105,8 @@ def run_compile_stage(mod: torch.nn.Module, stage: Pipe, args):
         ref_out = mod(ec_input)
 
         if args.rank == args.world_size - 1:
-            print(f"#############{out.shape}################")
             print(
-                f'profiling run completed {torch.sum(out)} ref {torch.sum(ref_out)}'  #TODO: bug in square brackets: I get `profiling run completed [nan/inf] ref 188975536.0`
+                f"profiling run completed {torch.sum(out)} ref {torch.sum(ref_out)}"  # TODO: bug in square brackets: I get `profiling run completed [nan/inf] ref 188975536.0`
             )
     if PROFILING_ENABLED:
         prof.export_chrome_trace(
@@ -136,8 +134,10 @@ def test_split_on_size_threshold(args):
         args.chunks,
         args.device,
         None,
-        [ec_input,],
-    #     split_policy=split_policy
+        [
+            ec_input,
+        ],
+        #     split_policy=split_policy
     )
 
     # inspect_split_module(stage, expected_stages=5)
@@ -161,8 +161,10 @@ def test_split_into_equal_size(args):
         args.chunks,
         args.device,
         None,
-        [ec_input, ],
-        split_policy=split_policy
+        [
+            ec_input,
+        ],
+        split_policy=split_policy,
     )
 
     # inspect_split_module(stage, expected_stages=nstages)
@@ -174,11 +176,11 @@ def main(args=None):
     parser.add_argument(
         "--world_size", type=int, default=int(os.getenv("WORLD_SIZE", 5))
     )
+    parser.add_argument("--rank", type=int, default=int(os.getenv("RANK", -1)))
     parser.add_argument(
-        "--rank", type=int, default=int(os.getenv("RANK", -1))
-    )
-    parser.add_argument(
-        "--chunks", type=int, default=5,
+        "--chunks",
+        type=int,
+        default=5,
     )
     parser.add_argument(
         "--master_addr", type=str, default=os.getenv("MASTER_ADDR", "localhost")
@@ -195,8 +197,11 @@ def main(args=None):
     parser.add_argument("--checkpoint", type=int, default=0, choices=[0, 1])
     args = parser.parse_args(args)
 
-    args.device = torch.device(f"cuda:{args.rank % torch.cuda.device_count()}") \
-                    if args.cuda else torch.device("cpu")
+    args.device = (
+        torch.device(f"cuda:{args.rank % torch.cuda.device_count()}")
+        if args.cuda
+        else torch.device("cpu")
+    )
 
     # init process group
     backend = "nccl" if args.cuda else "gloo"
