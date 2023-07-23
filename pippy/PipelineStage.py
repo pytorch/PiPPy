@@ -520,7 +520,7 @@ class PipelineStage(torch.nn.Module):
         chunk: int,
         args_split,
         kwargs_split,
-        fwd_cache: Dict[int, Tuple],
+        fwd_cache: Dict[int, Any],
     ):
         composite_args, composite_kwargs = self._recv_and_fill_inputs(
             chunk,
@@ -561,7 +561,7 @@ class PipelineStage(torch.nn.Module):
     def backward_one_chunk(
         self,
         bwd_chunk: int,
-        fwd_cache: Dict[int, Tuple],
+        fwd_cache: Dict[int, Any],
     ):
         grads = self._recv_grads(bwd_chunk)
 
