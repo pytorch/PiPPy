@@ -21,7 +21,7 @@ from pippy.PipelineDriver import (
     PipelineDriverFillDrain,
     PipelineDriverInterleaved1F1B,
 )
-from pippy.PipelineStage import PipelineStage
+from pippy.PipelineStage import PipelineStage, PipelineStage1F1B
 from pippy.utils import get_device, get_pp_rank, get_rank
 
 
@@ -231,6 +231,7 @@ def compile_stage(
     args_chunk_spec=None,
     kwargs_chunk_spec=None,
     output_chunk_spec=None,
+    schedule="FillDrain",
     **kwargs,
 ) -> PipelineStage:
     # If a param will be used in multiple pipeline stages, we default the strategy to REPLICATE'ing the param across
@@ -293,15 +294,28 @@ def compile_stage(
         else gen_output_chunk_spec(pipe.loss_spec, loss_reducer)
     )
 
-    # Create pipeline stage
-    return PipelineStage(
-        pipe,
-        rank,
-        num_ranks,
-        num_chunks,
-        device,
-        group,
-        args_chunk_spec,
-        kwargs_chunk_spec,
-        output_chunk_spec,
-    )
+    # Create pipeline stage based on schedule
+    if schedule == "1F1B":
+        return PipelineStage1F1B(
+            pipe,
+            rank,
+            num_ranks,
+            num_chunks,
+            device,
+            group,
+            args_chunk_spec,
+            kwargs_chunk_spec,
+            output_chunk_spec,
+        )
+    else:
+        return PipelineStage(
+            pipe,
+            rank,
+            num_ranks,
+            num_chunks,
+            device,
+            group,
+            args_chunk_spec,
+            kwargs_chunk_spec,
+            output_chunk_spec,
+        )
