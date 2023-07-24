@@ -609,7 +609,7 @@ class PipelineStage(torch.nn.Module):
         grad_send_reqs = self._send_grads(grads_input)
         self.all_grad_send_reqs += grad_send_reqs
 
-    def forward(self, *args, **kwargs):
+    def clear_runtime_states(self):
         # map microbatch ID to list of forward tensor args
         self.fwd_cache.clear()
         # Activation send requests of all chunk
@@ -618,6 +618,10 @@ class PipelineStage(torch.nn.Module):
         self.all_grad_send_reqs.clear()
         # Caching chunk outputs for final output merge or reduction
         self.output_chunks.clear()
+
+    def forward(self, *args, **kwargs):
+        # Clean per iteration
+        self.clear_runtime_states()
 
         # Split inputs into chunks
         self.split_inputs(args, kwargs)
@@ -677,14 +681,8 @@ class PipelineStage1F1B(PipelineStage):
         )
 
     def forward(self, *args, **kwargs):
-        # map microbatch ID to list of forward tensor args
-        self.fwd_cache.clear()
-        # Activation send requests of all chunk
-        self.all_act_send_reqs.clear()
-        # Grad send requests of all chunk
-        self.all_grad_send_reqs.clear()
-        # Caching chunk outputs for final output merge or reduction
-        self.output_chunks.clear()
+        # Clean per iteration
+        self.clear_runtime_states()
 
         # Split inputs into chunks
         self.split_inputs(args, kwargs)
