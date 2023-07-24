@@ -625,6 +625,12 @@ class PipelineStage(torch.nn.Module):
         # Caching chunk outputs for final output merge or reduction
         self.output_chunks.clear()
 
+    def merge_output_chunks(self):
+        return merge_chunks(
+            self.output_chunks,
+            self.output_chunk_spec,
+        )
+
     def forward(self, *args, **kwargs):
         # Clean per iteration
         self.clear_runtime_states()
@@ -653,10 +659,7 @@ class PipelineStage(torch.nn.Module):
 
         # Last rank return merged results per original format
         if self.is_last():
-            return merge_chunks(
-                self.output_chunks,
-                self.output_chunk_spec,
-            )
+            return self.merge_output_chunks()
         else:
             return None
 
@@ -722,9 +725,6 @@ class PipelineStage1F1B(PipelineStage):
 
         # Last rank return merged results per original format
         if self.is_last():
-            return merge_chunks(
-                self.output_chunks,
-                self.output_chunk_spec,
-            )
+            return self.merge_output_chunks()
         else:
             return None
