@@ -127,6 +127,12 @@ class PipelineStage(torch.nn.Module):
         # Prepare send/recv infrastructure
         self._prepare_send_recv_infra()
 
+    def is_first(self):
+        return self.rank == 0
+
+    def is_last(self):
+        return self.rank == self.nstages - 1
+
     def _prepare_send_recv_infra(self):
         """
         Create send/recv infrastructures for activations (during forward) and
@@ -646,7 +652,7 @@ class PipelineStage(torch.nn.Module):
             work.wait()
 
         # Last rank return merged results per original format
-        if self.rank == self.nstages - 1:
+        if self.is_last():
             return merge_chunks(
                 self.output_chunks,
                 self.output_chunk_spec,
@@ -715,7 +721,7 @@ class PipelineStage1F1B(PipelineStage):
             work.wait()
 
         # Last rank return merged results per original format
-        if self.rank == self.nstages - 1:
+        if self.is_last():
             return merge_chunks(
                 self.output_chunks,
                 self.output_chunk_spec,
