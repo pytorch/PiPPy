@@ -102,11 +102,6 @@ def _save_index(
 
     filepath = os.path.join(checkpoint_dir, ckpt_index_filename)
 
-    # create checkpoint directory if it doesn't exist
-    if not os.path.exists(checkpoint_dir):
-        pathlib.Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
-        # os.mkdir(checkpoint_dir)
-
     # write index file atomically to avoid partial/corrupted writes
     _atomic_write(json_str, filepath)
 
@@ -121,9 +116,6 @@ def _save_params(submod: torch.nn.Module, checkpoint_dir: str) -> None:
         submod(`Pipe`): a submodule of the model's graph
         checkpoint_dir(`str`): where to keep the checkpoint binaries
     """
-    if not os.path.exists(checkpoint_dir):
-        pathlib.Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
-        # os.mkdir(checkpoint_dir)
     filepath = os.path.join(
         checkpoint_dir, _get_binary_filename(dist.get_rank())
     )
@@ -146,9 +138,6 @@ def _save_optim_state(
         optimizer(`torch.optim.Optimizer`): pytorch optimizer
         checkpoint_dir(`str`): where to keep the checkpoint binaries
     """
-    if not os.path.exists(checkpoint_dir):
-        pathlib.Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
-        # os.mkdir(checkpoint_dir)
     filepath = os.path.join(
         checkpoint_dir, _get_binary_filename(dist.get_rank(), is_optim=True)
     )
@@ -171,6 +160,10 @@ def save_checkpoint(
                               defaults to `checkpoints`
         optimizer(`torch.optim.Optimizer`): optimizer whose state dict is to be saved
     """
+    # create checkpoint directory if it doesn't exist
+    if not os.path.exists(checkpoint_dir):
+        pathlib.Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
+        
     # write index file in rank 0
     if dist.get_rank() == 0:
         _save_index(stage, checkpoint_dir=checkpoint_dir)
