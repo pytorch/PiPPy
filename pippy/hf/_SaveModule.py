@@ -163,7 +163,7 @@ def save_checkpoint(
     # create checkpoint directory if it doesn't exist
     if not os.path.exists(checkpoint_dir):
         pathlib.Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
-        
+
     # write index file in rank 0
     if dist.get_rank() == 0:
         _save_index(stage, checkpoint_dir=checkpoint_dir)
