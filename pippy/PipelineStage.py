@@ -70,6 +70,19 @@ class PipelineStage(torch.nn.Module):
         self.kwargs_chunk_spec = kwargs_chunk_spec
         self.output_chunk_spec = output_chunk_spec
 
+        # Run time states
+        # map microbatch ID to list of forward tensor args
+        self.fwd_cache: Dict[int, Tuple[Any, List[torch.Tensor]]] = {}
+        # Split input chunks
+        self.args_split = None
+        self.kwargs_split = None
+        # Activation send requests of all chunk
+        self.all_act_send_reqs: List[dist.Work] = []
+        # Grad send requests of all chunk
+        self.all_grad_send_reqs: List[dist.Work] = []
+        # Caching chunk outputs for final output merge or reduction
+        self.output_chunks = []
+
         # Find my submodule
         self.split_gm = self.pipe.split_gm
         named_children = list(self.split_gm.named_children())
@@ -359,19 +372,29 @@ class PipelineStage(torch.nn.Module):
     ):
         return lambda info: self._recv_tensor(info, reqs)
 
+    def split_inputs(self, args, kwargs):
+        self.args_split = None
+        self.kwargs_split = None
+        if args or kwargs:
+            self.args_split, self.kwargs_split = split_args_kwargs_into_chunks(
+                args,
+                kwargs,
+                self.chunks,
+                self.args_chunk_spec,
+                self.kwargs_chunk_spec,
+            )
+
     def _recv_and_fill_inputs(
         self,
         chunk: int,
-        args_split,
-        kwargs_split,
     ):
         # Receive requests of a chunk
         recv_reqs: List[dist.Work] = []
 
         act_recv = self.recv_tensor_fn(recv_reqs)
 
-        if args_split:
-            chunk_args = args_split[chunk]
+        if self.args_split:
+            chunk_args = self.args_split[chunk]
             chunk_args_list = list(chunk_args)
 
         def recv_args(info):
@@ -385,8 +408,8 @@ class PipelineStage(torch.nn.Module):
             recv_args,
         )
 
-        if kwargs_split:
-            chunk_kwargs = kwargs_split[chunk]
+        if self.kwargs_split:
+            chunk_kwargs = self.kwargs_split[chunk]
 
         def recv_kwargs(info):
             if isinstance(info, RecvInfo):
@@ -518,15 +541,8 @@ class PipelineStage(torch.nn.Module):
     def forward_one_chunk(
         self,
         chunk: int,
-        args_split,
-        kwargs_split,
-        fwd_cache: Dict[int, Any],
     ):
-        composite_args, composite_kwargs = self._recv_and_fill_inputs(
-            chunk,
-            args_split,
-            kwargs_split,
-        )
+        composite_args, composite_kwargs = self._recv_and_fill_inputs(chunk)
 
         # Compute forward
         try:
@@ -545,24 +561,29 @@ class PipelineStage(torch.nn.Module):
         # Unify output form to tuple for easy correspondance with
         # `act_send_info`
         output_tuple = output if type(output) is tuple else (output,)
+        # Prepare for final output merge or reduction
+        self.output_chunks.append(output)
+
+        # Send activations
         send_reqs = self._send_activations(output_tuple)
+        self.all_act_send_reqs += send_reqs
 
         # Save activations and inputs for backward
         flat_args = flatten_args(composite_args)
         flat_kwargs = flatten_args(composite_kwargs)
         flatten_input_tensors = flat_args + flat_kwargs
-        fwd_cache[chunk] = (
+        self.fwd_cache[chunk] = (
             output_tuple,  # stage_output
             flatten_input_tensors,  # input_values
         )
 
-        return output, send_reqs
-
     def backward_one_chunk(
         self,
         bwd_chunk: int,
-        fwd_cache: Dict[int, Any],
     ):
+        if not self.pipe.has_loss_and_backwards:
+            return None
+
         grads = self._recv_grads(bwd_chunk)
 
         # Pack args for `stage_backward``
@@ -570,7 +591,7 @@ class PipelineStage(torch.nn.Module):
         (
             bwd_kwargs["stage_output"],
             bwd_kwargs["input_values"],
-        ) = fwd_cache.pop(bwd_chunk)
+        ) = self.fwd_cache.pop(bwd_chunk)
         # Fill actual gradients received for outputs
         # If nothing received, as in the case of last stage, then we
         # would use the default `output_grads` prepared in the IR phase,
@@ -586,60 +607,44 @@ class PipelineStage(torch.nn.Module):
         )
 
         grad_send_reqs = self._send_grads(grads_input)
-        return grad_send_reqs
+        self.all_grad_send_reqs += grad_send_reqs
 
     def forward(self, *args, **kwargs):
         # map microbatch ID to list of forward tensor args
-        fwd_cache: Dict[int, Tuple[Any, List[torch.Tensor]]] = {}
-
-        args_split = None
-        kwargs_split = None
-        if args or kwargs:
-            args_split, kwargs_split = split_args_kwargs_into_chunks(
-                args,
-                kwargs,
-                self.chunks,
-                self.args_chunk_spec,
-                self.kwargs_chunk_spec,
-            )
-
+        self.fwd_cache.clear()
         # Activation send requests of all chunk
-        all_send_reqs: List[dist.Work] = []
+        self.all_act_send_reqs.clear()
+        # Grad send requests of all chunk
+        self.all_grad_send_reqs.clear()
+        # Caching chunk outputs for final output merge or reduction
+        self.output_chunks.clear()
 
-        output_chunks = []
+        # Split inputs into chunks
+        self.split_inputs(args, kwargs)
 
         # Forward pass of all chunks
         for chunk in range(self.chunks):
-            output, send_reqs = self.forward_one_chunk(
-                chunk, args_split, kwargs_split, fwd_cache
-            )
-            all_send_reqs += send_reqs
-            # Prepare for final output merge or reduction
-            output_chunks.append(output)
+            self.forward_one_chunk(chunk)
 
         # Wait for all sends to finish
         # TODO: okay to delay the sync till completion of all chunks?
-        for work in all_send_reqs:
+        for work in self.all_act_send_reqs:
             work.wait()
 
         # Backward starts here
-        # Grad send requests of all chunk
-        all_grad_send_reqs: List[dist.Work] = []
 
         for bwd_chunk in range(self.chunks):
-            if self.pipe.has_loss_and_backwards:
-                grad_send_reqs = self.backward_one_chunk(bwd_chunk, fwd_cache)
-                all_grad_send_reqs += grad_send_reqs
+            self.backward_one_chunk(bwd_chunk)
 
         # Wait for all sends to finish
         # TODO: okay to delay the sync till completion of all chunks?
-        for work in all_grad_send_reqs:
+        for work in self.all_grad_send_reqs:
             work.wait()
 
         # Last rank return merged results per original format
         if self.rank == self.nstages - 1:
             return merge_chunks(
-                output_chunks,
+                self.output_chunks,
                 self.output_chunk_spec,
             )
         else:
@@ -673,70 +678,48 @@ class PipelineStage1F1B(PipelineStage):
 
     def forward(self, *args, **kwargs):
         # map microbatch ID to list of forward tensor args
-        fwd_cache: Dict[int, Tuple[Any, List[torch.Tensor]]] = {}
-
-        args_split = None
-        kwargs_split = None
-        if args or kwargs:
-            args_split, kwargs_split = split_args_kwargs_into_chunks(
-                args,
-                kwargs,
-                self.chunks,
-                self.args_chunk_spec,
-                self.kwargs_chunk_spec,
-            )
-
+        self.fwd_cache.clear()
         # Activation send requests of all chunk
-        all_send_reqs: List[dist.Work] = []
+        self.all_act_send_reqs.clear()
         # Grad send requests of all chunk
-        all_grad_send_reqs: List[dist.Work] = []
+        self.all_grad_send_reqs.clear()
         # Caching chunk outputs for final output merge or reduction
-        output_chunks = []
+        self.output_chunks.clear()
+
+        # Split inputs into chunks
+        self.split_inputs(args, kwargs)
 
         warmup_chunks = cooldown_chunks = self.nstages
 
         # Warm-up phase: forward number of chunks equal to pipeline depth.
         for chunk in range(warmup_chunks):
-            output, send_reqs = self.forward_one_chunk(
-                chunk, args_split, kwargs_split, fwd_cache
-            )
-            all_send_reqs += send_reqs
-            output_chunks.append(output)
+            self.forward_one_chunk(chunk)
 
         # 1F1B phase
         for bwd_chunk in range(0, self.chunks - cooldown_chunks):
             # Schedule backward for one warmed up chunk
-            if self.pipe.has_loss_and_backwards:
-                grad_send_reqs = self.backward_one_chunk(bwd_chunk, fwd_cache)
-                all_grad_send_reqs += grad_send_reqs
+            self.backward_one_chunk(bwd_chunk)
 
             # Schedule forward for one new chunk
             fwd_chunk = bwd_chunk + warmup_chunks
-            output, send_reqs = self.forward_one_chunk(
-                fwd_chunk, args_split, kwargs_split, fwd_cache
-            )
-            all_send_reqs += send_reqs
-            # Prepare for final output merge or reduction
-            output_chunks.append(output)
+            self.forward_one_chunk(fwd_chunk)
 
         # Cool-down phase: backward for the rest of the chunks
         for bwd_chunk in range(self.chunks - cooldown_chunks, self.chunks):
-            if self.pipe.has_loss_and_backwards:
-                grad_send_reqs = self.backward_one_chunk(bwd_chunk, fwd_cache)
-                all_grad_send_reqs += grad_send_reqs
+            self.backward_one_chunk(bwd_chunk)
 
         # Wait for all sends to finish
         # TODO: okay to delay the sync till completion of all chunks?
-        for work in all_send_reqs:
+        for work in self.all_act_send_reqs:
             work.wait()
 
-        for work in all_grad_send_reqs:
+        for work in self.all_grad_send_reqs:
             work.wait()
 
         # Last rank return merged results per original format
         if self.rank == self.nstages - 1:
             return merge_chunks(
-                output_chunks,
+                self.output_chunks,
                 self.output_chunk_spec,
             )
         else:
