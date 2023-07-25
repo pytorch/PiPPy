@@ -1,11 +1,13 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import logging
-from typing import Any
 import warnings
-from pippy.IR import TrivialLossWrapper
+from typing import Any
+
 import torch
 
 from torch.utils._pytree import tree_flatten, tree_unflatten
+
+from pippy.IR import TrivialLossWrapper
 
 
 class CustomReducer:
@@ -21,6 +23,7 @@ class LossReducer(CustomReducer):
 sum_reducer = LossReducer(torch.tensor(0.0), lambda a, b: a + b)
 
 DEFAULT_CHUNK_DIM = 0
+
 
 # Class used to specify chunking of inputs
 class TensorChunkSpec:

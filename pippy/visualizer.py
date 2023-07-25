@@ -1,12 +1,12 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import Dict, List, Any
+from typing import Any, Dict, List
 
 from pippy.events import (
+    Allocator,
     Event,
     EventDependency,
     EventsContext,
     MemDumpEvent,
-    Allocator,
 )
 
 

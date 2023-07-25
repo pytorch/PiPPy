@@ -13,11 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from dataclasses import dataclass
+from enum import Enum
 from typing import List, Tuple
 
 import numpy as np
+
 import pippy.fx
-from enum import Enum
 
 from pippy import pipe_split
 

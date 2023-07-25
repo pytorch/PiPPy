@@ -4,21 +4,21 @@ import copy
 import os
 import unittest
 
+import pippy.fx
+
 import torch
 import torch.distributed.rpc as rpc
-
-import pippy.fx
 from pippy import run_pippy
 from pippy.IR import (
     MultiUseParameterConfig,
     Pipe,
-    TrivialLossWrapper,
     pipe_split,
+    TrivialLossWrapper,
 )
 from pippy.PipelineDriver import (
-    PipelineDriverFillDrain,
     PipelineDriver1F1B,
     PipelineDriverBase,
+    PipelineDriverFillDrain,
     PipelineDriverInterleaved1F1B,
 )
 

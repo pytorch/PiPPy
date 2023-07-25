@@ -11,16 +11,13 @@ import torch.distributed
 import transformers
 import transformers.utils.fx as fx
 from transformers import (
-    TrainingArguments,
+    Seq2SeqTrainer,
     Seq2SeqTrainingArguments,
     Trainer,
-    Seq2SeqTrainer,
+    TrainingArguments,
 )
 from transformers.modeling_utils import ModuleUtilsMixin
-from transformers.utils import (
-    is_torch_available,
-)
-from transformers.utils import cached_property
+from transformers.utils import cached_property, is_torch_available
 
 from pippy.PipelineDriver import PipelineDriverBase
 

@@ -1,12 +1,12 @@
 # PiPPy (Pipline Parallelism for PyTorch) Distributed Inference for Large Models
 
 PiPPy helps to run very large models for inference by splitting the model into mutliple stages running on multiple GPUs.
-PiPPy make this easier by providing a auto split API that automates this process for user.
+PiPPy make this easier by providing an auto split API that automates this process for user.
 
 ## How It Works
 
-PiPPy splits your model into multiple stages, each stage loaded on one gpu then the input batch will be furhter divided into micro-batches and run through the splits from
-rank0..rankN. Results are being returned to rank0 as its runing the PipelineDriver. Please read more on pipleines [here](https://github.com/pytorch/tau/blob/main/README.md)
+PiPPy splits your model into multiple stages, each stage loaded on one gpu then the input batch will be further divided into micro-batches and run through the splits from
+rank0..rankN. Results are returned to rank0 as rank 0 is running the PipelineDriver. Please read more on pipleines [here](https://github.com/pytorch/tau/blob/main/README.md)
 
 The flowchart below helps to visualize the process in high level as well.
 
@@ -14,14 +14,14 @@ The flowchart below helps to visualize the process in high level as well.
 
 ## PiPPy Supports Arbitary Model Partitioning
 
-Unlike most of the available solutions that they need to know the model architecture beforehand, PiPPy supports arbitary PyTorch models.
+Unlike most of the available solutions that need to know the model architecture beforehand, PiPPy supports arbitary PyTorch models.
 * PiPPy supports both manual splitting and auto split.
 * Auto split uses `split_policy` and support both `equal_size` and `threshod` policies, the name are self-explanatory.
 * PiPPy use FX to trace and split the model.
 
 ## Settings To Care About
 
-* **world_size** specifies your availble number of gpus for paritioning your model
+* **world_size** specifies your availble number of gpus for partitioning your model
 
 * **split_policy** it can be either `equal_size`, `split_into_equal_size(number_of_workers)` or `threshod`, `split_on_size_threshold(#some number)`
 

@@ -6,27 +6,29 @@ import time
 import warnings
 from enum import Enum
 from inspect import Parameter, Signature
-from typing import Any, Callable, Dict, List, Tuple, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import torch
 import torch.distributed.rpc as rpc
+
 import pippy.fx
+from pippy.backward import (
+    _null_coalesce_accumulate,
+    stage_backward,
+    sync_barrier,
+)
+from pippy.events import Allocator, Event, EventRecorder, EventsContext
 from pippy.fx.passes import shape_prop
 
 from pippy.IR import Pipe
-from pippy.backward import (
-    stage_backward,
-    sync_barrier,
-    _null_coalesce_accumulate,
-)
-from pippy.events import EventRecorder, EventsContext, Event, Allocator
 from pippy.microbatch import (
-    LossReducer,
-    sum_reducer,
     gen_output_chunk_spec,
-    split_args_kwargs_into_chunks,
+    LossReducer,
     merge_chunks,
+    split_args_kwargs_into_chunks,
+    sum_reducer,
 )
+from pippy.utils import flatten_args_detach
 
 # TODO: Define the strategy for replicating the computation. In particular, we will likely make the assumption
 # that the operations in the program are batch-wise commutative (my term), i.e. we can guarantee equivalence
@@ -396,27 +398,11 @@ class RankWorker(EventRecorder):
             )
 
             def forward(args, kwargs, no_grad):
-                flat_args = []
+                args, flat_args = flatten_args_detach(args)
+                kwargs, flat_kwargs = flatten_args_detach(kwargs)
+                # Contains all tensors from args and kwargs, in flattened form
+                flat_args += flat_kwargs
 
-                def extract_tensor_args(a):
-                    nonlocal flat_args
-                    if isinstance(a, torch.Tensor):
-                        val = a.detach().requires_grad_(a.requires_grad)
-                        flat_args.append(val)
-                        return val
-                    else:
-                        flat_args.append(a)
-                        return a
-
-                def dont_traverse_size(a):
-                    return type(a) != torch.Size
-
-                args = pippy.fx.node.map_aggregate(
-                    args, extract_tensor_args, dont_traverse_size
-                )
-                kwargs = pippy.fx.node.map_aggregate(
-                    kwargs, extract_tensor_args, dont_traverse_size
-                )
                 logging.info(
                     f"[{self.rank}] Running forward module for microbatch {work_item.microbatch_id}"  # type: ignore[union-attr]
                 )
@@ -436,6 +422,9 @@ class RankWorker(EventRecorder):
                     if isinstance(a, torch.Tensor) and a.is_floating_point():
                         a.requires_grad_(True)
                     return a
+
+                def dont_traverse_size(a):
+                    return type(a) != torch.Size
 
                 if no_grad:
                     with torch.no_grad():

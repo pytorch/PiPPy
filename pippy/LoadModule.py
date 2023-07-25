@@ -1,11 +1,14 @@
-import os
-import json
 import gc
-from typing import Dict, List, Optional, Tuple, Union
+import json
 import logging
+import os
+from typing import Dict, List, Optional, Tuple, Union
 
 import torch
+import torch.distributed as dist
 from torch import nn
+
+from pippy.utils import _get_binary_filename
 
 
 TYPICAL_PREFIXES = [
@@ -17,11 +20,30 @@ TYPICAL_PREFIXES = [
 def load_checkpoint(
     model: nn.Module,
     index_filename: Union[str, os.PathLike],
+    optim: torch.optim.Optimizer = None,
     device: torch.device = None,
     dtype: torch.dtype = None,
     checkpoint_prefix: str = None,
 ):
+    """
+    Load a checkpoint from a model (and optimizer) file.
+    Args:
+        model (`torch.nn.Module`): the model to load the checkpoint into
+        index_filename (`Union[str, os.PathLike]`): path to the checkpoint's index (metadata file)
+        optim (`torch.optim.Optimizer`): optimizer object to load ckpt state dict into
+        device (`torch.device`): the device on which to load the checkpoint
+        dtype (`torch.dtype`): the dtype on which to load the checkpoint
+        checkpoint_prefix (`str`): the prefix of the checkpoint to load
+    Returns:
+        The loaded checkpoint model, or, if an optimizer is passed as an argument,
+        both the loaded checkpoint model and a optimizer
+    Example:
+        ```
+        checkpoint = load_checkpoint(model, index_filename, device, dtype)
+        ```
+    """
     checkpoint_folder = os.path.split(index_filename)[0]
+
     with open(index_filename, "r") as f:
         index = json.loads(f.read())
     if "weight_map" in index:
@@ -63,14 +85,37 @@ def load_checkpoint(
         del checkpoint
         gc.collect()
 
+    if optim:
+        optim.load_state_dict(
+            torch.load(
+                os.path.join(
+                    checkpoint_folder,
+                    _get_binary_filename(dist.get_rank(), is_optim=True),
+                )
+            )
+        )
+
+    if optim:
+        return model, optim
     return model
 
 
 def _get_file_to_weight_map(
     model: nn.Module,
-    index,
+    index: Dict[str, str],
     prefix_to_test: List[str],
 ) -> Dict[str, List[Tuple]]:
+    """
+    A helper function to create a mapping from binary checkpoint filename to parameter names
+    Args:
+        model (`torch.nn.Module`): The model to load weights into
+        index (`Dict[str, str]`): The checkpoint index mapping parameter name to binary checkpoint filename
+        prefix_to_test (`List[str]`): prefix to try if direct match is not found
+    Returns:
+        `Dict[str, List[Tuple]]`: A mapping from binary checkpoint filename to list of tuples of parameter names
+    Raises:
+        RuntimeError: if a parameter name is not found in the checkpoint index
+    """
     file_to_weights: Dict[str, List[Tuple]] = {}
 
     for iterator in [

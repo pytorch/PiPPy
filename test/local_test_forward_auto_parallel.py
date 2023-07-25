@@ -3,19 +3,19 @@ import argparse
 import os
 import unittest
 
+import pippy.fx
+
 import torch
 import torch.autograd.profiler_legacy
-
-import pippy.fx
 from pippy import run_pippy
+from pippy.auto_parallelization import AutoParallelConfig, dp_auto_parallel
 from pippy.IR import MultiUseParameterConfig, Pipe
 from pippy.PipelineDriver import (
+    PipelineDriver1F1B,
     PipelineDriverBase,
     PipelineDriverFillDrain,
-    PipelineDriver1F1B,
     PipelineDriverInterleaved1F1B,
 )
-from pippy.auto_parallelization import AutoParallelConfig, dp_auto_parallel
 
 PROFILING_ENABLED = True
 CHECK_NUMERIC_EQUIVALENCE = True

@@ -1,8 +1,8 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from pippy.IR import Pipe, annotate_split_points, PipeSplitWrapper
-import pippy.fx
-
 import logging
+
+import pippy.fx
+from pippy.IR import annotate_split_points, Pipe, PipeSplitWrapper
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
@@ -132,7 +132,7 @@ assert list(dict(traced_pipe.split_gm.named_children()).keys()) == [
     "submod_2",
 ]
 
-print(traced_pipe.split_gm.code)
+print(traced_pipe.split_gm)
 """
 def forward(self, idx, targets_1 = None):
     submod_0 = self.submod_0(idx);  idx = None

@@ -4,7 +4,7 @@ import socket
 from collections import defaultdict
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Optional, Any, List, Dict
+from typing import Any, Dict, List, Optional
 
 
 @dataclass

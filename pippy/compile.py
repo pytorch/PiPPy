@@ -2,25 +2,27 @@
 import inspect
 import logging
 from typing import Any, Callable, List, Optional
+
+import torch
+import torch.distributed as dist
+from torch._subclasses.fake_tensor import FakeTensorMode
+
+import pippy.fx as fx
+from pippy.debug import PIPPY_VERBOSITY
+from pippy.IR import MultiUseParameterConfig, Pipe, PiPPyShapeProp
+from pippy.microbatch import (
+    gen_output_chunk_spec,
+    LossReducer,
+    split_args_kwargs_into_chunks,
+    sum_reducer,
+)
 from pippy.PipelineDriver import (
     PipelineDriver1F1B,
     PipelineDriverFillDrain,
     PipelineDriverInterleaved1F1B,
 )
 from pippy.PipelineStage import PipelineStage
-import pippy.fx as fx
-from pippy.IR import MultiUseParameterConfig, Pipe
-from pippy.fx.passes import shape_prop
-from pippy.microbatch import (
-    LossReducer,
-    split_args_kwargs_into_chunks,
-    sum_reducer,
-)
-from pippy.utils import get_device, get_pp_rank, get_rank, PIPPY_VERBOSITY
-
-import torch
-import torch.distributed as dist
-from torch._subclasses.fake_tensor import FakeTensorMode
+from pippy.utils import get_device, get_pp_rank, get_rank
 
 
 PIPELINE_SCHEDULE_DRIVERS = {
@@ -79,10 +81,10 @@ def _compile(
 
     # Figure out which output is loss from output_chunk_spec
     output_loss_value_spec: Any = None
-    if isinstance(output_chunk_spec, dict):
-        output_loss_value_spec = {
-            k: isinstance(v, LossReducer) for k, v in output_chunk_spec.items()
-        }
+    if output_chunk_spec is not None:
+        output_loss_value_spec = fx.node.map_aggregate(
+            output_chunk_spec, lambda v: isinstance(v, LossReducer)
+        )
 
     logging.info("[PiPPy] Tracing model ...")
     pipe_model = Pipe.from_tracing(
@@ -225,6 +227,7 @@ def compile_stage(
     split_policy: Optional[Callable[[fx.GraphModule], fx.GraphModule]] = None,
     return_to_0: bool = False,
     tracer=None,
+    loss_reducer: LossReducer = sum_reducer,
     args_chunk_spec=None,
     kwargs_chunk_spec=None,
     output_chunk_spec=None,
@@ -236,10 +239,10 @@ def compile_stage(
 
     # Figure out which output is loss from output_chunk_spec
     output_loss_value_spec: Any = None
-    if isinstance(output_chunk_spec, dict):
-        output_loss_value_spec = {
-            k: isinstance(v, LossReducer) for k, v in output_chunk_spec.items()
-        }
+    if output_chunk_spec is not None:
+        output_loss_value_spec = fx.node.map_aggregate(
+            output_chunk_spec, lambda v: isinstance(v, LossReducer)
+        )
 
     logging.info("[PiPPy] Tracing model ...")
     pipe = Pipe.from_tracing(
@@ -248,6 +251,7 @@ def compile_stage(
         tracer=tracer,
         output_loss_value_spec=output_loss_value_spec,
         split_policy=split_policy,
+        return_to_0=return_to_0,
         **kwargs,
     )
 
@@ -279,8 +283,15 @@ def compile_stage(
     # Use 1st chunk of args for shape propagation
     chunk0 = fake_args_split[0]
 
-    sp = shape_prop.ShapeProp(gm)
+    sp = PiPPyShapeProp(gm)
     sp.propagate(*chunk0)
+
+    # Prepare output chunk/reduce spec for merging/reducing final outputs
+    output_chunk_spec = (
+        output_chunk_spec
+        if output_chunk_spec
+        else gen_output_chunk_spec(pipe.loss_spec, loss_reducer)
+    )
 
     # Create pipeline stage
     return PipelineStage(
@@ -290,7 +301,6 @@ def compile_stage(
         num_chunks,
         device,
         group,
-        return_to_0,
         args_chunk_spec,
         kwargs_chunk_spec,
         output_chunk_spec,

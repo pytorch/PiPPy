@@ -2,21 +2,23 @@
 import copy
 import logging
 import operator
-from enum import Enum
 import os
 import threading
+from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.fx as torch_fx
-import pippy.fx
 from packaging import version
-from pippy.fx.passes.split_module import split_module
+
+import pippy.fx
 from pippy.backward import (
+    _null_coalesce_accumulate,
     stage_backward,
     sync_barrier,
-    _null_coalesce_accumulate,
 )
+from pippy.fx.passes import shape_prop
+from pippy.fx.passes.split_module import split_module
 from pippy.LoadModule import load_checkpoint
 
 # Because split_module with 4 arguments is available only in PT 1.12+
@@ -125,7 +127,10 @@ def _find_loss_output(
 
 
 def _insert_stage_symbolic_backward(
-    g: pippy.fx.Graph, loss_node: pippy.fx.Node, output_node: pippy.fx.Node
+    g: pippy.fx.Graph,
+    loss_node: pippy.fx.Node,
+    output_node: pippy.fx.Node,
+    return_to_0: bool,
 ):
     # Collect metadata about tuple output values. TODO: move this to split_module or FX IR
     tuples: Dict[pippy.fx.Node, Tuple] = {}
@@ -250,10 +255,11 @@ def _insert_stage_symbolic_backward(
         # guaranteed that all backwards jobs for that micro-batch have been executed.
         # When all micro-batch pipeline outputs are ready, gradients have been fully
         # computed and synchronized and the optimizer step can be applied.
-        barrier_call = g.call_function(
-            sync_barrier, (output_node.args[0], barrier_tokens, last_grads)
-        )
-        output_node.args = (barrier_call,)
+        if return_to_0:
+            barrier_call = g.call_function(
+                sync_barrier, (output_node.args[0], barrier_tokens, last_grads)
+            )
+            output_node.args = (barrier_call,)
 
     return g
 
@@ -633,7 +639,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
     def forward(self, *args, **kwargs):
         executor_args = args
         if len(kwargs) > 0:
-            from inspect import Signature, Parameter
+            from inspect import Parameter, Signature
 
             parameters = []
             for node in self.split_gm.graph.nodes:
@@ -689,6 +695,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         traced: pippy.fx.GraphModule,
         multi_use_param_spec: Optional[MultiUseParamSpec] = None,
         output_loss_value_spec=None,
+        return_to_0: bool = True,
     ):
         """
         Additionally, the ``output_loss_value_spec`` value can be specified to disambiguate
@@ -834,7 +841,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
                 to_delete.append((mod_itr, atoms))
 
         # deferral deletion
-        for (mod_itr, atoms) in to_delete:
+        for mod_itr, atoms in to_delete:
             delattr(mod_itr, atoms[-1])
 
         split.graph.lint()
@@ -991,7 +998,10 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
             )
             if loss_node is not None:
                 _insert_stage_symbolic_backward(
-                    split.graph, loss_node, output_node
+                    split.graph,
+                    loss_node,
+                    output_node,
+                    return_to_0,
                 )
                 split.recompile()
                 has_loss_and_backward = True
@@ -1027,6 +1037,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         split_policy: Optional[
             Callable[[pippy.fx.GraphModule], pippy.fx.GraphModule]
         ] = None,
+        return_to_0: bool = True,
         **kwargs,
     ):
         # TODO: abstract partitioning policy
@@ -1070,6 +1081,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
             traced,
             multi_use_param_spec,
             output_loss_value_spec=output_loss_value_spec,
+            return_to_0=return_to_0,
         )
 
     def __str__(self):
@@ -1184,3 +1196,20 @@ def annotate_split_points(
         mod_to_wrap = getattr(predecessor_module, atoms[-1])
         wrapped_mod = PipeSplitWrapper(mod_to_wrap, split_type)
         setattr(predecessor_module, atoms[-1], wrapped_mod)
+
+
+class PiPPyShapeProp(shape_prop.ShapeProp):
+    def __init__(
+        self, module: pippy.fx.GraphModule, garbage_collect_values: bool = True
+    ):
+        super().__init__(module, garbage_collect_values)
+        self.stop_prop = False
+
+    def run_node(self, n: pippy.fx.Node) -> Any:
+        if (n.op, n.target) == ("call_function", stage_backward):
+            self.stop_prop = True
+
+        if self.stop_prop:
+            return None
+
+        return super().run_node(n)
