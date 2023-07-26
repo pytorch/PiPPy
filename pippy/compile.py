@@ -1,7 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import inspect
 import logging
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List, Optional, Union
 
 import torch
 import torch.distributed as dist
@@ -218,7 +218,7 @@ def all_compile(
 
 def compile_stage(
     mod: torch.nn.Module,
-    stage_index: int,
+    stage_index: Union[int, List[int]],
     num_stages: int,
     num_chunks: int,
     device: torch.device,
@@ -294,28 +294,31 @@ def compile_stage(
         else gen_output_chunk_spec(pipe.loss_spec, loss_reducer)
     )
 
-    # Create pipeline stage based on schedule
-    if schedule == "1F1B":
-        return PipelineStage1F1B(
-            pipe,
-            stage_index,
-            num_stages,
-            num_chunks,
-            device,
-            group=group,
-            args_chunk_spec=args_chunk_spec,
-            kwargs_chunk_spec=kwargs_chunk_spec,
-            output_chunk_spec=output_chunk_spec,
-        )
-    else:
-        return PipelineStage(
-            pipe,
-            stage_index,
-            num_stages,
-            num_chunks,
-            device,
-            group=group,
-            args_chunk_spec=args_chunk_spec,
-            kwargs_chunk_spec=kwargs_chunk_spec,
-            output_chunk_spec=output_chunk_spec,
-        )
+    # Unify format to list of indices to support interleaved usage
+    stage_indices = stage_index if type(stage_index) is List else [stage_index]
+    for s_index in stage_indices:
+        # Create pipeline stage based on schedule
+        if schedule == "1F1B":
+            return PipelineStage1F1B(
+                pipe,
+                s_index,
+                num_stages,
+                num_chunks,
+                device,
+                group=group,
+                args_chunk_spec=args_chunk_spec,
+                kwargs_chunk_spec=kwargs_chunk_spec,
+                output_chunk_spec=output_chunk_spec,
+            )
+        else:
+            return PipelineStage(
+                pipe,
+                s_index,
+                num_stages,
+                num_chunks,
+                device,
+                group=group,
+                args_chunk_spec=args_chunk_spec,
+                kwargs_chunk_spec=kwargs_chunk_spec,
+                output_chunk_spec=output_chunk_spec,
+            )
