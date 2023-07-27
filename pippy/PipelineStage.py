@@ -422,10 +422,17 @@ class PipelineStage(torch.nn.Module):
             else:
                 return chunk_args_list.pop(0)
 
-        composite_args = pippy.fx.node.map_aggregate(
-            self.args_recv_info[chunk],
-            recv_args,
-        )
+        try:
+            composite_args = pippy.fx.node.map_aggregate(
+                self.args_recv_info[chunk],
+                recv_args,
+            )
+        except Exception as e:
+            ex_msg = f"""
+            Stage {self.stage_index} fails to recv and fill args.
+            args_split: {self.args_split}.
+            """
+            raise RuntimeError(ex_msg) from e
 
         if self.kwargs_split:
             chunk_kwargs = self.kwargs_split[chunk]

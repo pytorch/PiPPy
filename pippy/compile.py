@@ -294,9 +294,7 @@ def compile_stage(
         else gen_output_chunk_spec(pipe.loss_spec, loss_reducer)
     )
 
-    # Unify format to list of indices to support interleaved usage
-    stage_indices = stage_index if type(stage_index) is List else [stage_index]
-    for s_index in stage_indices:
+    def create_pipeline_stage(s_index):
         # Create pipeline stage based on schedule
         if schedule == "1F1B":
             return PipelineStage1F1B(
@@ -322,3 +320,6 @@ def compile_stage(
                 kwargs_chunk_spec=kwargs_chunk_spec,
                 output_chunk_spec=output_chunk_spec,
             )
+
+    # Create one or multiple stages based on `stage_index` format (single int or List)
+    return fx.node.map_aggregate(stage_index, create_pipeline_stage)

@@ -17,6 +17,7 @@ from pippy.IR import (
 from pippy.ModelSplit import split_into_equal_size, split_on_size_threshold
 from pippy.PipelineDriver import PipelineDriver1F1B, PipelineDriverFillDrain
 from pippy.utils import run_pippy
+from pippy.StageInterleaver import StageInterleaver
 
 
 __all__ = [
@@ -36,4 +37,5 @@ __all__ = [
     "all_compile",
     "create_default_args",
     "compile_stage",
+    "StageInterleaver",
 ]
