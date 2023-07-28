@@ -25,6 +25,10 @@ def run_worker(args):
     split_policy = pippy.split_into_equal_size(args.world_size)
 
     # print("Instantiating BERT pipeline...")
+    chunks = args.chunks or args.world_size
+    seq_length = 16
+    bs = 1 * chunks
+    sample_input = torch.zeros(bs, seq_length, dtype=torch.long, device=args.device).random_(bert.config.vocab_size)
     stage = pippy.compile_stage(
         bert,
         args.rank,
@@ -32,7 +36,9 @@ def run_worker(args):
         num_chunks=args.chunks,
         device=args.device,
         group=None,
-        example_inputs=[],
+        example_inputs=[sample_input, ],
+        split_policy=split_policy,
+        tracer=PiPPyHFTracer()
     )
 
 
@@ -48,9 +54,9 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    args.pp_group_size = 4
-    assert args.world_size % args.pp_group_size == 0
-    args.dp_group_size = args.world_size // args.pp_group_size
+    # args.pp_group_size = 4
+    # assert args.world_size % args.pp_group_size == 0
+    # args.dp_group_size = args.world_size // args.pp_group_size
 
     if args.cuda:
         dev_id = args.rank % torch.cuda.device_count()
