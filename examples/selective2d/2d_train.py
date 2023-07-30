@@ -125,6 +125,7 @@ def get_args():
     )
     parser.add_argument("--tp_size", type=int, default=2)
     parser.add_argument("--pp_size", type=int, default=2)
+    parser.add_argument("--i_stage", type=int, default=1)
 
     parser.add_argument("--debug", dest="debug", action="store_true")
 
