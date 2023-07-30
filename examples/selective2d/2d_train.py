@@ -127,6 +127,7 @@ def get_args():
     )
     parser.add_argument("--tp_size", type=int, default=2)
     parser.add_argument("--pp_size", type=int, default=2)
+    parser.add_argument("--n_chunks", type=int, default=2)
 
     parser.add_argument("--debug", dest="debug", action="store_true")
 
@@ -241,7 +242,7 @@ def pp_and_tp(model, mesh, args):
         model,
         pp_rank,
         args.world_size,
-        args.pp_size,
+        args.n_chunks,
         args.device,
         pp_groups,
         example_inputs=[X, Y],
@@ -310,7 +311,7 @@ def pp_and_tp_selective(
         model,
         pp_rank,
         args.world_size,
-        args.pp_size,
+        args.n_chunks,
         args.device,
         pp_groups,
         example_inputs=[X, Y],
