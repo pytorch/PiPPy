@@ -25,7 +25,7 @@ from torch.distributed.tensor.parallel import (
     RowwiseParallel,
 )
 
-from torch.profiler import profile, ProfilerActivity, record_function
+from torch.profiler import profile, ProfilerActivity
 
 
 def get_args():
@@ -468,7 +468,9 @@ if __name__ == "__main__":
     # model = tp(model, args.n_layer, oned_mesh)
     # model, stage = pp(model, oned_mesh, args)
     # model, stage = pp_and_tp(model, twod_mesh, args)
-    model, stage = pp_and_tp_selective(model, twod_mesh, args, cut_fn=after_ar_cut)
+    model, stage = pp_and_tp_selective(
+        model, twod_mesh, args, cut_fn=after_ar_cut
+    )
 
     # iter_count, iter_time = pp_train(stage, args)
     iter_count, iter_time = pp_tp_train(stage, twod_mesh, args)
