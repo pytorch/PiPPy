@@ -541,15 +541,18 @@ class PipelineStage(torch.nn.Module):
         chunk_id=0
         for chunk in range(self.chunks):
             if chunk_id % 2 == 1:
-              s = self.odd
+                s = self.odd
             else:
-              s = self.even
+                s = self.even
 
             composite_args, composite_kwargs = self._recv_and_fill_inputs(
                 chunk,
                 args_split,
                 kwargs_split,
             )
+
+            if chunk_id == 0:
+                torch.cuda.synchronize()
 
             # Compute forward
             try:
