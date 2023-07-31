@@ -17,4 +17,4 @@ n_chunks=$(cat ./solver.out | awk '{print $5}')
 batch_size=$((size_microbatch * n_chunks))
 
 # 3. run training with optimal configuration
-torchrun --nproc-per-node=$NUM_GPUS 2d_train.py --batch-size=$size_microbatch --n_chunks $n_chunks --i_stage $i_stage
+torchrun --nproc-per-node=$NUM_GPUS 2d_train.py --batch_size $size_microbatch --n_chunks $n_chunks --i_stage $i_stage
