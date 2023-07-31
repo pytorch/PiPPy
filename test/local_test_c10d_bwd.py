@@ -10,6 +10,11 @@ from pippy.compile import compile_stage
 from pippy.IR import pipe_split
 
 
+schedules = [
+    "FillDrain",
+    "1F1B",
+]
+
 d_hid = 512
 chunk_size = 256
 
@@ -58,6 +63,7 @@ def run_worker(args):
         args.device,
         None,
         [ec_x, target],
+        schedule=args.schedule,
     )
 
     # Run
@@ -99,6 +105,12 @@ def main(args=None):
         "--chunks",
         type=int,
         default=4,
+    )
+    parser.add_argument(
+        "--schedule",
+        type=str,
+        default="FillDrain",
+        choices=schedules,
     )
     args = parser.parse_args(args)
 
