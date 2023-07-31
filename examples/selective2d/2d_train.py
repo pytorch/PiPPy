@@ -25,6 +25,8 @@ from torch.distributed.tensor.parallel import (
     RowwiseParallel,
 )
 
+from torch.profiler import profile, ProfilerActivity
+
 
 def get_args():
     # default config values designed to train a gpt2 (124M) on OpenWebText
@@ -125,6 +127,7 @@ def get_args():
     )
     parser.add_argument("--tp_size", type=int, default=2)
     parser.add_argument("--pp_size", type=int, default=2)
+    parser.add_argument("--n_chunks", type=int, default=2)
 
     parser.add_argument("--debug", dest="debug", action="store_true")
 
@@ -223,7 +226,7 @@ def pp(model, pp_device_mesh, args):
 def pp_and_tp(model, mesh, args):
     """
     Apply TP and PP to all layers in a model
-    This function assumes the model is already cut manually 
+    This function assumes the model is already cut manually
     """
     pp_dim, tp_dim = 0, 1
     pp_rank, tp_rank = args.rank // args.tp_size, args.rank % args.tp_size
@@ -239,7 +242,7 @@ def pp_and_tp(model, mesh, args):
         model,
         pp_rank,
         args.world_size,
-        args.pp_size,
+        args.n_chunks,
         args.device,
         pp_groups,
         example_inputs=[X, Y],
@@ -308,7 +311,7 @@ def pp_and_tp_selective(
         model,
         pp_rank,
         args.world_size,
-        args.pp_size,
+        args.n_chunks,
         args.device,
         pp_groups,
         example_inputs=[X, Y],
@@ -328,21 +331,30 @@ def pp_tp_train(stage, mesh, args):
     )
     local_iter_num = 0
     iter_time = 0.0
-    while local_iter_num < train_iters:
-        optimizer.zero_grad()
-        t0 = time.perf_counter()
-        X, Y = get_rand(args)
-        if pp_rank == 0:
-            out = stage(X)
-        elif pp_rank == args.pp_size - 1:
-            out = stage(Y)
-        else:
-            out = stage()
-        optimizer.step()
-        t1 = time.perf_counter()
-        dt = t1 - t0
-        local_iter_num += 1
-        iter_time += dt
+    with profile(
+        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+        schedule=torch.profiler.schedule(
+            skip_first=5, wait=0, warmup=4, active=1, repeat=1
+        ),
+    ) as prof:
+        while local_iter_num < train_iters:
+            optimizer.zero_grad()
+            t0 = time.perf_counter()
+            X, Y = get_rand(args)
+            if pp_rank == 0:
+                out = stage(X)
+            elif pp_rank == args.pp_size - 1:
+                out = stage(Y)
+            else:
+                out = stage()
+            optimizer.step()
+            t1 = time.perf_counter()
+            dt = t1 - t0
+            local_iter_num += 1
+            iter_time += dt
+            prof.step()
+
+    prof.export_chrome_trace(f"trace_rank{args.rank}.json")
 
     return local_iter_num, iter_time
 
@@ -457,7 +469,9 @@ if __name__ == "__main__":
     # model = tp(model, args.n_layer, oned_mesh)
     # model, stage = pp(model, oned_mesh, args)
     # model, stage = pp_and_tp(model, twod_mesh, args)
-    model, stage = pp_and_tp_selective(model, twod_mesh, args)
+    model, stage = pp_and_tp_selective(
+        model, twod_mesh, args, cut_fn=after_ar_cut
+    )
 
     # iter_count, iter_time = pp_train(stage, args)
     iter_count, iter_time = pp_tp_train(stage, twod_mesh, args)
