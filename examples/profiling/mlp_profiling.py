@@ -1,49 +1,61 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+# Run command:
+# torchrun --nproc-per-node 4 mlp_profiling.py
+
 import argparse
 import os
-import unittest
 
 import torch
 import torch.distributed as dist
+from torch.profiler import profile, ProfilerActivity
 
 from pippy.compile import compile_stage
 from pippy.IR import pipe_split
 
 
-d_hid = 512
-chunk_size = 256
+d_hid = 1024
+chunk_size = 1024
 
 torch.manual_seed(0)
 
 
+class MLPModule(torch.nn.Module):
+    def __init__(self, d_hid):
+        super(MLPModule, self).__init__()
+        self.net1 = torch.nn.Linear(d_hid, d_hid)
+        self.relu = torch.nn.ReLU()
+        self.net2 = torch.nn.Linear(d_hid, d_hid)
+
+    def forward(self, x):
+        x = self.net1(x)
+        x = self.relu(x)
+        x = self.net2(x)
+        return x
+
+
 class ExampleCode(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, d_hid):
         super().__init__()
-        self.mm_param = torch.nn.Parameter(torch.randn(d_hid, d_hid))
-        self.mm_param2 = torch.nn.Parameter(torch.randn(d_hid, d_hid))
-        self.lin = torch.nn.Linear(d_hid, d_hid)
+        self.mlp0 = MLPModule(d_hid)
+        self.mlp1 = MLPModule(d_hid)
+        self.mlp2 = MLPModule(d_hid)
+        self.mlp3 = MLPModule(d_hid)
         self.mse_loss = torch.nn.MSELoss(reduction="sum")
 
     def forward(self, x, target):
-        x = torch.mm(x, self.mm_param)
-        skip_connection = x
-        x = torch.relu(x)
+        x = self.mlp0(x)
         pipe_split()
-        x = torch.mm(x, self.mm_param)
-        x = self.lin(x)
+        x = self.mlp1(x)
         pipe_split()
-        x = torch.relu(x)
-        x = x + skip_connection
-        x = torch.mm(x, self.mm_param2)
+        x = self.mlp2(x)
         pipe_split()
-        x = self.lin(x)
-        x = torch.relu(x)
+        x = self.mlp3(x)
         loss = self.mse_loss(x, target)
         return {"logits": x, "loss": loss}
 
 
 def run_worker(args):
-    ec = ExampleCode()
+    ec = ExampleCode(d_hid)
     ec.to(args.device)
     ec.train()
 
@@ -61,23 +73,32 @@ def run_worker(args):
     )
 
     # Run
-    if args.rank == 0:
-        out = stage(ec_x)
-    elif args.rank == args.world_size - 1:
-        out = stage(target)
-    else:
-        stage()
+    for _ in range(10):
+        if args.rank == 0:
+            out = stage(ec_x)
+        elif args.rank == args.world_size - 1:
+            out = stage(target)
+        else:
+            stage()
 
     dist.barrier()
-    print(f"Rank {args.rank} completes")
+    print(f"Rank {args.rank} warmup completes")
 
-    # Last rank checks result
-    if args.rank == args.world_size - 1:
-        ref_out = ec(ec_x, target)
-        torch.testing.assert_close(out, ref_out)
-        print(
-            f"equivalence test passed, loss = {out['loss']}, ref loss = {ref_out['loss']}"
-        )
+    with profile(
+        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+    ) as prof:
+        for _ in range(20):
+            if args.rank == 0:
+                out = stage(ec_x)
+            elif args.rank == args.world_size - 1:
+                out = stage(target)
+            else:
+                stage()
+
+    print(f"Rank {args.rank} profiling run completed")
+    prof.export_chrome_trace(
+        f"{os.path.splitext(os.path.basename(__file__))[0]}_{args.rank}.json"
+    )
 
 
 def main(args=None):
@@ -121,15 +142,3 @@ def main(args=None):
 
 if __name__ == "__main__":
     main()
-
-
-class LocalTestC10DBwdTest(unittest.TestCase):
-    def test_c10d_bwd(self):
-        import random
-
-        port = random.randint(29500, 30000)
-        args = [
-            "--master_port",
-            str(port),
-        ]
-        main(args)
