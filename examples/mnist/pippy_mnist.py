@@ -8,7 +8,7 @@ import pippy.fx
 import torch
 import torch.distributed as dist
 
-from pippy.hf._SaveModule import save_checkpoint
+from pippy.SaveModule import save_checkpoint
 from pippy.IR import LossWrapper, PipeSplitWrapper
 from pippy.microbatch import sum_reducer, TensorChunkSpec
 
