@@ -50,27 +50,6 @@ class ExampleCode(torch.nn.Module):
         return {"logits": x, "loss": loss}
 
 
-class ExampleCodeRef(torch.nn.Module):
-    def __init__(self, d_hid):
-        super().__init__()
-        self.mlp0 = MLPModule(d_hid)
-        self.mlp1 = MLPModule(d_hid)
-        self.mlp2 = MLPModule(d_hid)
-        self.mlp3 = MLPModule(d_hid)
-        self.mse_loss = torch.nn.MSELoss(reduction="sum")
-
-    def forward(self, x, target):
-        x1 = self.mlp0(x)
-        pipe_split()
-        x2 = self.mlp1(x1)
-        pipe_split()
-        x3 = self.mlp2(x2)
-        pipe_split()
-        x4 = self.mlp3(x3)
-        loss = self.mse_loss(x4, target)
-        return {"logits": x4, "loss": loss, "intm": [x1, x2, x3, x4]}
-
-
 def get_args():
     def str_to_bool(v):
         if isinstance(v, bool):
