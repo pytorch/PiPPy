@@ -614,18 +614,17 @@ class PipelineStage(torch.nn.Module):
         # Forward pass of all chunks
         for chunk in range(self.chunks):
             if chunk % 2 == 0:
-              s = self.even
+                s = self.even
             else:
-              s = self.odd
+                s = self.odd
 
             with torch.cuda.stream(s):
-              output, send_reqs = self.forward_one_chunk(
-                  chunk, args_split, kwargs_split, fwd_cache
-              )
-              all_send_reqs += send_reqs
-              # Prepare for final output merge or reduction
-              output_chunks[chunk] = output
-
+                output, send_reqs = self.forward_one_chunk(
+                    chunk, args_split, kwargs_split, fwd_cache
+                )
+                all_send_reqs += send_reqs
+                # Prepare for final output merge or reduction
+                output_chunks[chunk] = output
 
         # Wait for all sends to finish
         # TODO: okay to delay the sync till completion of all chunks?
