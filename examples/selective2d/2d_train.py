@@ -239,6 +239,7 @@ def pp_and_tp(model, mesh, args):
     X, Y = get_rand(args)
 
     # PP
+    output_chunk_spec = (TensorChunkSpec(0), sum_reducer)
     stage = compile_stage(
         model,
         pp_rank,
@@ -247,6 +248,7 @@ def pp_and_tp(model, mesh, args):
         args.device,
         pp_groups,
         example_inputs=[X, Y],
+        output_chunk_spec=output_chunk_spec,
     )
 
     return model, stage
@@ -290,6 +292,7 @@ def pp_and_tp_selective(
     pp_dim, tp_dim = 0, 1
     pp_rank, tp_rank = args.rank // args.tp_size, args.rank % args.tp_size
     pp_groups = mesh.get_dim_groups()[pp_dim]
+    print('pp groups', pp_groups)
 
     # TP
     # Apply TP to layers if layer_id is in tp_attn / tp_mlp
@@ -308,14 +311,16 @@ def pp_and_tp_selective(
 
     # PP
     cut_fn(model, args, args.pp_size)
+    output_chunk_spec = (TensorChunkSpec(0), sum_reducer)
     stage = compile_stage(
         model,
         pp_rank,
-        args.world_size,
+        args.pp_size,
         args.n_chunks,
         args.device,
         pp_groups,
         example_inputs=[X, Y],
+        output_chunk_spec=output_chunk_spec,
     )
 
     return model, stage
