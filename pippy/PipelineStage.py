@@ -536,11 +536,10 @@ class PipelineStage(torch.nn.Module):
         # Activation send requests of all chunk
         all_send_reqs: List[dist.Work] = []
 
-        output_chunks = []
+        output_chunks = [None] * self.chunks
 
-        chunk_id=0
         for chunk in range(self.chunks):
-            if chunk_id % 2 == 1:
+            if chunk % 2 == 1:
                 s = self.odd
             else:
                 s = self.even
@@ -551,7 +550,7 @@ class PipelineStage(torch.nn.Module):
                 kwargs_split,
             )
 
-            if chunk_id == 0:
+            if chunk == 0:
                 torch.cuda.synchronize()
 
             # Compute forward
@@ -573,11 +572,12 @@ class PipelineStage(torch.nn.Module):
             # `act_send_info`
             output_tuple = output if type(output) is tuple else (output,)
 
-            send_reqs = self._send_activations(output_tuple)
-            all_send_reqs += send_reqs
+            with torch.cuda.stream(s):
+                send_reqs = self._send_activations(output_tuple)
+                all_send_reqs += send_reqs
 
             # Prepare for final output merge or reduction
-            output_chunks.append(output)
+            output_chunks[chunk] = output
 
             # Save activations and inputs for backward
             flat_args = flatten_args(composite_args)
@@ -587,8 +587,6 @@ class PipelineStage(torch.nn.Module):
                 output_tuple,  # stage_output
                 flatten_input_tensors,  # input_values
             )
-
-            chunk_id+=1
 
         # Wait for all sends to finish
         # TODO: okay to delay the sync till completion of all chunks?
