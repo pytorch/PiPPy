@@ -8,7 +8,6 @@ import torch.distributed as dist
 from pippy.compile import compile_stage
 
 from pippy.IR import pipe_split
-from pippy.microbatch import sum_reducer, TensorChunkSpec
 
 from torch.distributed._tensor import DeviceMesh
 

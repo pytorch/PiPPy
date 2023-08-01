@@ -70,9 +70,9 @@ class PipelineStage(torch.nn.Module):
         self.kwargs_chunk_spec = kwargs_chunk_spec
         self.output_chunk_spec = output_chunk_spec
 
-        self.streams = [] 
+        self.streams = []
         for i in range(chunks):
-          self.streams.append(torch.cuda.Stream())
+            self.streams.append(torch.cuda.Stream())
 
         # Find my submodule
         self.split_gm = self.pipe.split_gm
