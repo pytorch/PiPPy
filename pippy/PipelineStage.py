@@ -70,8 +70,9 @@ class PipelineStage(torch.nn.Module):
         self.kwargs_chunk_spec = kwargs_chunk_spec
         self.output_chunk_spec = output_chunk_spec
 
-        self.even = torch.cuda.Stream()
-        self.odd = torch.cuda.Stream()
+        self.streams = [] 
+        for i in range(chunks):
+          self.streams.append(torch.cuda.Stream())
 
         # Find my submodule
         self.split_gm = self.pipe.split_gm
@@ -613,11 +614,7 @@ class PipelineStage(torch.nn.Module):
 
         # Forward pass of all chunks
         for chunk in range(self.chunks):
-            if chunk % 2 == 0:
-                s = self.even
-            else:
-                s = self.odd
-
+            s = self.streams[chunk]
             with torch.cuda.stream(s):
                 output, send_reqs = self.forward_one_chunk(
                     chunk, args_split, kwargs_split, fwd_cache
