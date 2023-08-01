@@ -12,9 +12,10 @@ import torch.distributed as dist
 import torch.optim as optim
 from pippy.compile import compile_stage
 
-from pippy.SaveModule import save_checkpoint
 from pippy.IR import pipe_split, TrivialLossWrapper
 from pippy.LoadModule import load_checkpoint
+
+from pippy.SaveModule import save_checkpoint
 
 
 DEFAULT_FILENAME = "pytorch_model.bin.index.json"
