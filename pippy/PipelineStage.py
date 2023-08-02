@@ -58,7 +58,7 @@ class PipelineStage(torch.nn.Module):
         args_chunk_spec=None,
         kwargs_chunk_spec=None,
         output_chunk_spec=None,
-        nstreams = 2,
+        nstreams=2,
     ):
         super().__init__()
         self.pipe = pipe

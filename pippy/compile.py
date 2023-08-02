@@ -319,5 +319,5 @@ def compile_stage(
             args_chunk_spec,
             kwargs_chunk_spec,
             output_chunk_spec,
-            nstreams=nstreams
+            nstreams=nstreams,
         )
