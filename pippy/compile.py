@@ -235,7 +235,7 @@ def compile_stage(
     nstreams=2,
     num_stages=None,
     **kwargs,
-) -> PipelineStage:
+):
     # If a param will be used in multiple pipeline stages, we default the strategy to REPLICATE'ing the param across
     # stages instead of TRANSMIT'ting it
     multi_use_param_spec = MultiUseParameterConfig.REPLICATE
@@ -316,19 +316,20 @@ def compile_stage(
         per_rank_stages = num_stages // num_ranks
         stages_from = rank * per_rank_stages
         for i in range(0, per_rank_stages):
-          stages.append( PipelineStage(
-            pipe,
-            stages_from + i,
-            num_ranks,
-            num_chunks,
-            device,
-            group,
-            args_chunk_spec,
-            kwargs_chunk_spec,
-            output_chunk_spec,
-            nstreams=nstreams,
+            stages.append(
+                PipelineStage(
+                    pipe,
+                    stages_from + i,
+                    num_ranks,
+                    num_chunks,
+                    device,
+                    group,
+                    args_chunk_spec,
+                    kwargs_chunk_spec,
+                    output_chunk_spec,
+                    nstreams=nstreams,
+                )
             )
-          )
 
         return stages
     else:
