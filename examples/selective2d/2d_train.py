@@ -292,7 +292,6 @@ def pp_and_tp_selective(
     pp_dim, tp_dim = 0, 1
     pp_rank, tp_rank = args.rank // args.tp_size, args.rank % args.tp_size
     pp_groups = mesh.get_dim_groups()[pp_dim]
-    print('pp groups', pp_groups)
 
     # TP
     # Apply TP to layers if layer_id is in tp_attn / tp_mlp
