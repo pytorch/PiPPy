@@ -58,6 +58,7 @@ class PipelineStage(torch.nn.Module):
         args_chunk_spec=None,
         kwargs_chunk_spec=None,
         output_chunk_spec=None,
+        nstreams=2,
     ):
         super().__init__()
         self.pipe = pipe
@@ -69,9 +70,10 @@ class PipelineStage(torch.nn.Module):
         self.args_chunk_spec = args_chunk_spec
         self.kwargs_chunk_spec = kwargs_chunk_spec
         self.output_chunk_spec = output_chunk_spec
+        self.nstreams = nstreams
 
         self.streams = []
-        for i in range(chunks):
+        for i in range(nstreams):
             self.streams.append(torch.cuda.Stream())
 
         # Find my submodule
@@ -614,7 +616,7 @@ class PipelineStage(torch.nn.Module):
 
         # Forward pass of all chunks
         for chunk in range(self.chunks):
-            s = self.streams[chunk]
+            s = self.streams[chunk % self.nstreams]
             with torch.cuda.stream(s):
                 output, send_reqs = self.forward_one_chunk(
                     chunk, args_split, kwargs_split, fwd_cache

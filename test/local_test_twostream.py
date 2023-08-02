@@ -84,6 +84,7 @@ def get_args():
     parser.add_argument("--batch_size", type=int, default=12)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--n_chunks", type=int, default=4)
+    parser.add_argument("--n_streams", type=int, default=2)
 
     args = parser.parse_args()
 
@@ -128,6 +129,7 @@ def main():
         args.device,
         None,
         example_inputs=[example_input, example_target],
+        nstreams=args.n_streams,
     )
 
     with profile(
