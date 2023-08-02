@@ -70,6 +70,10 @@ class PipelineStage(torch.nn.Module):
         self.kwargs_chunk_spec = kwargs_chunk_spec
         self.output_chunk_spec = output_chunk_spec
 
+        self.streams = []
+        for i in range(chunks):
+            self.streams.append(torch.cuda.Stream())
+
         # Find my submodule
         self.split_gm = self.pipe.split_gm
         named_children = list(self.split_gm.named_children())
@@ -606,16 +610,18 @@ class PipelineStage(torch.nn.Module):
         # Activation send requests of all chunk
         all_send_reqs: List[dist.Work] = []
 
-        output_chunks = []
+        output_chunks = [None] * self.chunks
 
         # Forward pass of all chunks
         for chunk in range(self.chunks):
-            output, send_reqs = self.forward_one_chunk(
-                chunk, args_split, kwargs_split, fwd_cache
-            )
-            all_send_reqs += send_reqs
-            # Prepare for final output merge or reduction
-            output_chunks.append(output)
+            s = self.streams[chunk]
+            with torch.cuda.stream(s):
+                output, send_reqs = self.forward_one_chunk(
+                    chunk, args_split, kwargs_split, fwd_cache
+                )
+                all_send_reqs += send_reqs
+                # Prepare for final output merge or reduction
+                output_chunks[chunk] = output
 
         # Wait for all sends to finish
         # TODO: okay to delay the sync till completion of all chunks?
