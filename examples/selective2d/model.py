@@ -54,7 +54,7 @@ class LayerNorm(nn.Module):
 class CausalSelfAttention(nn.Module):
     def __init__(self, mesh, config):
         super().__init__()
-        tp_size = mesh.mesh.size(0)
+        tp_size = mesh.mesh.size(1)
         assert config.n_head % tp_size == 0
         assert config.n_embd % config.n_head == 0
         self.mesh = mesh
