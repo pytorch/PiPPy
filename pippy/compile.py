@@ -233,6 +233,7 @@ def compile_stage(
     output_chunk_spec=None,
     schedule="FillDrain",
     nstreams=2,
+    num_stages=None,
     **kwargs,
 ) -> PipelineStage:
     # If a param will be used in multiple pipeline stages, we default the strategy to REPLICATE'ing the param across
@@ -307,6 +308,20 @@ def compile_stage(
             args_chunk_spec,
             kwargs_chunk_spec,
             output_chunk_spec,
+        )
+    elif schedule == "TwoLevel":
+        return PipelineStage(
+            pipe,
+            rank,
+            num_ranks,
+            num_chunks,
+            device,
+            group,
+            args_chunk_spec,
+            kwargs_chunk_spec,
+            output_chunk_spec,
+            nstreams=nstreams,
+            global_depth=num_stages,
         )
     else:
         return PipelineStage(
