@@ -59,6 +59,8 @@ class PipelineStage(torch.nn.Module):
         kwargs_chunk_spec=None,
         output_chunk_spec=None,
         nstreams=2,
+        inner_rank=0,
+        global_depth=None,
     ):
         super().__init__()
         self.pipe = pipe
@@ -71,17 +73,22 @@ class PipelineStage(torch.nn.Module):
         self.kwargs_chunk_spec = kwargs_chunk_spec
         self.output_chunk_spec = output_chunk_spec
         self.nstreams = nstreams
+        self.inner_rank = inner_rank 
+        self.global_depth = nstages if global_depth is None else global_depth
 
         self.streams = []
         for i in range(nstreams):
             self.streams.append(torch.cuda.Stream())
 
+        per_rank_stages = self.global_depth // nstages
+        self._rank = rank * per_rank_stages + inner_rank 
+          
         # Find my submodule
         self.split_gm = self.pipe.split_gm
         named_children = list(self.split_gm.named_children())
-        self.name, self.submod = named_children[rank]
+        self.name, self.submod = named_children[self._rank]
         logging.info(
-            f"[{self.rank}][{self.name}] "
+            f"[{self.rank}-{self.inner_rank}][{self.name}] "
             f"Creating PipelineStage:\n"
             f"{self.submod}"
         )
@@ -103,7 +110,7 @@ class PipelineStage(torch.nn.Module):
             for node in reversed(self.split_gm.graph.nodes):
                 if (node.op, node.target) == ("call_function", stage_backward):
                     seen_bwd += 1
-                    if seen_bwd == self.rank:
+                    if seen_bwd == self._rank:
                         found_bwd = True
                         self.bwd_node = node
                         break

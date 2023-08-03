@@ -315,11 +315,12 @@ def compile_stage(
         stages = []
         per_rank_stages = num_stages // num_ranks
         stages_from = rank * per_rank_stages
+        print(f'rank{rank} called')
         for i in range(0, per_rank_stages):
             stages.append(
                 PipelineStage(
                     pipe,
-                    stages_from + i,
+                    rank,
                     num_ranks,
                     num_chunks,
                     device,
@@ -328,6 +329,8 @@ def compile_stage(
                     kwargs_chunk_spec,
                     output_chunk_spec,
                     nstreams=nstreams,
+                    inner_rank=i,
+                    global_depth=num_stages,
                 )
             )
 
