@@ -73,7 +73,7 @@ class PipelineStage(torch.nn.Module):
         self.kwargs_chunk_spec = kwargs_chunk_spec
         self.output_chunk_spec = output_chunk_spec
         self.nstreams = nstreams
-        self.inner_rank = inner_rank 
+        self.inner_rank = inner_rank
         self.global_depth = nstages if global_depth is None else global_depth
 
         self.streams = []
@@ -81,8 +81,8 @@ class PipelineStage(torch.nn.Module):
             self.streams.append(torch.cuda.Stream())
 
         per_rank_stages = self.global_depth // nstages
-        self._rank = rank * per_rank_stages + inner_rank 
-          
+        self._rank = rank * per_rank_stages + inner_rank
+
         # Find my submodule
         self.split_gm = self.pipe.split_gm
         named_children = list(self.split_gm.named_children())

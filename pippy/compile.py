@@ -315,7 +315,7 @@ def compile_stage(
         stages = []
         per_rank_stages = num_stages // num_ranks
         stages_from = rank * per_rank_stages
-        print(f'rank{rank} called')
+        print(f"rank{rank} called")
         for i in range(0, per_rank_stages):
             stages.append(
                 PipelineStage(
