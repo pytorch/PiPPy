@@ -463,6 +463,8 @@ class PipelineStage(torch.nn.Module):
 
         for idx, out in enumerate(output_tuple):
             dst_ranks = self.act_send_info[idx]
+            print(f'Rank {self.rank} Destination Ranks: {dst_ranks}')
+            quit()
             for dst in dst_ranks:
                 if dst is None:
                     continue
@@ -540,7 +542,17 @@ class PipelineStage(torch.nn.Module):
             with self.submod.no_sync():  # type: ignore[operator]
                 out_val = self.submod(*args, **kwargs)
         else:
-            out_val = self.submod(*args, **kwargs)
+            if self.inner_depth > 1:
+              for i in range(0, self.inner_depth):
+                if i == 0:
+                  out_val = self.submods[i](*args, **kwargs)
+                  print(f'[Rank {self.rank}] 0th pipe output: {out_val}')
+                else:
+                  print(f'[Rank {self.rank}] 1th pipe args {args}')
+                  out_val = self.submods[i](out_val, **kwargs)
+                  print(f'[Rank {self.rank}] 1th pipe output: {out_val}')
+            else:
+              out_val = self.submod(*args, **kwargs)
         return out_val
 
     def backward_maybe_with_nosync(self, bwd_kwargs: Dict, is_last_chunk: bool):
