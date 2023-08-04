@@ -308,29 +308,30 @@ class PipelineStage(torch.nn.Module):
         if self.inner_depth == 1:
             node = self.node
         else:
-            node = self.nodes[-1] # last node result is sent
+            node = self.nodes[-1]  # last node result is sent
 
         for user in node.users:
             if user.target is operator.getitem:
                 # Recursively find the real destination
                 gi_dsts = act_send_info.setdefault(out_idx, [])
-                print(f'[Rank{self.rank}] gi_dsts{gi_dsts}')
+                print(f"[Rank{self.rank}] gi_dsts{gi_dsts}")
                 for gi_user in user.users:
                     dst_rank = self.find_dst_rank(gi_user)
-                    print(f'[Rank{self.rank}] what is dst rank of user {gi_user}? {dst_rank}')
+                    print(
+                        f"[Rank{self.rank}] what is dst rank of user {gi_user}? {dst_rank}"
+                    )
                     if dst_rank is not None:
                         gi_dsts.append(dst_rank)
                 # Next `getitem` will point to the next output index
                 out_idx += 1
             else:
                 # In case of single output value, `out_idx` will not increase
-                print(f'[Rank{self.rank}] or do we meet here?')
+                print(f"[Rank{self.rank}] or do we meet here?")
                 dsts = act_send_info.setdefault(out_idx, [])
                 dst_rank = self.find_dst_rank(user)
                 if dst_rank is not None:
                     dsts.append(dst_rank)
-                print(f'[Rank{self.rank}] or do we meet here? {dsts}')
-
+                print(f"[Rank{self.rank}] or do we meet here? {dsts}")
 
         logging.info(
             f"[{self.rank}][{self.name}] " f"Send info: {act_send_info}"
@@ -474,9 +475,9 @@ class PipelineStage(torch.nn.Module):
         send_reqs: List[dist.Work] = []
 
         for idx, out in enumerate(output_tuple):
-            #print(f'[Rank{self.rank}] idx {idx} out {out}')
+            # print(f'[Rank{self.rank}] idx {idx} out {out}')
             dst_ranks = self.act_send_info[idx]
-            print(f'[Rank{self.rank}] Destination Ranks: {dst_ranks}')
+            print(f"[Rank{self.rank}] Destination Ranks: {dst_ranks}")
 
             for dst in dst_ranks:
                 if dst is None:
@@ -556,22 +557,24 @@ class PipelineStage(torch.nn.Module):
                 out_val = self.submod(*args, **kwargs)
         else:
             if self.inner_depth > 1:
-              if self.rank == self.nstages - 1:
-                for i in range(0, self.inner_depth):
-                  if i == 0:
-                    out_val = self.submods[i](*args, **kwargs)
-                  else:
-                    #target_args, target_kwargs = self._recv_and_fill_inputs(
-                    #no idea how target is passed in the original code... 
-                    out_val = self.submods[i](out_val, targets, **kwargs)
-              else: 
-                for i in range(0, self.inner_depth):
-                  if i == 0:
-                    out_val = self.submods[i](*args, **kwargs)
-                  else:
-                    out_val = self.submods[i](out_val, **kwargs)
+                if self.rank == self.nstages - 1:
+                    for i in range(0, self.inner_depth):
+                        if i == 0:
+                            out_val = self.submods[i](*args, **kwargs)
+                        else:
+                            # target_args, target_kwargs = self._recv_and_fill_inputs(
+                            # no idea how target is passed in the original code...
+                            out_val = self.submods[i](
+                                out_val, targets, **kwargs
+                            )
+                else:
+                    for i in range(0, self.inner_depth):
+                        if i == 0:
+                            out_val = self.submods[i](*args, **kwargs)
+                        else:
+                            out_val = self.submods[i](out_val, **kwargs)
             else:
-              out_val = self.submod(*args, **kwargs)
+                out_val = self.submod(*args, **kwargs)
         return out_val
 
     def backward_maybe_with_nosync(self, bwd_kwargs: Dict, is_last_chunk: bool):
@@ -601,11 +604,10 @@ class PipelineStage(torch.nn.Module):
         kwargs_split,
         fwd_cache: Dict[int, Any],
     ):
-        
         if self.rank == self.nstages - 1:
             # Need improvement- how do we properly pass targets to forward_maybe_with_nosync?
             targets = args_split[chunk][0]
-            print(f'[Rank{self.rank}] args_split {args_split}')
+            print(f"[Rank{self.rank}] args_split {args_split}")
         else:
             targets = None
 
@@ -616,7 +618,7 @@ class PipelineStage(torch.nn.Module):
         )
 
         if self.rank == self.nstages - 1:
-            print(f'[Rank{self.rank}] composite_args {composite_args}')
+            print(f"[Rank{self.rank}] composite_args {composite_args}")
 
         # Compute forward
         try:
@@ -624,7 +626,7 @@ class PipelineStage(torch.nn.Module):
                 targets, *composite_args, **composite_kwargs
             )
 
-            print(f'[Rank{self.rank}] Arrived here')
+            print(f"[Rank{self.rank}] Arrived here")
 
         except Exception as e:
             exc_msg = f"""
@@ -696,8 +698,10 @@ class PipelineStage(torch.nn.Module):
             )
 
         if self.rank == 3:
-          # where is my Y?
-          print(f'[Rank{self.rank}] ArgsSplit: {args_split}, KwargsSplit: {kwargs_split}') 
+            # where is my Y?
+            print(
+                f"[Rank{self.rank}] ArgsSplit: {args_split}, KwargsSplit: {kwargs_split}"
+            )
 
         # Activation send requests of all chunk
         all_send_reqs: List[dist.Work] = []
