@@ -580,6 +580,7 @@ class PipelineStage(torch.nn.Module):
             else:
                 out_val = self.submod(*args, **kwargs)
 
+
         return out_val
 
     def backward_maybe_with_nosync(self, bwd_kwargs: Dict, is_last_chunk: bool):
