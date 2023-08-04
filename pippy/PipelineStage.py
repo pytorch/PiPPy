@@ -139,9 +139,8 @@ class PipelineStage(torch.nn.Module):
                     f"Cannot find backward for {self.name} in graph"
                 )
 
-        if (
-            self.inner_depth > 1
-        ):  # when inner pipelining is enabled, we have multiple bwd nodes for this rank
+        # when inner pipelining is enabled, we have multiple bwd nodes for this rank
+        if self.pipe.has_loss_and_backwards and self.inner_depth > 1:
             self.bwd_nodes = []
             seen_bwd = -1
             added_bwd = 0
