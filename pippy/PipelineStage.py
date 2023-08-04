@@ -311,13 +311,13 @@ class PipelineStage(torch.nn.Module):
         if self.inner_depth == 1:
             node = self.node
         else:
-            node = self.nodes[-1] # last node result is sent
+            node = self.nodes[-1]  # last node result is sent
 
         for user in node.users:
             if user.target is operator.getitem:
                 # Recursively find the real destination
                 gi_dsts = act_send_info.setdefault(out_idx, [])
-                print(f'[Rank{self.rank}] gi_dsts{gi_dsts}')
+                print(f"[Rank{self.rank}] gi_dsts{gi_dsts}")
                 for gi_user in user.users:
                     dst_rank = self.find_dst_rank(gi_user)
                     print(
@@ -329,7 +329,7 @@ class PipelineStage(torch.nn.Module):
                 out_idx += 1
             else:
                 # In case of single output value, `out_idx` will not increase
-                print(f'[Rank{self.rank}] or do we meet here?')
+                print(f"[Rank{self.rank}] or do we meet here?")
                 dsts = act_send_info.setdefault(out_idx, [])
                 dst_rank = self.find_dst_rank(user)
                 if dst_rank is not None:
