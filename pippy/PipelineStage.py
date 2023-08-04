@@ -305,22 +305,32 @@ class PipelineStage(torch.nn.Module):
         act_send_info: Dict[int, List] = {}
         out_idx = 0
 
-        for user in self.node.users:
+        if self.inner_depth == 1:
+            node = self.node
+        else:
+            node = self.nodes[-1] # last node result is sent
+
+        for user in node.users:
             if user.target is operator.getitem:
                 # Recursively find the real destination
                 gi_dsts = act_send_info.setdefault(out_idx, [])
+                print(f'[Rank{self.rank}] gi_dsts{gi_dsts}')
                 for gi_user in user.users:
                     dst_rank = self.find_dst_rank(gi_user)
+                    print(f'[Rank{self.rank}] what is dst rank of user {gi_user}? {dst_rank}')
                     if dst_rank is not None:
                         gi_dsts.append(dst_rank)
                 # Next `getitem` will point to the next output index
                 out_idx += 1
             else:
                 # In case of single output value, `out_idx` will not increase
+                print(f'[Rank{self.rank}] or do we meet here?')
                 dsts = act_send_info.setdefault(out_idx, [])
                 dst_rank = self.find_dst_rank(user)
                 if dst_rank is not None:
                     dsts.append(dst_rank)
+                print(f'[Rank{self.rank}] or do we meet here? {dsts}')
+
 
         logging.info(
             f"[{self.rank}][{self.name}] " f"Send info: {act_send_info}"
@@ -462,9 +472,10 @@ class PipelineStage(torch.nn.Module):
         send_reqs: List[dist.Work] = []
 
         for idx, out in enumerate(output_tuple):
+            print(f'[Rank{self.rank}] idx {idx} out {out}')
             dst_ranks = self.act_send_info[idx]
-            print(f'Rank {self.rank} Destination Ranks: {dst_ranks}')
-            quit()
+            print(f'[Rank{self.rank}] Destination Ranks: {dst_ranks}')
+
             for dst in dst_ranks:
                 if dst is None:
                     continue
@@ -593,6 +604,8 @@ class PipelineStage(torch.nn.Module):
             output = self.forward_maybe_with_nosync(
                 *composite_args, **composite_kwargs
             )
+
+            print(f'[Rank{self.rank}] Arrived here')
 
         except Exception as e:
             exc_msg = f"""
