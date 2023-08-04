@@ -713,8 +713,7 @@ class {module_name}(torch.nn.Module):
     def __copy__(self):
         return GraphModule(self, self.graph)
 
-    @compatibility(is_backward_compatible=False)
-    def print_readable(self):
+    def _readable_str(self):
         """
         Return the Python code generated for current GraphModule and its children GraphModules
         """
@@ -725,13 +724,22 @@ class {module_name}(torch.nn.Module):
         module_code = _addindent(module_code, 4)
 
         submodule_code_list = [""]
-        for submodule in self.children():
+        for key, submodule in self._modules.items():
             if isinstance(submodule, GraphModule):
-                submodule_code_list.append(submodule.__nested_code())
+                submodule_code = submodule._readable_str()
+                submodule_code = _addindent(submodule_code, 4)
+                submodule_code_list.append(f"{key}:\n\t{submodule_code}")
         submodule_code = "\n".join(submodule_code_list)
         submodule_code = _addindent(submodule_code, 4)
+        return module_code + submodule_code
 
-        print(module_code + submodule_code)
+    @compatibility(is_backward_compatible=False)
+    def print_readable(self):
+        """
+        Return the Python code generated for current GraphModule and its children GraphModules
+        """
+
+        print(self._readable_str())
 
     def __str__(self) -> str:
         orig_str = super().__str__()
