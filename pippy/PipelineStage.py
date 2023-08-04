@@ -695,7 +695,7 @@ class PipelineStage(torch.nn.Module):
                 self.kwargs_chunk_spec,
             )
 
-        if self.rank == 3:
+        if self.rank == self.nstages - 1:
             # where is my Y?
             print(
                 f"[Rank{self.rank}] ArgsSplit: {args_split}, KwargsSplit: {kwargs_split}"
