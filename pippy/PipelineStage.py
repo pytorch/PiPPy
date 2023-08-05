@@ -699,13 +699,13 @@ class PipelineStage(torch.nn.Module):
 
                 for i in range(1, self.inner_depth-1):
                     output = self.forward_maybe_with_nosync(
-                        i, targets, output, **composite_kwargs
+                        i, targets, self.pipe_cache[chunk][i-1], **composite_kwargs
                     )
                     self.pipe_cache[chunk][i] = output
 
                 output = self.forward_maybe_with_nosync(
-                    self.inner_depth-1, targets, output, targets, **composite_kwargs
-                )
+                    self.inner_depth-1, targets, self.pipe_cache[chunk][self.inner_depth-2], targets, **composite_kwargs
+                ) # self.inner_pipe >= 2 is asserted
                 self.pipe_cache[chunk][self.inner_depth-1] = output
             else:
                 # 0th (first) inner node
@@ -717,7 +717,7 @@ class PipelineStage(torch.nn.Module):
                 # other inner nodes uses 'output' of previous inner node
                 for i in range(1, self.inner_depth):
                     output = self.forward_maybe_with_nosync(
-                        i, targets, output, **composite_kwargs
+                        i, targets, self.pipe_cache[chunk][i-1], **composite_kwargs
                     )
                     self.pipe_cache[chunk][i] = output
 
