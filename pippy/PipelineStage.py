@@ -81,9 +81,11 @@ class PipelineStage(torch.nn.Module):
         if global_depth is not None:
             self.global_depth = global_depth
             self.inner_depth = global_depth // nstages
+            self.enable_efficient_inner_pipe = True # TODO receive this from user
         else:
             self.global_depth = nstages
             self.inner_depth = 1
+            self.enable_efficient_inner_pipe = False
 
         self.pipe_cache: List[Dict[int, tuple]] = [
             {} for i in range(chunks)
@@ -883,39 +885,26 @@ class PipelineStage(torch.nn.Module):
         output_chunks = [None] * self.chunks
 
         if self.inner_depth > 1:
-            if True: 
+            if self.ennable_efficient_inner_pipe: 
                 # New schedule:
                 # 1A, 2A, 1M, 2M 
                 for i in range(self.inner_depth):
                     for chunk in range(self.chunks):
-                        # stream maintains dependency so it is shared by same chunk computation ops 
-                        output, send_reqs = self.forward_one_chunk_one_ipipe(
-                            chunk, i, args_split, kwargs_split, fwd_cache
-                        )
-                        if i == self.inner_depth - 1:
-                            all_send_reqs += send_reqs
-                            # Prepare for final output merge or reduction
-                            output_chunks[chunk] = output                       
-
-
-                ## New schedule:
-                ## 1A, 2A, 1M, 2M 
-                #for i in range(self.inner_depth):
-                #    for chunk in range(self.chunks):
-                #        # stream maintains dependency so it is shared by same chunk computation ops 
-                #        s = self.streams[chunk % self.nstreams] 
-                #        with torch.cuda.stream(s):
-                #            output, send_reqs = self.forward_one_chunk_one_ipipe(
-                #                chunk, i, args_split, kwargs_split, fwd_cache
-                #            )
-                #            if i == self.inner_depth - 1:
-                #                all_send_reqs += send_reqs
-                #                # Prepare for final output merge or reduction
-                #                output_chunks[chunk] = output                       
+                        # each stream maintains dependency so it is shared by same chunk computation ops 
+                        s = self.streams[chunk % self.nstreams] 
+                        with torch.cuda.stream(s):
+                            output, send_reqs = self.forward_one_chunk_one_ipipe(
+                                chunk, i, args_split, kwargs_split, fwd_cache
+                            )
+                            print(f'[Rank{self.rank}][i] Finished forward_one_chunk_ipipe, used chunk{chunk}')
+                            if i == self.inner_depth - 1:
+                                all_send_reqs += send_reqs
+                                # Prepare for final output merge or reduction
+                                output_chunks[chunk] = output                       
 
             else:
                 # Forward pass of all chunks
-                # 1A, 1M, 2A, 2M..
+                # 1A, 1M, 2A, 2M
                 for chunk in range(self.chunks):
                     s = self.streams[chunk % self.nstreams]
                     with torch.cuda.stream(s):
@@ -925,7 +914,6 @@ class PipelineStage(torch.nn.Module):
                         all_send_reqs += send_reqs
                         # Prepare for final output merge or reduction
                         output_chunks[chunk] = output
-
 
         else:
             # Forward pass of all chunks
