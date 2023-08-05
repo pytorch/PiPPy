@@ -85,7 +85,7 @@ class PipelineStage(torch.nn.Module):
             self.global_depth = nstages
             self.inner_depth = 1
 
-        self.pipe_cache = [{} for i in range(chunks)]
+        self.pipe_cache = [{} for i in range(chunks)] # [chunk][inner_rank] = value
 
         # Find my submodule
         self.split_gm = self.pipe.split_gm
@@ -695,26 +695,31 @@ class PipelineStage(torch.nn.Module):
                 output = self.forward_maybe_with_nosync(
                     0, targets, *composite_args, **composite_kwargs
                 )
+                self.pipe_cache[chunk][0] = output
 
                 for i in range(1, self.inner_depth-1):
                     output = self.forward_maybe_with_nosync(
                         i, targets, output, **composite_kwargs
                     )
+                    self.pipe_cache[chunk][i] = output
 
                 output = self.forward_maybe_with_nosync(
                     self.inner_depth-1, targets, output, targets, **composite_kwargs
                 )
+                self.pipe_cache[chunk][self.inner_depth-1] = output
             else:
                 # 0th (first) inner node
                 output = self.forward_maybe_with_nosync(
                     0, targets, *composite_args, **composite_kwargs
                 )
+                self.pipe_cache[chunk][0] = output
 
                 # other inner nodes uses 'output' of previous inner node
                 for i in range(1, self.inner_depth):
                     output = self.forward_maybe_with_nosync(
                         i, targets, output, **composite_kwargs
                     )
+                    self.pipe_cache[chunk][i] = output
 
             print(f"[Rank{self.rank}] Arrived here")
 
