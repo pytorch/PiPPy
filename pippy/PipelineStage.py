@@ -622,7 +622,6 @@ class PipelineStage(torch.nn.Module):
         kwargs_split,
         fwd_cache: Dict[int, Any],
     ):
-        # 1A, 1M, (return) 2A, 2M..
         if self.rank == self.nstages - 1:
             # Need improvement- how do we properly pass targets to forward_maybe_with_nosync?
             targets = args_split[chunk][0]
@@ -671,7 +670,76 @@ class PipelineStage(torch.nn.Module):
 
         return output, send_reqs
 
-    def forward_one_chunk_ipipe(
+    def forward_one_chunk_one_ipipe(
+        self,
+        chunk: int,
+        inner_rank: int,
+        args_split,
+        kwargs_split,
+        fwd_cache: Dict[int, Any],
+    ):
+        if self.rank == self.nstages - 1:
+            # Need improvement- how do we properly pass targets to forward_maybe_with_nosync?
+            targets = args_split[chunk][0]
+            print(f"[Rank{self.rank}] args_split {args_split}")
+        else:
+            targets = None
+
+        composite_args, composite_kwargs = self._recv_and_fill_inputs(
+            chunk,
+            args_split,
+            kwargs_split,
+        )
+
+        try:
+            if inner_rank == 0:
+                output = self.forward_maybe_with_nosync(
+                    inner_rank, targets, *composite_args, **composite_kwargs
+                )
+                self.pipe_cache[chunk][inner_rank] = output
+            elif inner_rank == self.inner_depth -1 and self.rank == self.nstages - 1: # last stage, last node
+                output = self.forward_maybe_with_nosync(
+                    inner_rank, targets, self.pipe_cache[chunk][self.inner_depth-2], targets, **composite_kwargs
+                ) # self.inner_pipe >= 2 is asserted
+                self.pipe_cache[chunk][self.inner_depth-1] = output
+            else:
+                output = self.forward_maybe_with_nosync(
+                    inner_rank, targets, self.pipe_cache[chunk][inner_rank-1], **composite_kwargs
+                )
+                self.pipe_cache[chunk][inner_rank] = output
+
+            print(f"[Rank{self.rank}] Arrived here")
+
+        except Exception as e:
+            exc_msg = f"""
+            Rank {self.rank} failed to run forward stage: {self.name}
+            args: {map_debug_info(composite_args)}
+            kwargs: {map_debug_info(composite_kwargs)}
+            """
+            raise RuntimeError(exc_msg) from e
+
+        if inner_rank == self.inner_depth - 1:
+            # Unify output form to tuple for easy correspondance with
+            # `act_send_info`
+            output_tuple = output if type(output) is tuple else (output,)
+            send_reqs = self._send_activations(output_tuple)
+
+            # Save activations and inputs for backward
+            flat_args = flatten_args(composite_args)
+            flat_kwargs = flatten_args(composite_kwargs)
+            flatten_input_tensors = flat_args + flat_kwargs
+            fwd_cache[chunk] = (
+                output_tuple,  # stage_output
+                flatten_input_tensors,  # input_values
+            )
+
+            return output, send_reqs
+        else:
+            return None, None
+
+
+   
+    def forward_one_chunk_all_ipipe(
         self,
         chunk: int,
         args_split,
@@ -815,16 +883,50 @@ class PipelineStage(torch.nn.Module):
         output_chunks = [None] * self.chunks
 
         if self.inner_depth > 1:
-            # Forward pass of all chunks
-            for chunk in range(self.chunks):
-                s = self.streams[chunk % self.nstreams]
-                with torch.cuda.stream(s):
-                    output, send_reqs = self.forward_one_chunk_ipipe(
-                        chunk, args_split, kwargs_split, fwd_cache
-                    )
-                    all_send_reqs += send_reqs
-                    # Prepare for final output merge or reduction
-                    output_chunks[chunk] = output
+            if True: 
+                # New schedule:
+                # 1A, 2A, 1M, 2M 
+                for i in range(self.inner_depth):
+                    for chunk in range(self.chunks):
+                        # stream maintains dependency so it is shared by same chunk computation ops 
+                        output, send_reqs = self.forward_one_chunk_one_ipipe(
+                            chunk, i, args_split, kwargs_split, fwd_cache
+                        )
+                        if i == self.inner_depth - 1:
+                            all_send_reqs += send_reqs
+                            # Prepare for final output merge or reduction
+                            output_chunks[chunk] = output                       
+
+
+                ## New schedule:
+                ## 1A, 2A, 1M, 2M 
+                #for i in range(self.inner_depth):
+                #    for chunk in range(self.chunks):
+                #        # stream maintains dependency so it is shared by same chunk computation ops 
+                #        s = self.streams[chunk % self.nstreams] 
+                #        with torch.cuda.stream(s):
+                #            output, send_reqs = self.forward_one_chunk_one_ipipe(
+                #                chunk, i, args_split, kwargs_split, fwd_cache
+                #            )
+                #            if i == self.inner_depth - 1:
+                #                all_send_reqs += send_reqs
+                #                # Prepare for final output merge or reduction
+                #                output_chunks[chunk] = output                       
+
+            else:
+                # Forward pass of all chunks
+                # 1A, 1M, 2A, 2M..
+                for chunk in range(self.chunks):
+                    s = self.streams[chunk % self.nstreams]
+                    with torch.cuda.stream(s):
+                        output, send_reqs = self.forward_one_chunk_all_ipipe(
+                            chunk, args_split, kwargs_split, fwd_cache
+                        )
+                        all_send_reqs += send_reqs
+                        # Prepare for final output merge or reduction
+                        output_chunks[chunk] = output
+
+
         else:
             # Forward pass of all chunks
             for chunk in range(self.chunks):
