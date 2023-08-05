@@ -327,8 +327,8 @@ def pp_and_tp_selective(
                 args.device,
                 pp_groups,
                 example_inputs=[X, Y],
-                #num_stages=num_stages,
-                #schedule="TwoLevel",
+                num_stages=num_stages,
+                schedule="TwoLevel",
         )
     else: 
         output_chunk_spec = (TensorChunkSpec(0), sum_reducer)
