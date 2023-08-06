@@ -312,39 +312,38 @@ def pp_and_tp_selective(
 
     # PP
     if args.inner_cut:
-      cut_fn(model, args, args.pp_size * 2)
-      num_stages = args.pp_size * 2 # TODO replace 2 with args.i_stage
+        cut_fn(model, args, args.pp_size * 2)
+        num_stages = args.pp_size * 2  # TODO replace 2 with args.i_stage
     else:
-      cut_fn(model, args, args.pp_size)
-      num_stages = args.pp_size
+        cut_fn(model, args, args.pp_size)
+        num_stages = args.pp_size
 
     if args.inference:
         stage = compile_stage(
-                model,
-                pp_rank,
-                args.pp_size,
-                args.n_chunks,
-                args.device,
-                pp_groups,
-                example_inputs=[X, Y],
-                num_stages=num_stages,
-                schedule="TwoLevel",
+            model,
+            pp_rank,
+            args.pp_size,
+            args.n_chunks,
+            args.device,
+            pp_groups,
+            example_inputs=[X, Y],
+            num_stages=num_stages,
+            schedule="TwoLevel",
         )
-    else: 
+    else:
         output_chunk_spec = (TensorChunkSpec(0), sum_reducer)
         stage = compile_stage(
-                model,
-                pp_rank,
-                args.pp_size,
-                args.n_chunks,
-                args.device,
-                pp_groups,
-                example_inputs=[X, Y],
-                output_chunk_spec=output_chunk_spec,
-                num_stages=num_stages,
-                schedule="TwoLevel",
+            model,
+            pp_rank,
+            args.pp_size,
+            args.n_chunks,
+            args.device,
+            pp_groups,
+            example_inputs=[X, Y],
+            output_chunk_spec=output_chunk_spec,
+            num_stages=num_stages,
+            schedule="TwoLevel",
         )
-     
 
     return model, stage
 
@@ -387,6 +386,7 @@ def pp_tp_train(stage, mesh, args):
 
     return local_iter_num, iter_time
 
+
 def pp_tp_inference(stage, mesh, args):
     pp_dim, tp_dim = 0, 1
     pp_rank, tp_rank = args.rank // args.tp_size, args.rank % args.tp_size
@@ -420,7 +420,6 @@ def pp_tp_inference(stage, mesh, args):
     prof.export_chrome_trace(f"trace_rank{args.rank}.json")
 
     return local_iter_num, iter_time
-
 
 
 def pp_train(stage, args):
@@ -494,9 +493,9 @@ if __name__ == "__main__":
         os.makedirs(args.out_dir, exist_ok=True)
 
     torch.manual_seed(args.seed)
-    #torch.backends.cuda.matmul.allow_tf32 = True  # allow tf32 on matmul
-    #torch.backends.cudnn.allow_tf32 = True  # allow tf32 on cudnn
-    #torch.backends.cuda.enable_mem_efficient_sdp(enabled=False)
+    # torch.backends.cuda.matmul.allow_tf32 = True  # allow tf32 on matmul
+    # torch.backends.cudnn.allow_tf32 = True  # allow tf32 on cudnn
+    # torch.backends.cuda.enable_mem_efficient_sdp(enabled=False)
 
     # init these up here, can override if init_from='resume' (i.e. from a checkpoint)
     iter_num = 0
@@ -533,9 +532,7 @@ if __name__ == "__main__":
     # model = tp(model, args.n_layer, oned_mesh)
     # model, stage = pp(model, oned_mesh, args)
     # model, stage = pp_and_tp(model, twod_mesh, args)
-    model, stage = pp_and_tp_selective(
-        model, twod_mesh, args
-    )
+    model, stage = pp_and_tp_selective(model, twod_mesh, args)
 
     if args.inference:
         iter_count, iter_time = pp_tp_inference(stage, twod_mesh, args)

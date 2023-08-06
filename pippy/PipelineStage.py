@@ -81,7 +81,9 @@ class PipelineStage(torch.nn.Module):
         if global_depth is not None:
             self.global_depth = global_depth
             self.inner_depth = global_depth // nstages
-            self.enable_efficient_inner_pipe = True # TODO receive this from user
+            self.enable_efficient_inner_pipe = (
+                True  # TODO receive this from user
+            )
         else:
             self.global_depth = nstages
             self.inner_depth = 1
@@ -699,14 +701,24 @@ class PipelineStage(torch.nn.Module):
                     inner_rank, targets, *composite_args, **composite_kwargs
                 )
                 self.pipe_cache[chunk][inner_rank] = output
-            elif inner_rank == self.inner_depth -1 and self.rank == self.nstages - 1: # last stage, last node
+            elif (
+                inner_rank == self.inner_depth - 1
+                and self.rank == self.nstages - 1
+            ):  # last stage, last node
                 output = self.forward_maybe_with_nosync(
-                    inner_rank, targets, self.pipe_cache[chunk][self.inner_depth-2], targets, **composite_kwargs
-                ) # self.inner_pipe >= 2 is asserted
-                self.pipe_cache[chunk][self.inner_depth-1] = output
+                    inner_rank,
+                    targets,
+                    self.pipe_cache[chunk][self.inner_depth - 2],
+                    targets,
+                    **composite_kwargs,
+                )  # self.inner_pipe >= 2 is asserted
+                self.pipe_cache[chunk][self.inner_depth - 1] = output
             else:
                 output = self.forward_maybe_with_nosync(
-                    inner_rank, targets, self.pipe_cache[chunk][inner_rank-1], **composite_kwargs
+                    inner_rank,
+                    targets,
+                    self.pipe_cache[chunk][inner_rank - 1],
+                    **composite_kwargs,
                 )
                 self.pipe_cache[chunk][inner_rank] = output
 
@@ -739,8 +751,6 @@ class PipelineStage(torch.nn.Module):
         else:
             return None, None
 
-
-   
     def forward_one_chunk_all_ipipe(
         self,
         chunk: int,
@@ -885,22 +895,27 @@ class PipelineStage(torch.nn.Module):
         output_chunks = [None] * self.chunks
 
         if self.inner_depth > 1:
-            if self.ennable_efficient_inner_pipe: 
+            if self.enable_efficient_inner_pipe:
                 # New schedule:
-                # 1A, 2A, 1M, 2M 
+                # 1A, 2A, 1M, 2M
                 for i in range(self.inner_depth):
                     for chunk in range(self.chunks):
-                        # each stream maintains dependency so it is shared by same chunk computation ops 
-                        s = self.streams[chunk % self.nstreams] 
+                        # each stream maintains dependency so it is shared by same chunk computation ops
+                        s = self.streams[chunk % self.nstreams]
                         with torch.cuda.stream(s):
-                            output, send_reqs = self.forward_one_chunk_one_ipipe(
+                            (
+                                output,
+                                send_reqs,
+                            ) = self.forward_one_chunk_one_ipipe(
                                 chunk, i, args_split, kwargs_split, fwd_cache
                             )
-                            print(f'[Rank{self.rank}][i] Finished forward_one_chunk_ipipe, used chunk{chunk}')
+                            print(
+                                f"[Rank{self.rank}][i] Finished forward_one_chunk_ipipe, used chunk{chunk}"
+                            )
                             if i == self.inner_depth - 1:
                                 all_send_reqs += send_reqs
                                 # Prepare for final output merge or reduction
-                                output_chunks[chunk] = output                       
+                                output_chunks[chunk] = output
 
             else:
                 # Forward pass of all chunks
