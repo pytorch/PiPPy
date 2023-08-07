@@ -89,7 +89,7 @@ class PipelineStage(torch.nn.Module):
             self.inner_depth = 1
             self.enable_efficient_inner_pipe = False
 
-        self.pipe_cache: List[Dict[int, tuple]] = [
+        self.pipe_cache : List[Dict[int, tuple]]= [
             {} for i in range(chunks)
         ]  # [chunk][inner_rank] = value
 
@@ -628,7 +628,7 @@ class PipelineStage(torch.nn.Module):
         if self.rank == self.nstages - 1:
             # Need improvement- how do we properly pass targets to forward_maybe_with_nosync?
             targets = args_split[chunk][0]
-            #print(f"[Rank{self.rank}] args_split {args_split}")
+            # print(f"[Rank{self.rank}] args_split {args_split}")
         else:
             targets = None
 
@@ -681,7 +681,7 @@ class PipelineStage(torch.nn.Module):
         if self.rank == self.nstages - 1:
             # Need improvement- how do we properly pass targets to forward_maybe_with_nosync?
             targets = args_split[chunk][0]
-            #print(f"[Rank{self.rank}] args_split {args_split}")
+            # print(f"[Rank{self.rank}] args_split {args_split}")
         else:
             targets = None
 
@@ -749,7 +749,7 @@ class PipelineStage(torch.nn.Module):
         if self.rank == self.nstages - 1:
             # Need improvement- how do we properly pass targets to forward_maybe_with_nosync?
             targets = args_split[chunk][0]
-            #print(f"[Rank{self.rank}] args_split {args_split}")
+            # print(f"[Rank{self.rank}] args_split {args_split}")
         else:
             targets = None
 
