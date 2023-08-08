@@ -88,7 +88,6 @@ class PipelineStage(torch.nn.Module):
         # Find my submodule
         self.split_gm = self.pipe.split_gm
         named_children = list(self.split_gm.named_children())
-
         # submod = first inner node of each rank
         self.name, self.submod = named_children[rank * self.inner_depth]
         self.names, self.submods = [], []
@@ -309,12 +308,20 @@ class PipelineStage(torch.nn.Module):
         act_send_info: Dict[int, List] = {}
         out_idx = 0
 
-        for user in self.node.users:
+        if self.inner_depth == 1:
+            node = self.node
+        else:
+            node = self.nodes[-1]  # last node result is sent
+
+        for user in node.users:
             if user.target is operator.getitem:
                 # Recursively find the real destination
                 gi_dsts = act_send_info.setdefault(out_idx, [])
                 for gi_user in user.users:
                     dst_rank = self.find_dst_rank(gi_user)
+                    print(
+                        f"[Rank{self.rank}] what is dst rank of user {gi_user}? {dst_rank}"
+                    )
                     if dst_rank is not None:
                         gi_dsts.append(dst_rank)
                 # Next `getitem` will point to the next output index
@@ -325,6 +332,7 @@ class PipelineStage(torch.nn.Module):
                 dst_rank = self.find_dst_rank(user)
                 if dst_rank is not None:
                     dsts.append(dst_rank)
+                print(f"[Rank{self.rank}] dest- {dsts}")
 
         logging.info(
             f"[{self.rank}][{self.name}] " f"Send info: {act_send_info}"
@@ -428,8 +436,10 @@ class PipelineStage(torch.nn.Module):
 
         def recv_args(info):
             if isinstance(info, RecvInfo):
+                # two RecvInfo of same tensor size
                 return act_recv(info)
             else:
+                # Y[chunk]
                 return chunk_args_list.pop(0)
 
         composite_args = pippy.fx.node.map_aggregate(
@@ -466,7 +476,10 @@ class PipelineStage(torch.nn.Module):
         send_reqs: List[dist.Work] = []
 
         for idx, out in enumerate(output_tuple):
+            # print(f'[Rank{self.rank}] idx {idx} out {out}')
             dst_ranks = self.act_send_info[idx]
+            print(f"[Rank{self.rank}] Destination Ranks: {dst_ranks}")
+
             for dst in dst_ranks:
                 if dst is None:
                     continue
@@ -537,14 +550,32 @@ class PipelineStage(torch.nn.Module):
 
         return grad_send_reqs
 
-    def forward_maybe_with_nosync(self, *args, **kwargs):
+    def forward_maybe_with_nosync(self, targets, *args, **kwargs):
         # If submod is wrapped with DDP, we use the `no_sync` context manager to
         # avoid gradient all-reduce per microbatch
         if isinstance(self.submod, DistributedDataParallel):
             with self.submod.no_sync():  # type: ignore[operator]
                 out_val = self.submod(*args, **kwargs)
         else:
-            out_val = self.submod(*args, **kwargs)
+            if self.inner_depth > 1:
+                if self.rank == self.nstages - 1:
+                    for i in range(0, self.inner_depth):
+                        if i == 0:
+                            out_val = self.submods[i](*args, **kwargs)
+                        else:
+                            # target_args, target_kwargs = self._recv_and_fill_inputs(
+                            # no idea how target is passed in the original code...
+                            out_val = self.submods[i](
+                                out_val, targets, **kwargs
+                            )
+                else:
+                    for i in range(0, self.inner_depth):
+                        if i == 0:
+                            out_val = self.submods[i](*args, **kwargs)
+                        else:
+                            out_val = self.submods[i](out_val, **kwargs)
+            else:
+                out_val = self.submod(*args, **kwargs)
         return out_val
 
     def backward_maybe_with_nosync(self, bwd_kwargs: Dict, is_last_chunk: bool):
@@ -574,17 +605,29 @@ class PipelineStage(torch.nn.Module):
         kwargs_split,
         fwd_cache: Dict[int, Any],
     ):
+        if self.rank == self.nstages - 1:
+            # Need improvement- how do we properly pass targets to forward_maybe_with_nosync?
+            targets = args_split[chunk][0]
+            print(f"[Rank{self.rank}] args_split {args_split}")
+        else:
+            targets = None
+
         composite_args, composite_kwargs = self._recv_and_fill_inputs(
             chunk,
             args_split,
             kwargs_split,
         )
 
+        if self.rank == self.nstages - 1:
+            print(f"[Rank{self.rank}] composite_args {composite_args}")
+
         # Compute forward
         try:
             output = self.forward_maybe_with_nosync(
-                *composite_args, **composite_kwargs
+                targets, *composite_args, **composite_kwargs
             )
+
+            print(f"[Rank{self.rank}] Arrived here")
 
         except Exception as e:
             exc_msg = f"""
@@ -653,6 +696,12 @@ class PipelineStage(torch.nn.Module):
                 self.chunks,
                 self.args_chunk_spec,
                 self.kwargs_chunk_spec,
+            )
+
+        if self.rank == self.nstages - 1:
+            # where is my Y?
+            print(
+                f"[Rank{self.rank}] ArgsSplit: {args_split}, KwargsSplit: {kwargs_split}"
             )
 
         # Activation send requests of all chunk
