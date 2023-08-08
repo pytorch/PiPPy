@@ -89,7 +89,7 @@ class PipelineStage(torch.nn.Module):
             self.inner_depth = 1
             self.enable_efficient_inner_pipe = False
 
-        self.pipe_cache : List[Dict[int, tuple]]= [
+        self.pipe_cache: List[Dict[int, tuple]] = [
             {} for i in range(chunks)
         ]  # [chunk][inner_rank] = value
 
