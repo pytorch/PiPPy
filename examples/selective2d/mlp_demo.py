@@ -75,7 +75,6 @@ class MLPModule(torch.nn.Module):
 
     def forward(self, x):
         x = self.net1(x)
-        #x = self.relu(x)
         x = self.net2(x)
         return x
 
@@ -98,9 +97,8 @@ class ExampleCode(torch.nn.Module):
 
         if y is not None:
             loss = self.mse_loss(x, y)
-            loss = None
         else:
-            loss = None # for inference
+            loss = None
 
         return x, loss
 
@@ -148,15 +146,8 @@ def pp_and_tp_selective(
     X, Y = get_rand(args)
 
     # PP
-    if args.inner_cut:
-        cut_fn(model, args, args.pp_size * 2)
-        num_stages = args.pp_size * 2
-    else:
-        cut_fn(model, args, args.pp_size)
-        num_stages = args.pp_size
-
-    if args.rank == 0:
-        print(f'Num stages: {num_stages}')
+    cut_fn(model, args, args.pp_size * args.i_stage)
+    num_stages = args.pp_size * args.i_stage
 
     if args.inference:
         stage = compile_stage(
@@ -289,29 +280,9 @@ if __name__ == "__main__":
     model = ExampleCode(args) 
     model.to(args.device)
 
-    if args.rank == 0:
-        for name, module in model.named_modules():
-            print(name)
-
     ref_x, ref_y = get_rand(args)
 
-    """
-    single_mlp = MLPModule(args.hidden_size)
-    single_mlp.to(args.device)
-    if args.rank == 0:
-        print(f"single mlp result? {single_mlp(ref_x)}")
-
-    if args.rank == 0:
-        print(f'what is the result of reference? {model(ref_x)}')
-
-    dist.barrier()
-    quit()
-    """
-
     model, stage = pp_and_tp_selective(model, twod_mesh, args)
-
-    if args.rank == 0:
-        print(stage)
 
     if args.inference:
         iter_count, iter_time = pp_tp_inference(stage, twod_mesh, args)
