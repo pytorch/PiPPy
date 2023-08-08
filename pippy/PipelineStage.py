@@ -88,9 +88,9 @@ class PipelineStage(torch.nn.Module):
         # Find my submodule
         self.split_gm = self.pipe.split_gm
         named_children = list(self.split_gm.named_children())
-        self.name, self.submod = named_children[
-            rank * self.inner_depth
-        ]  # submod = first inner node of each rank
+
+        # submod = first inner node of each rank
+        self.name, self.submod = named_children[rank * self.inner_depth]
         self.names, self.submods = [], []
         for i in range(self.inner_depth):
             name, submod = named_children[rank * self.inner_depth + i]
@@ -113,7 +113,9 @@ class PipelineStage(torch.nn.Module):
         if not found_node:
             raise AssertionError(f"Cannot find {self.name} in graph")
 
-        if self.inner_depth > 1:
+        if (
+            self.inner_depth > 1
+        ):  # when inner pipelining is enabled, we have multiple nodes for this rank
             self.nodes = []
             for node in self.split_gm.graph.nodes:
                 if node.name in self.names:
@@ -137,7 +139,9 @@ class PipelineStage(torch.nn.Module):
                     f"Cannot find backward for {self.name} in graph"
                 )
 
-        if self.inner_depth > 1:
+        if (
+            self.inner_depth > 1
+        ):  # when inner pipelining is enabled, we have multiple bwd nodes for this rank
             self.bwd_nodes = []
             seen_bwd = -1
             added_bwd = 0
