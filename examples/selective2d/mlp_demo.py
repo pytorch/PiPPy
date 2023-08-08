@@ -1,7 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-import argparse
 import os
-import time
 
 import torch
 import torch.distributed as dist
@@ -9,7 +7,6 @@ import torch.distributed as dist
 import torch.nn as nn
 
 from pippy.compile import compile_stage
-
 from pippy.IR import annotate_split_points, PipeSplitWrapper
 from pippy.microbatch import sum_reducer, TensorChunkSpec
 
@@ -19,53 +16,8 @@ from torch.distributed.tensor.parallel import (
     parallelize_module,
 )
 
-from torch.profiler import profile, ProfilerActivity
-
-
-def get_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--seed", type=int, default=1337)
-    parser.add_argument("--n_layer", type=int, default=12)
-    parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument("--hidden_size", type=int, default=1024)
-
-    # distributed
-    parser.add_argument(
-        "--backend", type=str, default="nccl"
-    )  # 'nccl', 'gloo', etc.
-    parser.add_argument("--rank", type=int, default=int(os.environ["RANK"]))
-    parser.add_argument(
-        "--world_size", type=int, default=int(os.environ["WORLD_SIZE"])
-    )
-    parser.add_argument(
-        "--device", type=str, default=f"cuda:{os.environ['LOCAL_RANK']}"
-    )
-
-    parser.add_argument("--train_iters", type=int, default=10)
-    parser.add_argument("--tp_size", type=int, default=2)
-    parser.add_argument("--pp_size", type=int, default=2)
-    parser.add_argument("--i_stage", type=int, default=1)
-    parser.add_argument("--n_chunks", type=int, default=2)
-
-    parser.add_argument("--debug", dest="debug", action="store_true")
-    parser.add_argument("--inner_cut", dest="inner_cut", action="store_true")
-    parser.add_argument("--inference", dest="inference", action="store_true")
-
-    args = parser.parse_args()
-
-    return args
-
-
-def get_rand(args):
-    x = torch.rand(
-        (args.batch_size, args.hidden_size),
-        device=args.device,
-    )
-    y = torch.rand(
-        (args.batch_size, args.hidden_size),
-        device=args.device,
-    )
-    return x, y
+from examples.selective2d.utils import *
+from examples.selective2d.parallelize_utils import *
 
 
 class MLPModule(torch.nn.Module):
@@ -105,14 +57,6 @@ class ExampleCode(torch.nn.Module):
         return x, loss
 
 
-def tp_mlp(model, mesh, tp_dim=0, mlp="mlp"):
-    parallelize_module(
-        model, mesh, {mlp: PairwiseParallel()}, tp_mesh_dim=tp_dim
-    )
-
-    return model
-
-
 def even_cut(model, args, pp_size):
     """
     Evenly cut a model into pp_size stages
@@ -124,10 +68,15 @@ def even_cut(model, args, pp_size):
         if i > 0 and i % cutpoint == 0:
             cut[name] = PipeSplitWrapper.SplitPoint.BEGINNING  # or END
 
-    if args.rank == 0:
-        print(cut)
-
     annotate_split_points(model, cut)
+
+
+def tp_mlp(model, mesh, tp_dim=0, mlp="mlp"):
+    parallelize_module(
+        model, mesh, {mlp: PairwiseParallel()}, tp_mesh_dim=tp_dim
+    )
+
+    return model
 
 
 def pp_and_tp_selective(
@@ -181,87 +130,13 @@ def pp_and_tp_selective(
     return model, stage
 
 
-def pp_tp_inference(stage, mesh, args):
-    pp_dim, tp_dim = 0, 1
-    pp_rank, tp_rank = args.rank // args.tp_size, args.rank % args.tp_size
-    pp_groups = mesh.get_dim_groups()[pp_dim]
-
-    train_iters = 10 if args.debug else args.train_iters
-    local_iter_num = 0
-    iter_time = 0.0
-    with profile(
-        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-        schedule=torch.profiler.schedule(
-            skip_first=5, wait=0, warmup=4, active=1, repeat=1
-        ),
-    ) as prof:
-        while local_iter_num < train_iters:
-            t0 = time.perf_counter()
-            X, Y = get_rand(args)
-            if pp_rank == 0:
-                out = stage(X)
-            elif pp_rank == args.pp_size - 1:
-                out = stage(Y)
-            else:
-                out = stage()
-            t1 = time.perf_counter()
-            dt = t1 - t0
-            local_iter_num += 1
-            iter_time += dt
-            prof.step()
-            dist.barrier()
-
-    prof.export_chrome_trace(f"trace_rank{args.rank}.json")
-
-    return local_iter_num, iter_time
-
-
-def pp_tp_train(stage, mesh, args):
-    pp_dim, tp_dim = 0, 1
-    pp_rank, tp_rank = args.rank // args.tp_size, args.rank % args.tp_size
-    pp_groups = mesh.get_dim_groups()[pp_dim]
-
-    train_iters = 10 if args.debug else args.train_iters
-    optimizer = torch.optim.AdamW(
-        stage.submod.parameters(), lr=args.learning_rate
-    )
-    local_iter_num = 0
-    iter_time = 0.0
-    with profile(
-        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-        schedule=torch.profiler.schedule(
-            skip_first=5, wait=0, warmup=4, active=1, repeat=1
-        ),
-    ) as prof:
-        while local_iter_num < train_iters:
-            optimizer.zero_grad()
-            t0 = time.perf_counter()
-            X, Y = get_rand(args)
-            if pp_rank == 0:
-                out = stage(X)
-            elif pp_rank == args.pp_size - 1:
-                out = stage(Y)
-            else:
-                out = stage()
-            optimizer.step()
-            t1 = time.perf_counter()
-            dt = t1 - t0
-            local_iter_num += 1
-            iter_time += dt
-            prof.step()
-
-    prof.export_chrome_trace(f"trace_rank{args.rank}.json")
-
-    return local_iter_num, iter_time
-
-
 if __name__ == "__main__":
     _multi_gpu = int(os.environ.get("RANK", -1)) != -1  # verify distributed run
     assert (
         _multi_gpu
     ), "this config assumes distributed setup - multi-gpu not ready here."
 
-    args = get_args()
+    args = get_args_mlp()
 
     device_type = (
         "cuda" if "cuda" in args.device else "cpu"
@@ -287,9 +162,9 @@ if __name__ == "__main__":
     model, stage = pp_and_tp_selective(model, twod_mesh, args)
 
     if args.inference:
-        iter_count, iter_time = pp_tp_inference(stage, twod_mesh, args)
+        iter_count, iter_time = pp_tp_inference(stage, twod_mesh, args, get_rand)
     else:
-        iter_count, iter_time = pp_tp_train(stage, twod_mesh, args)
+        iter_count, iter_time = pp_tp_train(stage, twod_mesh, args, get_rand)
 
     if args.rank == 0:
         print(f"\nInference demo completed. Check your trace!\n")

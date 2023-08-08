@@ -1,7 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-import argparse
 import os
-import time
 
 import torch
 import torch.distributed as dist
@@ -20,166 +18,8 @@ from torch.distributed.tensor.parallel import (
     RowwiseParallel,
 )
 
-from torch.profiler import profile, ProfilerActivity
-
-
-def get_args():
-    # default config values designed to train a gpt2 (124M) on OpenWebText
-
-    def str_to_bool(v):
-        if isinstance(v, bool):
-            return v
-        if v.lower() in ("true", "t", "1"):
-            return True
-        elif v.lower() in ("false", "f", "0"):
-            return False
-        else:
-            raise ArgumentTypeError("Boolean expected.")
-
-    # I/O
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--out_dir", type=str, default="out")
-    parser.add_argument("--eval_interval", type=int, default=2000)
-    parser.add_argument("--log_interval", type=int, default=2)
-    parser.add_argument("--eval_iters", type=int, default=200)
-    parser.add_argument(
-        "--eval_only", type=str_to_bool, default=False
-    )  # if True, script exits right after the first eval
-    parser.add_argument(
-        "--always_save_checkpoint", type=str_to_bool, default=True
-    )  # if True, always save a checkpoint after each eval
-    parser.add_argument(
-        "--init_from", type=str, default="scratch"
-    )  # 'scratch', 'resume', 'gpt2*'
-    parser.add_argument("--train_iters", type=int, default=200000)
-    parser.add_argument("--seed", type=int, default=1337)
-
-    # data
-    parser.add_argument(
-        "--dataset", type=str, default="shakespeare_char"
-    )  # "openwebtext"
-    parser.add_argument(
-        "--gradient_accumulation_steps", type=int, default=1
-    )  # used to simulate larger batch sizes
-    parser.add_argument(
-        "--batch_size", type=int, default=12
-    )  # if gradient_accumulation_steps > 1, this is the micro-batch size
-    parser.add_argument("--block_size", type=int, default=1024)
-    parser.add_argument("--vocab_size", type=int, default=50304)
-
-    # model
-    parser.add_argument("--n_layer", type=int, default=12)
-    parser.add_argument("--n_head", type=int, default=12)
-    parser.add_argument("--n_embd", type=int, default=768)
-    parser.add_argument(
-        "--dropout", type=float, default=0.0
-    )  # for pretraining 0 is good, for finetuning try 0.1+
-    parser.add_argument("--bias", type=str_to_bool, default=False)
-
-    # adamw optimizer
-    parser.add_argument(
-        "--learning_rate", type=float, default=4e-4
-    )  # max learning rate
-    parser.add_argument(
-        "--max_iters", type=int, default=600000
-    )  # total number of training iterations
-    parser.add_argument("--weight_decay", type=float, default=1e-2)
-    parser.add_argument("--beta1", type=float, default=0.9)
-    parser.add_argument("--beta2", type=float, default=0.95)
-    parser.add_argument(
-        "--grad_clip", type=float, default=1.0
-    )  # clip gradients at this value, or disable if == 0.0
-    parser.add_argument(
-        "--decay_lr", type=str_to_bool, default=True
-    )  # whether to decay the learning rate
-    parser.add_argument("--warmup_iters", type=int, default=2000)
-    parser.add_argument("--lr_decay_iters", type=int, default=600000)
-    parser.add_argument(
-        "--min_lr", type=float, default=6e-5
-    )  # minimum learning rate
-
-    # distributed
-    parser.add_argument(
-        "--backend", type=str, default="nccl"
-    )  # 'nccl', 'gloo', etc.
-    parser.add_argument(
-        "--compile", type=str_to_bool, default=False
-    )  # use PyTorch 2.0 to compile the model to be faster
-    parser.add_argument("--rank", type=int, default=int(os.environ["RANK"]))
-    parser.add_argument(
-        "--local_rank", type=int, default=int(os.environ["LOCAL_RANK"])
-    )
-    parser.add_argument(
-        "--world_size", type=int, default=int(os.environ["WORLD_SIZE"])
-    )
-    parser.add_argument(
-        "--device", type=str, default=f"cuda:{os.environ['LOCAL_RANK']}"
-    )
-    parser.add_argument(
-        "--master_process",
-        type=str_to_bool,
-        default=bool(os.environ["RANK"] == 0),
-    )
-    parser.add_argument("--tp_size", type=int, default=2)
-    parser.add_argument("--pp_size", type=int, default=2)
-    parser.add_argument("--i_stage", type=int, default=1)
-    parser.add_argument("--n_chunks", type=int, default=2)
-
-    parser.add_argument("--debug", dest="debug", action="store_true")
-    parser.add_argument("--inner_cut", dest="inner_cut", action="store_true")
-    parser.add_argument("--inference", dest="inference", action="store_true")
-
-    args = parser.parse_args()
-
-    return args
-
-
-def rank_print(x):
-    _rank = os.getenv("RANK")
-    if _rank == "0":
-        print(x)
-
-
-def get_rand(args):
-    x = torch.randint(
-        0,
-        args.vocab_size,
-        (args.batch_size, args.block_size),
-        device=args.device,
-    )
-    y = torch.randint(
-        0,
-        args.vocab_size,
-        (args.batch_size, args.block_size),
-        device=args.device,
-    )
-    return x, y
-
-
-def tp_attention(model, name, mesh, tp_dim=0, q="q", k="k", v="v", o="c_proj"):
-    layer = model.get_submodule(name)
-    parallelize_module(
-        layer,
-        mesh,
-        {
-            q: ColwiseParallel(),
-            k: ColwiseParallel(),
-            v: ColwiseParallel(),
-            o: RowwiseParallel(),
-        },
-        tp_mesh_dim=tp_dim,
-    )
-
-    return model
-
-
-def tp_mlp(model, name, mesh, tp_dim=0, mlp="mlp"):
-    layer = model.get_submodule(name)
-    parallelize_module(
-        layer, mesh, {mlp: PairwiseParallel()}, tp_mesh_dim=tp_dim
-    )
-
-    return model
+from examples.selective2d.utils import *
+from examples.selective2d.parallelize_utils import *
 
 
 def even_cut(model, args, pp_size):
@@ -210,6 +50,32 @@ def after_ar_cut(model, args, pp_size):
     annotate_split_points(model, cut)
 
 
+def tp_mlp(model, name, mesh, tp_dim=0, mlp="mlp"):
+    layer = model.get_submodule(name)
+    parallelize_module(
+        layer, mesh, {mlp: PairwiseParallel()}, tp_mesh_dim=tp_dim
+    )
+
+    return model
+
+
+def tp_attention(model, name, mesh, tp_dim=0, q="q", k="k", v="v", o="c_proj"):
+    layer = model.get_submodule(name)
+    parallelize_module(
+        layer,
+        mesh,
+        {
+            q: ColwiseParallel(),
+            k: ColwiseParallel(),
+            v: ColwiseParallel(),
+            o: RowwiseParallel(),
+        },
+        tp_mesh_dim=tp_dim,
+    )
+
+    return model
+
+
 def pp_and_tp_selective(
     model, mesh, args, tp_attn_layers=None, tp_mlp_layers=None, cut_fn=even_cut
 ):
@@ -234,7 +100,7 @@ def pp_and_tp_selective(
         att = tp_attention(model, f"{name}.attn", mesh, tp_dim)
         mlp = tp_mlp(model, f"{name}", mesh, tp_dim)
 
-    X, Y = get_rand(args)
+    X, Y = get_rand_int(args)
 
     # PP
     cut_fn(model, args, args.pp_size * args.i_stage)
@@ -270,87 +136,13 @@ def pp_and_tp_selective(
     return model, stage
 
 
-def pp_tp_train(stage, mesh, args):
-    pp_dim, tp_dim = 0, 1
-    pp_rank, tp_rank = args.rank // args.tp_size, args.rank % args.tp_size
-    pp_groups = mesh.get_dim_groups()[pp_dim]
-
-    train_iters = 10 if args.debug else args.train_iters
-    optimizer = torch.optim.AdamW(
-        stage.submod.parameters(), lr=args.learning_rate
-    )
-    local_iter_num = 0
-    iter_time = 0.0
-    with profile(
-        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-        schedule=torch.profiler.schedule(
-            skip_first=5, wait=0, warmup=4, active=1, repeat=1
-        ),
-    ) as prof:
-        while local_iter_num < train_iters:
-            optimizer.zero_grad()
-            t0 = time.perf_counter()
-            X, Y = get_rand(args)
-            if pp_rank == 0:
-                out = stage(X)
-            elif pp_rank == args.pp_size - 1:
-                out = stage(Y)
-            else:
-                out = stage()
-            optimizer.step()
-            t1 = time.perf_counter()
-            dt = t1 - t0
-            local_iter_num += 1
-            iter_time += dt
-            prof.step()
-
-    prof.export_chrome_trace(f"trace_rank{args.rank}.json")
-
-    return local_iter_num, iter_time
-
-
-def pp_tp_inference(stage, mesh, args):
-    pp_dim, tp_dim = 0, 1
-    pp_rank, tp_rank = args.rank // args.tp_size, args.rank % args.tp_size
-    pp_groups = mesh.get_dim_groups()[pp_dim]
-
-    train_iters = 10 if args.debug else args.train_iters
-    local_iter_num = 0
-    iter_time = 0.0
-    with profile(
-        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-        schedule=torch.profiler.schedule(
-            skip_first=5, wait=0, warmup=4, active=1, repeat=1
-        ),
-    ) as prof:
-        while local_iter_num < train_iters:
-            t0 = time.perf_counter()
-            X, Y = get_rand(args)
-            if pp_rank == 0:
-                out = stage(X)
-            elif pp_rank == args.pp_size - 1:
-                out = stage(Y)
-            else:
-                out = stage()
-            t1 = time.perf_counter()
-            dt = t1 - t0
-            local_iter_num += 1
-            iter_time += dt
-            prof.step()
-            dist.barrier()
-
-    prof.export_chrome_trace(f"trace_rank{args.rank}.json")
-
-    return local_iter_num, iter_time
-
-
 if __name__ == "__main__":
     _multi_gpu = int(os.environ.get("RANK", -1)) != -1  # verify distributed run
     assert (
         _multi_gpu
     ), "this config assumes distributed setup - multi-gpu not ready here."
 
-    args = get_args()
+    args = get_args_gpt2()
 
     device_type = (
         "cuda" if "cuda" in args.device else "cpu"
@@ -400,9 +192,13 @@ if __name__ == "__main__":
     model, stage = pp_and_tp_selective(model, twod_mesh, args)
 
     if args.inference:
-        iter_count, iter_time = pp_tp_inference(stage, twod_mesh, args)
+        iter_count, iter_time = pp_tp_inference(
+            stage, twod_mesh, args, data_fn=get_rand_int
+        )
     else:
-        iter_count, iter_time = pp_tp_train(stage, twod_mesh, args)
+        iter_count, iter_time = pp_tp_train(
+            stage, twod_mesh, args, data_fn=get_rand_int
+        )
 
     # display run stats
     rank_print(f"\nTraining completed.\n")
