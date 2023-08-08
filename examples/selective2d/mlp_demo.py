@@ -5,6 +5,8 @@ import time
 import torch
 import torch.distributed as dist
 
+import torch.nn as nn
+
 from pippy.compile import compile_stage
 
 from pippy.IR import annotate_split_points, PipeSplitWrapper
@@ -18,7 +20,6 @@ from torch.distributed.tensor.parallel import (
 
 from torch.profiler import profile, ProfilerActivity
 
-import torch.nn as nn
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -277,7 +278,7 @@ if __name__ == "__main__":
         mesh=torch.arange(0, args.world_size).view(-1, args.tp_size),
     )
 
-    model = ExampleCode(args) 
+    model = ExampleCode(args)
     model.to(args.device)
 
     ref_x, ref_y = get_rand(args)

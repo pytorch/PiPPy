@@ -247,31 +247,30 @@ def pp_and_tp_selective(
 
     if args.inference:
         stage = compile_stage(
-                model,
-                pp_rank,
-                args.pp_size,
-                args.n_chunks,
-                args.device,
-                pp_groups,
-                example_inputs=[X, Y],
-                num_stages=num_stages,
-                schedule="TwoLevel",
+            model,
+            pp_rank,
+            args.pp_size,
+            args.n_chunks,
+            args.device,
+            pp_groups,
+            example_inputs=[X, Y],
+            num_stages=num_stages,
+            schedule="TwoLevel",
         )
-    else: 
+    else:
         output_chunk_spec = (TensorChunkSpec(0), sum_reducer)
         stage = compile_stage(
-                model,
-                pp_rank,
-                args.pp_size,
-                args.n_chunks,
-                args.device,
-                pp_groups,
-                example_inputs=[X, Y],
-                output_chunk_spec=output_chunk_spec,
-                num_stages=num_stages,
-                schedule="TwoLevel",
+            model,
+            pp_rank,
+            args.pp_size,
+            args.n_chunks,
+            args.device,
+            pp_groups,
+            example_inputs=[X, Y],
+            output_chunk_spec=output_chunk_spec,
+            num_stages=num_stages,
+            schedule="TwoLevel",
         )
-     
 
     return model, stage
 
@@ -313,6 +312,7 @@ def pp_tp_train(stage, mesh, args):
     prof.export_chrome_trace(f"trace_rank{args.rank}.json")
 
     return local_iter_num, iter_time
+
 
 def pp_tp_inference(stage, mesh, args):
     pp_dim, tp_dim = 0, 1
@@ -403,9 +403,7 @@ if __name__ == "__main__":
 
     _current_model_params = model.get_num_params() / 1e6
 
-    model, stage = pp_and_tp_selective(
-        model, twod_mesh, args
-    )
+    model, stage = pp_and_tp_selective(model, twod_mesh, args)
 
     if args.inference:
         iter_count, iter_time = pp_tp_inference(stage, twod_mesh, args)
