@@ -1,9 +1,4 @@
-"""
-This training script updates NanoGPT to run with either TP, PP, or TP+PP (2D).
-Usage:
-gpurun4 torchrun --nproc-per-node 4 2d_train.py 
-"""
-
+# Copyright (c) Meta Platforms, Inc. and affiliates
 import argparse
 import os
 import time
