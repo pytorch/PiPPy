@@ -187,75 +187,6 @@ def tp_mlp(model, name, mesh, tp_dim=0, mlp="mlp"):
     return model
 
 
-def tp(model, n_layer, mesh, offset=0, tp_dim=0):
-    for i in range(n_layer):
-        block = model.get_submodule(f"transformer.h.{i + offset}")
-        parallelize_module(
-            block,
-            mesh,
-            {
-                "attn.q": ColwiseParallel(),
-                "attn.k": ColwiseParallel(),
-                "attn.v": ColwiseParallel(),
-                "attn.c_proj": RowwiseParallel(),
-                "mlp": PairwiseParallel(),
-            },
-            tp_mesh_dim=tp_dim,
-        )
-
-    return model
-
-
-def pp(model, pp_device_mesh, args):
-    pp_chunks = args.world_size
-    pp_groups = pp_device_mesh.get_dim_groups()[0]
-
-    output_chunk_spec = (TensorChunkSpec(0), sum_reducer)
-    stage = compile_stage(
-        model,
-        args.rank,
-        args.world_size,
-        pp_chunks,
-        pp_device_mesh,
-        pp_groups,
-        example_inputs=[X, Y],
-        output_chunk_spec=output_chunk_spec,
-    )
-
-    print(f"[Rank{_rank}] {stage.submod.print_readable()}")
-    return model, stage
-
-
-def pp_and_tp(model, mesh, args):
-    """
-    Apply TP and PP to all layers in a model
-    This function assumes the model is already cut manually
-    """
-    pp_dim, tp_dim = 0, 1
-    pp_rank, tp_rank = args.rank // args.tp_size, args.rank % args.tp_size
-    pp_groups = mesh.get_dim_groups()[pp_dim]
-
-    # TP
-    tp(model, args.n_layer, mesh, 0, tp_dim)
-
-    X, Y = get_rand(args)
-
-    # PP
-    output_chunk_spec = (TensorChunkSpec(0), sum_reducer)
-    stage = compile_stage(
-        model,
-        pp_rank,
-        args.world_size,
-        args.n_chunks,
-        args.device,
-        pp_groups,
-        example_inputs=[X, Y],
-        output_chunk_spec=output_chunk_spec,
-    )
-
-    return model, stage
-
-
 def even_cut(model, args, pp_size):
     """
     Evenly cut a model into pp_size stages
@@ -311,12 +242,8 @@ def pp_and_tp_selective(
     X, Y = get_rand(args)
 
     # PP
-    if args.inner_cut:
-      cut_fn(model, args, args.pp_size * 2)
-      num_stages = args.pp_size * 2 # TODO replace 2 with args.i_stage
-    else:
-      cut_fn(model, args, args.pp_size)
-      num_stages = args.pp_size
+    cut_fn(model, args, args.pp_size * args.i_stage)
+    num_stages = args.pp_size * args.i_stage
 
     if args.inference:
         stage = compile_stage(
@@ -422,57 +349,6 @@ def pp_tp_inference(stage, mesh, args):
     return local_iter_num, iter_time
 
 
-
-def pp_train(stage, args):
-    train_iters = 10 if args.debug else args.train_iters
-    optimizer = torch.optim.AdamW(
-        stage.submod.parameters(), lr=args.learning_rate
-    )
-    local_iter_num = 0
-    iter_time = 0.0
-    while local_iter_num < train_iters:
-        optimizer.zero_grad()
-        t0 = time.perf_counter()
-        X, Y = get_rand(args)
-        if args.rank == 0:
-            out = stage(X)
-        elif args.rank == args.world_size - 1:
-            out = stage(Y)
-        else:
-            out = stage()
-        optimizer.step()
-        t1 = time.perf_counter()
-        dt = t1 - t0
-        local_iter_num += 1
-        iter_time += dt
-
-    return local_iter_num, iter_time
-
-
-def tp_train():
-    local_iter_num = 0
-    iter_time = 0.0
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
-    while local_iter_num < train_iters:
-        optimizer.zero_grad(set_to_none=True)
-        t0 = time.perf_counter()
-        X, Y = get_rand(args)
-        logits, loss = model(X, Y)
-        loss.backward()
-        optimizer.step()
-        torch.distributed.barrier()
-        t1 = time.perf_counter()
-        dt = t1 - t0
-        lossf = loss.item()
-        rank_print(
-            f"iter {local_iter_num}: loss {lossf:.4f}, time {dt*1000:.2f}ms"
-        )
-        local_iter_num += 1
-        iter_time += dt
-
-    return local_iter_num, iter_time
-
-
 if __name__ == "__main__":
     _multi_gpu = int(os.environ.get("RANK", -1)) != -1  # verify distributed run
     assert (
@@ -494,9 +370,6 @@ if __name__ == "__main__":
         os.makedirs(args.out_dir, exist_ok=True)
 
     torch.manual_seed(args.seed)
-    #torch.backends.cuda.matmul.allow_tf32 = True  # allow tf32 on matmul
-    #torch.backends.cudnn.allow_tf32 = True  # allow tf32 on cudnn
-    #torch.backends.cuda.enable_mem_efficient_sdp(enabled=False)
 
     # init these up here, can override if init_from='resume' (i.e. from a checkpoint)
     iter_num = 0
@@ -530,9 +403,6 @@ if __name__ == "__main__":
 
     _current_model_params = model.get_num_params() / 1e6
 
-    # model = tp(model, args.n_layer, oned_mesh)
-    # model, stage = pp(model, oned_mesh, args)
-    # model, stage = pp_and_tp(model, twod_mesh, args)
     model, stage = pp_and_tp_selective(
         model, twod_mesh, args
     )
