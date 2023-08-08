@@ -384,7 +384,6 @@ if __name__ == "__main__":
     # init a new model from scratch
     rank_print("Initializing a new model from scratch")
 
-    oned_mesh = DeviceMesh(device_type, list(range(args.world_size)))
     twod_mesh = DeviceMesh(
         device_type=device_type,
         mesh=torch.arange(0, args.world_size).view(-1, args.tp_size),
