@@ -485,37 +485,110 @@ class PipelineStage(torch.nn.Module):
 
         return grad_send_reqs
 
-    def forward(self, *args, **kwargs):
+    def forward_maybe_with_nosync(self, *args, **kwargs):
         # If submod is wrapped with DDP, we use the `no_sync` context manager to
         # avoid gradient all-reduce per microbatch
-        def forward_maybe_with_nosync(*args, **kwargs):
-            if isinstance(self.submod, DistributedDataParallel):
-                with self.submod.no_sync():  # type: ignore[operator]
-                    out_val = self.submod(*args, **kwargs)
-            else:
+        if isinstance(self.submod, DistributedDataParallel):
+            with self.submod.no_sync():  # type: ignore[operator]
                 out_val = self.submod(*args, **kwargs)
-            return out_val
+        else:
+            out_val = self.submod(*args, **kwargs)
+        return out_val
 
-        def backward_maybe_with_nosync(bwd_kwargs: Dict, is_last_chunk: bool):
-            if isinstance(self.submod, DistributedDataParallel):
-                if is_last_chunk:
-                    # HACK: reaching into DDP implementation details here. Is there a better way?
-                    self.submod.reducer.prepare_for_backward(  # type: ignore[union-attr, operator]
-                        list(
-                            torch.nn.parallel.distributed._find_tensors(  # type: ignore[attr-defined]
-                                bwd_kwargs["stage_output"]
-                            )
+    def backward_maybe_with_nosync(self, bwd_kwargs: Dict, is_last_chunk: bool):
+        if isinstance(self.submod, DistributedDataParallel):
+            if is_last_chunk:
+                # HACK: reaching into DDP implementation details here. Is there a better way?
+                self.submod.reducer.prepare_for_backward(  # type: ignore[union-attr, operator]
+                    list(
+                        torch.nn.parallel.distributed._find_tensors(  # type: ignore[attr-defined]
+                            bwd_kwargs["stage_output"]
                         )
                     )
-                    grads_input, _ = stage_backward(**bwd_kwargs)
-                else:
-                    with self.submod.no_sync():  # type: ignore[operator]
-                        grads_input, _ = stage_backward(**bwd_kwargs)
-            else:
-                # Non-DDP submodule, regular backward
+                )
                 grads_input, _ = stage_backward(**bwd_kwargs)
-            return grads_input
+            else:
+                with self.submod.no_sync():  # type: ignore[operator]
+                    grads_input, _ = stage_backward(**bwd_kwargs)
+        else:
+            # Non-DDP submodule, regular backward
+            grads_input, _ = stage_backward(**bwd_kwargs)
+        return grads_input
 
+    def forward_one_chunk(
+        self,
+        chunk: int,
+        args_split,
+        kwargs_split,
+        fwd_cache: Dict[int, Any],
+    ):
+        composite_args, composite_kwargs = self._recv_and_fill_inputs(
+            chunk,
+            args_split,
+            kwargs_split,
+        )
+
+        # Compute forward
+        try:
+            output = self.forward_maybe_with_nosync(
+                *composite_args, **composite_kwargs
+            )
+
+        except Exception as e:
+            exc_msg = f"""
+            Rank {self.rank} failed to run forward stage: {self.name}
+            args: {map_debug_info(composite_args)}
+            kwargs: {map_debug_info(composite_kwargs)}
+            """
+            raise RuntimeError(exc_msg) from e
+
+        # Unify output form to tuple for easy correspondance with
+        # `act_send_info`
+        output_tuple = output if type(output) is tuple else (output,)
+        send_reqs = self._send_activations(output_tuple)
+
+        # Save activations and inputs for backward
+        flat_args = flatten_args(composite_args)
+        flat_kwargs = flatten_args(composite_kwargs)
+        flatten_input_tensors = flat_args + flat_kwargs
+        fwd_cache[chunk] = (
+            output_tuple,  # stage_output
+            flatten_input_tensors,  # input_values
+        )
+
+        return output, send_reqs
+
+    def backward_one_chunk(
+        self,
+        bwd_chunk: int,
+        fwd_cache: Dict[int, Any],
+    ):
+        grads = self._recv_grads(bwd_chunk)
+
+        # Pack args for `stage_backward``
+        bwd_kwargs = dict(self.bwd_node.kwargs)
+        (
+            bwd_kwargs["stage_output"],
+            bwd_kwargs["input_values"],
+        ) = fwd_cache.pop(bwd_chunk)
+        # Fill actual gradients received for outputs
+        # If nothing received, as in the case of last stage, then we
+        # would use the default `output_grads` prepared in the IR phase,
+        # i.e. from `bwd_node.kwargs`. For example, it may look like
+        # this if there are two outputs: ('None', 'None')
+        if len(grads) > 0:
+            bwd_kwargs["output_grads"] = grads
+
+        # `stage_backward` node does not have `args`, only `kwargs`
+        grads_input = self.backward_maybe_with_nosync(
+            bwd_kwargs,
+            bwd_chunk == self.chunks - 1,
+        )
+
+        grad_send_reqs = self._send_grads(grads_input)
+        return grad_send_reqs
+
+    def forward(self, *args, **kwargs):
         # map microbatch ID to list of forward tensor args
         fwd_cache: Dict[int, Tuple[Any, List[torch.Tensor]]] = {}
 
@@ -535,86 +608,130 @@ class PipelineStage(torch.nn.Module):
 
         output_chunks = []
 
+        # Forward pass of all chunks
         for chunk in range(self.chunks):
-            composite_args, composite_kwargs = self._recv_and_fill_inputs(
-                chunk,
-                args_split,
-                kwargs_split,
+            output, send_reqs = self.forward_one_chunk(
+                chunk, args_split, kwargs_split, fwd_cache
             )
-
-            # Compute forward
-            try:
-                output = forward_maybe_with_nosync(
-                    *composite_args, **composite_kwargs
-                )
-
-            except Exception as e:
-                exc_msg = f"""
-                Rank {self.rank} failed to run forward stage: {self.name}
-                args: {map_debug_info(composite_args)}
-                kwargs: {map_debug_info(composite_kwargs)}
-                """
-                raise RuntimeError(exc_msg) from e
-
-            # Unify output form to tuple for easy correspondance with
-            # `act_send_info`
-            output_tuple = output if type(output) is tuple else (output,)
-
-            send_reqs = self._send_activations(output_tuple)
             all_send_reqs += send_reqs
-
             # Prepare for final output merge or reduction
             output_chunks.append(output)
-
-            # Save activations and inputs for backward
-            flat_args = flatten_args(composite_args)
-            flat_kwargs = flatten_args(composite_kwargs)
-            flatten_input_tensors = flat_args + flat_kwargs
-            fwd_cache[chunk] = (
-                output_tuple,  # stage_output
-                flatten_input_tensors,  # input_values
-            )
 
         # Wait for all sends to finish
         # TODO: okay to delay the sync till completion of all chunks?
         for work in all_send_reqs:
             work.wait()
 
-        if self.pipe.has_loss_and_backwards:
-            # Backward starts here
-            # Grad send requests of all chunk
-            all_grad_send_reqs: List[dist.Work] = []
+        # Backward starts here
+        # Grad send requests of all chunk
+        all_grad_send_reqs: List[dist.Work] = []
 
-            for bwd_chunk in range(self.chunks):
-                grads = self._recv_grads(bwd_chunk)
-
-                # Pack args for `stage_backward``
-                bwd_kwargs = dict(self.bwd_node.kwargs)
-                (
-                    bwd_kwargs["stage_output"],
-                    bwd_kwargs["input_values"],
-                ) = fwd_cache.pop(bwd_chunk)
-                # Fill actual gradients received for outputs
-                # If nothing received, as in the case of last stage, then we
-                # would use the default `output_grads` prepared in the IR phase,
-                # i.e. from `bwd_node.kwargs`. For example, it may look like
-                # this if there are two outputs: ('None', 'None')
-                if len(grads) > 0:
-                    bwd_kwargs["output_grads"] = grads
-
-                # `stage_backward` node does not have `args`, only `kwargs`
-                grads_input = backward_maybe_with_nosync(
-                    bwd_kwargs,
-                    bwd_chunk == self.chunks - 1,
-                )
-
-                grad_send_reqs = self._send_grads(grads_input)
+        for bwd_chunk in range(self.chunks):
+            if self.pipe.has_loss_and_backwards:
+                grad_send_reqs = self.backward_one_chunk(bwd_chunk, fwd_cache)
                 all_grad_send_reqs += grad_send_reqs
 
-            # Wait for all sends to finish
-            # TODO: okay to delay the sync till completion of all chunks?
-            for work in all_grad_send_reqs:
-                work.wait()
+        # Wait for all sends to finish
+        # TODO: okay to delay the sync till completion of all chunks?
+        for work in all_grad_send_reqs:
+            work.wait()
+
+        # Last rank return merged results per original format
+        if self.rank == self.nstages - 1:
+            return merge_chunks(
+                output_chunks,
+                self.output_chunk_spec,
+            )
+        else:
+            return None
+
+
+class PipelineStage1F1B(PipelineStage):
+    def __init__(
+        self,
+        pipe: Pipe,
+        rank: int,
+        nstages: int,
+        chunks: int,
+        device: torch.device,
+        group: dist.ProcessGroup = None,
+        args_chunk_spec=None,
+        kwargs_chunk_spec=None,
+        output_chunk_spec=None,
+    ):
+        super().__init__(
+            pipe,
+            rank,
+            nstages,
+            chunks,
+            device,
+            group=group,
+            args_chunk_spec=args_chunk_spec,
+            kwargs_chunk_spec=kwargs_chunk_spec,
+            output_chunk_spec=output_chunk_spec,
+        )
+
+    def forward(self, *args, **kwargs):
+        # map microbatch ID to list of forward tensor args
+        fwd_cache: Dict[int, Tuple[Any, List[torch.Tensor]]] = {}
+
+        args_split = None
+        kwargs_split = None
+        if args or kwargs:
+            args_split, kwargs_split = split_args_kwargs_into_chunks(
+                args,
+                kwargs,
+                self.chunks,
+                self.args_chunk_spec,
+                self.kwargs_chunk_spec,
+            )
+
+        # Activation send requests of all chunk
+        all_send_reqs: List[dist.Work] = []
+        # Grad send requests of all chunk
+        all_grad_send_reqs: List[dist.Work] = []
+        # Caching chunk outputs for final output merge or reduction
+        output_chunks = []
+
+        warmup_chunks = cooldown_chunks = self.nstages
+
+        # Warm-up phase: forward number of chunks equal to pipeline depth.
+        for chunk in range(warmup_chunks):
+            output, send_reqs = self.forward_one_chunk(
+                chunk, args_split, kwargs_split, fwd_cache
+            )
+            all_send_reqs += send_reqs
+            output_chunks.append(output)
+
+        # 1F1B phase
+        for bwd_chunk in range(0, self.chunks - cooldown_chunks):
+            # Schedule backward for one warmed up chunk
+            if self.pipe.has_loss_and_backwards:
+                grad_send_reqs = self.backward_one_chunk(bwd_chunk, fwd_cache)
+                all_grad_send_reqs += grad_send_reqs
+
+            # Schedule forward for one new chunk
+            fwd_chunk = bwd_chunk + warmup_chunks
+            output, send_reqs = self.forward_one_chunk(
+                fwd_chunk, args_split, kwargs_split, fwd_cache
+            )
+            all_send_reqs += send_reqs
+            # Prepare for final output merge or reduction
+            output_chunks.append(output)
+
+        # Cool-down phase: backward for the rest of the chunks
+        for bwd_chunk in range(self.chunks - cooldown_chunks, self.chunks):
+            if self.pipe.has_loss_and_backwards:
+                grad_send_reqs = self.backward_one_chunk(bwd_chunk, fwd_cache)
+                all_grad_send_reqs += grad_send_reqs
+
+        # Wait for all sends to finish
+        # TODO: okay to delay the sync till completion of all chunks?
+        for work in all_send_reqs:
+            work.wait()
+
+        for work in all_grad_send_reqs:
+            work.wait()
 
         # Last rank return merged results per original format
         if self.rank == self.nstages - 1:

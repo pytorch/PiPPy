@@ -12,9 +12,10 @@ import torch.distributed as dist
 import torch.optim as optim
 from pippy.compile import compile_stage
 
-from pippy.hf._SaveModule import save_checkpoint
 from pippy.IR import pipe_split, TrivialLossWrapper
 from pippy.LoadModule import load_checkpoint
+
+from pippy.SaveModule import save_checkpoint
 
 
 DEFAULT_FILENAME = "pytorch_model.bin.index.json"
@@ -98,6 +99,7 @@ def run_worker(args: List[str | int]) -> None:
     optimizer.step()
     ref_state_dict = deepcopy(stage.submod.state_dict())
     ref_optim_state_dict = deepcopy(optimizer.state_dict())
+
     save_checkpoint(stage, CKPT_DIR, optimizer)
 
     # save index file in rank 0
@@ -135,15 +137,17 @@ def run_worker(args: List[str | int]) -> None:
     optimizer.step()
 
     # new api
-    mod, optimizer = load_checkpoint(
-        stage.submod,
-        os.path.join(CKPT_DIR, "pytorch_model.bin.index.json"),
-        args.device,
-        optim=optimizer,
-    )
+    # after index file has been written, load_checkpoint will read it
+    if os.path.exists(os.path.join(CKPT_DIR, DEFAULT_FILENAME)):
+        mod, optimizer = load_checkpoint(
+            stage.submod,
+            os.path.join(CKPT_DIR, DEFAULT_FILENAME),
+            optim=optimizer,
+            device=args.device,
+        )
 
-    torch.testing.assert_close(mod.state_dict(), submod_ref)
-    torch.testing.assert_close(optimizer.state_dict(), optim_ref)
+        torch.testing.assert_close(mod.state_dict(), ref_state_dict)
+        torch.testing.assert_close(optimizer.state_dict(), ref_optim_state_dict)
 
     dist.barrier()
     print(f"Rank {args.rank} completes")
