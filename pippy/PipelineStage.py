@@ -830,9 +830,9 @@ class PipelineStage(torch.nn.Module):
 
         output_chunks = [None] * self.chunks
 
-        if self.inner_depth > 1:
+        if self.inner_depth > 1: # inner_pipeline is enabled
             if self.enable_efficient_inner_pipe:
-                # New schedule:
+                # New schedule: Interleaved
                 # 1A, 2A, 1M, 2M
                 args_cache, kwargs_cache = {}, {}
                 for i in range(self.inner_depth):
@@ -875,7 +875,7 @@ class PipelineStage(torch.nn.Module):
                                 output_chunks[chunk] = output
 
             else:
-                # Forward pass of all chunks
+                # Forward pass of all chunks in-order processing
                 # 1A, 1M, 2A, 2M
                 for chunk in range(self.chunks):
                     s = self.streams[chunk % self.nstreams]
@@ -891,7 +891,7 @@ class PipelineStage(torch.nn.Module):
                         output_chunks[chunk] = output
 
         else:
-            # Forward pass of all chunks
+            # Forward pass of all chunks, no inner_pipelining
             for chunk in range(self.chunks):
                 s = self.streams[chunk % self.nstreams]
                 with torch.cuda.stream(s):
