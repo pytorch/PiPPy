@@ -25,6 +25,7 @@ def pp_tp_inference(stage, mesh, args, data_fn, model=None):
     ) as prof:
         while local_iter_num < train_iters:
             X, Y = data_fn(args)
+            ref_inputs.append((X, Y))
             t0 = time.perf_counter()
             if pp_rank == 0:
                 out = stage(X)
