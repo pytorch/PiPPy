@@ -830,7 +830,7 @@ class PipelineStage(torch.nn.Module):
 
         output_chunks = [None] * self.chunks
 
-        if self.inner_depth > 1: # inner_pipeline is enabled
+        if self.inner_depth > 1:  # inner_pipeline is enabled
             if self.enable_efficient_inner_pipe:
                 # New schedule: Interleaved
                 # 1A, 2A, 1M, 2M
