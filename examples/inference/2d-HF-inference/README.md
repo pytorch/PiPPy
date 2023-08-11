@@ -26,7 +26,7 @@ torchrun --nnodes 1 --nproc_per_node 8 pp_tp.py --model_name meta-llama/Llama-2-
     )
 ```
 
-2- TP(lize) each stage, here we need to figure out the layers to TP(lize) them in the model ( I am working on automating this process for HF models). We fist focus on MLP layers and will to Attention layer in the next step.
+2- TP(lize) each stage, here we need to figure out the layers to TP(lize) them in the model ( I am working on automating this process for HF models). We first focus on MLP layers and will extend to Attention layer in the next step.
 
 ```python
 
