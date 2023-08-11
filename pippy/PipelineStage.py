@@ -81,9 +81,13 @@ class PipelineStage(torch.nn.Module):
         if global_depth is not None:
             self.global_depth = global_depth
             self.inner_depth = global_depth // nstages
+            self.enable_efficient_inner_pipe = (
+                True  # TODO receive this from user
+            )
         else:
             self.global_depth = nstages
             self.inner_depth = 1
+            self.enable_efficient_inner_pipe = False
 
         self.pipe_cache: List[Dict[int, tuple]] = [
             {} for i in range(chunks)
@@ -323,9 +327,6 @@ class PipelineStage(torch.nn.Module):
                 gi_dsts = act_send_info.setdefault(out_idx, [])
                 for gi_user in user.users:
                     dst_rank = self.find_dst_rank(gi_user)
-                    print(
-                        f"[Rank{self.rank}] what is dst rank of user {gi_user}? {dst_rank}"
-                    )
                     if dst_rank is not None:
                         gi_dsts.append(dst_rank)
                 # Next `getitem` will point to the next output index
@@ -336,7 +337,6 @@ class PipelineStage(torch.nn.Module):
                 dst_rank = self.find_dst_rank(user)
                 if dst_rank is not None:
                     dsts.append(dst_rank)
-                print(f"[Rank{self.rank}] dest- {dsts}")
 
         logging.info(
             f"[{self.rank}][{self.name}] " f"Send info: {act_send_info}"
@@ -480,9 +480,7 @@ class PipelineStage(torch.nn.Module):
         send_reqs: List[dist.Work] = []
 
         for idx, out in enumerate(output_tuple):
-            # print(f'[Rank{self.rank}] idx {idx} out {out}')
             dst_ranks = self.act_send_info[idx]
-            print(f"[Rank{self.rank}] Destination Ranks: {dst_ranks}")
 
             for dst in dst_ranks:
                 if dst is None:
@@ -567,34 +565,6 @@ class PipelineStage(torch.nn.Module):
                 out_val = self.submods[inner_rank](*args, **kwargs)
         return out_val
 
-    def forward_maybe_with_nosync_save(self, targets, *args, **kwargs):
-        # If submod is wrapped with DDP, we use the `no_sync` context manager to
-        # avoid gradient all-reduce per microbatch
-        if isinstance(self.submod, DistributedDataParallel):
-            with self.submod.no_sync():  # type: ignore[operator]
-                out_val = self.submod(*args, **kwargs)
-        else:
-            if self.inner_depth > 1:
-                if self.rank == self.nstages - 1:
-                    for i in range(0, self.inner_depth):
-                        if i == 0:
-                            out_val = self.submods[i](*args, **kwargs)
-                        else:
-                            # target_args, target_kwargs = self._recv_and_fill_inputs(
-                            # no idea how target is passed in the original code...
-                            out_val = self.submods[i](
-                                out_val, targets, **kwargs
-                            )
-                else:
-                    for i in range(0, self.inner_depth):
-                        if i == 0:
-                            out_val = self.submods[i](*args, **kwargs)
-                        else:
-                            out_val = self.submods[i](out_val, **kwargs)
-            else:
-                out_val = self.submod(*args, **kwargs)
-        return out_val
-
     def backward_maybe_with_nosync(self, bwd_kwargs: Dict, is_last_chunk: bool):
         if isinstance(self.submod, DistributedDataParallel):
             if is_last_chunk:
@@ -622,11 +592,9 @@ class PipelineStage(torch.nn.Module):
         kwargs_split,
         fwd_cache: Dict[int, Any],
     ):
-        # 1A, 1M, (return) 2A, 2M..
         if self.rank == self.nstages - 1:
             # Need improvement- how do we properly pass targets to forward_maybe_with_nosync?
             targets = args_split[chunk][0]
-            print(f"[Rank{self.rank}] args_split {args_split}")
         else:
             targets = None
 
@@ -636,16 +604,11 @@ class PipelineStage(torch.nn.Module):
             kwargs_split,
         )
 
-        if self.rank == self.nstages - 1:
-            print(f"[Rank{self.rank}] composite_args {composite_args}")
-
         # Compute forward
         try:
             output = self.forward_maybe_with_nosync(
                 -1, targets, *composite_args, **composite_kwargs
             )
-
-            print(f"[Rank{self.rank}] Arrived here")
 
         except Exception as e:
             exc_msg = f"""
@@ -671,7 +634,77 @@ class PipelineStage(torch.nn.Module):
 
         return output, send_reqs
 
-    def forward_one_chunk_ipipe(
+    def forward_one_chunk_one_inner_pipe(
+        self,
+        chunk: int,
+        inner_rank: int,
+        args_split,
+        kwargs_split,
+        composite_args,
+        composite_kwargs,
+        fwd_cache: Dict[int, Any],
+    ):
+        if self.rank == self.nstages - 1:
+            # Need improvement- how do we properly pass targets to forward_maybe_with_nosync?
+            targets = args_split[chunk][0]
+        else:
+            targets = None
+
+        try:
+            if inner_rank == 0:
+                output = self.forward_maybe_with_nosync(
+                    inner_rank, targets, *composite_args, **composite_kwargs
+                )
+                self.pipe_cache[chunk][inner_rank] = output
+            elif (
+                inner_rank == self.inner_depth - 1
+                and self.rank == self.nstages - 1
+            ):  # last stage, last node
+                output = self.forward_maybe_with_nosync(
+                    inner_rank,
+                    targets,
+                    self.pipe_cache[chunk][self.inner_depth - 2],
+                    targets,
+                    **composite_kwargs,
+                )  # self.inner_pipe >= 2 is asserted
+                self.pipe_cache[chunk][self.inner_depth - 1] = output
+            else:
+                output = self.forward_maybe_with_nosync(
+                    inner_rank,
+                    targets,
+                    self.pipe_cache[chunk][inner_rank - 1],
+                    **composite_kwargs,
+                )
+                self.pipe_cache[chunk][inner_rank] = output
+
+        except Exception as e:
+            exc_msg = f"""
+            Rank {self.rank} failed to run forward stage: {self.name}
+            args: {map_debug_info(composite_args)}
+            kwargs: {map_debug_info(composite_kwargs)}
+            """
+            raise RuntimeError(exc_msg) from e
+
+        if inner_rank == self.inner_depth - 1:
+            # Unify output form to tuple for easy correspondance with
+            # `act_send_info`
+            output_tuple = output if type(output) is tuple else (output,)
+            send_reqs = self._send_activations(output_tuple)
+
+            # Save activations and inputs for backward
+            flat_args = flatten_args(composite_args)
+            flat_kwargs = flatten_args(composite_kwargs)
+            flatten_input_tensors = flat_args + flat_kwargs
+            fwd_cache[chunk] = (
+                output_tuple,  # stage_output
+                flatten_input_tensors,  # input_values
+            )
+
+            return output, send_reqs
+        else:
+            return None, None
+
+    def forward_one_chunk_all_inner_pipes(
         self,
         chunk: int,
         args_split,
@@ -681,7 +714,6 @@ class PipelineStage(torch.nn.Module):
         if self.rank == self.nstages - 1:
             # Need improvement- how do we properly pass targets to forward_maybe_with_nosync?
             targets = args_split[chunk][0]
-            print(f"[Rank{self.rank}] args_split {args_split}")
         else:
             targets = None
 
@@ -692,21 +724,22 @@ class PipelineStage(torch.nn.Module):
         )
 
         try:
-            if self.rank == self.nstages - 1:  # last stage
+            output = self.forward_maybe_with_nosync(
+                0, targets, *composite_args, **composite_kwargs
+            )
+            self.pipe_cache[chunk][0] = output
+
+            # other inner nodes uses 'output' of previous inner node
+            for i in range(1, self.inner_depth - 1):
                 output = self.forward_maybe_with_nosync(
-                    0, targets, *composite_args, **composite_kwargs
+                    i,
+                    targets,
+                    self.pipe_cache[chunk][i - 1],
+                    **composite_kwargs,
                 )
-                self.pipe_cache[chunk][0] = output
+                self.pipe_cache[chunk][i] = output
 
-                for i in range(1, self.inner_depth - 1):
-                    output = self.forward_maybe_with_nosync(
-                        i,
-                        targets,
-                        self.pipe_cache[chunk][i - 1],
-                        **composite_kwargs,
-                    )
-                    self.pipe_cache[chunk][i] = output
-
+            if self.rank == self.nstages - 1:  # last stage
                 output = self.forward_maybe_with_nosync(
                     self.inner_depth - 1,
                     targets,
@@ -714,25 +747,14 @@ class PipelineStage(torch.nn.Module):
                     targets,
                     **composite_kwargs,
                 )  # self.inner_pipe >= 2 is asserted
-                self.pipe_cache[chunk][self.inner_depth - 1] = output
             else:
-                # 0th (first) inner node
                 output = self.forward_maybe_with_nosync(
-                    0, targets, *composite_args, **composite_kwargs
+                    self.inner_depth - 1,
+                    targets,
+                    self.pipe_cache[chunk][self.inner_depth - 2],
+                    **composite_kwargs,
                 )
-                self.pipe_cache[chunk][0] = output
-
-                # other inner nodes uses 'output' of previous inner node
-                for i in range(1, self.inner_depth):
-                    output = self.forward_maybe_with_nosync(
-                        i,
-                        targets,
-                        self.pipe_cache[chunk][i - 1],
-                        **composite_kwargs,
-                    )
-                    self.pipe_cache[chunk][i] = output
-
-            print(f"[Rank{self.rank}] Arrived here")
+            self.pipe_cache[chunk][self.inner_depth - 1] = output
 
         except Exception as e:
             exc_msg = f"""
@@ -803,32 +825,82 @@ class PipelineStage(torch.nn.Module):
                 self.kwargs_chunk_spec,
             )
 
-        if self.rank == self.nstages - 1:
-            # where is my Y?
-            print(
-                f"[Rank{self.rank}] ArgsSplit: {args_split}, KwargsSplit: {kwargs_split}"
-            )
-
         # Activation send requests of all chunk
         all_send_reqs: List[dist.Work] = []
 
         output_chunks = [None] * self.chunks
 
-        # Forward pass of all chunks
-        for chunk in range(self.chunks):
-            s = self.streams[chunk % self.nstreams]
-            with torch.cuda.stream(s):
-                if self.inner_depth > 1:
-                    output, send_reqs = self.forward_one_chunk_ipipe(
-                        chunk, args_split, kwargs_split, fwd_cache
-                    )
-                else:
+        if self.inner_depth > 1:  # inner_pipeline is enabled
+            if self.enable_efficient_inner_pipe:
+                # New schedule: Interleaved
+                # 1A, 2A, 1M, 2M
+                args_cache, kwargs_cache = {}, {}
+                for i in range(self.inner_depth):
+                    for chunk in range(self.chunks):
+                        # each stream maintains dependency so it is shared by same chunk computation ops
+                        s = self.streams[chunk % self.nstreams]
+                        with torch.cuda.stream(s):
+                            if i == 0:
+                                (
+                                    composite_args,
+                                    composite_kwargs,
+                                ) = self._recv_and_fill_inputs(
+                                    chunk,
+                                    args_split,
+                                    kwargs_split,
+                                )
+                                args_cache[chunk] = composite_args
+                                kwargs_cache[chunk] = composite_kwargs
+                            else:
+                                composite_args, composite_kwargs = (
+                                    args_cache[chunk],
+                                    kwargs_cache[chunk],
+                                )
+
+                            (
+                                output,
+                                send_reqs,
+                            ) = self.forward_one_chunk_one_inner_pipe(
+                                chunk,
+                                i,
+                                args_split,
+                                kwargs_split,
+                                composite_args,
+                                composite_kwargs,
+                                fwd_cache,
+                            )
+                            if i == self.inner_depth - 1:
+                                all_send_reqs += send_reqs
+                                # Prepare for final output merge or reduction
+                                output_chunks[chunk] = output
+
+            else:
+                # Forward pass of all chunks in-order processing
+                # 1A, 1M, 2A, 2M
+                for chunk in range(self.chunks):
+                    s = self.streams[chunk % self.nstreams]
+                    with torch.cuda.stream(s):
+                        (
+                            output,
+                            send_reqs,
+                        ) = self.forward_one_chunk_all_inner_pipes(
+                            chunk, args_split, kwargs_split, fwd_cache
+                        )
+                        all_send_reqs += send_reqs
+                        # Prepare for final output merge or reduction
+                        output_chunks[chunk] = output
+
+        else:
+            # Forward pass of all chunks, no inner_pipelining
+            for chunk in range(self.chunks):
+                s = self.streams[chunk % self.nstreams]
+                with torch.cuda.stream(s):
                     output, send_reqs = self.forward_one_chunk(
                         chunk, args_split, kwargs_split, fwd_cache
                     )
-                all_send_reqs += send_reqs
-                # Prepare for final output merge or reduction
-                output_chunks[chunk] = output
+                    all_send_reqs += send_reqs
+                    # Prepare for final output merge or reduction
+                    output_chunks[chunk] = output
 
         # Wait for all sends to finish
         # TODO: okay to delay the sync till completion of all chunks?
@@ -851,6 +923,7 @@ class PipelineStage(torch.nn.Module):
 
         # Last rank return merged results per original format
         if self.rank == self.nstages - 1:
+            torch.cuda.synchronize()
             return merge_chunks(
                 output_chunks,
                 self.output_chunk_spec,

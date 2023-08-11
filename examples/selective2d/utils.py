@@ -29,6 +29,8 @@ def get_args_mlp():
     parser.add_argument("--pp_size", type=int, default=2)
     parser.add_argument("--i_stage", type=int, default=1)
     parser.add_argument("--n_chunks", type=int, default=2)
+    parser.add_argument("--nstreams", type=int, default=2)
+    parser.add_argument("--warmup_iters", type=int, default=2)
 
     parser.add_argument("--debug", dest="debug", action="store_true")
     parser.add_argument("--inner_cut", dest="inner_cut", action="store_true")
@@ -140,6 +142,8 @@ def get_args_gpt2():
     parser.add_argument("--pp_size", type=int, default=2)
     parser.add_argument("--i_stage", type=int, default=1)
     parser.add_argument("--n_chunks", type=int, default=2)
+    parser.add_argument("--nstreams", type=int, default=2)
+    parser.add_argument("--warmup_iters", type=int, default=2)
 
     parser.add_argument("--debug", dest="debug", action="store_true")
     parser.add_argument("--inner_cut", dest="inner_cut", action="store_true")
