@@ -2,6 +2,12 @@
 
 The idea here is to combine TensorParallel (TP) with Pipeline Parallelism (PP). At this point we still rely on FX tracing to partition the model. 
 
+## Quick try
+
+```bash
+torchrun --nnodes 1 --nproc_per_node 8 pp_tp.py --model_name meta-llama/Llama-2-7b-chat-hf  --world_size 8 --pp_group_size 1 --tp_group_size 8
+
+```
 ## How does 2D work here?
 
 1- `compile_stage()` API takes a model/HuggingFace model (HF) it will partition the model to stages, where each stage mean the partition (e.g. few model layers) of the model on each rank, that has a send and receive method for handling data in/out of the stage.

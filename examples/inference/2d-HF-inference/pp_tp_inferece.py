@@ -126,10 +126,6 @@ def run_all(args):
     else:
         out= stage()
     
-    # if rank==6:
-    #     print(out.size())
-    # elif rank==7:
-    #     print(out.size())
     
     dist.barrier()
     print(f"Rank {args.rank} completes")
