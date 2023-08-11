@@ -111,6 +111,7 @@ def pp_and_tp_selective(
             example_inputs=[X, Y],
             num_stages=num_stages,
             schedule="TwoLevel",
+            nstreams=args.nstreams,
         )
     else:
         output_chunk_spec = (TensorChunkSpec(0), sum_reducer)
@@ -125,6 +126,7 @@ def pp_and_tp_selective(
             output_chunk_spec=output_chunk_spec,
             num_stages=num_stages,
             schedule="TwoLevel",
+            nstreams=args.nstreams,
         )
 
     return model, stage
@@ -162,11 +164,14 @@ if __name__ == "__main__":
     model, stage = pp_and_tp_selective(model, twod_mesh, args)
 
     if args.inference:
-        iter_count, iter_time = pp_tp_inference(stage, twod_mesh, args, get_rand)
+        iter_count, iter_time = pp_tp_inference(
+            stage, twod_mesh, args, get_rand, model
+        )
     else:
         iter_count, iter_time = pp_tp_train(stage, twod_mesh, args, get_rand)
 
-    if args.rank == 0:
+    if args.rank == args.world_size - 1:
         print(f"\nInference demo completed. Check your trace!\n")
+        print(f"\nAverage iteration time: {iter_time / iter_count}\n")
 
     dist.destroy_process_group()
