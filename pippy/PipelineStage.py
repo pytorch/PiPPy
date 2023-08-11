@@ -634,7 +634,7 @@ class PipelineStage(torch.nn.Module):
 
         return output, send_reqs
 
-    def forward_one_chunk_one_ipipe(
+    def forward_one_chunk_one_inner_pipe(
         self,
         chunk: int,
         inner_rank: int,
@@ -704,7 +704,7 @@ class PipelineStage(torch.nn.Module):
         else:
             return None, None
 
-    def forward_one_chunk_all_ipipe(
+    def forward_one_chunk_all_inner_pipes(
         self,
         chunk: int,
         args_split,
@@ -724,21 +724,22 @@ class PipelineStage(torch.nn.Module):
         )
 
         try:
-            if self.rank == self.nstages - 1:  # last stage
+            output = self.forward_maybe_with_nosync(
+                0, targets, *composite_args, **composite_kwargs
+            )
+            self.pipe_cache[chunk][0] = output
+
+            # other inner nodes uses 'output' of previous inner node
+            for i in range(1, self.inner_depth - 1):
                 output = self.forward_maybe_with_nosync(
-                    0, targets, *composite_args, **composite_kwargs
+                    i,
+                    targets,
+                    self.pipe_cache[chunk][i - 1],
+                    **composite_kwargs,
                 )
-                self.pipe_cache[chunk][0] = output
+                self.pipe_cache[chunk][i] = output
 
-                for i in range(1, self.inner_depth - 1):
-                    output = self.forward_maybe_with_nosync(
-                        i,
-                        targets,
-                        self.pipe_cache[chunk][i - 1],
-                        **composite_kwargs,
-                    )
-                    self.pipe_cache[chunk][i] = output
-
+            if self.rank == self.nstages - 1:  # last stage
                 output = self.forward_maybe_with_nosync(
                     self.inner_depth - 1,
                     targets,
@@ -746,23 +747,14 @@ class PipelineStage(torch.nn.Module):
                     targets,
                     **composite_kwargs,
                 )  # self.inner_pipe >= 2 is asserted
-                self.pipe_cache[chunk][self.inner_depth - 1] = output
             else:
-                # 0th (first) inner node
                 output = self.forward_maybe_with_nosync(
-                    0, targets, *composite_args, **composite_kwargs
+                    self.inner_depth - 1,
+                    targets,
+                    self.pipe_cache[chunk][self.inner_depth - 2],
+                    **composite_kwargs,
                 )
-                self.pipe_cache[chunk][0] = output
-
-                # other inner nodes uses 'output' of previous inner node
-                for i in range(1, self.inner_depth):
-                    output = self.forward_maybe_with_nosync(
-                        i,
-                        targets,
-                        self.pipe_cache[chunk][i - 1],
-                        **composite_kwargs,
-                    )
-                    self.pipe_cache[chunk][i] = output
+            self.pipe_cache[chunk][self.inner_depth - 1] = output
 
         except Exception as e:
             exc_msg = f"""
@@ -868,7 +860,7 @@ class PipelineStage(torch.nn.Module):
                             (
                                 output,
                                 send_reqs,
-                            ) = self.forward_one_chunk_one_ipipe(
+                            ) = self.forward_one_chunk_one_inner_pipe(
                                 chunk,
                                 i,
                                 args_split,
@@ -888,7 +880,10 @@ class PipelineStage(torch.nn.Module):
                 for chunk in range(self.chunks):
                     s = self.streams[chunk % self.nstreams]
                     with torch.cuda.stream(s):
-                        output, send_reqs = self.forward_one_chunk_all_ipipe(
+                        (
+                            output,
+                            send_reqs,
+                        ) = self.forward_one_chunk_all_inner_pipes(
                             chunk, args_split, kwargs_split, fwd_cache
                         )
                         all_send_reqs += send_reqs
