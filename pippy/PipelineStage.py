@@ -327,9 +327,6 @@ class PipelineStage(torch.nn.Module):
                 gi_dsts = act_send_info.setdefault(out_idx, [])
                 for gi_user in user.users:
                     dst_rank = self.find_dst_rank(gi_user)
-                    print(
-                        f"[Rank{self.rank}] dst rank of user {gi_user}: {dst_rank}"
-                    )
                     if dst_rank is not None:
                         gi_dsts.append(dst_rank)
                 # Next `getitem` will point to the next output index
@@ -340,7 +337,6 @@ class PipelineStage(torch.nn.Module):
                 dst_rank = self.find_dst_rank(user)
                 if dst_rank is not None:
                     dsts.append(dst_rank)
-                print(f"[Rank{self.rank}] dest- {dsts}")
 
         logging.info(
             f"[{self.rank}][{self.name}] " f"Send info: {act_send_info}"
@@ -485,7 +481,6 @@ class PipelineStage(torch.nn.Module):
 
         for idx, out in enumerate(output_tuple):
             dst_ranks = self.act_send_info[idx]
-            print(f"[Rank{self.rank}] Destination Ranks: {dst_ranks}")
 
             for dst in dst_ranks:
                 if dst is None:
@@ -570,34 +565,6 @@ class PipelineStage(torch.nn.Module):
                 out_val = self.submods[inner_rank](*args, **kwargs)
         return out_val
 
-    def forward_maybe_with_nosync_save(self, targets, *args, **kwargs):
-        # If submod is wrapped with DDP, we use the `no_sync` context manager to
-        # avoid gradient all-reduce per microbatch
-        if isinstance(self.submod, DistributedDataParallel):
-            with self.submod.no_sync():  # type: ignore[operator]
-                out_val = self.submod(*args, **kwargs)
-        else:
-            if self.inner_depth > 1:
-                if self.rank == self.nstages - 1:
-                    for i in range(0, self.inner_depth):
-                        if i == 0:
-                            out_val = self.submods[i](*args, **kwargs)
-                        else:
-                            # target_args, target_kwargs = self._recv_and_fill_inputs(
-                            # no idea how target is passed in the original code...
-                            out_val = self.submods[i](
-                                out_val, targets, **kwargs
-                            )
-                else:
-                    for i in range(0, self.inner_depth):
-                        if i == 0:
-                            out_val = self.submods[i](*args, **kwargs)
-                        else:
-                            out_val = self.submods[i](out_val, **kwargs)
-            else:
-                out_val = self.submod(*args, **kwargs)
-        return out_val
-
     def backward_maybe_with_nosync(self, bwd_kwargs: Dict, is_last_chunk: bool):
         if isinstance(self.submod, DistributedDataParallel):
             if is_last_chunk:
@@ -628,7 +595,6 @@ class PipelineStage(torch.nn.Module):
         if self.rank == self.nstages - 1:
             # Need improvement- how do we properly pass targets to forward_maybe_with_nosync?
             targets = args_split[chunk][0]
-            # print(f"[Rank{self.rank}] args_split {args_split}")
         else:
             targets = None
 
@@ -681,78 +647,6 @@ class PipelineStage(torch.nn.Module):
         if self.rank == self.nstages - 1:
             # Need improvement- how do we properly pass targets to forward_maybe_with_nosync?
             targets = args_split[chunk][0]
-            # print(f"[Rank{self.rank}] args_split {args_split}")
-        else:
-            targets = None
-
-        try:
-            if inner_rank == 0:
-                output = self.forward_maybe_with_nosync(
-                    inner_rank, targets, *composite_args, **composite_kwargs
-                )
-                self.pipe_cache[chunk][inner_rank] = output
-            elif (
-                inner_rank == self.inner_depth - 1
-                and self.rank == self.nstages - 1
-            ):  # last stage, last node
-                output = self.forward_maybe_with_nosync(
-                    inner_rank,
-                    targets,
-                    self.pipe_cache[chunk][self.inner_depth - 2],
-                    targets,
-                    **composite_kwargs,
-                )  # self.inner_pipe >= 2 is asserted
-                self.pipe_cache[chunk][self.inner_depth - 1] = output
-            else:
-                output = self.forward_maybe_with_nosync(
-                    inner_rank,
-                    targets,
-                    self.pipe_cache[chunk][inner_rank - 1],
-                    **composite_kwargs,
-                )
-                self.pipe_cache[chunk][inner_rank] = output
-
-        except Exception as e:
-            exc_msg = f"""
-            Rank {self.rank} failed to run forward stage: {self.name}
-            args: {map_debug_info(composite_args)}
-            kwargs: {map_debug_info(composite_kwargs)}
-            """
-            raise RuntimeError(exc_msg) from e
-
-        if inner_rank == self.inner_depth - 1:
-            # Unify output form to tuple for easy correspondance with
-            # `act_send_info`
-            output_tuple = output if type(output) is tuple else (output,)
-            send_reqs = self._send_activations(output_tuple)
-
-            # Save activations and inputs for backward
-            flat_args = flatten_args(composite_args)
-            flat_kwargs = flatten_args(composite_kwargs)
-            flatten_input_tensors = flat_args + flat_kwargs
-            fwd_cache[chunk] = (
-                output_tuple,  # stage_output
-                flatten_input_tensors,  # input_values
-            )
-
-            return output, send_reqs
-        else:
-            return None, None
-
-    def forward_one_chunk_one_ipipe_refactored(
-        self,
-        chunk: int,
-        inner_rank: int,
-        args_split,
-        kwargs_split,
-        composite_args,
-        composite_kwargs,
-        fwd_cache: Dict[int, Any],
-    ):
-        if self.rank == self.nstages - 1:
-            # Need improvement- how do we properly pass targets to forward_maybe_with_nosync?
-            targets = args_split[chunk][0]
-            # print(f"[Rank{self.rank}] args_split {args_split}")
         else:
             targets = None
 
@@ -820,7 +714,6 @@ class PipelineStage(torch.nn.Module):
         if self.rank == self.nstages - 1:
             # Need improvement- how do we properly pass targets to forward_maybe_with_nosync?
             targets = args_split[chunk][0]
-            # print(f"[Rank{self.rank}] args_split {args_split}")
         else:
             targets = None
 
