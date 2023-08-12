@@ -113,11 +113,8 @@ def run_all(args):
         tracer=PiPPyHFTracer(),
         concrete_args=concrete_args,
     )
-  
-    try:
-        tp_stage(stage, dm)
-    except Exception as e:
-        print(f"rank {rank} has not this stage")
+    parallelize_stage_llama_MLP_block(stage, model.config.num_hidden_layers, args.pp_group_size,pp_rank, dm)
+   
     
     if pp_rank == 0:
         out = stage(input_ids)

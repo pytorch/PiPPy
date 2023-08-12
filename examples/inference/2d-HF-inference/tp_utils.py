@@ -53,19 +53,7 @@ def parallelize_stage_MLP_block(model, twod_mesh):
         )
         return parallelized_block
     
-def parallelize_stage_llama_MLP_block(stage, twod_mesh):
-    parallelized_block = parallelize_module(
-        module=stage.submod,
-        device_mesh=twod_mesh,
-        parallelize_plan={
-            "layers_{i}_mlp_down_proj": ColwiseParallel(),
-            "layers_{i}_mlp_gate_proj":RowwiseParallel(),
-            "layers_{i}_mlp_up_proj": ColwiseParallel(),
-            
-        },
-        tp_mesh_dim=1,
-    )
-    return parallelized_block
+
 
 def parallelize_MLP_block(model, module_path, twod_mesh):
     block = model.get_submodule(module_path)
@@ -101,20 +89,39 @@ def parallelize_Attn_block(model, module_path, twod_mesh):
 def tp(model, mesh):
     for i in range(model.config.num_hidden_layers):
         block = parallelize_MLP_block(model, f"model.decoder.layers.{i}", mesh)
-        block = parallelize_MLP_block(model, f"model.decoder.layers.{i}", mesh)
         # block = parallelize_Attn_block(model, f"model.decoder.layers.{1}.self_attn.k_proj", mesh)
         # block = parallelize_Attn_block(model, f"model.decoder.layers.{1}.self_attn.v_proj", mesh)
         # block = parallelize_Attn_block(model, f"model.decoder.layers.{1}.self_attn.q_proj", mesh)
         # block = parallelize_Attn_block(model, f"model.decoder.layers.{1}.self_attn.out_proj", mesh)
-    
-def tp_stage(model, mesh):
-    for i in range(model.config.num_hidden_layers):
-        block = parallelize_stage_llama_MLP_block(model, mesh)
-        block = parallelize_stage_llama_MLP_block(model, mesh)
-        # block = parallelize_Attn_block(model, f"model.decoder.layers.{1}.self_attn.k_proj", mesh)
-        # block = parallelize_Attn_block(model, f"model.decoder.layers.{1}.self_attn.v_proj", mesh)
-        # block = parallelize_Attn_block(model, f"model.decoder.layers.{1}.self_attn.q_proj", mesh)
-        # block = parallelize_Attn_block(model, f"model.decoder.layers.{1}.self_attn.out_proj", mesh)
+
+def parallelize_stage_llama_MLP_block(stage, num_layers,pp_group_size,pp_rank, twod_mesh):
+
+    for i in range(num_layers):
+        try :
+            parallelized_block = parallelize_module(
+                module=stage.submod,
+                device_mesh=twod_mesh,
+                parallelize_plan={
+                    f"model_layers_{i}_mlp_down_proj": ColwiseParallel(),
+                    # f"model_layers_{i}_mlp_gate_proj":RowwiseParallel(),
+                    f"model_layers_{i}_mlp_up_proj": RowwiseParallel(),
+                    # f"model_layers_{i}_mlp_act_fn": RowwiseParallel(),
+                    
+                },
+                tp_mesh_dim=1,
+            )
+        except:
+            pass
+
+  
+def tp_stage(stage,num_layers, mesh):
+
+    for i in range(num_layers):
+        try:
+            block = parallelize_stage_llama_MLP_block('model_layers_{i}', mesh)
+        except:
+            pass
+
 
 def even_cut(model, num_layer, pp_size):
         """

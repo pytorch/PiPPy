@@ -30,32 +30,22 @@ torchrun --nnodes 1 --nproc_per_node 8 pp_tp.py --model_name meta-llama/Llama-2-
 
 ```python
 
-def parallelize_stage_llama_MLP_block(model, twod_mesh):
-    # block = model.get_submodule(module_path)
-    parallelized_block = parallelize_module(
-        module=model,
-        device_mesh=twod_mesh,
-        parallelize_plan={
-            "layers_{i}_mlp_down_proj": ColwiseParallel(),
-            "layers_{i}_mlp_gate_proj":RowwiseParallel(),
-            "layers_{i}_mlp_up_proj": ColwiseParallel(),
-        },
-        tp_mesh_dim=1,
-    )
-    return parallelized_block
+def parallelize_stage_llama_MLP_block(stage, num_layers,pp_group_size,pp_rank, twod_mesh):
 
-def tp_stage(model, mesh):
-        for i in range(model.config.num_hidden_layers):
-        # for i in range(model.config):
-            block = parallelize_stage_llama_MLP_block(model, mesh)
-            block = parallelize_stage_llama_MLP_block(model, mesh)
-
-
-try:
-    tp_stage(stage.submod, dm)
-except Exception as e:
-    print(f"rank {rank} has not this stage")
-
+    for i in range(num_layers):
+        try :
+            parallelized_block = parallelize_module(
+                module=stage.submod,
+                device_mesh=twod_mesh,
+                parallelize_plan={
+                    f"model_layers_{i}_mlp_down_proj": ColwiseParallel(),
+                    f"model_layers_{i}_mlp_gate_proj":RowwiseParallel(),
+                    f"model_layers_{i}_mlp_up_proj": RowwiseParallel(),
+                },
+                tp_mesh_dim=1,
+            )
+        except:
+            pass
 ```
 
 3- Run the inference
