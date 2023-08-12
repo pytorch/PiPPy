@@ -40,7 +40,7 @@ def parallelize_stage_llama_MLP_block(stage, num_layers,pp_group_size,pp_rank, t
                 parallelize_plan={
                     f"model_layers_{i}_mlp_down_proj": ColwiseParallel(),
                     f"model_layers_{i}_mlp_gate_proj":RowwiseParallel(),
-                    f"model_layers_{i}_mlp_up_proj": RowwiseParallel(),
+                    f"model_layers_{i}_mlp_up_proj": ColwiseParallel(),
                 },
                 tp_mesh_dim=1,
             )
