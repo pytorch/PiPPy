@@ -95,23 +95,26 @@ def tp(model, mesh):
         # block = parallelize_Attn_block(model, f"model.decoder.layers.{1}.self_attn.out_proj", mesh)
 
 def parallelize_stage_llama_MLP_block(stage, num_layers,pp_group_size,pp_rank, twod_mesh):
-
-    for i in range(num_layers):
-        try :
-            parallelized_block = parallelize_module(
-                module=stage.submod,
-                device_mesh=twod_mesh,
-                parallelize_plan={
-                    f"model_layers_{i}_mlp_down_proj": ColwiseParallel(),
-                    # f"model_layers_{i}_mlp_gate_proj":RowwiseParallel(),
-                    f"model_layers_{i}_mlp_up_proj": RowwiseParallel(),
-                    # f"model_layers_{i}_mlp_act_fn": RowwiseParallel(),
-                    
-                },
-                tp_mesh_dim=1,
-            )
-        except:
-            pass
+    num_layer_per_rank = num_layers/pp_group_size
+    start_range = int(num_layer_per_rank*pp_rank)
+    end_range = int(num_layer_per_rank*(pp_rank+1))
+    for i in range(start_range,end_range):
+        parallelize_plan={
+                        f"model_layers_{i}_mlp_up_proj": ColwiseParallel(),
+                        f"model_layers_{i}_mlp_gate_proj":ColwiseParallel(),
+                        f"model_layers_{i}_mlp_down_proj": RowwiseParallel(),
+                        
+                        
+                    }
+    try :
+        parallelized_block = parallelize_module(
+            module=stage.submod,
+            device_mesh=twod_mesh,
+            parallelize_plan=parallelize_plan,
+            tp_mesh_dim=1,
+        )
+    except:
+        pass
 
   
 def tp_stage(stage,num_layers, mesh):

@@ -5,7 +5,7 @@ The idea here is to combine TensorParallel (TP) with Pipeline Parallelism (PP). 
 ## Quick try
 
 ```bash
-torchrun --nnodes 1 --nproc_per_node 8 pp_tp.py --model_name meta-llama/Llama-2-7b-chat-hf  --world_size 8 --pp_group_size 1 --tp_group_size 8
+torchrun --nnodes 1 --nproc_per_node 8 pp_tp_inferece.py --model_name meta-llama/Llama-2-7b-chat-hf  --world_size 8 --pp_group_size 1 --tp_group_size 8
 
 ```
 ## How does 2D work here?
@@ -31,21 +31,26 @@ torchrun --nnodes 1 --nproc_per_node 8 pp_tp.py --model_name meta-llama/Llama-2-
 ```python
 
 def parallelize_stage_llama_MLP_block(stage, num_layers,pp_group_size,pp_rank, twod_mesh):
-
-    for i in range(num_layers):
-        try :
-            parallelized_block = parallelize_module(
-                module=stage.submod,
-                device_mesh=twod_mesh,
-                parallelize_plan={
-                    f"model_layers_{i}_mlp_down_proj": ColwiseParallel(),
-                    f"model_layers_{i}_mlp_gate_proj":RowwiseParallel(),
-                    f"model_layers_{i}_mlp_up_proj": ColwiseParallel(),
-                },
-                tp_mesh_dim=1,
-            )
-        except:
-            pass
+    num_layer_per_rank = num_layers/pp_group_size
+    start_range = int(num_layer_per_rank*pp_rank)
+    end_range = int(num_layer_per_rank*(pp_rank+1))
+    for i in range(start_range,end_range):
+        parallelize_plan={
+                        f"model_layers_{i}_mlp_up_proj": ColwiseParallel(),
+                        f"model_layers_{i}_mlp_gate_proj":ColwiseParallel(),
+                        f"model_layers_{i}_mlp_down_proj": RowwiseParallel(),
+                        
+                        
+                    }
+    try :
+        parallelized_block = parallelize_module(
+            module=stage.submod,
+            device_mesh=twod_mesh,
+            parallelize_plan=parallelize_plan,
+            tp_mesh_dim=1,
+        )
+    except:
+        pass
 ```
 
 3- Run the inference
