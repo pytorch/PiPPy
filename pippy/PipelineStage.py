@@ -339,7 +339,8 @@ class PipelineStage(torch.nn.Module):
             )
 
         logging.info(
-            f"[{self.group_rank}][{self.name}] " f"Grad recv info: {grad_recv_info}"
+            f"[{self.group_rank}][{self.name}] "
+            f"Grad recv info: {grad_recv_info}"
         )
         return grad_recv_info
 
@@ -363,7 +364,8 @@ class PipelineStage(torch.nn.Module):
         pippy.fx.node.map_aggregate(kwargs_recv_info, map_recv_to_send)
 
         logging.info(
-            f"[{self.group_rank}][{self.name}] " f"Grad send info: {grad_send_info}"
+            f"[{self.group_rank}][{self.name}] "
+            f"Grad send info: {grad_send_info}"
         )
         return grad_send_info
 
@@ -518,9 +520,7 @@ class PipelineStage(torch.nn.Module):
                     grad,
                     peer_rank
                     if self.group is None
-                    else dist.get_global_rank(
-                        self.group, peer_rank
-                    ),  # TODO
+                    else dist.get_global_rank(self.group, peer_rank),  # TODO
                     group=self.group,
                 )
                 grad_send_reqs.append(work)
