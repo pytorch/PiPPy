@@ -98,6 +98,7 @@ def parallelize_stage_llama_MLP_block(stage, num_layers,pp_group_size,pp_rank, t
     num_layer_per_rank = num_layers/pp_group_size
     start_range = int(num_layer_per_rank*pp_rank)
     end_range = int(num_layer_per_rank*(pp_rank+1))
+    parallelize_plan={}
     for i in range(start_range,end_range):
         parallelize_plan={
                         f"model_layers_{i}_mlp_up_proj": ColwiseParallel(),

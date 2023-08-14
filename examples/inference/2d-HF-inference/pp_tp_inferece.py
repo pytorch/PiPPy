@@ -24,6 +24,7 @@ from torch.distributed.tensor.parallel import (
 
 from tp_utils import parallelize_MLP_block, parallelize_stage_llama_MLP_block, find_mlp_layers, find_mlp_layers_pattern, tp_stage, even_cut
 from utils import print_submodules
+import time 
 
 pippy.fx.Tracer.proxy_buffer_attributes = True
 
@@ -100,7 +101,7 @@ def run_all(args):
     
     # split strategy of the model for even split of layers on each rank
     even_cut(model, model.config.num_hidden_layers, args.pp_group_size)
-    
+    compile_time_start = time.perf_counter()
     # compile_stage to FX trace the model and partition it into multiple stages
     stage= pippy.compile_stage(
         model,
@@ -113,7 +114,15 @@ def run_all(args):
         tracer=PiPPyHFTracer(),
         concrete_args=concrete_args,
     )
+    compile_time_end = time.perf_counter()-compile_time_start
+    print(f"compile time took {compile_time_end}s")
+    print("==============================================")
+    TP_time_start = time.perf_counter()
     parallelize_stage_llama_MLP_block(stage, model.config.num_hidden_layers, args.pp_group_size,pp_rank, dm)
+    TP_time_end = time.perf_counter()-TP_time_start
+    print(f"TP time took {TP_time_end}s")
+    print("==============================================")
+    
    
     
     if pp_rank == 0:
@@ -135,7 +144,11 @@ def run_all(args):
     # prompt = "Hey, are you conscious? Can you talk to me?"
     # input = tokenizer(prompt, return_tensors="pt")
     # input_ids = input["input_ids"].to(args.device)
+    # generate_time_start = time.perf_counter()
     # outputs = model.generate(input_ids, max_new_tokens=30)
+    # generate_time_end = time.perf_counter()-generate_time_start
+    # print(f"Generate time took {generate_time_end}s")
+    # print("==============================================")
     # response = tokenizer.batch_decode(outputs, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
     # print(response)
 if __name__ == "__main__":
