@@ -84,7 +84,7 @@ class PipelineStage(torch.nn.Module):
         # Grad send requests of all chunk
         self.all_grad_send_reqs: List[dist.Work] = []
         # Caching chunk outputs for final output merge or reduction
-        self.output_chunks = []
+        self.output_chunks: List[Any] = []
 
         # Find my submodule
         self.split_gm = self.pipe.split_gm
@@ -422,7 +422,7 @@ class PipelineStage(torch.nn.Module):
             if isinstance(info, RecvInfo):
                 return act_recv(info)
             else:
-                return chunk_args_list.pop(0)
+                return chunk_args_list.pop(0)  # type: ignore[has-type]
 
         composite_args = pippy.fx.node.map_aggregate(
             self.args_recv_info[chunk],
@@ -436,8 +436,8 @@ class PipelineStage(torch.nn.Module):
             if isinstance(info, RecvInfo):
                 return act_recv(info)
             else:
-                k = next(iter(chunk_kwargs))
-                return chunk_kwargs.pop(k)
+                k = next(iter(chunk_kwargs))  # type: ignore[has-type]
+                return chunk_kwargs.pop(k)  # type: ignore[has-type]
 
         composite_kwargs = pippy.fx.node.map_aggregate(
             self.kwargs_recv_info[chunk],
