@@ -63,7 +63,6 @@ page](https://github.com/pytorch/PiPPy).
 
 class clean(distutils.command.clean.clean):  # type: ignore
     def run(self):
-
         with open(".gitignore", "r") as f:
             ignores = f.read()
             for wildcard in filter(None, ignores.split("\n")):

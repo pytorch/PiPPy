@@ -218,8 +218,8 @@ def all_compile(
 
 def compile_stage(
     mod: torch.nn.Module,
-    rank: int,
-    num_ranks: int,
+    stage_index: int,
+    num_stages: int,
     num_chunks: int,
     device: torch.device,
     group: dist.ProcessGroup,
@@ -257,7 +257,7 @@ def compile_stage(
     )
 
     gm = pipe.split_gm
-    if rank == 0:
+    if stage_index == 0:
         logging.info(gm)
         if PIPPY_VERBOSITY == "INFO":
             gm.graph.print_tabular()
@@ -298,24 +298,24 @@ def compile_stage(
     if schedule == "1F1B":
         return PipelineStage1F1B(
             pipe,
-            rank,
-            num_ranks,
+            stage_index,
+            num_stages,
             num_chunks,
             device,
-            group,
-            args_chunk_spec,
-            kwargs_chunk_spec,
-            output_chunk_spec,
+            group=group,
+            args_chunk_spec=args_chunk_spec,
+            kwargs_chunk_spec=kwargs_chunk_spec,
+            output_chunk_spec=output_chunk_spec,
         )
     else:
         return PipelineStage(
             pipe,
-            rank,
-            num_ranks,
+            stage_index,
+            num_stages,
             num_chunks,
             device,
-            group,
-            args_chunk_spec,
-            kwargs_chunk_spec,
-            output_chunk_spec,
+            group=group,
+            args_chunk_spec=args_chunk_spec,
+            kwargs_chunk_spec=kwargs_chunk_spec,
+            output_chunk_spec=output_chunk_spec,
         )
