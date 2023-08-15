@@ -1,7 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import inspect
 import logging
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List, Optional, Union
 
 import torch
 import torch.distributed as dist
@@ -218,8 +218,8 @@ def all_compile(
 
 def compile_stage(
     mod: torch.nn.Module,
-    rank: int,
-    num_ranks: int,
+    stage_index: Union[int, List[int]],
+    num_stages: int,
     num_chunks: int,
     device: torch.device,
     group: dist.ProcessGroup,
@@ -257,7 +257,7 @@ def compile_stage(
     )
 
     gm = pipe.split_gm
-    if rank == 0:
+    if stage_index == 0:
         logging.info(gm)
         if PIPPY_VERBOSITY == "INFO":
             gm.graph.print_tabular()
@@ -294,28 +294,32 @@ def compile_stage(
         else gen_output_chunk_spec(pipe.loss_spec, loss_reducer)
     )
 
-    # Create pipeline stage based on schedule
-    if schedule == "1F1B":
-        return PipelineStage1F1B(
-            pipe,
-            rank,
-            num_ranks,
-            num_chunks,
-            device,
-            group,
-            args_chunk_spec,
-            kwargs_chunk_spec,
-            output_chunk_spec,
-        )
-    else:
-        return PipelineStage(
-            pipe,
-            rank,
-            num_ranks,
-            num_chunks,
-            device,
-            group,
-            args_chunk_spec,
-            kwargs_chunk_spec,
-            output_chunk_spec,
-        )
+    def create_pipeline_stage(s_index):
+        # Create pipeline stage based on schedule
+        if schedule == "1F1B":
+            return PipelineStage1F1B(
+                pipe,
+                s_index,
+                num_stages,
+                num_chunks,
+                device,
+                group=group,
+                args_chunk_spec=args_chunk_spec,
+                kwargs_chunk_spec=kwargs_chunk_spec,
+                output_chunk_spec=output_chunk_spec,
+            )
+        else:
+            return PipelineStage(
+                pipe,
+                s_index,
+                num_stages,
+                num_chunks,
+                device,
+                group=group,
+                args_chunk_spec=args_chunk_spec,
+                kwargs_chunk_spec=kwargs_chunk_spec,
+                output_chunk_spec=output_chunk_spec,
+            )
+
+    # Create one or multiple stages based on `stage_index` format (single int or List)
+    return fx.node.map_aggregate(stage_index, create_pipeline_stage)
