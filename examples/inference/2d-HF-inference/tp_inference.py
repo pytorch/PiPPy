@@ -32,12 +32,6 @@ def print_submodules(model):
             # print(module)
             print()
             
-def setup(rank, world_size):
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12355'
-
-    # initialize the process group
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
 def parallelize_llama_MLP_block(model, module_path, twod_mesh):
     block = model.get_submodule(module_path)
@@ -53,12 +47,28 @@ def parallelize_llama_MLP_block(model, module_path, twod_mesh):
     )
     return parallelized_block
 
+def parallelize_opt_MLP_block(model, module_path, twod_mesh):
+    block = model.get_submodule(module_path)
+    parallelized_block = parallelize_module(
+        module=block,
+        device_mesh=twod_mesh,
+        parallelize_plan={
+            "fc1": ColwiseParallel(),
+            "fc2": RowwiseParallel(),
+        },
+        # tp_mesh_dim=1,
+    )
+    return parallelized_block
 def tp_llama(model, mesh):
     for i in range(model.config.num_hidden_layers):
         print(f" i number of layers {i}*********************")
         block = parallelize_llama_MLP_block(model, f"model.layers.{i}.mlp", mesh)
     
-
+def tp_opt(model, mesh):
+    for i in range(model.config.num_hidden_layers):
+        print(f" i number of layers {i}")
+        block = parallelize_opt_MLP_block(model, f"model.decoder.layers.{i}", mesh)
+        
 def run_all(args):
     # setup(rank, world_size)
     device_type = "cuda" if args.cuda else "cpu"
@@ -168,8 +178,6 @@ if __name__ == "__main__":
     else:
         raise ValueError(f"Unsupported model: {args.model_name}")
     args.model = model
-   
-    backend = "nccl" if args.cuda else "gloo"
- 
+    
     run_all(args)
   
