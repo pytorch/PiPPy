@@ -2,10 +2,7 @@
 import argparse
 import os
 import torch
-import pippy
-import pippy.fx
-from pippy import run_pippy
-from pippy.hf import PiPPyHFTracer, inject_pipeline_forward
+
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from torch.distributed._tensor import (
     DeviceMesh,
@@ -22,7 +19,6 @@ from torch.distributed.tensor.parallel import (
         RowwiseParallel,
     )
 
-from utils import print_submodules
 import time 
 import torch.multiprocessing as mp
 
@@ -83,7 +79,7 @@ def run_all(args):
         dev_id = args.rank % torch.cuda.device_count()
         args.device = torch.device(f"cuda:{dev_id}")
         torch.cuda.set_device(dev_id)
-    args.model.to(args.device)
+    # args.model.to(args.device)
     dm = DeviceMesh("cuda", torch.arange(0, args.world_size))
 
     print(f"device mesh {dm}")
@@ -103,7 +99,10 @@ def run_all(args):
     
     print("==============================================")
     TP_time_start = time.perf_counter()
-    tp_llama(model,dm)
+    if "llama" in args.model_name:
+        tp_llama(model,dm)
+    elif "opt" in args.model_name:
+        tp_opt(model,dm)
     TP_time_end = time.perf_counter()-TP_time_start
     print(f"TP time took {TP_time_end}s")
     print("==============================================")
@@ -126,6 +125,7 @@ def run_all(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--world_size', type=int, default=int(os.getenv("WORLD_SIZE", 8)))
+    parser.add_argument('--meta_device', type=bool, default=True)
     parser.add_argument('--rank', type=int, default=int(os.getenv("RANK", -1)))
     parser.add_argument('--master_addr', type=str, default=os.getenv('MASTER_ADDR', 'localhost'))
     parser.add_argument('--master_port', type=str, default=os.getenv('MASTER_PORT', '29500'))
@@ -170,7 +170,7 @@ if __name__ == "__main__":
             or m.upper() in args.model_name
             for m in supported_model_categories]):
         print(f"Loading model {args.model_name}")
-        if args.index_filename is not None:
+        if args.meta_device:
             with torch.device("meta"):
                 model = AutoModelForCausalLM.from_pretrained(args.model_name, use_cache=False, torch_dtype=dtype)
         else:
