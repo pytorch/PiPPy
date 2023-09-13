@@ -16,15 +16,11 @@ import torch.distributed as dist
 # For checkpoint reading directly from manifold
 import torch.manifold.patch
 import torch.nn.functional as F
-from gen_ai.genie_projects.llm.metaformers.src.checkpoint_conversion.converter import (
-    build_distributed_state_dict_from_consolidated,
-)
+
 from torch import nn
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.api import StateDictType
 from torch.distributed.fsdp.wrap import ModuleWrapPolicy
-from torchmultimodal import _PATH_MANAGER as PathManager
-from torchmultimodal.fb.examples.llama.llama_2_tokenizer import Tokenizer
 
 log = logging.getLogger(__name__)
 
