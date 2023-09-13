@@ -2,7 +2,6 @@
 
 import json
 import math
-from manifold.clients.python import *  # noqa
 import logging
 import os
 import time
@@ -13,8 +12,6 @@ from typing import Optional, Tuple, Union
 import torch
 import torch.distributed as dist
 
-# For checkpoint reading directly from manifold
-import torch.manifold.patch
 import torch.nn.functional as F
 from checkpoint_converter import build_distributed_state_dict_from_consolidated
 from torch import nn
@@ -370,8 +367,6 @@ def _build_model_args(ckpt_dir: str, max_seq_len, max_batch_size) -> ModelArgs:
 
 def _create_tokenizer(bucket: str, tokenizer_path: str) -> Tokenizer:
     local_tokenizer_path = "/tmp/tokenizer_path"
-    with ManifoldClient.get_client(bucket) as client:
-        client.sync_get(tokenizer_path, local_tokenizer_path)
     log.debug(f"successfully saved tokenizer to {local_tokenizer_path}")
     tokenizer = Tokenizer(model_path=local_tokenizer_path)
     return tokenizer

@@ -257,7 +257,7 @@ def build_distributed_state_dict_from_consolidated(
 
     Example usage::
         ```
-        PTH_65b = "manifold://genai_llm_fb/tree/checkpoints/stable/llama_65B_cinnamon_consolidated"
+        
         MODEL_PARALLEL_SIZE = 8
         ckpt_path = get_consolidated_ckpt_path(
             ckpt_dir=PTH_65b, mp_rank=local_rank, mp_size=MODEL_PARALLEL_SIZE
@@ -354,8 +354,7 @@ def build_distributed_state_dict_from_unconsolidated(
         use_dtensor (bool): Whether to use PyTorch Distributed Tensor instead of ShardedTensor (default: False)
             (this will eventually default to true)
 
-    The fairscale checkpoint given by `fs_state_dict` should come from gen_ai.genie_projects.llm.metaformers.src.checkpointing.get_model_state,
-    which is an unconsolidated model checkpoint format stored in manifold. The format is something like the following:
+    
     {
         'weights': <mapping of FSDP param to flat tensor>
         'metadata': <per parameter sharding info and FSDP prefix>
