@@ -73,9 +73,7 @@ def apply_rotary_emb(
     xk: torch.Tensor,
     freqs_cis: torch.Tensor,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """
-    To be replaced by torchMM's RotaryEmbedding
-    """
+   
     xq_ = torch.view_as_complex(xq.float().reshape(*xq.shape[:-1], -1, 2))
     xk_ = torch.view_as_complex(xk.float().reshape(*xk.shape[:-1], -1, 2))
     freqs_cis = reshape_for_broadcast(freqs_cis, xq_)
@@ -96,8 +94,7 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
     )
 
 
-# TODO: below are taken from facebookresearch/llama, update to use torchMM components
-# once they are compatible
+
 class Attention(nn.Module):
     def __init__(
         self,
@@ -400,9 +397,7 @@ def _init_local_model(model_args: ModelArgs) -> Transformer:
 def get_consolidated_ckpt_path(
     ckpt_dir: Union[str, Path], mp_rank: int = 0, mp_size: int = 1
 ) -> Union[str, Path]:
-    """
-    From https://fburl.com/code/7wfw9goy
-    """
+  
     if mp_size == 1:
         assert mp_rank == 0
         filename = "consolidated.00.pth"
