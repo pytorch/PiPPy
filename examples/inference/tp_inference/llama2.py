@@ -16,7 +16,7 @@ import torch.distributed as dist
 # For checkpoint reading directly from manifold
 import torch.manifold.patch
 import torch.nn.functional as F
-
+from checkpoint_converter import build_distributed_state_dict_from_consolidated
 from torch import nn
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.api import StateDictType
