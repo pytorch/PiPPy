@@ -18,6 +18,7 @@ from torch import nn
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.api import StateDictType
 from torch.distributed.fsdp.wrap import ModuleWrapPolicy
+from llama2_tokenizer import Tokenizer
 
 log = logging.getLogger(__name__)
 
@@ -342,7 +343,8 @@ def _build_model_args(ckpt_dir: str, max_seq_len, max_batch_size) -> ModelArgs:
     Reads params.json from checkpoint and builds ModelArgs to initialize
     model with.
     """
-    with PathManager.open(os.path.join(ckpt_dir, "params.json"), "r") as f:
+    params_path = os.path.join(ckpt_dir, "params.json")
+    with open(params_path, "r") as f:
         params = json.loads(f.read())
 
     # Some checkpoints have other details besides "model", fix this up and use a
@@ -363,7 +365,7 @@ def _build_model_args(ckpt_dir: str, max_seq_len, max_batch_size) -> ModelArgs:
 
 
 def _create_tokenizer(bucket: str, tokenizer_path: str) -> Tokenizer:
-    local_tokenizer_path = "/tmp/tokenizer_path"
+    local_tokenizer_path = tokenizer_path
     log.debug(f"successfully saved tokenizer to {local_tokenizer_path}")
     tokenizer = Tokenizer(model_path=local_tokenizer_path)
     return tokenizer
@@ -435,7 +437,7 @@ class Llama:
         tokenizer_path: str,
         max_seq_len: int,
         max_batch_size: int,
-        model_parallel_size: int = 8,
+        model_parallel_size: int,
     ) -> "Llama":
         """
         Heavily motivated from https://github.com/facebookresearch/llama/blob/main/llama/generation.py#L51,
