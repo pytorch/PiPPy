@@ -454,7 +454,7 @@ def parallelize_llama_MLP_block(model, module_path, twod_mesh):
 
 def tp_llama(model, mesh):
     for i in range(32):
-        print(f" i number of layers {i}*********************")
+        # print(f" i number of layers {i}*********************")
         block = parallelize_llama_MLP_block(model, f"layers.{i}.feed_forward", mesh)
         
 def print_submodules(model):
@@ -496,21 +496,23 @@ class Llama:
             device_type="cuda",
             mesh=list(range(dist.get_world_size())),
         ))
-        # tp_llama(model, mesh)
-        model = FSDP(
-            model,
-            param_init_fn=lambda module: module.to_empty(
-                device=torch.device("cuda"), recurse=False
-            ),
-            device_id=torch.cuda.current_device(),
-            auto_wrap_policy=ModuleWrapPolicy({TransformerBlock}),
-        )
+        model_tp = model
+        model_tp.to_empty(device='cuda')
+        # model_tp.reset_parameters()
+        # model = FSDP(
+        #     model,
+        #     param_init_fn=lambda module: module.to_empty(
+        #         device=torch.device("cuda"), recurse=False
+        #     ),
+        #     device_id=torch.cuda.current_device(),
+        #     auto_wrap_policy=ModuleWrapPolicy({TransformerBlock}),
+        # )
         FSDP.set_state_dict_type(model, StateDictType.SHARDED_STATE_DICT)
         dist.barrier()
         log.debug(f"Rank {dist.get_rank()}: created FSDP model {model}")
         # Convert state_dict from fairscale + load in to FSDP
         _load_checkpoint(
-            model=model,
+            model=model_tp,
             meta_model=cloned_meta_model,
             model_parallel_size=model_parallel_size,
             ckpt_dir=ckpt_dir,
