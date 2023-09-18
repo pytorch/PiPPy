@@ -64,23 +64,15 @@ def _is_tp_sharded(fqn: str) -> bool:
         or "output" in fqn
         or "tok_embeddings" in fqn
     )
-
-
-# pyre-fixme[3]: Return type must be annotated.
+    
 def _unshard_param(
-    # pyre-fixme[2]: Parameter must be annotated.
     ref_state_dict,
-    # pyre-fixme[2]: Parameter must be annotated.
     fqn,
-    # pyre-fixme[2]: Parameter must be annotated.
     model_parallel_group,
-    # pyre-fixme[2]: Parameter must be annotated.
     grp_gloo,
-    # pyre-fixme[2]: Parameter must be annotated.
     data_tensor,
-    # pyre-fixme[2]: Parameter must be annotated.
     tp_sharded_shape,
-):
+    ):
     """
     Unshards the row or col-wise sharded parameter.
     For rowwise, this is done by reshaping into the local shape, allgathering,

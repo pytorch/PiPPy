@@ -19,6 +19,15 @@ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.api import StateDictType
 from torch.distributed.fsdp.wrap import ModuleWrapPolicy
 from llama2_tokenizer import Tokenizer
+from torch.distributed._tensor import DeviceMesh, DTensor
+from torch.distributed.tensor.parallel import (
+        PairwiseParallel,
+        parallelize_module,
+        ColwiseParallel,
+        RowwiseParallel,
+    )
+
+from copy import deepcopy
 
 log = logging.getLogger(__name__)
 
@@ -411,7 +420,7 @@ def get_consolidated_ckpt_path(
         return os.path.join(ckpt_dir, filename)
 
 
-def _load_checkpoint(model, model_parallel_size: int, ckpt_dir: str) -> None:
+def _load_checkpoint(model, meta_model, model_parallel_size: int, ckpt_dir: str) -> None:
     mp_group, _ = dist.new_subgroups(group_size=model_parallel_size)
     local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if local_rank == -1:
@@ -422,14 +431,37 @@ def _load_checkpoint(model, model_parallel_size: int, ckpt_dir: str) -> None:
     )
     state_dict = torch.load(state_dict_pth)
     dist_state_dict = build_distributed_state_dict_from_consolidated(
-        model, state_dict, model_parallel_world_size=model_parallel_size
+        meta_model, state_dict, model_parallel_world_size=model_parallel_size
     )
     log.debug("build distributed_state_dict")
     missing_keys, unexpected_keys = model.load_state_dict(dist_state_dict, strict=False)
     assert not missing_keys
     assert len(unexpected_keys) == 1 and "freqs" in unexpected_keys[0]
+    
+def parallelize_llama_MLP_block(model, module_path, twod_mesh):
+    block = model.get_submodule(module_path)
+    parallelized_block = parallelize_module(
+        module=block,
+        device_mesh=twod_mesh,
+        parallelize_plan={
+            "w1": ColwiseParallel(),
+            "w2": ColwiseParallel(),
+            "w3": RowwiseParallel(),
+        },
+        tp_mesh_dim=0,
+    )
+    return parallelized_block
 
-
+def tp_llama(model, mesh):
+    for i in range(32):
+        print(f" i number of layers {i}*********************")
+        block = parallelize_llama_MLP_block(model, f"layers.{i}.feed_forward", mesh)
+        
+def print_submodules(model):
+        for name, module in model.named_modules():
+            print(f"Module name: {name}")
+            # print(module)
+            print()       
 class Llama:
     @staticmethod
     def build(
@@ -457,6 +489,14 @@ class Llama:
         model_args.vocab_size = tokenizer.n_words
 
         model = _init_local_model(model_args)
+        cloned_meta_model = deepcopy(model)
+        # print_submodules(model)
+        mesh = (
+        DeviceMesh(
+            device_type="cuda",
+            mesh=list(range(dist.get_world_size())),
+        ))
+        # tp_llama(model, mesh)
         model = FSDP(
             model,
             param_init_fn=lambda module: module.to_empty(
@@ -471,6 +511,7 @@ class Llama:
         # Convert state_dict from fairscale + load in to FSDP
         _load_checkpoint(
             model=model,
+            meta_model=cloned_meta_model,
             model_parallel_size=model_parallel_size,
             ckpt_dir=ckpt_dir,
         )
