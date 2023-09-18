@@ -7,7 +7,7 @@ Here we convert the Meta Llama model, which is based on Fairscale TP to PT-D com
 
 
 
-1- Make sure you have access to llama weights on [HF model hub](https://huggingface.co/meta-llama), there is form you need to fill up and within few mins you will get access. ANy model name on the hub **without -hf** is Meta weight.
+1- Make sure you have access to llama weights on [HF model hub](https://huggingface.co/meta-llama), there is form you need to fill up and within few mins you will get access. ANy model name on the hub **without -hf** is Meta/FAIR weight.
 
 Make sure you you are signed up in HF as well, you will need you API token than can be access from [here](https://huggingface.co/settings/tokens), note to use the same email for accessing the weights as email you signed in to HF.
 
@@ -37,7 +37,7 @@ The following will run try to
 
 a- first [build llama without any TP with meta device](https://github.com/pytorch/PiPPy/blob/2d_inference/examples/inference/tp_inference/llama2.py#L491) --> `meta_model` 
 
-b- use the `meta_model` to [convert Meta weights to PT-D compliant checkpoints](https://github.com/pytorch/PiPPy/blob/2d_inference/examples/inference/tp_inference/llama2.py#L433)
+b- use the `meta_model` to [convert Meta/FAIR weights to PT-D compliant checkpoints](https://github.com/pytorch/PiPPy/blob/2d_inference/examples/inference/tp_inference/llama2.py#L433)
 
 c- TP(lize) `meta_model` with [PT-D TP ](https://github.com/pytorch/PiPPy/blob/2d_inference/examples/inference/tp_inference/llama2.py#L499)
 
