@@ -496,6 +496,8 @@ class Llama:
             device_type="cuda",
             mesh=list(range(dist.get_world_size())),
         ))
+        tp_llama(model, mesh)
+        
         model_tp = model
         model_tp.to_empty(device='cuda')
         # model_tp.reset_parameters()
@@ -512,7 +514,7 @@ class Llama:
         log.debug(f"Rank {dist.get_rank()}: created FSDP model {model}")
         # Convert state_dict from fairscale + load in to FSDP
         _load_checkpoint(
-            model=model_tp,
+            model=model,
             meta_model=cloned_meta_model,
             model_parallel_size=model_parallel_size,
             ckpt_dir=ckpt_dir,
