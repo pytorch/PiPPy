@@ -266,8 +266,8 @@ class TransformerBlock(nn.Module):
         h = x + self.attention(self.attention_norm(x), start_pos, freqs_cis, mask)
         out = h + self.feed_forward(self.ffn_norm(h))
         return out
-
-
+    
+   
 class Transformer(nn.Module):
     """
     LLama2 implementation, free of any coupling to parallelism implementations, heavily drawn from
@@ -342,6 +342,18 @@ class Transformer(nn.Module):
         h = self.norm(h)
         output = self.output(h).float()
         return output
+    
+    @torch.no_grad()
+    def reset_parameters(self):
+       for layer in self.layers:
+           for submodule in layer.modules():
+               for param_name, param in submodule.named_parameters(recurse=False):
+                    if param.is_meta:
+                        materialized_param = nn.Parameter(
+                            torch.empty_like(param, device=torch.device("cuda"))
+                        )
+                        nn.init.uniform_after(materialized_param)
+                        setattr(submodule, param_name, materialized_param)
 
 
 ### --- Utilities for model creation / loading ---- ####
@@ -500,7 +512,9 @@ class Llama:
         
         model_tp = model
         model_tp.to_empty(device='cuda')
-        # model_tp.reset_parameters()
+        model_tp.reset_parameters()
+        print("reset parameters is done")
+        print("===============================================")
         # model = FSDP(
         #     model,
         #     param_init_fn=lambda module: module.to_empty(
