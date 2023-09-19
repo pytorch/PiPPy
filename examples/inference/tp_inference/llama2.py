@@ -443,8 +443,20 @@ def _load_checkpoint(model, meta_model, model_parallel_size: int, ckpt_dir: str)
     )
     state_dict = torch.load(state_dict_pth)
     dist_state_dict = build_distributed_state_dict_from_consolidated(
-        meta_model, state_dict, model_parallel_world_size=model_parallel_size
+        meta_model, state_dict, model_parallel_world_size=model_parallel_size,use_dtensor=True
     )
+    # print(f"dist_state_dict{dist_state_dict}")
+    # for key, value in dist_state_dict.items():
+    #     if isinstance(value, torch.Tensor):
+    #         # Check the dtype and device of the tensor
+    #         # print(dir(value))
+    #         dtype = value.dtype
+    #         device = value.device
+    #         is_meta_tensor = value.is_meta
+    #         assert not is_meta_tensor, "is_meta_tensor should be False"
+
+    #         print(f"Key: {key}, Dtype: {dtype}, Device: {device},is_meta_tensor {is_meta_tensor}")
+            
     log.debug("build distributed_state_dict")
     missing_keys, unexpected_keys = model.load_state_dict(dist_state_dict, strict=False)
     assert not missing_keys
