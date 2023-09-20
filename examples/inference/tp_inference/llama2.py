@@ -446,16 +446,23 @@ def _load_checkpoint(model, meta_model, model_parallel_size: int, ckpt_dir: str)
         meta_model, state_dict, model_parallel_world_size=model_parallel_size,use_dtensor=True
     )
     # print(f"dist_state_dict{dist_state_dict}")
-    # for key, value in dist_state_dict.items():
-    #     if isinstance(value, torch.Tensor):
-    #         # Check the dtype and device of the tensor
-    #         # print(dir(value))
-    #         dtype = value.dtype
-    #         device = value.device
-    #         is_meta_tensor = value.is_meta
-    #         assert not is_meta_tensor, "is_meta_tensor should be False"
+    for key, value in dist_state_dict.items():
+        if isinstance(value, torch.Tensor):
+            # Check the dtype and device of the tensor
+            # print(dir(value))
+            dtype = value.dtype
+            device = value.device
+            is_meta_tensor = value.is_meta
+            assert not is_meta_tensor, "is_meta_tensor should be False"
+            assert isinstance(value, DTensor), f"The tensor at key '{key}' is not a DTensor."
 
-    #         print(f"Key: {key}, Dtype: {dtype}, Device: {device},is_meta_tensor {is_meta_tensor}")
+            try:
+                dv_mesh = value.device_mesh
+            except:
+                print(f"key {key} does not have device mesh ")
+                print("****************************************")
+                print("****************************************")
+            print(f"Key: {key}, Dtype: {dtype}, Device: {device},is_meta_tensor {is_meta_tensor}")
             
     log.debug("build distributed_state_dict")
     missing_keys, unexpected_keys = model.load_state_dict(dist_state_dict, strict=False)
@@ -520,6 +527,9 @@ class Llama:
             device_type="cuda",
             mesh=list(range(dist.get_world_size())),
         ))
+        print(f" mesh {mesh}")
+        print("#############################")
+        
         tp_llama(model, mesh)
         
         model_tp = model

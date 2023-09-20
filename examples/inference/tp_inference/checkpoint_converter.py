@@ -184,6 +184,7 @@ def build_distributed_state_dict_from_consolidated(
             dist_state_dict[fqn] = tensor.clone()
             continue
         if _is_tp_sharded(fqn):
+        
             tensor, _ = _unshard_param(
                 ref_state_dict,
                 fqn,
@@ -193,13 +194,16 @@ def build_distributed_state_dict_from_consolidated(
                 tensor.shape,
             )
         if use_dtensor:
+       
             assert mesh is not None
             tensor = _ext_chunk_dtensor(
                 tensor=tensor.contiguous(),
                 rank=dist.get_rank(),
                 device_mesh=mesh,
             )
+         
         else:
+         
             tensor = _ext_chunk_tensor(
                 tensor=tensor.contiguous(),
                 rank=dist.get_rank(),
@@ -207,8 +211,9 @@ def build_distributed_state_dict_from_consolidated(
                 num_devices_per_node=torch.cuda.device_count(),  # TODO: this is not accurate if user set CUDA_VISIBLE_DEVICES
                 pg=dist.distributed_c10d._get_default_group(),  # TODO: this should be the FSDP process group
             )
+        
         dist_state_dict[fqn] = tensor
-
+    assert isinstance(tensor, DTensor), f"The tensor at fqn '{fqn}' is not a DTensor."
     dtypes = {v.dtype for v in dist_state_dict.values()}
     logging.warning(f"Made dist_state_dict with dtypes {dtypes}")
     return dist_state_dict
