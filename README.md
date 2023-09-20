@@ -105,7 +105,7 @@ This network is written as free-form Python code; it has not been modified for a
 Let us see our first usage of the `pippy.IR.Pipe` interface:
 
 ```python
-from pippy.IR import annotate_split_points, PipeSplitWrapper
+from pippy.IR import annotate_split_points, PipeSplitWrapper, Pipe
 
 annotate_split_points(mn, {'layer0': PipeSplitWrapper.SplitPoint.END,
                            'layer1': PipeSplitWrapper.SplitPoint.END})
