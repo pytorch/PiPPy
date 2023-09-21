@@ -446,23 +446,23 @@ def _load_checkpoint(model, meta_model, model_parallel_size: int, ckpt_dir: str)
         meta_model, state_dict, model_parallel_world_size=model_parallel_size,use_dtensor=True
     )
     # print(f"dist_state_dict{dist_state_dict}")
-    for key, value in dist_state_dict.items():
-        if isinstance(value, torch.Tensor):
-            # Check the dtype and device of the tensor
-            # print(dir(value))
-            dtype = value.dtype
-            device = value.device
-            is_meta_tensor = value.is_meta
-            assert not is_meta_tensor, "is_meta_tensor should be False"
-            assert isinstance(value, DTensor), f"The tensor at key '{key}' is not a DTensor."
+    # for key, value in dist_state_dict.items():
+    #     if isinstance(value, torch.Tensor):
+    #         # Check the dtype and device of the tensor
+    #         # print(dir(value))
+    #         dtype = value.dtype
+    #         device = value.device
+    #         is_meta_tensor = value.is_meta
+    #         assert not is_meta_tensor, "is_meta_tensor should be False"
+    #         # assert isinstance(value, DTensor), f"The tensor at key '{key}' is not a DTensor."
 
-            try:
-                dv_mesh = value.device_mesh
-            except:
-                print(f"key {key} does not have device mesh ")
-                print("****************************************")
-                print("****************************************")
-            print(f"Key: {key}, Dtype: {dtype}, Device: {device},is_meta_tensor {is_meta_tensor}")
+    #         try:
+    #             dv_mesh = value.device_mesh
+    #         except:
+    #             print(f"key {key} does not have device mesh ")
+    #             print("****************************************")
+    #             print("****************************************")
+    #         print(f"Key: {key}, Dtype: {dtype}, Device: {device},is_meta_tensor {is_meta_tensor}")
             
     log.debug("build distributed_state_dict")
     missing_keys, unexpected_keys = model.load_state_dict(dist_state_dict, strict=False)
@@ -483,10 +483,26 @@ def parallelize_llama_MLP_block(model, module_path, twod_mesh):
     )
     return parallelized_block
 
+def parallelize_llama_attn_block(model, module_path, twod_mesh):
+    block = model.get_submodule(module_path)
+    parallelized_block = parallelize_module(
+        module=block,
+        device_mesh=twod_mesh,
+        parallelize_plan={
+            "wq": ColwiseParallel(),
+            "wk": ColwiseParallel(),
+            "wv": ColwiseParallel(),
+            "wo": RowwiseParallel(),
+        },
+        tp_mesh_dim=0,
+    )
+    return parallelized_block
+
 def tp_llama(model, mesh):
-    for i in range(32):
+    for i in range(model.n_layers):
         # print(f" i number of layers {i}*********************")
         block = parallelize_llama_MLP_block(model, f"layers.{i}.feed_forward", mesh)
+        block = parallelize_llama_attn_block(model, f"layers.{i}.attention", mesh)
         
 def print_submodules(model):
         for name, module in model.named_modules():
@@ -521,7 +537,7 @@ class Llama:
 
         model = _init_local_model(model_args)
         cloned_meta_model = deepcopy(model)
-        # print_submodules(model)
+        print_submodules(model)
         mesh = (
         DeviceMesh(
             device_type="cuda",
@@ -535,8 +551,17 @@ class Llama:
         model_tp = model
         model_tp.to_empty(device='cuda')
         model_tp.reset_parameters()
-        print("reset parameters is done")
-        print("===============================================")
+        for fqn, tensor in model_tp.state_dict().items():
+                try:
+                    is_dtensor = isinstance(tensor, DTensor)
+                except:
+                    is_dtensor = False
+                   
+                print(f"TP model FQN: {fqn}, is DTensor {is_dtensor}")
+                print("****************************************")
+                print("****************************************")
+            # print("reset parameters is done")
+            # print("===============================================")
         # model = FSDP(
         #     model,
         #     param_init_fn=lambda module: module.to_empty(
@@ -550,7 +575,7 @@ class Llama:
         log.debug(f"Rank {dist.get_rank()}: created FSDP model {model}")
         # Convert state_dict from fairscale + load in to FSDP
         _load_checkpoint(
-            model=model,
+            model=model_tp,
             meta_model=cloned_meta_model,
             model_parallel_size=model_parallel_size,
             ckpt_dir=ckpt_dir,

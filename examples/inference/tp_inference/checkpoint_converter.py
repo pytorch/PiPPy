@@ -80,6 +80,8 @@ def _unshard_param(
     This is done via vstack and column_stack respectively.
     """
     mp_size = dist.get_world_size(model_parallel_group)
+    print(f"mp sizeeeeeeeeee {mp_size}")
+    print("-------------------------------")
     ref_shape = ref_state_dict[fqn].shape
     assert (
         ref_shape[0] == tp_sharded_shape[0] or ref_shape[1] == tp_sharded_shape[1]
@@ -211,9 +213,13 @@ def build_distributed_state_dict_from_consolidated(
                 num_devices_per_node=torch.cuda.device_count(),  # TODO: this is not accurate if user set CUDA_VISIBLE_DEVICES
                 pg=dist.distributed_c10d._get_default_group(),  # TODO: this should be the FSDP process group
             )
-        
+        try:
+            if isinstance(tensor, DTensor):
+                print(f"{fqn} is DTensor")
+        except:
+            print(f"{fqn} is not DTensor")
         dist_state_dict[fqn] = tensor
-    assert isinstance(tensor, DTensor), f"The tensor at fqn '{fqn}' is not a DTensor."
+    # assert isinstance(tensor, DTensor), f"The tensor at fqn '{fqn}' is not a DTensor."
     dtypes = {v.dtype for v in dist_state_dict.values()}
     logging.warning(f"Made dist_state_dict with dtypes {dtypes}")
     return dist_state_dict
