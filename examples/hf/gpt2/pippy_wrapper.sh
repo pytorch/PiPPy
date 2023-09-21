@@ -8,4 +8,11 @@ export CUDA_VISIBLE_DEVICES=${SLURM_LOCALID}
 export WORLD_SIZE=${SLURM_NTASKS}
 export RANK=${SLURM_PROCID}
 
-python -u pippy_gpt2.py --record_mem_dumps=0 --checkpoint=0
+# Small
+python -u pippy_gpt2.py
+
+# 33B
+#python -u pippy_gpt2.py --checkpoint=1 --gspmd=1 \
+#  --n_layer=96 \
+#  --n_head=96 \
+#  --n_embd=5376
