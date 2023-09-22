@@ -512,7 +512,7 @@ Note: in cases where a model's parameters do not fit into the memory of a single
 distributed initialization which only materializes a pipeline stage on its corresponding GPU worker. For details,
 please see PiPPy's `Pipe.defer_stage_init` API.
 
-In adition, some backend options need to be passed to RPC initialization. RPC by default uses the TensorPipe backend
+In addition, some backend options need to be passed to RPC initialization. RPC by default uses the TensorPipe backend
 that supports point-to-point communication in an asynchronous manner. Configurations for TensorPipe can be specified
 with a `TensorPipeRpcBackendOptions` object. Here is an example:
 
