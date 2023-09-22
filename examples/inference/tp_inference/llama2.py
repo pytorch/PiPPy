@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Tuple, Union
 
+from torch.distributed._tensor.placement_types import Replicate, Shard
 import torch
 import torch.distributed as dist
 
@@ -432,7 +433,7 @@ def get_consolidated_ckpt_path(
         return os.path.join(ckpt_dir, filename)
 
 
-def _load_checkpoint(model, meta_model, model_parallel_size: int, ckpt_dir: str) -> None:
+def _load_checkpoint(mesh, model, meta_model, model_parallel_size: int, ckpt_dir: str) -> None:
     mp_group, _ = dist.new_subgroups(group_size=model_parallel_size)
     local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if local_rank == -1:
@@ -463,7 +464,8 @@ def _load_checkpoint(model, meta_model, model_parallel_size: int, ckpt_dir: str)
     #             print("****************************************")
     #             print("****************************************")
     #         print(f"Key: {key}, Dtype: {dtype}, Device: {device},is_meta_tensor {is_meta_tensor}")
-            
+    converting_Dtensor_to_tensor(model,dist_state_dict,mesh )
+    check_dtensor(dist_state_dict)
     log.debug("build distributed_state_dict")
     missing_keys, unexpected_keys = model.load_state_dict(dist_state_dict, strict=False)
     assert not missing_keys
@@ -509,6 +511,29 @@ def print_submodules(model):
             print(f"Module name: {name}")
             # print(module)
             print()       
+
+def check_dtensor(state_dict):
+    for fqn, tensor in state_dict.items():
+        try:
+            is_dtensor = isinstance(tensor, DTensor)
+        except:
+            is_dtensor = False
+            
+        print(f"The model FQN: {fqn}, is DTensor {is_dtensor}")
+        
+def converting_Dtensor_to_tensor(model_tp, dist_state_dict, mesh):          
+# Make sure this covers all non DTensor FQNs.
+    # model is the tp_model
+    for fqn in model_tp.state_dict():
+        if not isinstance(model_tp.state_dict()[fqn], DTensor):
+        # #     # Convert dist_state_dict[fqn] into non-DTensor
+            
+            if isinstance(dist_state_dict[fqn], DTensor):
+                # Not sure best way to materialize full DTensor on each rank Doing it by
+                # redistributing it to a world_size = 1 DeviceMesh, and then to_local.
+                unsharded_dt = dist_state_dict[fqn].redistribute(device_mesh=mesh, placements=[Replicate()])
+                dist_state_dict[fqn] = unsharded_dt.to_local()
+                
 class Llama:
     @staticmethod
     def build(
@@ -551,15 +576,15 @@ class Llama:
         model_tp = model
         model_tp.to_empty(device='cuda')
         model_tp.reset_parameters()
-        for fqn, tensor in model_tp.state_dict().items():
-                try:
-                    is_dtensor = isinstance(tensor, DTensor)
-                except:
-                    is_dtensor = False
+        # for fqn, tensor in model_tp.state_dict().items():
+        #         try:
+        #             is_dtensor = isinstance(tensor, DTensor)
+        #         except:
+        #             is_dtensor = False
                    
-                print(f"TP model FQN: {fqn}, is DTensor {is_dtensor}")
-                print("****************************************")
-                print("****************************************")
+        #         print(f"TP model FQN: {fqn}, is DTensor {is_dtensor}")
+        #         print("****************************************")
+        #         print("****************************************")
             # print("reset parameters is done")
             # print("===============================================")
         # model = FSDP(
@@ -575,6 +600,7 @@ class Llama:
         log.debug(f"Rank {dist.get_rank()}: created FSDP model {model}")
         # Convert state_dict from fairscale + load in to FSDP
         _load_checkpoint(
+            mesh, 
             model=model_tp,
             meta_model=cloned_meta_model,
             model_parallel_size=model_parallel_size,
@@ -584,7 +610,7 @@ class Llama:
         log.debug(
             f"Loaded {param_numel * dist.get_world_size()} params (across all workers) in {time.time() - start:.2f} seconds"
         )
-        return Llama(model, tokenizer)
+        return Llama(model_tp, tokenizer)
 
     def __init__(self, model: Union[FSDP, Transformer], tokenizer: Tokenizer):
         self.model = model
