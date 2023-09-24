@@ -502,7 +502,6 @@ def parallelize_llama_attn_block(model, module_path, twod_mesh):
 
 def tp_llama(model, mesh):
     for i in range(model.n_layers):
-        # print(f" i number of layers {i}*********************")
         block = parallelize_llama_MLP_block(model, f"layers.{i}.feed_forward", mesh)
         block = parallelize_llama_attn_block(model, f"layers.{i}.attention", mesh)
         
