@@ -30,9 +30,16 @@ from torch.distributed.tensor.parallel import (
     )
 
 from copy import deepcopy
+from dataclasses import dataclass, asdict, fields
 
 log = logging.getLogger(__name__)
 
+def dataclass_to_json(dc):
+    return json.dumps(asdict(dc))
+
+def json_to_dataclass(json_str, dataclass_type):
+    data = json.loads(json_str)
+    return dataclass_type(**data)
 
 @dataclass
 class ModelArgs:
@@ -225,14 +232,9 @@ class FeedForward(nn.Module):
         self.w3 = nn.Linear(dim, hidden_dim, bias=False)
 
     def forward(self, x):
-        # x = x.view(-1, 4096)
-        # print(f" line 227 w1 weight spec {self.w1.weight._spec}, self.w1.weight._local_tensor {self.w1.weight._local_tensor} ,  w3 weight spec {self.w3.weight._spec},  x size {x.size()}")
         a= self.w1(x)
-        # print(f"line 229 {a.size()}")
         b =F.silu(a)
-        # print(f"line 231 {b.size()}")
         c= self.w3(x)
-        # print(f"line 233 {c.size()}")
         return self.w2(b*c)
 
 
@@ -565,12 +567,9 @@ def converting_Dtensor_to_tensor(model_tp, dist_state_dict, mesh):
 class Llama:
     @staticmethod
     def build(
-        ckpt_dir: str,
+        model_args: str,
         converted_ckpt_dir:str,
         tokenizer_path: str,
-        max_seq_len: int,
-        max_batch_size: int,
-        model_parallel_size: int,
     ) -> "Llama":
         """
         Heavily motivated from https://github.com/facebookresearch/llama/blob/main/llama/generation.py#L51,
@@ -583,30 +582,28 @@ class Llama:
             raise RuntimeError("Expected local_rank to be set, but it is not!")
 
         torch.cuda.set_device(local_rank)
-        model_args = _build_model_args(ckpt_dir, max_seq_len, max_batch_size)
+        # model_args = _build_model_args(ckpt_dir, max_seq_len, max_batch_size)
+        # file_path = os.path.join(converted_ckpt_dir, 'model_args.json')
+
+        with open(model_args, 'r') as file:
+          loaded_json = file.read()
+
+        model_args = json_to_dataclass(loaded_json, ModelArgs)
+        
         tokenizer = _create_tokenizer(tokenizer_path=tokenizer_path)
         model_args.vocab_size = tokenizer.n_words
 
         model = _init_local_model(model_args)
-        # model.to(local_rank)
-        # cloned_meta_model = deepcopy(model)
-        # print_submodules(model)
         mesh = (
         DeviceMesh(
             device_type="cuda",
             mesh=list(range(dist.get_world_size())),
         ))
-        print(f" mesh {mesh}")
-        print("#############################")
         
         tp_llama(model, mesh)
         
-        # model_tp = model
         model.to_empty(device='cuda')
         model.reset_parameters()
-    
-        # FSDP.set_state_dict_type(model, StateDictType.SHARDED_STATE_DICT)
-        # dist.barrier()
         log.debug(f"Rank {dist.get_rank()}: created FSDP model {model}")
         # Convert state_dict from fairscale + load in to FSDP
         # _load_checkpoint(
@@ -617,7 +614,6 @@ class Llama:
         #     ckpt_dir=ckpt_dir,
         # )
          
-        # CHECKPOINT_DIR="converted_checkpoints"
         _load_tp_checkpoints(model,converted_ckpt_dir)
         param_numel = sum(p.numel() for p in model.parameters())
         log.debug(
@@ -648,32 +644,14 @@ class Llama:
         model_args = _build_model_args(original_ckpt_dir, max_seq_len, max_batch_size)
         tokenizer = _create_tokenizer(tokenizer_path=tokenizer_path)
         model_args.vocab_size = tokenizer.n_words
-
+        json_args = dataclass_to_json(model_args)
+        with open('model_args.json', 'w') as file:
+            file.write(json_args)
+            
         model = _init_local_model(model_args)
-        # model.to(local_rank)
-        # cloned_meta_model = deepcopy(model)
-        # print_submodules(model)
-        # mesh = (
-        # DeviceMesh(
-        #     device_type="cuda",
-        #     mesh=list(range(dist.get_world_size())),
-        # ))
-        # print(f" mesh {mesh}")
-        # print("#############################")
         
-        # tp_llama(model, mesh)
-        
-        # # model_tp = model
-        # model.to_empty(device='cuda')
-        # model.reset_parameters()
-    
-        # FSDP.set_state_dict_type(model, StateDictType.SHARDED_STATE_DICT)
-        # dist.barrier()
-        log.debug(f"Rank {dist.get_rank()}: created FSDP model {model}")
-     
         _convert_fairscale_checkpoints(model, model_parallel_size=model_parallel_size, original_ckpt_dir=original_ckpt_dir, save_checkpoint_dir=save_checkpoint_dir)
-        # CHECKPOINT_DIR="converted_checkpoints"
-        # _load_tp_checkpoints(model,CHECKPOINT_DIR)
+    
         log.debug(
             f"the  checkpoints have been converted to PTD compliant checkpoint and saved in {save_checkpoint_dir}"
         )

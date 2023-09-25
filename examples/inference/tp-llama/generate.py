@@ -136,23 +136,17 @@ def generate(model,
 
 
 def token_generation(
-    ckpt_dir: str,
+    model_args: str,
     converted_ckpt_dir: str,
     tokenizer_path: str,
-    model_parallel_size: int,
-    max_seq_len: int=512,
-    max_batch_size: int=4,
     ):
     dist.init_process_group("nccl")
     
       
     llama_model_and_tok = Llama.build(
-            ckpt_dir=ckpt_dir,
+            model_args=model_args,
             converted_ckpt_dir=converted_ckpt_dir,
             tokenizer_path= tokenizer_path,
-            max_seq_len=max_seq_len,
-            max_batch_size=max_batch_size,
-            model_parallel_size=model_parallel_size,
         )
     model = llama_model_and_tok.model
     

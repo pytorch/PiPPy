@@ -31,35 +31,20 @@ python download.py --model_name meta-llama/Llama-2-7b
 
 ```
 
-4- convert the checkpoints to  PT-D compliant checkpoints as follows, note that for 7B `model_parallel_size 1` for 13B would be `model_parallel_size 2` and 70B `model_parallel_size 8`.
+4- convert the checkpoints to  PT-D compliant checkpoints as follows, note that for 7B `model_parallel_size 1` for 13B would be `model_parallel_size 2` and 70B `model_parallel_size 8`, you can also set `--nproc_per_node ` accordingly. PT-D compliant support flexible world_size when loading back the checkpoints into TP(lized) model.
+
+This will save the model args in `model_args.json`, during the inference step you need to pass this json file for build the model.
 
 ```
-torchrun --nnodes 1 --nproc_per_node 8 convert_checkpoints.py --original_ckpt_dir  ./model/models--meta-llama--Llama-2-7b/snapshots/365ffa8f1a6c455d3e2028ae658236b4b85ba824/ --tokenizer_path ./model/models--meta-llama--Llama-2-7b/snapshots/365ffa8f1a6c455d3e2028ae658236b4b85ba824/tokenizer.model --model_parallel_size 1 --save_checkpoint_dir converted_checkpoints
-
-```
-
-
-
-5- Run the inference and generate tokens:
-
-```
-torchrun --nnodes 1 --nproc_per_node 8 generate.py  --ckpt_dir  ../model/models--meta-llama--Llama-2-7b/snapshots/365ffa8f1a6c455d3e2028ae658236b4b85ba824/ --tokenizer_path ../model/models--meta-llama--Llama-2-7b/snapshots/365ffa8f1a6c455d3e2028ae658236b4b85ba824/tokenizer.model --model_parallel_size 1 --converted_ckpt_dir converted_checkpoints
+torchrun --nnodes 1 --nproc_per_node 8 convert_checkpoints.py --original_ckpt_dir  ../model/models--meta-llama--Llama-2-7b/snapshots/365ffa8f1a6c455d3e2028ae658236b4b85ba824/ --tokenizer_path ../model/models--meta-llama--Llama-2-7b/snapshots/365ffa8f1a6c455d3e2028ae658236b4b85ba824/tokenizer.model --model_parallel_size 1 --save_checkpoint_dir converted_checkpoints
 
 ```
 
 
 
-The following will run try to
-
-a- first [build llama without any TP with meta device](https://github.com/pytorch/PiPPy/blob/2d_inference/examples/inference/tp_inference/llama2.py#L491) --> `meta_model` 
-
-b- use the `meta_model` to [convert Meta/FAIR weights to PT-D compliant checkpoints](https://github.com/pytorch/PiPPy/blob/2d_inference/examples/inference/tp_inference/llama2.py#L433)
-
-c- TP(lize) `meta_model` with [PT-D TP ](https://github.com/pytorch/PiPPy/blob/2d_inference/examples/inference/tp_inference/llama2.py#L499)
-
-4- [load the PT-D compliant checkpoints to TP(lized)](https://github.com/pytorch/PiPPy/blob/2d_inference/examples/inference/tp_inference/llama2.py#L437) `meta_model` 
+5- Run the inference and generate tokens with TP(lized) model:
 
 ```
-torchrun --nnodes 1 --nproc_per_node 8 convert_checkpoints.py --ckpt_dir  ../model/models--meta-llama--Llama-2-7b/snapshots/365ffa8f1a6c455d3e2028ae658236b4b85ba824/ --tokenizer_path ../model/models--meta-llama--Llama-2-7b/snapshots/365ffa8f1a6c455d3e2028ae658236b4b85ba824/tokenizer.model --model_parallel_size 1
+torchrun --nnodes 1 --nproc_per_node 8 generate.py  --model_args model_args.json  --tokenizer_path ../model/models--meta-llama--Llama-2-7b/snapshots/365ffa8f1a6c455d3e2028ae658236b4b85ba824/tokenizer.model --converted_ckpt_dir converted_checkpoints
 
 ```
