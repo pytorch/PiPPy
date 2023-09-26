@@ -336,10 +336,10 @@ class Transformer(nn.Module):
 
     def forward(self, tokens: torch.Tensor, start_pos: int):
         _bsz, seqlen = tokens.shape
-        print(
-            f"RV: before embedding lookup, input {tokens}, start:{start_pos}",
-            flush=True,
-        )
+        # print(
+        #     f"RV: before embedding lookup, input {tokens}, start:{start_pos}",
+        #     flush=True,
+        # )
         h = self.tok_embeddings(tokens)
         self.freqs_cis = self.freqs_cis.to(h.device)
         freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
