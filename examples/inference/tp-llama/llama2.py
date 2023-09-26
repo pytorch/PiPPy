@@ -124,9 +124,10 @@ class Attention(nn.Module):
         max_seq_len: int,
     ):
         super().__init__()
+        tp_degree = 8
         self.n_kv_heads = n_heads if n_kv_heads is None else n_kv_heads
-        self.n_local_heads = n_heads
-        self.n_local_kv_heads = self.n_kv_heads
+        self.n_local_heads = n_heads//tp_degree
+        self.n_local_kv_heads = self.n_kv_heads//tp_degree
         self.n_rep = self.n_local_heads // self.n_local_kv_heads
         self.head_dim = dim // n_heads
 
@@ -178,6 +179,7 @@ class Attention(nn.Module):
         freqs_cis: torch.Tensor,
         mask: Optional[torch.Tensor],
     ):
+       
         bsz, seqlen, _ = x.shape
         xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
 
@@ -362,7 +364,7 @@ class Transformer(nn.Module):
                for param_name, param in submodule.named_parameters(recurse=False):
                     if param.is_meta:
                         materialized_param = nn.Parameter(
-                            torch.empty_like(param, device=torch.device("cuda"))
+                            torch.empty_like(param, dtype=torch.bfloat16, device=torch.device("cuda"))
                         )
                         nn.init.uniform_after(materialized_param)
                         setattr(submodule, param_name, materialized_param)
@@ -534,7 +536,7 @@ def tp_llama(model, mesh):
     for i in range(model.n_layers):
         # print(f" i number of layers {i}*********************")
         block = parallelize_llama_MLP_block(model, f"layers.{i}.feed_forward", mesh)
-        # block = parallelize_llama_attn_block(model, f"layers.{i}.attention", mesh)
+        block = parallelize_llama_attn_block(model, f"layers.{i}.attention", mesh)
         
 def print_submodules(model):
         for name, module in model.named_modules():
