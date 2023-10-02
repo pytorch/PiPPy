@@ -124,10 +124,10 @@ class Attention(nn.Module):
         max_seq_len: int,
     ):
         super().__init__()
-        tp_degree = int(os.environ["WORLD_SIZE"])
+        self.tp_degree = int(os.environ["WORLD_SIZE"])
         self.n_kv_heads = n_heads if n_kv_heads is None else n_kv_heads
-        self.n_local_heads = n_heads//tp_degree
-        self.n_local_kv_heads = self.n_kv_heads//tp_degree
+        self.n_local_heads = n_heads//self.tp_degree
+        self.n_local_kv_heads = self.n_kv_heads//self.tp_degree
         self.n_rep = self.n_local_heads // self.n_local_kv_heads
         self.head_dim = dim // n_heads
 
@@ -191,9 +191,7 @@ class Attention(nn.Module):
 
         self.cache_k = self.cache_k.to(xq)
         self.cache_v = self.cache_v.to(xq)
-        device = self.cache_v.device
-        print(f"the KV cache device{device}")
-        print("##################################################")
+        
         self.cache_k[:bsz, start_pos : start_pos + seqlen] = xk
         self.cache_v[:bsz, start_pos : start_pos + seqlen] = xv
 
@@ -204,15 +202,18 @@ class Attention(nn.Module):
         keys = repeat_kv(keys, self.n_rep)  # (bs, seqlen, n_local_heads, head_dim)
         values = repeat_kv(values, self.n_rep)  # (bs, seqlen, n_local_heads, head_dim)
 
-        xq = xq.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
-        keys = keys.transpose(1, 2)
-        values = values.transpose(1, 2)
-        scores = torch.matmul(xq, keys.transpose(2, 3)) / math.sqrt(self.head_dim)
-        if mask is not None:
-            scores = scores + mask  # (bs, n_local_heads, seqlen, cache_len + seqlen)
-        scores = F.softmax(scores.float(), dim=-1).type_as(xq)
-        output = torch.matmul(scores, values)  # (bs, n_local_heads, seqlen, head_dim)
+        # xq = xq.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
+        # keys = keys.transpose(1, 2)
+        # values = values.transpose(1, 2)
+        # scores = torch.matmul(xq, keys.transpose(2, 3)) / math.sqrt(self.head_dim)
+        # if mask is not None:
+        #     scores = scores + mask  # (bs, n_local_heads, seqlen, cache_len + seqlen)
+        # scores = F.softmax(scores.float(), dim=-1).type_as(xq)
+        # output = torch.matmul(scores, values)  # (bs, n_local_heads, seqlen, head_dim)
+        output = torch.nn.functional.scaled_dot_product_attention(xq, xk, xv, attn_mask=None, is_causal=True)
+        # breakpoint()
         output = output.transpose(1, 2).contiguous().view(bsz, seqlen, -1)
+        
         return self.wo(output)
 
 
