@@ -124,7 +124,7 @@ class Attention(nn.Module):
         max_seq_len: int,
     ):
         super().__init__()
-        tp_degree = 8
+        tp_degree = int(os.environ["WORLD_SIZE"])
         self.n_kv_heads = n_heads if n_kv_heads is None else n_kv_heads
         self.n_local_heads = n_heads//tp_degree
         self.n_local_kv_heads = self.n_kv_heads//tp_degree
@@ -160,7 +160,7 @@ class Attention(nn.Module):
                 self.n_local_kv_heads,
                 self.head_dim,
             )
-        )
+        )#.cuda()
 
     def _init_cache_v(self):
         self.cache_v = torch.zeros(
@@ -170,7 +170,7 @@ class Attention(nn.Module):
                 self.n_local_kv_heads,
                 self.head_dim,
             )
-        )
+        )#.cuda()
 
     def forward(
         self,
@@ -191,7 +191,9 @@ class Attention(nn.Module):
 
         self.cache_k = self.cache_k.to(xq)
         self.cache_v = self.cache_v.to(xq)
-
+        device = self.cache_v.device
+        print(f"the KV cache device{device}")
+        print("##################################################")
         self.cache_k[:bsz, start_pos : start_pos + seqlen] = xk
         self.cache_v[:bsz, start_pos : start_pos + seqlen] = xv
 
