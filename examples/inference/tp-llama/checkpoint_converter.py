@@ -1,5 +1,4 @@
 import logging
-from dataclasses import dataclass
 from typing import Dict, List, Union
 
 import torch
@@ -11,25 +10,6 @@ from torch.distributed.fsdp._fsdp_extensions import (
     _ext_chunk_dtensor,
     _ext_chunk_tensor,
 )
-
-
-@dataclass
-class FairScaleFSDPManagedParam:
-    """
-    Information about an original parameter managed by (fairscale) FSDP.
-    Attributes:
-        flat_param_key: FQN of the flat_param in FSDP this original param belongs to. This is the key in the fairscale state_dict.
-        fqn: full original param FQN, with no FSDP prefixing, starting from root module.
-        full_shape: full, unsharded parameter shape
-        local_numels: numels value from the fairscale state_dict, unused for now
-        data_tensor: Union[ShardedTensor, DTensor] - data tensor sharded in the PT-D style
-    """
-
-    flat_param_key: str  # this is the key in the fairscale state_dict
-    fqn: str  # full FQN starting from root module, with no FSDP prefixing
-    full_shape: torch.Size  # full, unsharded shape (original parameter shape)
-    local_numels: int  # numels value from the fairscale state_dict
-    data_tensor: torch.Tensor  # actual data tensor
 
 
 # pyre-fixme[3]: Return type must be annotated.
@@ -80,8 +60,6 @@ def _unshard_param(
     This is done via vstack and column_stack respectively.
     """
     mp_size = dist.get_world_size(model_parallel_group)
-    # print(f"mp sizeeeeeeeeee {mp_size}")
-    # print("-------------------------------")
     ref_shape = ref_state_dict[fqn].shape
     assert (
         ref_shape[0] == tp_sharded_shape[0] or ref_shape[1] == tp_sharded_shape[1]
@@ -129,10 +107,10 @@ def build_distributed_state_dict_from_consolidated(
     checkpoint.
 
     Args:
-        model (torch.nn.Module): module with no parallelism applied (i.e. result of `build_model` with parallel_impl=ParallelImpl.NONE)
-        fs_state_dict (Dict[str, Any]): Fairscale consolidated
+        model (torch.nn.Module): nn.Module with no parallelism applied (this can be a meta-device module to save memory)
+        consolidated_state_dict (Dict[str, Any]): Consolidated checkpoint to convert
         offload_to_cpu (bool): Whether to offload the resulting state_dict to CPU (default: False)
-        use_dtensor (bool): Whether to use PyTorch Distributed Tensor instead of ShardedTensor (default: False)
+        use_dtensor (bool): Whether to use PyTorch DistributedTensor instead of ShardedTensor (default: False)
             (this will eventually default to True)
         model_parallel_world_size: Model parallel world size that was used to create the consolidated checkpoint.
             This can be obtained by checking the number of consolidated0x.pth files in the checkpoint directory.
@@ -213,12 +191,6 @@ def build_distributed_state_dict_from_consolidated(
                 num_devices_per_node=torch.cuda.device_count(),  # TODO: this is not accurate if user set CUDA_VISIBLE_DEVICES
                 pg=dist.distributed_c10d._get_default_group(),  # TODO: this should be the FSDP process group
             )
-        # try:
-        #     if isinstance(tensor, DTensor):
-        #         print(f"{fqn} is DTensor")
-        # except:
-        #     print(f"{fqn} is not DTensor")
-        dist_state_dict[fqn] = tensor
     # assert isinstance(tensor, DTensor), f"The tensor at fqn '{fqn}' is not a DTensor."
     dtypes = {v.dtype for v in dist_state_dict.values()}
     logging.warning(f"Made dist_state_dict with dtypes {dtypes}")
