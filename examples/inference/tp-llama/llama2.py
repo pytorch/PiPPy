@@ -210,7 +210,8 @@ class Attention(nn.Module):
         #     scores = scores + mask  # (bs, n_local_heads, seqlen, cache_len + seqlen)
         # scores = F.softmax(scores.float(), dim=-1).type_as(xq)
         # output = torch.matmul(scores, values)  # (bs, n_local_heads, seqlen, head_dim)
-        output = torch.nn.functional.scaled_dot_product_attention(xq, xk, xv, attn_mask=None, is_causal=True)
+        output = torch.nn.functional.scaled_dot_product_attention(xq.transpose(1,2), keys.transpose(1,2), values.transpose(1,2), attn_mask=mask, dropout_p=0.0, is_causal=False)
+
         # breakpoint()
         output = output.transpose(1, 2).contiguous().view(bsz, seqlen, -1)
         
