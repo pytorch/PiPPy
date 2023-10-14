@@ -5,6 +5,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from typing import List, Literal, Optional, Tuple, TypedDict
 import abc 
 import fire
+from torch._dynamo.utils import CompileProfiler
 
 
 Role = Literal["system", "user", "assistant"]
