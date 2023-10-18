@@ -61,7 +61,7 @@ def sample_top_p(probs, p):
     next_token = torch.gather(probs_idx, -1, next_token)
     return next_token
   
-@torch.inference_mode()
+# @torch.inference_mode()
 def generate(model,
     tokenizer,
     prompt_tokens: List[List[int]],
