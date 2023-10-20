@@ -358,8 +358,8 @@ def token_generation(
     #plan to pass the model to convert checkpoints 
     
     prompt =[tokenizer.encode("how does it feel to be the first test case", bos=True,eos=False)]
-    
-    generation_tokens, generation_logprobs = generate(model,
+    compiled_model = torch.compile(model)
+    generation_tokens, generation_logprobs = generate(compiled_model,
                                                         tokenizer,
                                                         prompt_tokens=prompt,
                                                         max_gen_len= 100,
