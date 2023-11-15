@@ -6,8 +6,13 @@ import unittest
 import torch
 import torch.distributed as dist
 
+import pippy
 from pippy.compile import compile_stage
 from pippy.IR import pipe_split
+
+
+# For stable numerical testing
+pippy.microbatch._debug_mask_minibatches = True
 
 
 d_hid = 512
