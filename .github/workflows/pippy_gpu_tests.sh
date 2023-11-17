@@ -20,7 +20,7 @@ apt-get install git -y
 # Turn off progress bar to save logs
 pip3 config set global.progress_bar off
 pip3 install flake8 pytest pytest-cov numpy
-if [ -f requirements.txt ]; then pip3 install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cu102/torch_nightly.html; fi
+if [ -f requirements.txt ]; then pip3 install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cu118/torch_nightly.html; fi
 
 # Install pippy
 python3 setup.py install

@@ -45,7 +45,7 @@ def write_version_file():
 requirements = [
     # If the torch version has a ".dev" suffix, it would represent a nightly version of PyTorch.
     # It can be installed as a binary or from source.
-    "torch>=1.13.0",
+    "torch>=2.2.0.dev",
 ]
 
 extras: Dict = {}
