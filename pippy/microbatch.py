@@ -4,10 +4,15 @@ import warnings
 from typing import Any
 
 import torch
-
 from torch.utils._pytree import tree_flatten, tree_unflatten
 
-from pippy.IR import TrivialLossWrapper
+
+"""
+_debug_mask_minibatches specifies to send masked versions of the mini-batch
+through instead of micro-batch slices--this can be used for more stable
+numerical testing (see [A Note About Correctness Testing])
+"""
+_debug_mask_minibatches = False
 
 
 class CustomReducer:
@@ -48,7 +53,6 @@ def shard_dict_of_args(
     args_dict,
     args_chunk_spec,
     num_chunks,
-    _debug_mask_minibatches: bool = False,
 ):
     # Stage 1+2: flatten and shard/replicate
 
@@ -173,7 +177,6 @@ def split_args_kwargs_into_chunks(
     chunks,
     args_chunk_spec=None,
     kwargs_chunk_spec=None,
-    _debug_mask_minibatches: bool = False,
 ):
     # Given `args` and `kwargs`, we want to yield a set of `chunks` args and kwargs such that
     # the constituent Tensor values have been sharded/replicated according to the `args_chunk_spec`
@@ -221,12 +224,13 @@ def split_args_kwargs_into_chunks(
         dict(enumerate(args)),
         dict(enumerate(args_chunk_spec)),
         chunks,
-        _debug_mask_minibatches,
     )
     real_num_chunks = len(args_split_dict)
 
     kwargs_split = shard_dict_of_args(
-        kwargs, kwargs_chunk_spec, real_num_chunks, _debug_mask_minibatches
+        kwargs,
+        kwargs_chunk_spec,
+        real_num_chunks,
     )
 
     if len(kwargs_split) < real_num_chunks:
@@ -238,7 +242,6 @@ def split_args_kwargs_into_chunks(
             dict(enumerate(args)),
             dict(enumerate(args_chunk_spec)),
             real_num_chunks,
-            _debug_mask_minibatches,
         )
 
     if len(args_split_dict) != len(kwargs_split):
@@ -254,7 +257,7 @@ def split_args_kwargs_into_chunks(
     return args_split, kwargs_split
 
 
-def merge_chunks(chunks, chunk_spec, _debug_mask_minibatches: bool = False):
+def merge_chunks(chunks, chunk_spec):
     # Given a list of chunks and a chunk specification, merge the chunks
     # into a single value according to that chunk spec. This is essentially
     # the inverse of `split_args_kwargs_into_chunks`, so the steps are
@@ -374,6 +377,8 @@ def merge_chunks(chunks, chunk_spec, _debug_mask_minibatches: bool = False):
     return tree_unflatten(args_flattened, flatten_spec)
 
 
+# TODO: determine if we still need this helper
+"""
 def gen_output_chunk_spec(loss_spec, loss_reducer):
     output_chunk_spec: Any = None
     if loss_spec is None:
@@ -395,3 +400,4 @@ def gen_output_chunk_spec(loss_spec, loss_reducer):
         f"{output_chunk_spec}"
     )
     return output_chunk_spec
+"""

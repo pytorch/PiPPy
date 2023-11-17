@@ -3,23 +3,28 @@ import copy
 import logging
 import operator
 import os
-import threading
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
-
-import torch
-import torch.fx as torch_fx
 from packaging import version
 
-import pippy.fx
+import torch
+import torch.fx as fx
+from torch.export import Constraint
+from torch.fx.interpreter import Interpreter
+from torch.fx.passes.split_module import split_module
+
 from pippy.backward import (
     _null_coalesce_accumulate,
     stage_backward,
-    sync_barrier,
 )
-from pippy.fx.passes import shape_prop
-from pippy.fx.passes.split_module import split_module
-from pippy.LoadModule import load_checkpoint
+from pippy.microbatch import (
+    LossReducer,
+    split_args_kwargs_into_chunks,
+)
+from pippy.debug import PIPPY_VERBOSITY
+
+
+logger = logging.getLogger(__name__)
 
 # Because split_module with 4 arguments is available only in PT 1.12+
 TORCH_FX_REQUIRED_VERSION = version.parse("1.12")
@@ -43,7 +48,7 @@ def _find_loss_from_output_and_spec(output_val, spec_val):
     if spec_val is False:
         return None
     if spec_val is True:
-        if not isinstance(output_val, pippy.fx.Node):
+        if not isinstance(output_val, fx.Node):
             raise RuntimeError(
                 f"Loss spec must specify a dynamic value but got {output_val}"
             )
@@ -95,7 +100,7 @@ def _find_loss_from_output_and_spec(output_val, spec_val):
 
 
 def _find_loss_output(
-    mod: torch.nn.Module, g: pippy.fx.Graph, output_loss_value_spec
+    mod: torch.nn.Module, g: fx.Graph, output_loss_value_spec
 ):
     output_nodes = [n for n in g.nodes if n.op == "output"]
     assert len(output_nodes) == 1
@@ -127,13 +132,12 @@ def _find_loss_output(
 
 
 def _insert_stage_symbolic_backward(
-    g: pippy.fx.Graph,
-    loss_node: pippy.fx.Node,
-    output_node: pippy.fx.Node,
-    return_to_0: bool,
+    g: fx.Graph,
+    loss_node: fx.Node,
+    output_node: fx.Node,
 ):
     # Collect metadata about tuple output values. TODO: move this to split_module or FX IR
-    tuples: Dict[pippy.fx.Node, Tuple] = {}
+    tuples: Dict[fx.Node, Tuple] = {}
     for node in reversed(g.nodes):
         if node.op == "call_function":
             # In the forward pass, only emit placeholder, module calls, and
@@ -172,9 +176,7 @@ def _insert_stage_symbolic_backward(
     # We will only emit backward operations for nodes that can contribute
     # to the specified loss value.
     live_nodes = {loss_node: None}
-    val_to_grad: Dict[pippy.fx.Node, Optional[pippy.fx.Node]] = {
-        loss_node: None
-    }
+    val_to_grad: Dict[fx.Node, Optional[fx.Node]] = {loss_node: None}
 
     def assign_or_accumulate_grad(forward_node, grad_value):
         if forward_node in val_to_grad and forward_node.op != "placeholder":
@@ -185,8 +187,8 @@ def _insert_stage_symbolic_backward(
         val_to_grad[forward_node] = grad_value
 
     with g.inserting_before(output_node):
+        # TODO: remove barrier_tokens
         barrier_tokens = []
-        last_grads = None
 
         for node in reversed(g.nodes):
             if node not in live_nodes:
@@ -195,11 +197,11 @@ def _insert_stage_symbolic_backward(
             def add_to_live_nodes(n):
                 live_nodes.setdefault(n, None)
 
-            pippy.fx.node.map_arg(node.args, add_to_live_nodes)
-            pippy.fx.node.map_arg(node.kwargs, add_to_live_nodes)
+            fx.node.map_arg(node.args, add_to_live_nodes)
+            fx.node.map_arg(node.kwargs, add_to_live_nodes)
             if node.op == "call_module":
                 output_grads: Union[
-                    Tuple[Optional[pippy.fx.Node], ...], Optional[pippy.fx.Node]
+                    Tuple[Optional[fx.Node], ...], Optional[fx.Node]
                 ]
                 if node in tuples:
                     stage_output = tuples[node]
@@ -236,30 +238,17 @@ def _insert_stage_symbolic_backward(
                 ] = f"{grad_call} for stage {node.format_node()}"
                 grad_call.kwargs = kwargs_copy
 
-                grad_call_proxy = pippy.fx.Proxy(grad_call)
+                grad_call_proxy = fx.Proxy(grad_call)
                 grads, barrier_token = (
                     grad_call_proxy[0].node,
                     grad_call_proxy[1].node,
                 )
                 barrier_tokens.append(barrier_token)
-                last_grads = grads
 
                 input_nodes = list(node.all_input_nodes)
-                grads_proxy = pippy.fx.Proxy(grads)
+                grads_proxy = fx.Proxy(grads)
                 for i, input_node in enumerate(input_nodes):
                     assign_or_accumulate_grad(input_node, grads_proxy[i].node)
-
-        # Insert barrier call - reconnect the original pipeline output (output_node.args[0])
-        # to go through the `sync_barrier` call, then make the pipeline output the output
-        # of the sync_barrier call. When the driver gets the pipeline output, it is
-        # guaranteed that all backwards jobs for that micro-batch have been executed.
-        # When all micro-batch pipeline outputs are ready, gradients have been fully
-        # computed and synchronized and the optimizer step can be applied.
-        if return_to_0:
-            barrier_call = g.call_function(
-                sync_barrier, (output_node.args[0], barrier_tokens, last_grads)
-            )
-            output_node.args = (barrier_call,)
 
     return g
 
@@ -363,7 +352,7 @@ MultiUseParamSpec = Union[
 ]
 
 
-class DetachExecutor(pippy.fx.Interpreter):
+class DetachExecutor(fx.Interpreter):
     """
     Special interpreter to run the split_gm in testing that detaches all inputs to
     a module invocation. This is needed so that the values at the boundary are
@@ -389,14 +378,18 @@ class DetachExecutor(pippy.fx.Interpreter):
             else:
                 return a
 
+        """
         def dont_traverse_size(a):
             return type(a) != torch.Size
+        """
 
-        args = pippy.fx.node.map_aggregate(
-            args, detach_tensors, dont_traverse_size
+        args = fx.node.map_aggregate(
+            args,
+            detach_tensors,  # dont_traverse_size
         )
-        kwargs = pippy.fx.node.map_aggregate(
-            kwargs, detach_tensors, dont_traverse_size
+        kwargs = fx.node.map_aggregate(
+            kwargs,
+            detach_tensors,  # dont_traverse_size
         )
 
         return super().call_module(target, args, kwargs)
@@ -422,13 +415,13 @@ class _LinearNodeList:
     def __init__(self, node_list):
         self.serialize_node_list = []
         for node in node_list:
-            node_args = pippy.fx.node.map_arg(
+            node_args = fx.node.map_arg(
                 node.args, lambda n: _NodeReference(n.name)
             )
-            node_kwargs = pippy.fx.node.map_arg(
+            node_kwargs = fx.node.map_arg(
                 node.kwargs, lambda n: _NodeReference(n.name)
             )
-            serialize_node = pippy.fx.Node(
+            serialize_node = fx.Node(
                 graph=None,
                 name=node.name,
                 op=node.op,
@@ -441,9 +434,9 @@ class _LinearNodeList:
             self.serialize_node_list.append(serialize_node)
 
     def to_graph(self):
-        graph = pippy.fx.Graph()
+        graph = fx.Graph()
 
-        ref_str_to_node: Dict[str, pippy.fx.Node] = {}
+        ref_str_to_node: Dict[str, fx.Node] = {}
 
         def ref_to_node(arg):
             if isinstance(arg, _NodeReference):
@@ -452,8 +445,8 @@ class _LinearNodeList:
                 return arg
 
         for node in self.serialize_node_list:
-            node_args = pippy.fx.node.map_aggregate(node.args, ref_to_node)
-            node_kwargs = pippy.fx.node.map_aggregate(node.kwargs, ref_to_node)
+            node_args = fx.node.map_aggregate(node.args, ref_to_node)
+            node_kwargs = fx.node.map_aggregate(node.kwargs, ref_to_node)
             deser_node = graph.create_node(
                 op=node.op,
                 target=node.target,
@@ -486,7 +479,7 @@ def _direct_serialization_deserialize(body, nodes):
 
     dummy = DummyModule(body)
 
-    return pippy.fx.GraphModule(dummy, nodes.to_graph())
+    return fx.GraphModule(dummy, nodes.to_graph())
 
 
 def _direct_serialization_reduce(self):
@@ -538,7 +531,7 @@ class QualnameMapMixin:
 class Pipe(QualnameMapMixin, torch.nn.Module):
     def __init__(
         self,
-        split_gm: pippy.fx.GraphModule,
+        split_gm: fx.GraphModule,
         qualname_mapping: Dict[str, str],
         num_stages: int,
         has_loss_and_backward: bool,
@@ -547,12 +540,11 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         # TODO: is there a way not to hard wire init?
         QualnameMapMixin.__init__(self, qualname_mapping)
         torch.nn.Module.__init__(self)
-        self.split_gm: pippy.fx.GraphModule = split_gm
+        self.split_gm: fx.GraphModule = split_gm
         self.executor: DetachExecutor = DetachExecutor(self.split_gm)
         self.num_stages: int = num_stages
         self.has_loss_and_backwards = has_loss_and_backward
         self.loss_spec = loss_spec
-        self.last_grads = None
 
         for node in split_gm.graph.nodes:
             assert (
@@ -562,7 +554,6 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
                 or (node.op, node.target) == ("call_function", stage_backward)
                 or (node.op, node.target)
                 == ("call_function", _null_coalesce_accumulate)
-                or (node.op, node.target) == ("call_function", sync_barrier)
             ), node
 
         # Detect replicated parameters so we know that we have to do an additional allreduce
@@ -669,13 +660,10 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
 
         res = self.executor.run(*executor_args)
 
-        if self.has_loss_and_backwards:
-            res, self.last_grads = res
-
         return res
 
     @staticmethod
-    def _number_and_count_forward_stages(gm: pippy.fx.GraphModule):
+    def _number_and_count_forward_stages(gm: fx.GraphModule):
         num_stages = 0
         found_idxs: Dict[int, None] = {}
         for node in gm.graph.nodes:
@@ -692,10 +680,9 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
     @staticmethod
     def _from_traced(
         mod: torch.nn.Module,
-        traced: pippy.fx.GraphModule,
+        traced: fx.GraphModule,
         multi_use_param_spec: Optional[MultiUseParamSpec] = None,
         output_loss_value_spec=None,
-        return_to_0: bool = True,
     ):
         """
         Additionally, the ``output_loss_value_spec`` value can be specified to disambiguate
@@ -709,7 +696,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         # Deduplicate `get_attr` nodes that refer to the same parameter . Downstream code for moving
         # parameters relies on the invariant that parameter accesses happen once. This is not necessarily
         # the case (especially with custom tracers), so fix that up here.
-        get_attr_nodes: Dict[str, pippy.fx.Node] = {}
+        get_attr_nodes: Dict[str, fx.Node] = {}
         for node in traced.graph.nodes:
             if node.op == "get_attr":
                 get_attr_nodes.setdefault(node.target, node)
@@ -734,9 +721,10 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
 
         part_idx = 0
 
-        def split_callback(n: pippy.fx.Node):
+        def split_callback(n: fx.Node):
             nonlocal part_idx
             if (n.op, n.target) == ("call_function", pipe_split):
+                logger.debug(f"Found pipe_split {part_idx}")
                 part_idx += 1
             return part_idx
 
@@ -750,7 +738,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
 
         # peephole to remove pipe_split
         for submodule in split.modules():
-            if isinstance(submodule, pippy.fx.GraphModule):
+            if isinstance(submodule, fx.GraphModule):
                 for node in submodule.graph.nodes:
                     if (node.op, node.target) == ("call_function", pipe_split):
                         submodule.graph.erase_node(node)
@@ -777,7 +765,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
                 f"Expected '{node.target}' to be {torch.Tensor} but got {type(param_val)}."
                 + (
                     f" It might happen if module '{node.target}' was passed to some 'leaf function'"
-                    f"(see https://pytorch.org/docs/stable/fx.html#pippy.fx.wrap). Please inspect "
+                    f"(see https://pytorch.org/docs/stable/fx.html#fx.wrap). Please inspect "
                     f"usages of '{node.target}' in the traced graph."
                     if isinstance(param_val, torch.nn.Module)
                     else ""
@@ -871,7 +859,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
                 )
 
         # TODO: do we maintain the invariant that `Node.users` is topologically ordered? I don't think so
-        node_to_first_user: Dict[pippy.fx.Node, pippy.fx.Node] = {}
+        node_to_first_user: Dict[fx.Node, fx.Node] = {}
         for node in split.graph.nodes:
             for input in node.all_input_nodes:
                 if input not in node_to_first_user:
@@ -1001,22 +989,21 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
                     split.graph,
                     loss_node,
                     output_node,
-                    return_to_0,
                 )
                 split.recompile()
                 has_loss_and_backward = True
-                logging.info(
+                logger.info(
                     "Pipeline is in training mode, backward pass generated"
                 )
             else:
-                logging.warning(
+                logger.info(
                     "Did not find any loss value from model output, your pipeline will be in inference mode. "
                     "If you want your pipeline to be in training mode, please specify a loss value via "
                     "`output_loss_value_spec`."
                 )
         else:
-            logging.info(
-                "Pipeline is in evaluation mode, backward pass not generated"
+            logger.info(
+                "Pipeline is in inference mode, backward pass not generated"
             )
 
         return Pipe(
@@ -1028,129 +1015,108 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         )
 
     @staticmethod
+    def _trace_with_export(
+        mod: torch.nn.Module,
+        example_args: Tuple[Any, ...],
+        example_kwargs: Optional[Dict[str, Any]] = None,
+        constraints: Optional[List[Constraint]] = None,
+        split_policy: Optional[
+            Callable[[torch.fx.GraphModule], torch.fx.GraphModule]
+        ] = None,
+    ) -> torch.fx.GraphModule:
+        logger.info("[PiPPy] Tracing model ...")
+        try:
+            torch._dynamo.allow_in_graph(pipe_split)
+            traced: torch.fx.GraphModule = torch._export._export_to_torch_ir(
+                mod,
+                example_args,
+                example_kwargs,
+                constraints,
+            )
+            if split_policy is not None:
+                traced = split_policy(traced)
+        finally:
+            torch._dynamo.disallow_in_graph(pipe_split)
+        return traced
+
+    @staticmethod
     def from_tracing(
         mod: torch.nn.Module,
-        multi_use_param_spec: Optional[MultiUseParamSpec] = None,
-        tracer=None,
-        output_loss_value_spec=None,
-        deep_copy_module=False,
+        num_chunks: int,
+        example_args: Tuple[Any, ...],
+        example_kwargs: Optional[Dict[str, Any]] = None,
         split_policy: Optional[
-            Callable[[pippy.fx.GraphModule], pippy.fx.GraphModule]
+            Callable[[fx.GraphModule], fx.GraphModule]
         ] = None,
-        return_to_0: bool = True,
-        **kwargs,
+        args_chunk_spec: Optional[Tuple[Any, ...]] = None,
+        kwargs_chunk_spec: Optional[Dict[str, Any]] = None,
+        output_chunk_spec=None,
+        constraints: Optional[List[Constraint]] = None,
     ):
-        # TODO: abstract partitioning policy
+        # If a param will be used in multiple pipeline stages, we default the strategy to REPLICATE'ing the param across
+        # stages instead of TRANSMIT'ting it
+        multi_use_param_spec = MultiUseParameterConfig.REPLICATE
 
-        global _pipeline_tracer
-        old__pipeline_tracer = _pipeline_tracer
-        _pipeline_tracer = tracer or pippy.fx.Tracer()
-        try:
-            # TODO: tracing policy
-            if deep_copy_module:
-                mod = copy.deepcopy(
-                    mod
-                )  # because further pipe building activities can modify mod
-            graph = _pipeline_tracer.trace(mod, **kwargs)
-            if isinstance(graph, torch_fx.Graph):
-                # HACK to convert torch.fx.Graph to pippy.fx.Graph
-                g_new = pippy.fx.Graph()
-                val_map: Dict[pippy.fx.Node, pippy.fx.Node] = {}
-                out = g_new.graph_copy(graph, val_map, False)
-                g_new.output(out)
+        # Figure out which output is loss from output_chunk_spec
+        output_loss_value_spec: Any = None
+        if output_chunk_spec is not None:
+            output_loss_value_spec = fx.node.map_aggregate(
+                output_chunk_spec, lambda v: isinstance(v, LossReducer)
+            )
 
-                # `pippy.fx.map_arg` doesn't work on torch.fx.Node instances;
-                # do it here
-                def remap_vals(n):
-                    return val_map[n]
+        # Get split example inputs
+        if example_kwargs is None:
+            # Needed by `split_args_kwargs_into_chunks`
+            example_kwargs = {}
 
-                for node in g_new.nodes:
-                    node.args = torch_fx.map_arg(node.args, remap_vals)
-                    node.kwargs = torch_fx.map_arg(node.kwargs, remap_vals)
-                graph = g_new
+        args_split, kwargs_split = split_args_kwargs_into_chunks(
+            example_args,
+            example_kwargs,
+            num_chunks,
+            args_chunk_spec,
+            kwargs_chunk_spec,  # TODO: merge into args_chunk_spec
+        )
 
-            traced = pippy.fx.GraphModule(mod, graph)
-        finally:
-            _pipeline_tracer = old__pipeline_tracer
+        # Trace with export
+        traced = Pipe._trace_with_export(
+            mod,
+            example_args=args_split[0],
+            example_kwargs=kwargs_split[0],
+            constraints=constraints,
+            split_policy=split_policy,
+        )
 
-        if split_policy is not None:
-            traced = split_policy(traced)
-
-        return Pipe._from_traced(
+        pipe = Pipe._from_traced(
             mod,
             traced,
             multi_use_param_spec,
             output_loss_value_spec=output_loss_value_spec,
-            return_to_0=return_to_0,
         )
+
+        logger.info(pipe.split_gm)
+        if PIPPY_VERBOSITY == "DEBUG":
+            pipe.split_gm.graph.print_tabular()
+
+        pipe.num_chunks = num_chunks
+        pipe.args_chunk_spec = args_chunk_spec
+        pipe.kwargs_chunk_spec = kwargs_chunk_spec
+        pipe.output_chunk_spec = output_chunk_spec
+
+        # Shape propagation to get shapes of all tensors
+        PipeFakeTensorProp(pipe.split_gm).run()
+        for node in pipe.split_gm.graph.nodes:
+            logger.debug(
+                f"{node.name}, "
+                f"{node.meta['example_value'] if 'example_value' in node.meta else 'None'}",
+            )
+
+        return pipe
 
     def __str__(self):
         return self.split_gm.__str__()
 
     def __repr__(self):
         return self.split_gm.__repr__()
-
-    # Conditoinal variable to ensure `defer_stage_init` is called before other callers call `materialize_stage`
-    # TODO: cleaner approach
-    _stage_init_lock = threading.Lock()
-    stage_init_cv = threading.Condition(_stage_init_lock)
-
-    def defer_stage_init(
-        self,
-        device: torch.device,
-        index_filename: Union[str, os.PathLike] = None,
-        dtype: torch.dtype = None,
-        checkpoint_prefix: str = None,
-    ):
-        def materialize_stage(target: str) -> torch.nn.Module:
-            logging.info(f"Materializing {target} on {device}")
-            submodule = self.split_gm.get_submodule(target)
-            if index_filename is not None:
-                submodule = load_checkpoint(
-                    model=submodule,
-                    index_filename=index_filename,
-                    device=device,
-                    dtype=dtype,
-                    checkpoint_prefix=checkpoint_prefix,
-                )
-            try:
-                submodule.to(device)
-            except Exception:
-                # Usually `to(device)` fails because there is still some meta
-                # tensor in submodule, potentially because the checkpoint load
-                # did not cover that parameter. And the reason is often that
-                # that parameter shares weight with another parameter.
-                for name, param in submodule.named_parameters():
-                    if param.device == torch.device("meta"):
-                        logging.warning(f"{name} is a meta tensor")
-                # Re-throw the original exception
-                raise
-            return submodule
-
-        with Pipe.stage_init_cv:
-            setattr(Pipe, "materialize_stage", materialize_stage)
-            Pipe.stage_init_cv.notify()
-
-    @staticmethod
-    def is_stage_init_deferred():
-        return hasattr(Pipe, "materialize_stage")
-
-    def export(self, stage_id: int) -> torch.nn.Module:
-        split_gm_children = list(self.split_gm.children())
-        submod = split_gm_children[stage_id]
-
-        # HACK: reusing defer init path in PipelineDriver
-        def exported_stage(target: str) -> torch.nn.Module:
-            logging.info(f"Retrieving exported {target}")
-            assert self.split_gm.get_submodule(target) is submod
-            return submod
-
-        with Pipe.stage_init_cv:
-            if not hasattr(Pipe, "materialize_stage"):
-                setattr(Pipe, "materialize_stage", exported_stage)
-                Pipe.stage_init_cv.notify()
-
-        return submod
 
 
 class PipeSplitWrapper(torch.nn.Module):
@@ -1198,18 +1164,30 @@ def annotate_split_points(
         setattr(predecessor_module, atoms[-1], wrapped_mod)
 
 
-class PiPPyShapeProp(shape_prop.ShapeProp):
+class PipeFakeTensorProp(Interpreter):
     def __init__(
-        self, module: pippy.fx.GraphModule, garbage_collect_values: bool = True
+        self, module: fx.GraphModule, garbage_collect_values: bool = True
     ):
         super().__init__(module, garbage_collect_values)
         self.stop_prop = False
 
-    def run_node(self, n: pippy.fx.Node) -> Any:
-        if (n.op, n.target) == ("call_function", stage_backward):
+    def run(self):
+        inp = tuple(
+            node.meta["val"]
+            for node in self.module.graph.nodes
+            if node.op == "placeholder"
+        )
+        super().run(*inp)
+
+    def run_node(self, node):
+        # Do not propagate through the stage backward call because it won't work
+        if (node.op, node.target) == ("call_function", stage_backward):
             self.stop_prop = True
 
         if self.stop_prop:
             return None
 
-        return super().run_node(n)
+        res = super().run_node(node)
+        node.meta["example_value"] = res
+        node.meta["val"] = res
+        return res

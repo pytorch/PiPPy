@@ -6,12 +6,15 @@ import unittest
 import torch
 import torch.distributed as dist
 
-from pippy.compile import compile_stage
-from pippy.IR import pipe_split
+import pippy
+from pippy.IR import pipe_split, Pipe
+from pippy.PipelineStage import PipelineStage
 
+
+pippy.microbatch._debug_mask_minibatches = True
 
 d_hid = 512
-chunk_size = 256
+batch_size = 256
 
 torch.manual_seed(0)
 
@@ -42,25 +45,27 @@ class ExampleCode(torch.nn.Module):
 
 
 def run_worker(args):
-    ec = ExampleCode()
-    ec.to(args.device)
+    mod = ExampleCode()
+    mod.to(args.device)
 
-    ec_x = torch.randn(args.chunks * chunk_size, d_hid, device=args.device)
-    ec_y = torch.randn(args.chunks * chunk_size, d_hid, device=args.device)
+    x = torch.randn(batch_size, d_hid, device=args.device)
+    y = torch.randn(batch_size, d_hid, device=args.device)
 
-    stage = compile_stage(
-        ec,
-        args.rank,
-        args.world_size,
+    pipe = Pipe.from_tracing(
+        mod,
         args.chunks,
-        args.device,
-        None,
-        [ec_x, ec_y],
+        example_args=(x, y),
+    )
+
+    stage = PipelineStage(
+        pipe,
+        args.rank,
+        device=args.device,
     )
 
     # Run
     if args.rank == 0:
-        out = stage(ec_x, ec_y)
+        stage(x, y)
     elif args.rank == args.world_size - 1:
         out = stage()
     else:
@@ -71,7 +76,7 @@ def run_worker(args):
 
     # Last rank checks result
     if args.rank == args.world_size - 1:
-        ref_out = ec(ec_x, ec_y)
+        ref_out = mod(x, y)
         torch.testing.assert_close(out, ref_out)
         print(
             f"equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}"
@@ -121,8 +126,8 @@ if __name__ == "__main__":
     main()
 
 
-class LocalTestC10DTest(unittest.TestCase):
-    def test_c10d(self):
+class TestFwd(unittest.TestCase):
+    def test_fwd(self):
         import random
 
         port = random.randint(29500, 30000)
