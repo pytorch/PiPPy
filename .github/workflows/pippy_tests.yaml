@@ -74,7 +74,7 @@ jobs:
     runs-on: linux.4xlarge
     strategy:
       matrix:
-        python-version: ["3.8", "3.9"]
+        python-version: ["3.9"]
         schedule: ["FillDrain", "1F1B"]
     env:
       OMP_NUM_THREADS: "1"
