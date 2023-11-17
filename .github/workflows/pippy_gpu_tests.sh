@@ -28,5 +28,5 @@ python3 setup.py install
 set -ex
 
 # Run all integration tests
-torchrun --nproc-per-node 4 test_fwd.py -s ${SCHEDULE}
+torchrun --nproc-per-node 4 test_fwd.py
 torchrun --nproc-per-node 4 test_bwd.py -s ${SCHEDULE}

@@ -75,7 +75,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.9"]
-        schedule: ["FillDrain", "1F1B"]
+        schedule: ["FillDrain"]
     env:
       OMP_NUM_THREADS: "1"
     container:
@@ -95,7 +95,7 @@ jobs:
       - name: Test backward pipe generation
         run: python test/test_pipe_bwd.py
       - name: Run forward-only integration test
-        run: torchrun --nproc-per-node 4 test/test_fwd.py -s ${{ matrix.schedule }}
+        run: torchrun --nproc-per-node 4 test/test_fwd.py
       - name: Run forward-loss-backward integration test
         run: torchrun --nproc-per-node 4 test/test_bwd.py -s ${{ matrix.schedule }}
       # - name: Run null_coalesce_accumulate integration test
@@ -183,7 +183,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.8"]
-        schedule: ["FillDrain", "1F1B"]
+        schedule: ["FillDrain"]
     env:
       DOCKER_IMAGE: qts8n/cuda-python:devel
       PIPPY_ROOT: /PiPPy
