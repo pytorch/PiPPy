@@ -1,11 +1,11 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import logging
-import warnings
-from typing import Any
 
 import torch
 from torch.utils._pytree import tree_flatten, tree_unflatten
 
+
+logger = logging.getLogger(__name__)
 
 """
 _debug_mask_minibatches specifies to send masked versions of the mini-batch
@@ -99,7 +99,7 @@ def shard_dict_of_args(
                     if first_tensor:
                         # We can only adjust number of chunks when we hit this
                         # issue at the first tensor encountered
-                        warnings.warn(
+                        logger.warning(
                             f"Tensor size on chunking dimension is {v_split_dim_size}, "
                             f"downsizing the number of chunks from {num_chunks} to {v_split_dim_size}."
                         )
@@ -395,7 +395,7 @@ def gen_output_chunk_spec(loss_spec, loss_reducer):
     else:
         raise ValueError(f"Cannot generate output chunk spec for {loss_spec}")
 
-    logging.info(
+    logger.info(
         f"Generated output_chunk_spec for loss_spec {loss_spec}: "
         f"{output_chunk_spec}"
     )

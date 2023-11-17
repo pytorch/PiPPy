@@ -3,11 +3,11 @@ import argparse
 import os
 import unittest
 
+import pippy
+
 import torch
 import torch.distributed as dist
-
-import pippy
-from pippy.IR import pipe_split, Pipe
+from pippy.IR import Pipe, pipe_split
 from pippy.PipelineStage import PipelineStage
 
 

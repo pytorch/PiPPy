@@ -6,10 +6,9 @@ from typing import Any, Dict, List, Optional, Tuple
 import torch
 import torch.distributed as dist
 import torch.fx as fx
-from torch.nn.parallel import DistributedDataParallel
 from torch._subclasses.fake_tensor import FakeTensor
+from torch.nn.parallel import DistributedDataParallel
 
-import pippy
 from pippy.backward import stage_backward
 from pippy.debug import map_debug_info
 from pippy.IR import Pipe

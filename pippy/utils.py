@@ -1,9 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-import logging
-import os
-import socket
-from typing import List
-
+import torch
+import torch.distributed as dist
 from torch import fx
 
 

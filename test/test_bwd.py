@@ -3,13 +3,13 @@ import argparse
 import os
 import unittest
 
+import pippy
+
 import torch
 import torch.distributed as dist
-
-import pippy
-from pippy.IR import pipe_split, Pipe
+from pippy.IR import Pipe, pipe_split
+from pippy.microbatch import sum_reducer, TensorChunkSpec
 from pippy.PipelineStage import PipelineStage
-from pippy.microbatch import TensorChunkSpec, sum_reducer
 
 
 pippy.microbatch._debug_mask_minibatches = True

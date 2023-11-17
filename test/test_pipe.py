@@ -1,11 +1,10 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import argparse
-import os
 import unittest
 
 import torch
 
-from pippy.IR import pipe_split, Pipe
+from pippy.IR import Pipe, pipe_split
 
 
 d_hid = 512

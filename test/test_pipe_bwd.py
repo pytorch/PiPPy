@@ -1,12 +1,11 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import argparse
-import os
 import unittest
 
 import torch
+from pippy.IR import Pipe, pipe_split
 
-from pippy.microbatch import TensorChunkSpec, sum_reducer
-from pippy.IR import pipe_split, Pipe
+from pippy.microbatch import sum_reducer, TensorChunkSpec
 
 
 d_hid = 512

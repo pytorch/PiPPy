@@ -2,26 +2,19 @@
 import copy
 import logging
 import operator
-import os
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
-from packaging import version
 
 import torch
 import torch.fx as fx
+from packaging import version
 from torch.export import Constraint
 from torch.fx.interpreter import Interpreter
 from torch.fx.passes.split_module import split_module
 
-from pippy.backward import (
-    _null_coalesce_accumulate,
-    stage_backward,
-)
-from pippy.microbatch import (
-    LossReducer,
-    split_args_kwargs_into_chunks,
-)
+from pippy.backward import _null_coalesce_accumulate, stage_backward
 from pippy.debug import PIPPY_VERBOSITY
+from pippy.microbatch import LossReducer, split_args_kwargs_into_chunks
 
 
 logger = logging.getLogger(__name__)
