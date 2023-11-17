@@ -178,59 +178,6 @@ jobs:
   #     - name: "HF Text classification: fine-tune BERT on the GLUE benchmark"
   #       run: python examples/hf/text-classification/run_glue.py --dp_group_size=2 --pp_group_size=8 --model_name_or_path bert-base-cased --task_name mrpc --do_train --do_eval --max_seq_length 128 --per_device_train_batch_size 32 --learning_rate 2e-5 --num_train_epochs 3 --output_dir /tmp/mrpc/ --max_steps=3 --overwrite_output_dir
 
-  integration_test_gpu:
-    runs-on: linux.16xlarge.nvidia.gpu
-    strategy:
-      matrix:
-        python-version: ["3.8"]
-        schedule: ["FillDrain"]
-    env:
-      DOCKER_IMAGE: qts8n/cuda-python:devel
-      PIPPY_ROOT: /PiPPy
-      OMP_NUM_THREADS: "1"
-      SCHEDULE: ${{ matrix.schedule }}
-
-    steps:
-      - name: Clean working directory
-        shell: bash
-        run: |
-          sudo rm -rf /home/ec2-user/actions-runner/_work/PiPPy/PiPPy/* || true
-      - uses: actions/checkout@v2
-      - name: Install nvidia driver, nvidia-docker runtime, set GPU_FLAG
-        uses: pytorch/test-infra/.github/actions/setup-nvidia@main
-      - name: Pull Docker image
-        run: |
-          retry () {
-              "$@"  || (sleep 1 && "$@") || (sleep 2 && "$@")
-          }
-          retry docker pull "${DOCKER_IMAGE}"
-      - name: Test docker run
-        run: |
-          set -x
-          # shellcheck disable=SC2086,SC2090
-          container_name=$(docker run \
-            --gpus all \
-            --shm-size=1g --ulimit memlock=-1 \
-            -e OMP_NUM_THREADS \
-            -e SCHEDULE \
-            --tty \
-            --detach \
-            -v "$(pwd):${PIPPY_ROOT}" \
-            -w "${PIPPY_ROOT}" \
-            "${DOCKER_IMAGE}"
-          )
-          # Run GPU tests and return error signal from docker
-          docker exec -t -w "${PIPPY_ROOT}" "${container_name}" bash -c "bash .github/workflows/pippy_gpu_tests.sh; exit \$?"
-      - name: Chown workspace
-        if: always()
-        run: |
-          # Ensure the working directory gets chowned back to the current user
-          docker run --rm -v "$(pwd):${PIPPY_ROOT}" -w "${PIPPY_ROOT}" "${DOCKER_IMAGE}" chown -R "$(id -u):$(id -g)" .
-      - name: Kill containers, clean up images
-        if: always()
-        run: |
-          # ignore expansion of "docker ps -q" since it could be empty
-          # shellcheck disable=SC2046
-          docker stop $(docker ps -q) || true
-          # Prune all of the docker images
-          docker system prune -af
+  # TODO:
+  # Update GPU test to use template in:
+  # https://github.com/pytorch/test-infra/wiki/Writing-generic-CI-jobs
