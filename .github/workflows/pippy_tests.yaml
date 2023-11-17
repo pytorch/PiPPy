@@ -97,17 +97,17 @@ jobs:
       - name: Run forward-only integration test
         run: torchrun --nproc-per-node 4 test/test_fwd.py
       - name: Run forward-loss-backward integration test
-        run: torchrun --nproc-per-node 4 test/test_bwd.py -s ${{ matrix.schedule }}
+        run: torchrun --nproc-per-node 4 test/test_bwd.py --schedule ${{ matrix.schedule }}
       # - name: Run null_coalesce_accumulate integration test
-      #   run: python test/local_test_null_coalesce_accumulate.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+      #   run: python test/local_test_null_coalesce_accumulate.py --replicate ${{ matrix.replicate }} --schedule ${{ matrix.schedule }}
       # - name: Run PP + DDP test
-      #   run: python test/local_test_ddp.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
+      #   run: python test/local_test_ddp.py --replicate ${{ matrix.replicate }} --schedule ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
       #- name: Run HF BERT forward-only integration test
-      #  run: python test/local_test_forward_hf_bert.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
+      #  run: python test/local_test_forward_hf_bert.py --replicate ${{ matrix.replicate }} --schedule ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
       # - name: Run HF GPT2 forward-only integration test
-      #   run: python test/local_test_forward_hf_gpt2.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
+      #   run: python test/local_test_forward_hf_gpt2.py --replicate ${{ matrix.replicate }} --schedule ${{ matrix.schedule }} --checkpoint ${{ matrix.checkpoint }}
       # - name: Run auto-split test
-      #   run: python test/local_test_autosplit.py --replicate ${{ matrix.replicate }} -s ${{ matrix.schedule }}
+      #   run: python test/local_test_autosplit.py --replicate ${{ matrix.replicate }} --schedule ${{ matrix.schedule }}
 
   # hf_examples_set1:
   #   runs-on: linux.12xlarge
@@ -137,11 +137,11 @@ jobs:
   #         git submodule update --init test/minGPT
   #         python test/min_gpt_tracing.py
   #     - name: Run GPT2 example
-  #       run: python examples/hf/gpt2/pippy_gpt2.py -s ${{ matrix.schedule }}
+  #       run: python examples/hf/gpt2/pippy_gpt2.py --schedule ${{ matrix.schedule }}
   #     - name: Run BERT example
-  #       run: python examples/hf/bert/pippy_bert.py -s ${{ matrix.schedule }}
+  #       run: python examples/hf/bert/pippy_bert.py --schedule ${{ matrix.schedule }}
   #     - name: Run T5 example
-  #       run: python examples/hf/t5/pippy_t5.py -s ${{ matrix.schedule }}
+  #       run: python examples/hf/t5/pippy_t5.py --schedule ${{ matrix.schedule }}
   #     - name: "HF Translation: fine-tune T5 model translation English to Romanian"
   #       run: >
   #         python examples/hf/translation/run_translation.py --model_name_or_path t5-small --do_train --source_lang en --target_lang ro --source_prefix "translate English to Romanian: " --dataset_name wmt16 --dataset_config_name ro-en --output_dir /tmp/tst-translation --per_device_train_batch_size=8 --per_device_eval_batch_size=8 --overwrite_output_dir --predict_with_generate --max_steps=10  --dp_group_size=1 --pp_group_size=8
