@@ -13,6 +13,9 @@ import torch.distributed as dist
 from pippy.IR import Pipe
 from pippy.utils import _get_binary_filename
 
+
+logger = logging.getLogger(__name__)
+
 CKPT_INDEX_JSON_FILENAME = "pytorch_model.bin.index.json"
 
 DTYPE_SIZES = {
@@ -105,7 +108,7 @@ def _save_index(
     # write index file atomically to avoid partial/corrupted writes
     _atomic_write(json_str, filepath)
 
-    logging.info(f"Saved index file to {filepath}")
+    logger.info(f"Saved index file to {filepath}")
 
 
 def _save_params(submod: torch.nn.Module, checkpoint_dir: str) -> None:

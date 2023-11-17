@@ -305,7 +305,7 @@ def inject_pipeline_forward(
     model: torch.nn.Module,
     pipe_driver: PipelineDriverBase,
 ):
-    logging.info(
+    logger.info(
         f"Inserting PiPPy pipeline forward into model {model._get_name()}"
     )
     # Inject pipeline driver as a member object of original model
