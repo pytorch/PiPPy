@@ -3,7 +3,6 @@
 # Minimum effort to run this example:
 # $ torchrun --nproc-per-node 4 pippy_gpt2.py
 
-
 import argparse
 import os
 
@@ -15,11 +14,7 @@ from pippy.PipelineStage import PipelineStage
 
 from transformers import GPT2ForSequenceClassification, GPT2Config
 
-from gen_inputs import generate_inputs_for_model
-
-
-def get_number_of_params(model):
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+from hf_utils import generate_inputs_for_model, get_number_of_params
 
 
 def add_split_points(gpt2, nranks):
@@ -33,16 +28,6 @@ def add_split_points(gpt2, nranks):
         )
         nstages += 1
     assert nstages == nranks, f"nstages = {nstages} nranks = {nranks}"
-
-
-def calc_flop(args, conf):
-    # https://arxiv.org/pdf/2104.04473.pdf page 8, formula 3
-    B = args.batch_size
-    s = args.seq_length
-    l = conf.n_layer
-    h = conf.n_embd
-    V = conf.vocab_size
-    return 96 * B * s * l * h * h * (1 + s/6/h + V/16/l/h)
 
 
 def run(args):

@@ -234,3 +234,17 @@ def rand_int_tensor(device, low, high, shape):
         dtype=torch.int64,
         requires_grad=False,
     )
+
+
+def get_number_of_params(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
+def calc_flop(args, conf):
+    # https://arxiv.org/pdf/2104.04473.pdf page 8, formula 3
+    B = args.batch_size
+    s = args.seq_length
+    l = conf.n_layer
+    h = conf.n_embd
+    V = conf.vocab_size
+    return 96 * B * s * l * h * h * (1 + s/6/h + V/16/l/h)
