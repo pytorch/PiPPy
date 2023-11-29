@@ -151,7 +151,9 @@ class PipelineStage(nn.Module):
         )
 
         # we store a ref to the input/output pair for this forward to be later used by the corresponding backward
-        self.fwd_outputs_for_backward.append((self.fwd_input, output_for_backward))
+        self.fwd_outputs_for_backward.append(
+            (self.fwd_input, output_for_backward)
+        )
 
         return self.fwd_output
 
@@ -233,7 +235,9 @@ class PipelineScheduleGPipe:
                 if ops:
                     dist.batch_isend_irecv(ops).pop().wait()
 
-                self._stage.forward(mb, is_first_mb=i == 0, is_last_mb=is_last_mb)
+                self._stage.forward(
+                    mb, is_first_mb=i == 0, is_last_mb=is_last_mb
+                )
 
                 ops = self._stage.get_fwd_send_ops()
                 if ops:
@@ -480,7 +484,9 @@ class PipelineScheduleLoopedDFS:
                     )
                     backward_batched_op_handles.pop().wait()
 
-                with record_function(f"Stage {backward_stage.stage_id} Backward"):
+                with record_function(
+                    f"Stage {backward_stage.stage_id} Backward"
+                ):
                     logger.info(
                         f"pp_id {self.pp_id} step {step}/{self.total_steps} backward_step {backward_step} backward_stage_id {backward_stage.stage_id} mb_id {mb_id_bwd}"
                     )
@@ -520,14 +526,18 @@ def main(**kwargs):
     world_size = kwargs["world_size"]
 
     setup(local_rank, world_size)
-    logger.info(f"====== World Rank {rank}, Local Rank {local_rank}, World Size {world_size} main ======")
+    logger.info(
+        f"====== World Rank {rank}, Local Rank {local_rank}, World Size {world_size} main ======"
+    )
 
     input_dim = 4000
     hidden_dim = 8000
     output_dim = 4000
 
     module_list = torch.nn.ModuleList(
-        modules=[MLP(input_dim, hidden_dim, output_dim) for i in range(world_size)]
+        modules=[
+            MLP(input_dim, hidden_dim, output_dim) for i in range(world_size)
+        ]
     )
     microbatch_size = 8
     global_batch_size = 64
@@ -554,7 +564,9 @@ def main(**kwargs):
         for i in range(world_size)
     ]
     x_cuda_empty = torch.empty_like(x, device="cuda")
-    microbatches = [torch.randn_like(x_cuda_empty) for _ in range(n_microbatches)]
+    microbatches = [
+        torch.randn_like(x_cuda_empty) for _ in range(n_microbatches)
+    ]
 
     for schedule in kwargs["schedules"]:
         logger.info(f"====== Rank {rank} running schedule {schedule} ======")
@@ -564,22 +576,25 @@ def main(**kwargs):
             pipeline = PipelineScheduleLoopedBFS(stage_model_looped)
         elif schedule == "looped_dfs":
             pipeline = PipelineScheduleLoopedDFS(
-                stage_model_looped, n_microbatch=n_microbatches, pp_id=rank, n_pp=n_pp
+                stage_model_looped,
+                n_microbatch=n_microbatches,
+                pp_id=rank,
+                n_pp=n_pp,
             )
 
         logger.info(f"====== Rank {rank} profile ======")
 
-        #with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
+        # with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
         #    with record_function(schedule):
         pipeline.step(microbatches)
 
         # TODO - default should be no profiling.
-        '''if not kwargs["no_trace"]:
+        """if not kwargs["no_trace"]:
             trace_dir = kwargs["trace_dir"]
             if not os.path.exists(trace_dir):
                 os.mkdir(trace_dir)
             prof.export_chrome_trace(f"{trace_dir}/{schedule}_rank{rank}_trace.json")
-        '''
+        """
         logger.info(f"====== Rank {rank} finished {schedule} ======")
 
 
@@ -630,7 +645,12 @@ if __name__ == "__main__":
     kwargs = vars(args)
     print(kwargs)
 
-    if rank is None or local_rank is None or world_size is None or master_addr is None:
+    if (
+        rank is None
+        or local_rank is None
+        or world_size is None
+        or master_addr is None
+    ):
         # single host code path
         master_port = "23456"
         master_addr = "localhost"
