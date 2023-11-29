@@ -3,19 +3,19 @@
 """
 SINGLE HOST:
 
-python pipeline_parallelism_example.py
+python PipelineSchedule.py
 
 or
 
 with torchrun (1x2, 1 host with 2 processes):
-torchrun --rdzv-backend=c10d --rdzv-endpoint=localhost:29500 --nnodes=1 --nproc-per-node=2 pipeline_parallelism_example.py
+torchrun --rdzv-backend=c10d --rdzv-endpoint=localhost:29500 --nnodes=1 --nproc-per-node=2 PipelineSchedule.py
 
 MULTIPLE HOSTS:
 
-torchrun --rdzv-backend=c10d --rdzv-endpoint=$HOST_NODE_ADDR --nnodes=$NUM_NODES --nproc-per-node=$NUM_TRAINERS pipeline_parallelism_example.py
+torchrun --rdzv-backend=c10d --rdzv-endpoint=$HOST_NODE_ADDR --nnodes=$NUM_NODES --nproc-per-node=$NUM_TRAINERS PipelineSchedule.py
 
 e.g. (2x2, 2 hosts with 2 processes)
-torchrun --rdzv-backend=c10d --rdzv-endpoint=node1.example.com:29400 --nnodes=2 --nproc-per-node=2 pipeline_parallelism_example.py
+torchrun --rdzv-backend=c10d --rdzv-endpoint=node1.example.com:29400 --nnodes=2 --nproc-per-node=2 PipelineSchedule.py
 """
 import argparse
 import logging
@@ -213,14 +213,9 @@ def setup(local_rank, world_size):
 
     # initialize the process group
     logger.info(f"init for rank {local_rank}")
-    #torch.cuda.set_device(rank)
-    # dist.init_process_group(
-    #     "nccl", rank=rank, world_size=world_size, timeout=timedelta(seconds=10)
-    # )
     dist.init_process_group("nccl")
     if torch.distributed.is_initialized():
         torch.cuda.set_device(local_rank)
-        #dist.barrier()
 
     logger.info(f"finish init for rank {local_rank}")
 
@@ -519,26 +514,13 @@ class PipelineScheduleLoopedDFS:
 
 def main(**kwargs):
     torch.manual_seed(42)
-    #rank = kwargs["rank"]
-    #world_size = kwargs["world_size"]
+    print(f"MY KWARGS ARE {kwargs}")
+    rank = kwargs["rank"]
+    local_rank = kwargs["local_rank"]
+    world_size = kwargs["world_size"]
 
-    _rank = int(os.environ["RANK"])
-    _world_size = int(os.environ["WORLD_SIZE"])
-    _local_rank = int(os.environ["LOCAL_RANK"])
-    _local_world_size = int(os.environ["LOCAL_WORLD_SIZE"])
-
-    # reroute variables to account for multi-node:
-    rank = _rank
-    world_size = _world_size
-
-
-    #logger.info(f" comparing world size: {world_size=}, {_world_size=}")
-    #logger.info(f" comparing ranks: {rank=} and {_local_rank=}")
-
-
-    setup(_local_rank, _world_size)
-    logger.info(f"====== World Rank {rank} and Local Rank {_local_rank} main ======")
-
+    setup(local_rank, world_size)
+    logger.info(f"====== World Rank {rank}, Local Rank {local_rank}, World Size {world_size} main ======")
 
     input_dim = 4000
     hidden_dim = 8000
@@ -601,8 +583,15 @@ def main(**kwargs):
         logger.info(f"====== Rank {rank} finished {schedule} ======")
 
 
-def main_wrapper(kwargs):
-    main( **kwargs)
+def main_wrapper(rank, local_rank, world_size, kwargs):
+    rank = int(rank)
+    world_size = int(world_size)
+    if local_rank is None:
+        local_rank = rank
+    local_rank = int(local_rank)
+
+    os.environ["RANK"] = str(rank)
+    main(rank=rank, local_rank=local_rank, world_size=world_size, **kwargs)
 
 
 def set_up_logging(rank, log_level=logging.INFO):
@@ -622,6 +611,7 @@ def set_up_logging(rank, log_level=logging.INFO):
 
 if __name__ == "__main__":
     rank = os.environ.get("RANK", None)
+    local_rank = os.environ.get("LOCAL_RANK", None)
     world_size = os.environ.get("WORLD_SIZE", None)
     master_addr = os.environ.get("MASTER_ADDR", None)
     master_port = os.environ.get("MASTER_PORT", None)
@@ -640,7 +630,7 @@ if __name__ == "__main__":
     kwargs = vars(args)
     print(kwargs)
 
-    if rank is None or world_size is None or master_addr is None:
+    if rank is None or local_rank is None or world_size is None or master_addr is None:
         # single host code path
         master_port = "23456"
         master_addr = "localhost"
@@ -648,12 +638,14 @@ if __name__ == "__main__":
         os.environ["MASTER_PORT"] = master_port
         n_gpus = 4
         world_size = n_gpus
+        os.environ["WORLD_SIZE"] = str(world_size)
         print(
             f"Torchrun was not used. Spawning {world_size} processes on {master_addr}:{master_port}"
         )
         mp.spawn(
             main_wrapper,
             args=(
+                None,
                 world_size,
                 kwargs,
             ),
@@ -661,6 +653,4 @@ if __name__ == "__main__":
         )
     else:
         # multihost code path (ran with torchrun)
-        #rank = int(rank)
-        #world_size = int(world_size)
-        main_wrapper(kwargs)
+        main_wrapper(rank, local_rank, world_size, kwargs)
