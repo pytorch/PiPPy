@@ -1,5 +1,0 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates
-# type: ignore[attr-defined]
-from .core import unify, reify  # noqa: F403
-from .more import unifiable  # noqa: F403
-from .variable import var, isvar, vars, variables, Var  # noqa: F403

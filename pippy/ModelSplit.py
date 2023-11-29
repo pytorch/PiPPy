@@ -3,8 +3,8 @@ import logging
 from typing import Callable, Dict, List, Tuple
 
 import torch
+import torch.fx as fx
 
-import pippy.fx
 from pippy.IR import pipe_split
 
 """
@@ -16,13 +16,13 @@ size of that parameter
 
 
 def _analyze_node_size(
-    gm: pippy.fx.GraphModule,
-) -> Dict[pippy.fx.Node, Dict[str, int]]:
+    gm: fx.GraphModule,
+) -> Dict[fx.Node, Dict[str, int]]:
     # state_dict helps us to get parameter sizes
     state_dict = gm.state_dict()
 
     # Function Parameter Usage
-    node_param_sizes: Dict[pippy.fx.Node, Dict[str, int]] = {}
+    node_param_sizes: Dict[fx.Node, Dict[str, int]] = {}
     for node in gm.graph.nodes:
         if node.op == "get_attr":  # a parameter node
             param_name = node.target
@@ -53,7 +53,7 @@ def _analyze_node_size(
 """
 Split a model based on a maximum number of parameter and buffer elements a pipeline stage can have
 Input:
-  gm: `pippy.fx.GraphModule` to split
+  gm: `fx.GraphModule` to split
   threshold: maximum number of parameter and buffer elements a stage can have
   max_stages: maximum number of stages; default = -1, no limit
 Output:
@@ -64,15 +64,15 @@ Output:
 
 
 def _split_on_size_threshold_with_max_stages(
-    gm: pippy.fx.GraphModule,
+    gm: fx.GraphModule,
     threshold: int,
     max_stages: int = -1,
-) -> Tuple[pippy.fx.GraphModule, int]:
+) -> Tuple[fx.GraphModule, int]:
     # Analyze size of parameters/buffers used by each node in the graph
     node_param_sizes = _analyze_node_size(gm)
 
     # Record split positions
-    insert_before_nodes: List[pippy.fx.Node] = []
+    insert_before_nodes: List[fx.Node] = []
 
     def new_stage_before(node):
         insert_before_nodes.append(node)
@@ -150,10 +150,10 @@ Output:
 
 def split_on_size_threshold(
     threshold: int,
-) -> Callable[[pippy.fx.GraphModule], pippy.fx.GraphModule]:
+) -> Callable[[fx.GraphModule], fx.GraphModule]:
     def _split_on_size_threshold(
-        gm: pippy.fx.GraphModule,
-    ) -> pippy.fx.GraphModule:
+        gm: fx.GraphModule,
+    ) -> fx.GraphModule:
         gm, _ = _split_on_size_threshold_with_max_stages(gm, threshold)
         return gm
 
@@ -172,10 +172,10 @@ Output:
 
 def split_into_equal_size(
     nstages: int = 1,
-) -> Callable[[pippy.fx.GraphModule], pippy.fx.GraphModule]:
+) -> Callable[[fx.GraphModule], fx.GraphModule]:
     def _split_into_nstages_equal_size(
-        gm: pippy.fx.GraphModule,
-    ) -> pippy.fx.GraphModule:
+        gm: fx.GraphModule,
+    ) -> fx.GraphModule:
         param_size = 0
         for param in gm.parameters():
             param_size += param.numel()

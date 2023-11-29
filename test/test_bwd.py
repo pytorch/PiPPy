@@ -3,30 +3,40 @@ import argparse
 import os
 import unittest
 
+import pippy
+
 import torch
 import torch.distributed as dist
+from pippy.IR import Pipe, pipe_split
+from pippy.microbatch import sum_reducer, TensorChunkSpec
+from pippy.PipelineStage import PipelineStage
 
-from pippy.compile import compile_stage
-from pippy.IR import pipe_split
 
+pippy.microbatch._debug_mask_minibatches = True
+
+schedules = [
+    "FillDrain",
+    "1F1B",
+]
 
 d_hid = 512
-chunk_size = 256
+batch_size = 256
 
 torch.manual_seed(0)
 
 
+# Basic example
 class ExampleCode(torch.nn.Module):
     def __init__(self):
         super().__init__()
         self.mm_param = torch.nn.Parameter(torch.randn(d_hid, d_hid))
         self.mm_param2 = torch.nn.Parameter(torch.randn(d_hid, d_hid))
         self.lin = torch.nn.Linear(d_hid, d_hid)
+        self.mse_loss = torch.nn.MSELoss(reduction="sum")
 
     def forward(self, x, y):
         x = torch.mm(x, self.mm_param)
         skip_connection = x
-        x = x + y
         x = torch.relu(x)
         pipe_split()
         x = torch.mm(x, self.mm_param)
@@ -37,32 +47,41 @@ class ExampleCode(torch.nn.Module):
         x = torch.mm(x, self.mm_param2)
         pipe_split()
         x = self.lin(x)
-        x = torch.relu(x)
-        return x
+        logits = torch.relu(x)
+        loss = self.mse_loss(x, y)
+        return logits, loss
 
 
 def run_worker(args):
-    ec = ExampleCode()
-    ec.to(args.device)
+    mod = ExampleCode()
+    mod.to(args.device)
 
-    ec_x = torch.randn(args.chunks * chunk_size, d_hid, device=args.device)
-    ec_y = torch.randn(args.chunks * chunk_size, d_hid, device=args.device)
+    x = torch.randn(batch_size, d_hid, device=args.device)
+    y = torch.randn(batch_size, d_hid, device=args.device)
 
-    stage = compile_stage(
-        ec,
-        args.rank,
-        args.world_size,
+    output_chunk_spec = (
+        TensorChunkSpec(0),  # logits
+        sum_reducer,  # loss
+    )
+
+    pipe = Pipe.from_tracing(
+        mod,
         args.chunks,
-        args.device,
-        None,
-        [ec_x, ec_y],
+        example_args=(x, y),
+        output_chunk_spec=output_chunk_spec,
+    )
+
+    stage = PipelineStage(
+        pipe,
+        args.rank,
+        device=args.device,
     )
 
     # Run
     if args.rank == 0:
-        out = stage(ec_x, ec_y)
+        out = stage(x)
     elif args.rank == args.world_size - 1:
-        out = stage()
+        out = stage(y)
     else:
         stage()
 
@@ -71,11 +90,9 @@ def run_worker(args):
 
     # Last rank checks result
     if args.rank == args.world_size - 1:
-        ref_out = ec(ec_x, ec_y)
+        ref_out = mod(x, y)
         torch.testing.assert_close(out, ref_out)
-        print(
-            f"equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}"
-        )
+        print(f"equivalence test passed loss={out[1]} ref_loss={ref_out[1]}")
 
 
 def main(args=None):
@@ -97,6 +114,12 @@ def main(args=None):
         "--chunks",
         type=int,
         default=4,
+    )
+    parser.add_argument(
+        "--schedule",
+        type=str,
+        default="FillDrain",
+        choices=schedules,
     )
     args = parser.parse_args(args)
 
@@ -121,8 +144,8 @@ if __name__ == "__main__":
     main()
 
 
-class LocalTestC10DTest(unittest.TestCase):
-    def test_c10d(self):
+class TestBwd(unittest.TestCase):
+    def test_bwd(self):
         import random
 
         port = random.randint(29500, 30000)

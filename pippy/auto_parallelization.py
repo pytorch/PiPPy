@@ -18,7 +18,7 @@ from typing import List, Tuple
 
 import numpy as np
 
-import pippy.fx
+from torch import fx
 
 from pippy import pipe_split
 
@@ -272,7 +272,7 @@ class AutoParallelConfig:
 
 
 def dp_auto_parallel(config: AutoParallelConfig):
-    def _dp_auto_parallel(fx_mod: pippy.fx.GraphModule):
+    def _dp_auto_parallel(fx_mod: fx.GraphModule):
         n_graph_nodes = len(fx_mod.graph.nodes)
         submesh_shapes = get_possible_submesh_shapes(
             n_compute_nodes=config.n_compute_nodes,

@@ -66,8 +66,10 @@ def run_gspmd(pp_ranks, args):
     finish = time.time()
     print(f"GPT-2 model instantiation finished in {(finish - start) / 60:1.2f} minutes")
     gpt2.eval()
-    print(gpt2.config)
-    print(f"GPT-2 total number of params = {get_number_of_params(gpt2) // 10 ** 6}M")
+    if args.rank == 0:
+        print(gpt2.config)
+        print(f"GPT-2 total number of params = {get_number_of_params(gpt2) // 10 ** 6}M")
+        print(gpt2)
 
     emb_head = 2  # embeddings + head
     master_emb_head = 1 + emb_head  # master + embeddings + head
@@ -97,7 +99,8 @@ def run_gspmd(pp_ranks, args):
     sm_cnt = add_split_points(gpt2, decoders_per_rank)
     assert sm_cnt == len(all_worker_ranks), f"sm_cnt = {sm_cnt} all_worker_ranks = {all_worker_ranks}"
 
-    # print(gpt2)
+    if args.rank == 0:
+        print(gpt2)
 
     input_names = gpt2_input_dict.keys()
     sig = inspect.signature(gpt2.forward)
@@ -108,6 +111,9 @@ def run_gspmd(pp_ranks, args):
                               'past_key_values': [[False for _ in range(2)] for _ in range(12)]}
     gpt2_pipe = Pipe.from_tracing(gpt2, MULTI_USE_PARAM_CONFIG, tracer=PiPPyHFTracer(), concrete_args=concrete_args,
                                   output_loss_value_spec=output_loss_value_spec, deep_copy_module=False)
+    if args.rank == 0:
+        print(gpt2_pipe.split_gm)
+
     assert sm_cnt == len(list(gpt2_pipe.split_gm.children()))
 
     # Materialize model differently depending on run mode

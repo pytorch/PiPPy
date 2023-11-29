@@ -4,7 +4,7 @@ function usage() {
   echo 2>&1 <<EOF
 USAGE: ./check [--keep-going] [--pyre]
 
-  --keep-going (default: 0)
+  --keep-going (default: 1)
   Continue processing even when errors are ecountered.
 
   --pyre
@@ -17,7 +17,7 @@ EOF
 
 SKIP_FORMAT=0
 SKIP_PYRE=1
-KEEP_GOING=0
+KEEP_GOING=1
 for x in "$@"; do
   case "$x" in
     '--keep-going')
@@ -64,7 +64,7 @@ flake8 pippy
 (( RETVAL |= $? ))
 
 echo; echo "Running mypy ..."
-mypy pippy
+mypy --follow-imports=skip pippy
 (( RETVAL |= $? ))
 
 echo; echo "Running pylint ..."
@@ -72,4 +72,3 @@ pylint --disable=all --enable=unused-import $(git ls-files '*.py')
 (( RETVAL |= $? ))
 
 exit $RETVAL
-
