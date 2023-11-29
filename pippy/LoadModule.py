@@ -11,6 +11,8 @@ from torch import nn
 from pippy.utils import _get_binary_filename
 
 
+logger = logging.getLogger(__name__)
+
 TYPICAL_PREFIXES = [
     "model",  # facebook/opt-6.7b
     "transformer",  # bigscience/bloom-7b1
@@ -58,7 +60,7 @@ def load_checkpoint(
     used_files = file_to_weights.keys()
     import time
 
-    logging.info(
+    logger.info(
         f"Timestamp {time.time():.2f} " f"Opening checkpoint: {used_files}"
     )
 

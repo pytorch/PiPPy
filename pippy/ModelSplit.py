@@ -7,6 +7,9 @@ import torch.fx as fx
 
 from pippy.IR import pipe_split
 
+
+logger = logging.getLogger(__name__)
+
 """
 Analyze size of parameters/buffers used by each node in the graph
 Here node can be a `call_function` or a `call_module`
@@ -45,7 +48,7 @@ def _analyze_node_size(
                 node_param_sizes.setdefault(node, mod_param_sizes)
 
     for node, param_sizes in node_param_sizes.items():
-        logging.debug(f"{node} has params: {param_sizes}")
+        logger.debug(f"{node} has params: {param_sizes}")
 
     return node_param_sizes
 
@@ -185,7 +188,7 @@ def split_into_equal_size(
 
         total_size = param_size + buffer_size
         per_stage_size = total_size // nstages
-        logging.debug(
+        logger.debug(
             f"Total model size: {total_size}, "
             f"per stage size: {per_stage_size}"
         )

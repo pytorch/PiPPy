@@ -1017,7 +1017,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
             Callable[[torch.fx.GraphModule], torch.fx.GraphModule]
         ] = None,
     ) -> torch.fx.GraphModule:
-        logger.info("[PiPPy] Tracing model ...")
+        logger.info("Tracing model ...")
         try:
             torch._dynamo.allow_in_graph(pipe_split)
             traced: torch.fx.GraphModule = torch._export._export_to_torch_ir(
