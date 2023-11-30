@@ -1,20 +1,19 @@
 # (c) Meta Platforms, Inc. and affiliates. Confidential and proprietary.
 
-import argparse
 import logging
-import os
-
 from collections import deque
-from datetime import timedelta
-from typing import List, Optional, Union
+from typing import Deque, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
-import torch.multiprocessing as mp
 import torch.nn as nn
-from torch.profiler import profile, ProfilerActivity, record_function
+from torch.profiler import record_function
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+handler = logging.StreamHandler()
+handler.setLevel(logging.INFO)
+logger.addHandler(handler)
 
 
 class PipelineStage(nn.Module):
@@ -26,6 +25,7 @@ class PipelineStage(nn.Module):
         rank: int,
         world_size: int,
         meta_input: torch.Tensor,
+        device: torch.device,
     ):
         super().__init__()
         self.rank = rank
@@ -34,16 +34,15 @@ class PipelineStage(nn.Module):
         self.is_last_stage = stage_id == num_stages - 1
         self.num_stages = num_stages
         # When we materialize the model partition on cuda, we call reset_parameters() if it is available
-        self.module = module.to(device=torch.cuda.current_device())
-        if hasattr(self.module, "reset_parameters"):
-            with torch.no_grad():
-                self.module.reset_parameters()
+        self.module = module.to(device)
 
         meta_output = self.module(meta_input)
-        self.fwd_input = torch.empty_like(meta_input, device="cuda")
+        self.fwd_input = torch.empty_like(meta_input, device=device)
         self.fwd_output = None
-        self.fwd_output_grads = torch.empty_like(meta_output, device="cuda")
-        self.fwd_outputs_for_backward = deque()
+        self.fwd_output_grads = torch.empty_like(meta_output, device=device)
+        self.fwd_outputs_for_backward: Deque[
+            Tuple[torch.tensor, torch.tensor]
+        ] = deque()
 
         self.prev_stage = (rank - 1) % world_size
         self.next_stage = (rank + 1) % world_size
@@ -121,7 +120,7 @@ class PipelineStage(nn.Module):
         assert self.fwd_input.grad is not None, "grad must be valid"
         return [dist.P2POp(dist.isend, self.fwd_input.grad, self.prev_stage)]
 
-    def get_bwd_recv_ops(self) -> Optional[dist.P2POp]:
+    def get_bwd_recv_ops(self) -> List[dist.P2POp]:
         if self.is_last_stage:
             return []
         return [dist.P2POp(dist.irecv, self.fwd_output_grads, self.next_stage)]
@@ -167,7 +166,7 @@ class PipelineStage(nn.Module):
 
 
 class PipelineScheduleGPipe:
-    def __init__(self, stage):
+    def __init__(self, stage: PipelineStage):
         self._stage = stage
 
     def step(self, microbatches):
@@ -210,7 +209,7 @@ class PipelineScheduleGPipe:
 
 
 class PipelineScheduleLoopedBFS:
-    def __init__(self, stages):
+    def __init__(self, stages: List[PipelineStage]):
         self._stages = stages
 
     def step(self, microbatches):
@@ -247,7 +246,7 @@ class PipelineScheduleLoopedBFS:
 
 
 class PipelineScheduleLoopedDFS:
-    def __init__(self, stages, n_microbatch, pp_id, n_pp):
+    def __init__(self, stages: List[PipelineStage], n_microbatch, pp_id, n_pp):
         assert (
             n_microbatch % n_pp == 0
         ), f"Looped DFS schedule requires microbatch_size ({n_microbatch}) to be a multiple of n_pp ({n_pp})"
@@ -255,19 +254,19 @@ class PipelineScheduleLoopedDFS:
         self.stages = stages
         self.n_microbatch = n_microbatch
 
-        self.n_stages = len(stages)
-        self.total_stages = self.n_stages * n_pp
+        self.n_local_stages = len(stages)
+        self.total_stages = self.n_local_stages * n_pp
         # world_size
         self.n_pp = n_pp
 
         self.stage_id_to_global_stage_id = [
-            (i * n_pp) + pp_id for i in range(self.n_stages)
+            (i * n_pp) + pp_id for i in range(self.n_local_stages)
         ]
 
         # pp_id is the same as local rank within the PP dimension
         self.pp_id = pp_id
 
-        # number of sequences (chunks) to divide microbatches into == microbatch_size / (microbatch_size / n_pp)
+        # number of sequences (chunks)
         self.seq_size = n_pp
 
         # warmup steps for latest pp stage is trivial to compute
@@ -311,13 +310,13 @@ class PipelineScheduleLoopedDFS:
             # step: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
             # index:0, 1, 0, 1, 2, 3, 2, 3, 4, 5, 4,  5,  6,  7,  6,  7
             return (step % self.seq_size) + self.seq_size * int(
-                step / (self.seq_size * self.n_stages)
+                step / (self.seq_size * self.n_local_stages)
             )
 
         def stage_index(step):
             # step: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
             # index:0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1,  1,  0,  0,  1,  1
-            return int((step / self.seq_size) % self.n_stages)
+            return int((step / self.seq_size) % self.n_local_stages)
 
         """
 
@@ -331,14 +330,19 @@ class PipelineScheduleLoopedDFS:
             f"rank {self.pp_id} - stage_index {[stage_index(step) for step in range(self.total_steps)]}"
         )
 
-        forward_batched_op_handles = []
-        backward_batched_op_handles = []
+        forward_batched_op_handle: Optional[dist.Work] = None
+        backward_batched_op_handle: Optional[dist.Work] = None
 
         # edge case for first stage on each rank we need to call receive, recv for future microbatches will be fetched after fwd
-        forward_first_recv = self.stages[0].get_fwd_recv_ops()
+        # TODO: move this to its own class? `OneTimeUseRecv`?
+        forward_first_recv: Optional[List[dist.P2POp]] = self.stages[
+            0
+        ].get_fwd_recv_ops()
 
         # edge case for the last stage on each rank we need to call receive, recv for future microbatches will be fetched after bwd
-        backward_first_recv = self.stages[-1].get_bwd_recv_ops()
+        backward_first_recv: Optional[List[dist.P2POp]] = self.stages[
+            -1
+        ].get_bwd_recv_ops()
 
         backward_stages = list(reversed(self.stages))
         for step in range(self.total_steps):
@@ -370,14 +374,12 @@ class PipelineScheduleLoopedDFS:
                     dist.batch_isend_irecv(forward_first_recv).pop().wait()
                     forward_first_recv = None
 
-                if forward_batched_op_handles:
-                    assert (
-                        len(forward_batched_op_handles) == 1
-                    ), "only support one batched op at a time"
+                if forward_batched_op_handle:
                     logger.info(
-                        f"rank: {self.pp_id} - waiting on batched_op_handles before fwd"
+                        f"rank: {self.pp_id} - waiting on batched_op_handle before fwd"
                     )
-                    forward_batched_op_handles.pop().wait()
+                    forward_batched_op_handle.wait()
+                    forward_batched_op_handle = None
 
                 with record_function(f"Stage {forward_stage.stage_id} Forward"):
                     logger.info(
@@ -396,18 +398,18 @@ class PipelineScheduleLoopedDFS:
                 requests.extend(ops)
 
                 # add recv for the NEXT stage, do not do this for last stage
-                if fwd_stage_id_next is not None:
+                if forward_stage_next is not None:
                     ops = forward_stage_next.get_fwd_recv_ops()
                     if mb_id_fwd != len(microbatches) - 1:
                         requests.extend(ops)
 
                 if requests:
                     logger.info(
-                        f"rank: {self.pp_id}, current stage_id {self.stage_id_to_global_stage_id[fwd_stage_id]}, next stage_id {self.stage_id_to_global_stage_id[fwd_stage_id]} requests - {[(req.op, req.peer) for req in requests]}"
+                        f"rank: {self.pp_id}, current stage_id {self.stage_id_to_global_stage_id[fwd_stage_id]}, - {[(req.op, req.peer) for req in requests]}"
                     )
-                    forward_batched_op_handles.append(
-                        dist.batch_isend_irecv(requests).pop()
-                    )
+                    forward_batched_op_handle = dist.batch_isend_irecv(
+                        requests
+                    ).pop()
 
             if step >= self.warmup_steps:
                 if backward_first_recv:
@@ -417,14 +419,12 @@ class PipelineScheduleLoopedDFS:
                     dist.batch_isend_irecv(backward_first_recv).pop().wait()
                     backward_first_recv = None
 
-                if backward_batched_op_handles:
-                    assert (
-                        len(backward_batched_op_handles) == 1
-                    ), "only support one batched op at a time"
+                if backward_batched_op_handle:
                     logger.info(
                         f"rank: {self.pp_id} - waiting on batched_op_handles before bwd"
                     )
-                    backward_batched_op_handles.pop().wait()
+                    backward_batched_op_handle.wait()
+                    backward_batched_op_handle = None
 
                 with record_function(
                     f"Stage {backward_stage.stage_id} Backward"
@@ -437,24 +437,24 @@ class PipelineScheduleLoopedDFS:
                         is_last_mb=mb_id_bwd == len(microbatches) - 1,
                     )
 
-                requests: List[dist.P2POp] = []
+                requests = []
 
                 # send bwd grad if this is not the first stage
                 ops = backward_stage.get_bwd_send_ops()
                 requests.extend(ops)
 
                 # add recv for the NEXT stage, do not do this for first stage
-                if bwd_stage_id_next is not None:
+                if backward_stage_next is not None:
                     ops = backward_stage_next.get_bwd_recv_ops()
                     if mb_id_bwd != len(microbatches) - 1:
                         requests.extend(ops)
 
                 if requests:
                     logger.info(
-                        f"rank: {self.pp_id}, current stage_id {self.stage_id_to_global_stage_id[bwd_stage_id]}, next stage_id {self.stage_id_to_global_stage_id[bwd_stage_id_next]} requests - {[(req.op, req.peer) for req in requests]}"
+                        f"rank: {self.pp_id} - {[(req.op, req.peer) for req in requests]}"
                     )
-                    backward_batched_op_handles.append(
-                        dist.batch_isend_irecv(requests).pop()
-                    )
+                    backward_batched_op_handle = dist.batch_isend_irecv(
+                        requests
+                    ).pop()
 
         logger.info("Step exiting")

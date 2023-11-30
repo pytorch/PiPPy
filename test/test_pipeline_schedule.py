@@ -22,9 +22,7 @@ import argparse
 import logging
 import os
 
-from collections import deque
 from datetime import timedelta
-from typing import List, Optional, Union
 
 import torch
 import torch.distributed as dist
@@ -36,7 +34,6 @@ from pippy.PipelineSchedule import (
     PipelineScheduleLoopedDFS,
     PipelineStage,
 )
-from torch.profiler import profile, ProfilerActivity, record_function
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +70,7 @@ def setup(local_rank, world_size):
 
     # initialize the process group
     logger.info(f"init for rank {local_rank}")
-    dist.init_process_group("nccl")
+    dist.init_process_group("nccl", timeout=timedelta(seconds=20))
     if torch.distributed.is_initialized():
         torch.cuda.set_device(local_rank)
 
@@ -86,10 +83,11 @@ def main(**kwargs):
     rank = kwargs["rank"]
     local_rank = kwargs["local_rank"]
     world_size = kwargs["world_size"]
+    device = torch.device(kwargs["device"])
 
     setup(local_rank, world_size)
     logger.info(
-        f"====== World Rank {rank}, Local Rank {local_rank}, World Size {world_size} main ======"
+        f"====== World Rank {rank}, Local Rank {local_rank}, World Size {world_size}, Device {device} main ======"
     )
 
     input_dim = 4000
@@ -110,7 +108,7 @@ def main(**kwargs):
     x = torch.randn([microbatch_size, input_dim]).to("meta")
 
     stage_model = PipelineStage(
-        module_list[rank], rank, world_size, rank, world_size, x
+        module_list[rank], rank, world_size, rank, world_size, x, device
     )
     stage_model.init_p2p_neighbors()
 
@@ -122,6 +120,7 @@ def main(**kwargs):
             rank=rank,
             world_size=world_size,
             meta_input=x,
+            device=device,
         )
         for i in range(world_size)
     ]
@@ -177,13 +176,16 @@ def set_up_logging(rank, log_level=logging.INFO):
     handler = logging.StreamHandler()
     handler.setLevel(log_level)
 
-    class FstringFormatter(logging.Formatter):
-        def format(self, record):
-            return f"[{rank}][{record.levelname}][{self.formatTime(record)}][{os.path.basename(__file__)}:{record.lineno}]: {record.getMessage()}"
+    # TODO: seeing double logging due to global logging setup in
+    # - fx/passes/utils/matcher_utils.py
 
-    formatter = FstringFormatter()
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
+    # class FstringFormatter(logging.Formatter):
+    #     def format(self, record):
+    #         return f"[{rank}][{record.levelname}][{self.formatTime(record)}][{os.path.basename(__file__)}:{record.lineno}]:{record.getMessage()}"
+
+    # formatter = FstringFormatter()
+    # handler.setFormatter(formatter)
+    # logger.addHandler(handler)
 
 
 if __name__ == "__main__":
@@ -201,8 +203,9 @@ if __name__ == "__main__":
         type=str,
         nargs="+",
         choices=["gpipe", "looped_bfs", "looped_dfs"],
-        default=["gpipe", "looped_bfs"],
+        default=["gpipe", "looped_bfs", "looped_dfs"],
     )
+    parser.add_argument("--device", type=str, default="cuda")
     args = parser.parse_args()
     kwargs = vars(args)
     print(kwargs)
