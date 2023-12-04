@@ -7,12 +7,14 @@ from llama2 import Llama
 from generate import text_completion, chat_completion
 from typing import List, Literal, Optional, Tuple, TypedDict
 import itertools
+from torch._dynamo.utils import CompileProfiler
 """
 Usage example :
 
 torchrun --nnodes 1 --nproc_per_node 2 benchmark.py  --model_args model_args.json --tokenizer_path /data/home/hamidnazeri/PiPPy/examples/inference/model/models--meta-llama--Llama-2-13b-chat/snapshots/8ebc6a0ac2e4a781c31cb4ad395b1c26c5158c76/tokenizer.model --converted_ckpt_dir converted_checkpoints --batch_size 4 --max_gen_len 50 --num_trials 5 --warmup 2
 
 """
+torch._inductor.config.coordinate_descent_tuning = True
 LOCAL_RANK = int(os.environ["LOCAL_RANK"])
 
 def load_model(model_args: str,
@@ -116,7 +118,19 @@ def benchmark_text_completion(
     cuda_time_profiles=[]
     cuda_start_event = torch.cuda.Event(enable_timing=True)
     cuda_end_event = torch.cuda.Event(enable_timing=True)
-    
+    # with CompileProfiler() as prof:
+    #     compiled_model = torch.compile(model, backend="inductor") 
+    #     completions = text_completion(
+    #         compiled_model,
+    #         tokenizer,
+    #         prompts,
+    #         temperature,
+    #         top_p,
+    #         max_gen_len,
+    #         logprobs,
+    #         echo
+    #     )
+    #     print(prof.report())  
     
     # cuda_start_event.record()
     for _ in range(num_trials):
@@ -149,13 +163,15 @@ def benchmark_text_completion(
     # avg_time = sum(system_time_profiles)/ len(system_time_profiles) 
     # avg_inference_cuda_time = (cuda_start_event.elapsed_time(cuda_end_event) * 1.0e-3) / num_trials
     tokens_per_second = total_tokens / avg_time
+    token_decode_latency= avg_time/total_tokens 
     bandwidth = model_size * tokens_per_second / 1e9
-    print(f"total tokens is {total_tokens}")
+    print(f"total tokens is {total_tokens} and token decoding latency is {token_decode_latency}s per token")
     print(f"Bandwidth achieved: {bandwidth:.02f} GB/s", file=sys.stderr)
     print("=======================================================================")
     if LOCAL_RANK == 0:
         print(f"Memory used: {torch.cuda.max_memory_reserved() / 1e9:.02f} GB", file=sys.stderr)
-    
+    print(completions)
+    print("****************************************************************")
     return tokens_per_second, bandwidth
 
 
@@ -178,7 +194,9 @@ def prepare_prompts(prompt: str, tokenizer, max_prompt_len: int, batch_size: int
     truncated_encoded_prompts = encoded_prompt[:max_prompt_len]
     truncated_prompt = tokenizer.decode(truncated_encoded_prompts)
 
+   
     print(f"tottal  token is {total_tokens}, max token is {max_prompt_len} and truncated_encoded_prompts {len(truncated_encoded_prompts)} and itself is {truncated_prompt}")
+    print("========================================================================")
     batch_prompts = [truncated_prompt for p in range(batch_size)]
     
     return batch_prompts
@@ -200,4 +218,14 @@ def write_to_csv(file_name, values_dict):
         
         # Write the passed values as a new row
         writer.writerow(list(values_dict.values()))
+
+def read_prompt_from_file(file_name):
+    try:
+        with open(file_name, 'r') as file:
+            text = file.read()
+        return text
+    except FileNotFoundError:
+        print(f"Error: The file '{file_name}' was not found.")
+        return None
+
 
