@@ -1,7 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 
 # Minimum effort to run this example:
-# $ torchrun --nproc-per-node 4 pippy_bert.py
+# $ torchrun --nproc-per-node 4 pippy_megatronBert.py
 
 import argparse
 import os
