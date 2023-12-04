@@ -187,8 +187,12 @@ class PipelineScheduleGPipe:
                     dist.batch_isend_irecv(ops)
 
                 logger.info(
-                    f"{self._stage.stage_id} forward {i} finished, microbatch: {mb.shape}"
+                    f"{self._stage.stage_id} forward mb {i} finished, microbatch: {mb.shape}"
                 )
+                if (rank := dist.get_rank()) == 0:
+                    import time
+                    logger.info(f"rank {rank} is sleeping for 1s")
+                    time.sleep(1)
 
         for i, _ in enumerate(microbatches):
             with record_function(f"Backward {i}"):
@@ -205,7 +209,7 @@ class PipelineScheduleGPipe:
                 if ops:
                     dist.batch_isend_irecv(ops)
 
-            logger.info(f"{self._stage.stage_id} backward {i} finished")
+            logger.info(f"{self._stage.stage_id} backward mb {i} finished")
 
 
 class PipelineScheduleLoopedBFS:
