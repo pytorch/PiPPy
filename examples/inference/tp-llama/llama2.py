@@ -31,6 +31,7 @@ from torch.distributed.tensor.parallel import (
 
 from copy import deepcopy
 from dataclasses import dataclass, asdict, fields
+# from xformers.ops import RMSNorm, fmha
 
 log = logging.getLogger(__name__)
 
@@ -182,10 +183,11 @@ class Attention(nn.Module):
        
         bsz, seqlen, _ = x.shape
         xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
-
         xq = xq.view(bsz, seqlen, self.n_local_heads, self.head_dim)
+        
         xk = xk.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
         xv = xv.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
+        
 
         xq, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis)
 
@@ -198,19 +200,36 @@ class Attention(nn.Module):
         keys = self.cache_k[:bsz, : start_pos + seqlen]
         values = self.cache_v[:bsz, : start_pos + seqlen]
 
-        # repeat k/v heads if n_kv_heads < n_heads
+        #repeat k/v heads if n_kv_heads < n_heads
         keys = repeat_kv(keys, self.n_rep)  # (bs, seqlen, n_local_heads, head_dim)
         values = repeat_kv(values, self.n_rep)  # (bs, seqlen, n_local_heads, head_dim)
-
+        # print(f"xq before transpose {xq.size()}, keys {keys.size()}, key transpose {keys.transpose(2, 3).size()}, self.n_rep {self.n_rep}")
+        # print("=================&&&&&&&==========")
         # xq = xq.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
         # keys = keys.transpose(1, 2)
         # values = values.transpose(1, 2)
         # scores = torch.matmul(xq, keys.transpose(2, 3)) / math.sqrt(self.head_dim)
         # if mask is not None:
         #     scores = scores + mask  # (bs, n_local_heads, seqlen, cache_len + seqlen)
+                        
+        #     # print(f"mask {mask.size()}, xq {xq.size()}, xk {xk.size()}, xv {xv.size()}, n_local_heads {self.n_local_heads}, head_dim {self.head_dim}, seqlen {seqlen}, scores {scores.size()}")
+        #     # print("---------------------------------------------------------------------------------------------------------------------------------------")
+            
         # scores = F.softmax(scores.float(), dim=-1).type_as(xq)
         # output = torch.matmul(scores, values)  # (bs, n_local_heads, seqlen, head_dim)
-        output = torch.nn.functional.scaled_dot_product_attention(xq, xk, xv, attn_mask=None, is_causal=True)
+        
+        
+        # if mask is not None:
+
+        # print(f"xq {mask.size()}, xq {xq.size()}, xk {xk.size()}, xv {xv.size()}, n_local_heads {self.n_local_heads}, head_dim {self.head_dim}, seqlen {seqlen}")
+        # print("---------------------------------------------------------------------------------------------------------------------------------------")
+        output = torch.nn.functional.scaled_dot_product_attention(xq.transpose(1,2), keys.transpose(1,2), values.transpose(1,2), attn_mask=mask, dropout_p=0.0, is_causal=False)
+        # output = fmha.memory_efficient_attention_forward(xq, keys, values)
+        # # else:
+        # output = torch.nn.functional.scaled_dot_product_attention(xq, xk, xv, attn_mask=None, dropout_p=0.0, is_causal=False)
+            
+            
+            
         # breakpoint()
         output = output.transpose(1, 2).contiguous().view(bsz, seqlen, -1)
         
@@ -344,16 +363,17 @@ class Transformer(nn.Module):
         #     flush=True,
         # )
         h = self.tok_embeddings(tokens)
+        # print(f"input size {tokens.size()}, embedding size {h.size()}")
+        # print("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^")
+        bsz = h.shape[0]  
         self.freqs_cis = self.freqs_cis.to(h.device)
         freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
-
         mask = None
         if seqlen > 1:
             mask = torch.full(
                 (1, 1, seqlen, seqlen), float("-inf"), device=tokens.device
             )
             mask = torch.triu(mask, diagonal=start_pos + 1).type_as(h)
-
         for layer in self.layers:
             h = layer(h, start_pos, freqs_cis, mask)
         h = self.norm(h)
@@ -608,7 +628,7 @@ class Llama:
         tp_llama(model, mesh)
         
         model.to_empty(device='cuda')
-        model.reset_parameters()
+        # model.reset_parameters()
         log.debug(f"Rank {dist.get_rank()}: created FSDP model {model}")
         # Convert state_dict from fairscale + load in to FSDP
         # _load_checkpoint(
@@ -650,13 +670,22 @@ class Llama:
         tokenizer = _create_tokenizer(tokenizer_path=tokenizer_path)
         model_args.vocab_size = tokenizer.n_words
         json_args = dataclass_to_json(model_args)
-        with open('model_args.json', 'w') as file:
-            file.write(json_args)
+        model_args_file_name = os.path.join(save_checkpoint_dir,'model_args.json' )
+        
             
         model = _init_local_model(model_args)
         
+        # with open('model_args.json', 'w') as file:
+        #         file.write(json_args)
+                
         _convert_fairscale_checkpoints(model, model_parallel_size=model_parallel_size, original_ckpt_dir=original_ckpt_dir, save_checkpoint_dir=save_checkpoint_dir)
-    
+        if os.path.exists(save_checkpoint_dir):
+            with open(model_args_file_name, 'w') as file:
+                file.write(json_args)
+        else:
+            with open('model_args.json', 'w') as file:
+                file.write(json_args)
+                
         log.debug(
             f"the  checkpoints have been converted to PTD compliant checkpoint and saved in {save_checkpoint_dir}"
         )
