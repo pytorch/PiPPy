@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 _null_context = nullcontext()
 
-    
+# profiling context manager     
 @contextmanager
 def maybe_run_profiler(use_profiler, trace_dir, schedule, rank, *args, **kwargs):
 
@@ -164,7 +164,7 @@ def main(**kwargs):
         torch.randn_like(x_cuda_empty) for _ in range(n_microbatches)
     ]
 
-    # setup profiling setup (enable with --profiler True)
+    # profiling setup (enable with --profiler True)
     _run_profiler = kwargs["profiler"]
     _torch_profiler = None
     _trace_dir = kwargs["trace_dir"]
@@ -175,27 +175,28 @@ def main(**kwargs):
         rank_print(f"Profiling active -- saving traces to {_trace_dir}")
      
     
-        for schedule in kwargs["schedules"]:
-            logger.info(f"====== Rank {rank} running schedule {schedule} ======")
-            if schedule == "gpipe":
-                pipeline = PipelineScheduleGPipe(stage_model)
-            elif schedule == "looped_bfs":
-                pipeline = PipelineScheduleLoopedBFS(stage_model_looped)
-            elif schedule == "looped_dfs":
-                pipeline = PipelineScheduleLoopedDFS(
-                    stage_model_looped,
-                    n_microbatch=n_microbatches,
-                    pp_id=rank,
-                    n_pp=n_pp,
-                )
-            
-    
-            if _run_profiler:
-                logger.info(f"====== Rank {rank} profile ======")
+    for schedule in kwargs["schedules"]:
+        rank_print(f"179 - {schedule=}, {kwargs['schedules']=}")
+        logger.info(f"====== Rank {rank} running schedule {schedule} ======")
+        if schedule == "gpipe":
+            pipeline = PipelineScheduleGPipe(stage_model)
+        elif schedule == "looped_bfs":
+            pipeline = PipelineScheduleLoopedBFS(stage_model_looped)
+        elif schedule == "looped_dfs":
+            pipeline = PipelineScheduleLoopedDFS(
+                stage_model_looped,
+                n_microbatch=n_microbatches,
+                pp_id=rank,
+                n_pp=n_pp,
+            )
+        
 
-            with maybe_run_profiler(_run_profiler, _trace_dir, schedule, rank) as _torch_profiler:
-                with record_function(schedule):
-                    pipeline.step(microbatches)
+        if _run_profiler:
+            logger.info(f"====== Rank {rank} profile ======")
+
+        with maybe_run_profiler(_run_profiler, _trace_dir, schedule, rank) as _torch_profiler:
+            with record_function(schedule):
+                pipeline.step(microbatches)
 
 
         logger.info(f"====== Rank {rank} finished {schedule} ======")
