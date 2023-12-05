@@ -125,9 +125,9 @@ def main(**kwargs):
     
     rank_print(f"My KWARGS are {kwargs}")
 
-    input_dim = 400#0
-    hidden_dim = 800#0
-    output_dim = 400#0
+    input_dim = 4000
+    hidden_dim = 8000
+    output_dim = 4000
 
     module_list = torch.nn.ModuleList(
         modules=[
