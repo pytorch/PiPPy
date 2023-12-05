@@ -28,7 +28,6 @@ export NCCL_IB_DISABLE=1
 
 # debugging flags (optional)
 export NCCL_DEBUG=WARN
-export NCCL_DEBUG_SUBSYS=WARN
 export PYTHONFAULTHANDLER=1
 # optional debug settings
 # export NCCL_DEBUG=INFO
