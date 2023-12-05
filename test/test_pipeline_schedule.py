@@ -24,7 +24,7 @@ import os
 from contextlib import contextmanager, nullcontext
 
 from datetime import timedelta
-from torch.profiler import record_function
+from torch.profiler import record_function, profile, ProfilerActivity
 
 import torch
 import torch.distributed as dist
@@ -41,9 +41,15 @@ logger = logging.getLogger(__name__)
 
 _null_context = nullcontext()
 
-@contextmanager
-def maybe_run_profiler(use_profiler, trace_dir, *args, **kwargs):
     
+@contextmanager
+def maybe_run_profiler(use_profiler, trace_dir, schedule, rank, *args, **kwargs):
+
+    def trace_handler(prof):
+        if rank==0:
+            (f"about to EXPORT traces for {schedule} to {trace_dir}")
+        prof.export_chrome_trace(f"{trace_dir}/{schedule}_rank{rank}_trace.json")
+ 
     if use_profiler:
         with torch.profiler.profile(
             activities=[
@@ -51,9 +57,7 @@ def maybe_run_profiler(use_profiler, trace_dir, *args, **kwargs):
                 torch.profiler.ProfilerActivity.CUDA,
             ],
             # schedule=torch.profiler.schedule(wait=1, warmup=2, active=3, repeat=1),
-            on_trace_ready=torch.profiler.tensorboard_trace_handler(
-                trace_dir
-            ),
+            on_trace_ready= trace_handler,
             profile_memory=True,
             with_stack=False,
             record_shapes=True,
@@ -169,11 +173,8 @@ def main(**kwargs):
         if not os.path.exists(_trace_dir):
             os.mkdir(_trace_dir)
         rank_print(f"Profiling active -- saving traces to {_trace_dir}")
-    from torch.profiler import profile, ProfilerActivity
-    # 
-    with profile( activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA] ) as _torch_profiler:
-        _torch_profiler.enabled
-    #with maybe_run_profiler(_run_profiler, _trace_dir) as _torch_profiler:
+     
+    
         for schedule in kwargs["schedules"]:
             logger.info(f"====== Rank {rank} running schedule {schedule} ======")
             if schedule == "gpipe":
@@ -187,17 +188,15 @@ def main(**kwargs):
                     pp_id=rank,
                     n_pp=n_pp,
                 )
-
+            
+    
             if _run_profiler:
                 logger.info(f"====== Rank {rank} profile ======")
 
-            with record_function(schedule):
-                pipeline.step(microbatches)
+            with maybe_run_profiler(_run_profiler, _trace_dir, schedule, rank) as _torch_profiler:
+                with record_function(schedule):
+                    pipeline.step(microbatches)
 
-        if _torch_profiler:
-            rank_print(f"about to EXPORT traces")
-            _torch_profiler.export_chrome_trace(f"{_trace_dir}/{schedule}_rank{rank}_trace.json")
-     
 
         logger.info(f"====== Rank {rank} finished {schedule} ======")
 
