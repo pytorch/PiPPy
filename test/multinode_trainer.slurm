@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --job-name=looped-bfs-trainer
+#SBATCH --job-name=test_pipeline_schedules
 
 #SBATCH --ntasks=2
 
@@ -47,5 +47,5 @@ export FI_EFA_SET_CUDA_SYNC_MEMOPS=0
 dcgmi profile --pause
 # adjust sbatch --ntasks and sbatch --nodes above and --nnodes below
 # to your specific node count, and update target launch file.
-srun torchrun --nnodes 2 --nproc_per_node 8 --rdzv_id 101 --rdzv_backend c10d --rdzv_endpoint "$head_node_ip:29500" ./multinode_bfs.py
+srun torchrun --nnodes 2 --nproc_per_node 8 --rdzv_id 101 --rdzv_backend c10d --rdzv_endpoint "$head_node_ip:29500" ./test_pipeline_schedule.py --schedules gpipe looped_bfs
 dcgmi profile --resume
