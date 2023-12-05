@@ -24,7 +24,7 @@ import os
 from contextlib import contextmanager, nullcontext
 
 from datetime import timedelta
-from torch.profiler import record_function, profile, ProfilerActivity
+from torch.profiler import record_function
 
 import torch
 import torch.distributed as dist
