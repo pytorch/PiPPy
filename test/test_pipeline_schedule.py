@@ -257,7 +257,7 @@ if __name__ == "__main__":
     kwargs = vars(args)
 
     if (
-        rank is None 
+        rank is None
         or local_rank is None
         or world_size is None
         or master_addr is None
