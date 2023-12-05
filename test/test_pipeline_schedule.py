@@ -41,15 +41,15 @@ logger = logging.getLogger(__name__)
 
 _null_context = nullcontext()
 
-# profiling context manager     
+
+# profiling context manager
 @contextmanager
 def maybe_run_profiler(use_profiler, trace_dir, schedule, rank, *args, **kwargs):
-
     def trace_handler(prof):
-        if rank==0:
+        if rank == 0:
             (f"about to EXPORT traces for {schedule} to {trace_dir}")
         prof.export_chrome_trace(f"{trace_dir}/{schedule}_rank{rank}_trace.json")
- 
+
     if use_profiler:
         with torch.profiler.profile(
             activities=[
@@ -57,7 +57,7 @@ def maybe_run_profiler(use_profiler, trace_dir, schedule, rank, *args, **kwargs)
                 torch.profiler.ProfilerActivity.CUDA,
             ],
             # schedule=torch.profiler.schedule(wait=1, warmup=2, active=3, repeat=1),
-            on_trace_ready= trace_handler,
+            on_trace_ready=trace_handler,
             profile_memory=True,
             with_stack=False,
             record_shapes=True,
@@ -66,6 +66,7 @@ def maybe_run_profiler(use_profiler, trace_dir, schedule, rank, *args, **kwargs)
     else:
         torch_profiler = nullcontext()
         yield None
+
 
 class MLP(nn.Module):
     def __init__(
@@ -108,7 +109,7 @@ def setup(local_rank, world_size):
 
 def main(**kwargs):
     torch.manual_seed(42)
-    
+
     rank = kwargs["rank"]
     local_rank = kwargs["local_rank"]
     world_size = kwargs["world_size"]
@@ -120,9 +121,9 @@ def main(**kwargs):
     )
 
     def rank_print(msg):
-        if rank==0:
+        if rank == 0:
             print(f"{msg}")
-    
+
     rank_print(f"My KWARGS are {kwargs}")
 
     input_dim = 4000
@@ -130,9 +131,7 @@ def main(**kwargs):
     output_dim = 4000
 
     module_list = torch.nn.ModuleList(
-        modules=[
-            MLP(input_dim, hidden_dim, output_dim) for i in range(world_size)
-        ]
+        modules=[MLP(input_dim, hidden_dim, output_dim) for i in range(world_size)]
     )
     microbatch_size = 8
     global_batch_size = 64
@@ -160,9 +159,7 @@ def main(**kwargs):
         for i in range(world_size)
     ]
     x_cuda_empty = torch.empty_like(x, device="cuda")
-    microbatches = [
-        torch.randn_like(x_cuda_empty) for _ in range(n_microbatches)
-    ]
+    microbatches = [torch.randn_like(x_cuda_empty) for _ in range(n_microbatches)]
 
     # profiling setup (enable with --profiler True)
     _run_profiler = kwargs["profiler"]
@@ -173,7 +170,6 @@ def main(**kwargs):
         if not os.path.exists(_trace_dir):
             os.mkdir(_trace_dir)
         rank_print(f"Profiling active -- saving traces to {_trace_dir}")
-     
 
     for schedule in kwargs["schedules"]:
         logger.info(f"====== Rank {rank} running schedule {schedule} ======")
@@ -188,15 +184,15 @@ def main(**kwargs):
                 pp_id=rank,
                 n_pp=n_pp,
             )
-        
 
         if _run_profiler:
             logger.info(f"====== Rank {rank} profile ======")
 
-        with maybe_run_profiler(_run_profiler, _trace_dir, schedule, rank) as _torch_profiler:
+        with maybe_run_profiler(
+            _run_profiler, _trace_dir, schedule, rank
+        ) as _torch_profiler:
             with record_function(schedule):
                 pipeline.step(microbatches)
-
 
         logger.info(f"====== Rank {rank} finished {schedule} ======")
 
@@ -245,18 +241,13 @@ if __name__ == "__main__":
         type=str,
         nargs="+",
         choices=["gpipe", "looped_bfs", "looped_dfs"],
-        default=["gpipe","looped_bfs", "looped_dfs"],
+        default=["gpipe", "looped_bfs", "looped_dfs"],
     )
     parser.add_argument("--device", type=str, default="cuda")
     args = parser.parse_args()
     kwargs = vars(args)
 
-    if (
-        rank is None
-        or local_rank is None
-        or world_size is None
-        or master_addr is None
-    ):
+    if rank is None or local_rank is None or world_size is None or master_addr is None:
         # single host code path
         master_port = "23456"
         master_addr = "localhost"
