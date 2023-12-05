@@ -79,7 +79,7 @@ def setup(local_rank, world_size):
 
 def main(**kwargs):
     torch.manual_seed(42)
-    print(f"MY KWARGS ARE {kwargs}")
+    
     rank = kwargs["rank"]
     local_rank = kwargs["local_rank"]
     world_size = kwargs["world_size"]
@@ -90,9 +90,15 @@ def main(**kwargs):
         f"====== World Rank {rank}, Local Rank {local_rank}, World Size {world_size}, Device {device} main ======"
     )
 
-    input_dim = 4000
-    hidden_dim = 8000
-    output_dim = 4000
+    def rank_print(msg):
+        if rank==0:
+            print(f"{msg}")
+    
+    rank_print(f"My KWARGS are {kwargs}")
+
+    input_dim = 400#0
+    hidden_dim = 800#0
+    output_dim = 400#0
 
     module_list = torch.nn.ModuleList(
         modules=[
@@ -145,17 +151,23 @@ def main(**kwargs):
 
         logger.info(f"====== Rank {rank} profile ======")
 
+        # ---- setup profiling if enabled (default is no profiling)
+        _run_profiler = kwargs["profiler"]
+
+        if _run_profiler:
+            trace_dir = kwargs["trace_dir"]
+            if not os.path.exists(trace_dir):
+                os.mkdir(trace_dir)
+            rank_print(f"Profiling active -- saving traces to {trace_dir}")
+            #prof.export_chrome_trace(f"{trace_dir}/{schedule}_rank{rank}_trace.json")
+        
+
+
         # with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
         #    with record_function(schedule):
         pipeline.step(microbatches)
 
-        # TODO - default should be no profiling.
-        """if not kwargs["no_trace"]:
-            trace_dir = kwargs["trace_dir"]
-            if not os.path.exists(trace_dir):
-                os.mkdir(trace_dir)
-            prof.export_chrome_trace(f"{trace_dir}/{schedule}_rank{rank}_trace.json")
-        """
+        
         logger.info(f"====== Rank {rank} finished {schedule} ======")
 
 
@@ -196,19 +208,18 @@ if __name__ == "__main__":
     master_port = os.environ.get("MASTER_PORT", None)
 
     parser = argparse.ArgumentParser(description="Pipeline Stages Runner")
-    parser.add_argument("--no_trace", action="store_true")
-    parser.add_argument("--trace_dir", type=str, default="./traces")
+    parser.add_argument("--profiler", type=bool, default=False)
+    parser.add_argument("--trace_dir", type=str, default="./pipeline_traces")
     parser.add_argument(
         "--schedules",
         type=str,
         nargs="+",
         choices=["gpipe", "looped_bfs", "looped_dfs"],
-        default=["gpipe", "looped_bfs", "looped_dfs"],
+        default=["gpipe",], #  "looped_bfs", "looped_dfs"],
     )
     parser.add_argument("--device", type=str, default="cuda")
     args = parser.parse_args()
     kwargs = vars(args)
-    print(kwargs)
 
     if (
         rank is None
