@@ -174,9 +174,8 @@ def main(**kwargs):
             os.mkdir(_trace_dir)
         rank_print(f"Profiling active -- saving traces to {_trace_dir}")
      
-    
+
     for schedule in kwargs["schedules"]:
-        rank_print(f"179 - {schedule=}, {kwargs['schedules']=}")
         logger.info(f"====== Rank {rank} running schedule {schedule} ======")
         if schedule == "gpipe":
             pipeline = PipelineScheduleGPipe(stage_model)
