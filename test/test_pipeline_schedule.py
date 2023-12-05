@@ -34,6 +34,7 @@ from pippy.PipelineSchedule import (
     PipelineScheduleLoopedDFS,
     PipelineStage,
 )
+from torch.profiler import profile, ProfilerActivity, record_function
 
 logger = logging.getLogger(__name__)
 
@@ -112,18 +113,18 @@ def main(**kwargs):
     )
     stage_model.init_p2p_neighbors()
 
-    stage_model_looped = [
-        PipelineStage(
-            module_list[rank],
-            stage_id=(world_size * i) + rank,
-            num_stages=world_size * world_size,
-            rank=rank,
-            world_size=world_size,
-            meta_input=x,
-            device=device,
-        )
-        for i in range(world_size)
-    ]
+    # stage_model_looped = [
+    #     PipelineStage(
+    #         module_list[rank],
+    #         stage_id=(world_size * i) + rank,
+    #         num_stages=world_size * world_size,
+    #         rank=rank,
+    #         world_size=world_size,
+    #         meta_input=x,
+    #         device=device,
+    #     )
+    #     for i in range(world_size)
+    # ]
     x_cuda_empty = torch.empty_like(x, device="cuda")
     microbatches = [
         torch.randn_like(x_cuda_empty) for _ in range(n_microbatches)
@@ -145,17 +146,17 @@ def main(**kwargs):
 
         logger.info(f"====== Rank {rank} profile ======")
 
-        # with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
-        #    with record_function(schedule):
-        pipeline.step(microbatches)
+        with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
+           with record_function(schedule):
+                pipeline.step(microbatches)
 
-        # TODO - default should be no profiling.
-        """if not kwargs["no_trace"]:
+        if kwargs["trace"]:
             trace_dir = kwargs["trace_dir"]
             if not os.path.exists(trace_dir):
                 os.mkdir(trace_dir)
             prof.export_chrome_trace(f"{trace_dir}/{schedule}_rank{rank}_trace.json")
-        """
+
+        dist.barrier()
         logger.info(f"====== Rank {rank} finished {schedule} ======")
 
 
@@ -196,7 +197,7 @@ if __name__ == "__main__":
     master_port = os.environ.get("MASTER_PORT", None)
 
     parser = argparse.ArgumentParser(description="Pipeline Stages Runner")
-    parser.add_argument("--no_trace", action="store_true")
+    parser.add_argument("--trace", action="store_true")
     parser.add_argument("--trace_dir", type=str, default="./traces")
     parser.add_argument(
         "--schedules",
