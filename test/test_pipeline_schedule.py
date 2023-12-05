@@ -47,13 +47,13 @@ _null_context = nullcontext()
 @contextmanager
 def maybe_run_profiler(
     use_profiler, trace_dir, schedule, rank, *args, **kwargs
-    ):
+):
     def trace_handler(prof):
         if rank == 0:
             (f"about to EXPORT traces for {schedule} to {trace_dir}")
         prof.export_chrome_trace(
             f"{trace_dir}/{schedule}_rank{rank}_trace.json"
-            )
+        )
 
     if use_profiler:
         with torch.profiler.profile(
@@ -138,7 +138,7 @@ def main(**kwargs):
     module_list = torch.nn.ModuleList(
         modules=[
             MLP(input_dim, hidden_dim, output_dim) for i in range(world_size)
-            ]
+        ]
     )
     microbatch_size = 8
     global_batch_size = 64
@@ -168,7 +168,7 @@ def main(**kwargs):
     x_cuda_empty = torch.empty_like(x, device="cuda")
     microbatches = [
         torch.randn_like(x_cuda_empty) for _ in range(n_microbatches)
-        ]
+    ]
 
     # profiling setup (enable with --profiler True)
     _run_profiler = kwargs["profiler"]
