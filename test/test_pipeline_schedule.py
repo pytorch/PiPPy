@@ -21,8 +21,10 @@ torchrun --rdzv-backend=c10d --rdzv-endpoint=node1.example.com:29400 --nnodes=2 
 import argparse
 import logging
 import os
+from contextlib import contextmanager, nullcontext
 
 from datetime import timedelta
+from torch.profiler import record_function
 
 import torch
 import torch.distributed as dist
@@ -37,6 +39,29 @@ from pippy.PipelineSchedule import (
 
 logger = logging.getLogger(__name__)
 
+_null_context = nullcontext()
+
+@contextmanager
+def maybe_run_profiler(use_profiler, trace_dir, *args, **kwargs):
+    
+    if use_profiler:
+        with torch.profiler.profile(
+            activities=[
+                torch.profiler.ProfilerActivity.CPU,
+                torch.profiler.ProfilerActivity.CUDA,
+            ],
+            # schedule=torch.profiler.schedule(wait=1, warmup=2, active=3, repeat=1),
+            on_trace_ready=torch.profiler.tensorboard_trace_handler(
+                trace_dir
+            ),
+            profile_memory=True,
+            with_stack=False,
+            record_shapes=True,
+        ) as torch_profiler:
+            yield torch_profiler
+    else:
+        torch_profiler = nullcontext()
+        yield None
 
 class MLP(nn.Module):
     def __init__(
@@ -135,39 +160,45 @@ def main(**kwargs):
         torch.randn_like(x_cuda_empty) for _ in range(n_microbatches)
     ]
 
-    for schedule in kwargs["schedules"]:
-        logger.info(f"====== Rank {rank} running schedule {schedule} ======")
-        if schedule == "gpipe":
-            pipeline = PipelineScheduleGPipe(stage_model)
-        elif schedule == "looped_bfs":
-            pipeline = PipelineScheduleLoopedBFS(stage_model_looped)
-        elif schedule == "looped_dfs":
-            pipeline = PipelineScheduleLoopedDFS(
-                stage_model_looped,
-                n_microbatch=n_microbatches,
-                pp_id=rank,
-                n_pp=n_pp,
-            )
+    # setup profiling setup (enable with --profiler True)
+    _run_profiler = kwargs["profiler"]
+    _torch_profiler = None
+    _trace_dir = kwargs["trace_dir"]
 
-        logger.info(f"====== Rank {rank} profile ======")
+    if _run_profiler:
+        if not os.path.exists(_trace_dir):
+            os.mkdir(_trace_dir)
+        rank_print(f"Profiling active -- saving traces to {_trace_dir}")
+    from torch.profiler import profile, ProfilerActivity
+    # 
+    with profile( activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA] ) as _torch_profiler:
+        _torch_profiler.enabled
+    #with maybe_run_profiler(_run_profiler, _trace_dir) as _torch_profiler:
+        for schedule in kwargs["schedules"]:
+            logger.info(f"====== Rank {rank} running schedule {schedule} ======")
+            if schedule == "gpipe":
+                pipeline = PipelineScheduleGPipe(stage_model)
+            elif schedule == "looped_bfs":
+                pipeline = PipelineScheduleLoopedBFS(stage_model_looped)
+            elif schedule == "looped_dfs":
+                pipeline = PipelineScheduleLoopedDFS(
+                    stage_model_looped,
+                    n_microbatch=n_microbatches,
+                    pp_id=rank,
+                    n_pp=n_pp,
+                )
 
-        # ---- setup profiling if enabled (default is no profiling)
-        _run_profiler = kwargs["profiler"]
+            if _run_profiler:
+                logger.info(f"====== Rank {rank} profile ======")
 
-        if _run_profiler:
-            trace_dir = kwargs["trace_dir"]
-            if not os.path.exists(trace_dir):
-                os.mkdir(trace_dir)
-            rank_print(f"Profiling active -- saving traces to {trace_dir}")
-            #prof.export_chrome_trace(f"{trace_dir}/{schedule}_rank{rank}_trace.json")
-        
+            with record_function(schedule):
+                pipeline.step(microbatches)
 
+        if _torch_profiler:
+            rank_print(f"about to EXPORT traces")
+            _torch_profiler.export_chrome_trace(f"{_trace_dir}/{schedule}_rank{rank}_trace.json")
+     
 
-        # with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
-        #    with record_function(schedule):
-        pipeline.step(microbatches)
-
-        
         logger.info(f"====== Rank {rank} finished {schedule} ======")
 
 
