@@ -24,7 +24,7 @@ import os
 from contextlib import contextmanager, nullcontext
 
 from datetime import timedelta
-from torch.profiler import record_function
+
 
 import torch
 import torch.distributed as dist
@@ -36,6 +36,7 @@ from pippy.PipelineSchedule import (
     PipelineScheduleLoopedDFS,
     PipelineStage,
 )
+from torch.profiler import record_function
 
 logger = logging.getLogger(__name__)
 
@@ -44,11 +45,15 @@ _null_context = nullcontext()
 
 # profiling context manager
 @contextmanager
-def maybe_run_profiler(use_profiler, trace_dir, schedule, rank, *args, **kwargs):
+def maybe_run_profiler(
+    use_profiler, trace_dir, schedule, rank, *args, **kwargs
+    ):
     def trace_handler(prof):
         if rank == 0:
             (f"about to EXPORT traces for {schedule} to {trace_dir}")
-        prof.export_chrome_trace(f"{trace_dir}/{schedule}_rank{rank}_trace.json")
+        prof.export_chrome_trace(
+            f"{trace_dir}/{schedule}_rank{rank}_trace.json"
+            )
 
     if use_profiler:
         with torch.profiler.profile(
@@ -131,7 +136,9 @@ def main(**kwargs):
     output_dim = 4000
 
     module_list = torch.nn.ModuleList(
-        modules=[MLP(input_dim, hidden_dim, output_dim) for i in range(world_size)]
+        modules=[
+            MLP(input_dim, hidden_dim, output_dim) for i in range(world_size)
+            ]
     )
     microbatch_size = 8
     global_batch_size = 64
@@ -159,7 +166,9 @@ def main(**kwargs):
         for i in range(world_size)
     ]
     x_cuda_empty = torch.empty_like(x, device="cuda")
-    microbatches = [torch.randn_like(x_cuda_empty) for _ in range(n_microbatches)]
+    microbatches = [
+        torch.randn_like(x_cuda_empty) for _ in range(n_microbatches)
+        ]
 
     # profiling setup (enable with --profiler True)
     _run_profiler = kwargs["profiler"]
@@ -247,7 +256,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
     kwargs = vars(args)
 
-    if rank is None or local_rank is None or world_size is None or master_addr is None:
+    if (
+        rank is None 
+        or local_rank is None 
+        or world_size is None 
+        or master_addr is None
+    ):
         # single host code path
         master_port = "23456"
         master_addr = "localhost"
