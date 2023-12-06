@@ -21,6 +21,7 @@ torchrun --rdzv-backend=c10d --rdzv-endpoint=node1.example.com:29400 --nnodes=2 
 import argparse
 import logging
 import os
+from contextlib import contextmanager, nullcontext
 
 from datetime import timedelta
 
@@ -34,8 +35,41 @@ from pippy.PipelineSchedule import (
     PipelineScheduleLoopedDFS,
     PipelineStageV2Impl,
 )
+from torch.profiler import record_function
 
 logger = logging.getLogger(__name__)
+
+_null_context = nullcontext()
+
+
+# profiling context manager
+@contextmanager
+def maybe_run_profiler(
+    use_profiler, trace_dir, schedule, rank, *args, **kwargs
+):
+    def trace_handler(prof):
+        if rank == 0:
+            (f"about to EXPORT traces for {schedule} to {trace_dir}")
+        prof.export_chrome_trace(
+            f"{trace_dir}/{schedule}_rank{rank}_trace.json"
+        )
+
+    if use_profiler:
+        with torch.profiler.profile(
+            activities=[
+                torch.profiler.ProfilerActivity.CPU,
+                torch.profiler.ProfilerActivity.CUDA,
+            ],
+            # schedule=torch.profiler.schedule(wait=1, warmup=2, active=3, repeat=1),
+            on_trace_ready=trace_handler,
+            profile_memory=True,
+            with_stack=False,
+            record_shapes=True,
+        ) as torch_profiler:
+            yield torch_profiler
+    else:
+        torch_profiler = nullcontext()
+        yield None
 
 
 class MLP(nn.Module):
@@ -79,7 +113,7 @@ def setup(local_rank, world_size):
 
 def main(**kwargs):
     torch.manual_seed(42)
-    print(f"MY KWARGS ARE {kwargs}")
+
     rank = kwargs["rank"]
     local_rank = kwargs["local_rank"]
     world_size = kwargs["world_size"]
@@ -89,6 +123,12 @@ def main(**kwargs):
     logger.info(
         f"====== World Rank {rank}, Local Rank {local_rank}, World Size {world_size}, Device {device} main ======"
     )
+
+    def rank_print(msg):
+        if rank == 0:
+            print(f"{msg}")
+
+    rank_print(f"My KWARGS are {kwargs}")
 
     input_dim = 4000
     hidden_dim = 8000
@@ -129,6 +169,16 @@ def main(**kwargs):
         torch.randn_like(x_cuda_empty) for _ in range(n_microbatches)
     ]
 
+    # profiling setup (enable with --profiler True)
+    _run_profiler = kwargs["profiler"]
+    _torch_profiler = None
+    _trace_dir = kwargs["trace_dir"]
+
+    if _run_profiler:
+        if not os.path.exists(_trace_dir):
+            os.mkdir(_trace_dir)
+        rank_print(f"Profiling active -- saving traces to {_trace_dir}")
+
     for schedule in kwargs["schedules"]:
         logger.info(f"====== Rank {rank} running schedule {schedule} ======")
         if schedule == "gpipe":
@@ -143,19 +193,15 @@ def main(**kwargs):
                 n_pp=n_pp,
             )
 
-        logger.info(f"====== Rank {rank} profile ======")
+        if _run_profiler:
+            logger.info(f"====== Rank {rank} profile ======")
 
-        # with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
-        #    with record_function(schedule):
-        pipeline.step(microbatches)
+        with maybe_run_profiler(
+            _run_profiler, _trace_dir, schedule, rank
+        ) as _torch_profiler:
+            with record_function(schedule):
+                pipeline.step(microbatches)
 
-        # TODO - default should be no profiling.
-        """if not kwargs["no_trace"]:
-            trace_dir = kwargs["trace_dir"]
-            if not os.path.exists(trace_dir):
-                os.mkdir(trace_dir)
-            prof.export_chrome_trace(f"{trace_dir}/{schedule}_rank{rank}_trace.json")
-        """
         logger.info(f"====== Rank {rank} finished {schedule} ======")
 
 
@@ -196,8 +242,8 @@ if __name__ == "__main__":
     master_port = os.environ.get("MASTER_PORT", None)
 
     parser = argparse.ArgumentParser(description="Pipeline Stages Runner")
-    parser.add_argument("--no_trace", action="store_true")
-    parser.add_argument("--trace_dir", type=str, default="./traces")
+    parser.add_argument("--profiler", type=bool, default=False)
+    parser.add_argument("--trace_dir", type=str, default="./pipeline_traces")
     parser.add_argument(
         "--schedules",
         type=str,
@@ -208,7 +254,6 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default="cuda")
     args = parser.parse_args()
     kwargs = vars(args)
-    print(kwargs)
 
     if (
         rank is None
