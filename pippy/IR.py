@@ -672,7 +672,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         # may be named as
         # submod_0, submod_2, submod_4, ...
         # TODO: investigate
-        #assert all(i in found_idxs for i in range(num_stages))
+        # assert all(i in found_idxs for i in range(num_stages))
 
         return num_stages
 
