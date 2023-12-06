@@ -666,7 +666,13 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
                 num_stages += 1
 
         # this assert will fail if a split point is inserted before the first layer, which creates empty first submodule
-        assert all(i in found_idxs for i in range(num_stages))
+        # Update: the following assert may fail against some torch versions >=
+        # 2.2.0, as:
+        # submod_0, submod_1, submod_2, ...
+        # may be named as
+        # submod_0, submod_2, submod_4, ...
+        # TODO: investigate
+        #assert all(i in found_idxs for i in range(num_stages))
 
         return num_stages
 
