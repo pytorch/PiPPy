@@ -1,6 +1,7 @@
 # (c) Meta Platforms, Inc. and affiliates. Confidential and proprietary.
 
 import logging
+from abc import ABC, abstractmethod
 from collections import deque
 from typing import Deque, List, Optional, Tuple
 
@@ -16,7 +17,65 @@ handler.setLevel(logging.INFO)
 logger.addHandler(handler)
 
 
-class PipelineStage(nn.Module):
+class PipelineStage(ABC, nn.Module):
+    @abstractmethod
+    def forward(self, microbatch):
+        """
+        TODO: this will be updated to support multiple arguments
+
+        Perform forward pass on the module.
+        This should only be called once per microbatch.
+
+        Args:
+            microbatch: The input to the module
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_fwd_recv_ops(self) -> List[dist.P2POp]:
+        """
+        Get the list of P2P operations that need to be performed before calling forward()
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_fwd_send_ops(self) -> List[dist.P2POp]:
+        """
+        Get the list of P2P operations that need to be performed after calling forward()
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def backward(self):
+        """
+        Perform backward pass on the module.
+        This should only be called once per microbatch.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_bwd_recv_ops(self) -> List[dist.P2POp]:
+        """
+        Get the list of P2P operations that need to be performed before calling backward()
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_bwd_send_ops(self) -> List[dist.P2POp]:
+        """
+        Get the list of P2P operations that need to be performed after calling backward()
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def compute_loss(self):
+        """
+        Compute loss from the outputs of the last stage
+        """
+        raise NotImplementedError
+
+
+class PipelineStageV2Impl(PipelineStage):
     def __init__(
         self,
         module: nn.Module,
@@ -89,12 +148,10 @@ class PipelineStage(nn.Module):
             return []
         return [dist.P2POp(dist.isend, self.fwd_output, self.next_stage)]
 
-    def forward(self, input_data, is_first_mb, is_last_mb):
-        logger.info(
-            f"[{self.rank} FORWARD {self.stage_id}] is_first_mb {is_first_mb} is_last_mb {is_last_mb}"
-        )
+    def forward(self, microbatch: torch.Tensor):
+        logger.info(f"[{self.rank} FORWARD {self.stage_id}")
         if self.is_first_stage:
-            self.fwd_input = input_data
+            self.fwd_input = microbatch
 
         # this is needed when we access the gradients for this in backward()
         self.fwd_input.requires_grad = True
@@ -138,10 +195,8 @@ class PipelineStage(nn.Module):
         self.bwd_recv_queue = None
         return self.fwd_output_grads
 
-    def backward(self, is_first_mb, is_last_mb):
-        logger.info(
-            f"[{self.rank} BACKWARD {self.stage_id}] is_first_mb {is_first_mb} is_last_mb {is_last_mb}"
-        )
+    def backward(self):
+        logger.info(f"[{self.rank} BACKWARD {self.stage_id}]")
 
         if self.is_last_stage:
             fwd_inputs, loss = self.fwd_outputs_for_backward.popleft()
@@ -165,22 +220,31 @@ class PipelineStage(nn.Module):
         return self.fwd_output.mean()
 
 
-class PipelineScheduleGPipe:
+class PipelineSchedule(ABC):
+    @abstractmethod
+    def step(self, microbatches: List[torch.Tensor]) -> None:
+        """
+        Run one iteration of the pipeline schedule. Will go through all the microbatches
+        according to the schedule implementation.
+
+        Args:
+            microbatches: list of microbatch tensors
+        """
+        raise NotImplementedError
+
+
+class PipelineScheduleGPipe(PipelineSchedule):
     def __init__(self, stage: PipelineStage):
         self._stage = stage
 
     def step(self, microbatches):
         for i, mb in enumerate(microbatches):
             with record_function(f"Forward {i}"):
-                is_last_mb = i == len(microbatches) - 1
-
                 ops = self._stage.get_fwd_recv_ops()
                 if ops:
                     dist.batch_isend_irecv(ops).pop().wait()
 
-                self._stage.forward(
-                    mb, is_first_mb=i == 0, is_last_mb=is_last_mb
-                )
+                self._stage.forward(mb)
 
                 ops = self._stage.get_fwd_send_ops()
                 if ops:
@@ -196,10 +260,7 @@ class PipelineScheduleGPipe:
                 if ops:
                     dist.batch_isend_irecv(ops).pop().wait()
 
-                self._stage.backward(
-                    is_first_mb=i == 0,
-                    is_last_mb=i == len(microbatches) - 1,
-                )
+                self._stage.backward()
 
                 ops = self._stage.get_bwd_send_ops()
                 if ops:
@@ -208,7 +269,7 @@ class PipelineScheduleGPipe:
             logger.info(f"{self._stage.stage_id} backward {i} finished")
 
 
-class PipelineScheduleLoopedBFS:
+class PipelineScheduleLoopedBFS(PipelineSchedule):
     def __init__(self, stages: List[PipelineStage]):
         self._stages = stages
 
@@ -216,13 +277,11 @@ class PipelineScheduleLoopedBFS:
         for s, stage in enumerate(self._stages):
             for i, mb in enumerate(microbatches):
                 with record_function(f"Stage {s} Forward"):
-                    is_last_mb = i == len(microbatches) - 1
-
                     ops = stage.get_fwd_recv_ops()
                     if ops:
                         dist.batch_isend_irecv(ops).pop().wait()
 
-                    stage.forward(mb, is_first_mb=i == 0, is_last_mb=is_last_mb)
+                    stage.forward(mb)
 
                     ops = stage.get_fwd_send_ops()
                     if ops:
@@ -235,17 +294,14 @@ class PipelineScheduleLoopedBFS:
                     if ops:
                         dist.batch_isend_irecv(ops).pop().wait()
 
-                    stage.backward(
-                        is_first_mb=i == 0,
-                        is_last_mb=i == len(microbatches) - 1,
-                    )
+                    stage.backward()
 
                     ops = stage.get_bwd_send_ops()
                     if ops:
                         dist.batch_isend_irecv(ops)
 
 
-class PipelineScheduleLoopedDFS:
+class PipelineScheduleLoopedDFS(PipelineSchedule):
     def __init__(self, stages: List[PipelineStage], n_microbatch, pp_id, n_pp):
         assert (
             n_microbatch % n_pp == 0
@@ -385,11 +441,7 @@ class PipelineScheduleLoopedDFS:
                     logger.info(
                         f"pp_id {self.pp_id} step {step} forward_stage {forward_stage.stage_id} mb_id {mb_id_fwd}"
                     )
-                    forward_stage.forward(
-                        microbatches[mb_id_fwd],
-                        is_first_mb=mb_id_fwd == 0,
-                        is_last_mb=mb_id_fwd == len(microbatches) - 1,
-                    )
+                    forward_stage.forward(microbatches[mb_id_fwd])
 
                 requests: List[dist.P2POp] = []
 
@@ -432,10 +484,7 @@ class PipelineScheduleLoopedDFS:
                     logger.info(
                         f"pp_id {self.pp_id} step {step}/{self.total_steps} backward_step {backward_step} backward_stage_id {backward_stage.stage_id} mb_id {mb_id_bwd}"
                     )
-                    backward_stage.backward(
-                        is_first_mb=mb_id_bwd == 0,
-                        is_last_mb=mb_id_bwd == len(microbatches) - 1,
-                    )
+                    backward_stage.backward()
 
                 requests = []
 

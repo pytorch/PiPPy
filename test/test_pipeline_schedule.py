@@ -32,7 +32,7 @@ from pippy.PipelineSchedule import (
     PipelineScheduleGPipe,
     PipelineScheduleLoopedBFS,
     PipelineScheduleLoopedDFS,
-    PipelineStage,
+    PipelineStageV2Impl,
 )
 
 logger = logging.getLogger(__name__)
@@ -107,13 +107,13 @@ def main(**kwargs):
 
     x = torch.randn([microbatch_size, input_dim]).to("meta")
 
-    stage_model = PipelineStage(
+    stage_model = PipelineStageV2Impl(
         module_list[rank], rank, world_size, rank, world_size, x, device
     )
     stage_model.init_p2p_neighbors()
 
     stage_model_looped = [
-        PipelineStage(
+        PipelineStageV2Impl(
             module_list[rank],
             stage_id=(world_size * i) + rank,
             num_stages=world_size * world_size,
