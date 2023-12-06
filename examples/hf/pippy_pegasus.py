@@ -1,7 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 
 # Minimum effort to run this example:
-# $ torchrun --nproc-per-node 4 pippy_bert.py
+# $ torchrun --nproc-per-node 4 pippy_pegasus.py
 
 import argparse
 import os
@@ -17,11 +17,11 @@ from transformers import PegasusForCausalLM, PegasusConfig
 from hf_utils import generate_inputs_for_model, get_number_of_params
 
 
-def add_split_points(bert, nranks):
-    layers_per_rank = bert.config.num_hidden_layers // nranks
+def add_split_points(pegasus, nranks):
+    layers_per_rank = pegasus.config.num_hidden_layers // nranks
     for i in range(1, nranks):
         annotate_split_points(
-            bert, {f"model.decoder.layers.{i * layers_per_rank}": PipeSplitWrapper.SplitPoint.BEGINNING})
+            pegasus, {f"model.decoder.layers.{i * layers_per_rank}": PipeSplitWrapper.SplitPoint.BEGINNING})
 
 
 def run(args):
@@ -32,37 +32,37 @@ def run(args):
     # Create model
     model_class = PegasusForCausalLM
     model_name = "PegasusForCausalLM"
-    bert = model_class(config)
-    bert.to(args.device)
-    bert.eval()
+    pegasus = model_class(config)
+    pegasus.to(args.device)
+    pegasus.eval()
     if args.rank == 0:
-        print(bert.config)
-        print(f"Total number of params = {get_number_of_params(bert) // 10 ** 6}M")
-        print(bert)
+        print(pegasus.config)
+        print(f"Total number of params = {get_number_of_params(pegasus) // 10 ** 6}M")
+        print(pegasus)
 
     # Input configs
     example_inputs = generate_inputs_for_model(
-        model_class, bert, model_name, args.batch_size, args.device)
+        model_class, pegasus, model_name, args.batch_size, args.device)
     input_ids = example_inputs["input_ids"]
 
     # Annotate split points
-    add_split_points(bert, args.world_size)
+    add_split_points(pegasus, args.world_size)
 
     # Create pipeline
-    bert_pipe = Pipe.from_tracing(
-        bert,
+    pegasus_pipe = Pipe.from_tracing(
+        pegasus,
         num_chunks=args.chunks,
         example_args=(input_ids, ),
     )
-    nstages = len(list(bert_pipe.split_gm.children()))
+    nstages = len(list(pegasus_pipe.split_gm.children()))
     assert nstages == args.world_size, f"nstages = {nstages} nranks = {args.world_size}"
     if args.rank == 0:
-        for i, sm in enumerate(bert_pipe.split_gm.children()):
+        for i, sm in enumerate(pegasus_pipe.split_gm.children()):
             print(f"Pipeline stage {i} {get_number_of_params(sm) // 10 ** 6}M params")
 
     # Create schedule runtime
     stage = PipelineStage(
-        bert_pipe,
+        pegasus_pipe,
         args.rank,
         device=args.device,
     )
