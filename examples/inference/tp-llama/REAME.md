@@ -27,7 +27,7 @@ pip install transformers fairscale
 3- Download Meta llama weights from HF hub, it will download the models into `model/models--meta-llama--Llama-2-7b/snapshots/365ffa8f1a6c455d3e2028ae658236b4b85ba824/`
 
 ```
-python download.py --model_name meta-llama/Llama-2-7b
+python download.py --model_name meta-llama/Llama-2-7b # alternatively try larger models meta-llama/Llama-2-13b, meta-llama/Llama-2-70b
 
 ```
 
@@ -47,4 +47,9 @@ torchrun --nnodes 1 --nproc_per_node 8 convert_checkpoints.py --original_ckpt_di
 ```
 torchrun --nnodes 1 --nproc_per_node 8 generate.py  --model_args model_args.json  --tokenizer_path ../model/models--meta-llama--Llama-2-7b/snapshots/365ffa8f1a6c455d3e2028ae658236b4b85ba824/tokenizer.model --converted_ckpt_dir converted_checkpoints
 
+```
+
+6- To see some numbers on TP inference run the following:
+```
+torchrun --nnodes 1 --nproc_per_node 2 benchmark.py  --model_args model_args.json  --tokenizer_path .../model/models--meta-llama--Llama-2-7b/snapshots/365ffa8f1a6c455d3e2028ae658236b4b85ba824/tokenizer.model --converted_ckpt_dir converted_checkpoints
 ```
