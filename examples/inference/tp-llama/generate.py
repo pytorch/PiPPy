@@ -412,6 +412,7 @@ def text_completion(
     prompt_tokens = [tokenizer.encode(x, bos=True, eos=False) for x in prompts]
     global decode_one_token, prefill
     decode_one_token = torch.compile(decode_one_token, mode="reduce-overhead", dynamic=True)
+    prefill = torch.compile(prefill, fullgraph=True, dynamic=True)
     with CompileProfiler() as prof:
         generation_tokens, generation_logprobs = generate(
             model,
