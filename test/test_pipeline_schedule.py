@@ -23,10 +23,8 @@ import logging
 import os
 from contextlib import contextmanager, nullcontext
 
-from datetime import timedelta
 
 import torch
-import torch.distributed as dist
 from torch.distributed._tensor.device_mesh import init_device_mesh
 import torch.multiprocessing as mp
 import torch.nn as nn
@@ -46,15 +44,11 @@ _null_context = nullcontext()
 
 # profiling context manager
 @contextmanager
-def maybe_run_profiler(
-    use_profiler, trace_dir, schedule, rank, *args, **kwargs
-):
+def maybe_run_profiler(use_profiler, trace_dir, schedule, rank, *args, **kwargs):
     def trace_handler(prof):
         if rank == 0:
             (f"about to EXPORT traces for {schedule} to {trace_dir}")
-        prof.export_chrome_trace(
-            f"{trace_dir}/{schedule}_rank{rank}_trace.json"
-        )
+        prof.export_chrome_trace(f"{trace_dir}/{schedule}_rank{rank}_trace.json")
 
     if use_profiler:
         with torch.profiler.profile(
@@ -99,15 +93,14 @@ class MLP(nn.Module):
         return c
 
 
-def setup(local_rank, init_process_group = False):
+def setup(local_rank, init_process_group=False):
     # If this is a child process (i.e., its PID is not the same as the PID of the process that started this script)
     if os.getppid() != os.getpid():
         set_up_logging(local_rank)
 
-    # initialize the process group
+    # initialize the process group (not needed if using device_mesh)
     if init_process_group:
         logger.info(f"init for rank {local_rank}")
-        dist.init_process_group("nccl", timeout=timedelta(seconds=20))
         if torch.distributed.is_initialized():
             torch.cuda.set_device(local_rank)
 
@@ -117,38 +110,36 @@ def setup(local_rank, init_process_group = False):
 def main(**kwargs):
     torch.manual_seed(42)
     device = torch.device(kwargs["device"])
-    
-    # use device mesh
-    # create a device mesh based on the given world_size.
+
+    local_rank = kwargs["local_rank"]
+    world_size = kwargs["world_size"]
+
+    def rank_print(msg):
+        if rank == 0:
+            print(f"{msg}")
+
+    # use device mesh for cuda - create a device mesh based on the given world_size.
     device_mesh = None
     rank = None
 
-    if device == 'cuda':
+    if device.type == "cuda":
         device_mesh = init_device_mesh(
             device_type="cuda", mesh_shape=(int(os.environ["WORLD_SIZE"]),)
         )
 
         rank = device_mesh.get_rank()
-        print(f"{device_mesh=}")
+        rank_print(f"using {device_mesh=}")
 
-
-    if not rank:
-        rank = kwargs["rank"] 
-
-    local_rank = kwargs["local_rank"]
-    world_size = kwargs["world_size"]
+    if not device_mesh:
+        rank = kwargs["rank"]
 
     init_process_group = bool(device_mesh is not None)
-    
-    setup(local_rank, init_process_group= init_process_group )
+
+    setup(local_rank, init_process_group=init_process_group)
 
     logger.info(
         f"====== World Rank {rank}, Local Rank {local_rank}, World Size {world_size}, Device {device} main ======"
     )
-
-    def rank_print(msg):
-        if rank == 0:
-            print(f"{msg}")
 
     rank_print(f"My KWARGS are {kwargs}")
 
@@ -157,9 +148,7 @@ def main(**kwargs):
     output_dim = 4000
 
     module_list = torch.nn.ModuleList(
-        modules=[
-            MLP(input_dim, hidden_dim, output_dim) for i in range(world_size)
-        ]
+        modules=[MLP(input_dim, hidden_dim, output_dim) for i in range(world_size)]
     )
     microbatch_size = 8
     global_batch_size = 64
@@ -187,9 +176,7 @@ def main(**kwargs):
         for i in range(world_size)
     ]
     x_cuda_empty = torch.empty_like(x, device="cuda")
-    microbatches = [
-        torch.randn_like(x_cuda_empty) for _ in range(n_microbatches)
-    ]
+    microbatches = [torch.randn_like(x_cuda_empty) for _ in range(n_microbatches)]
 
     # profiling setup (enable with --profiler True)
     _run_profiler = kwargs["profiler"]
@@ -271,18 +258,15 @@ if __name__ == "__main__":
         type=str,
         nargs="+",
         choices=["gpipe", "looped_bfs", "looped_dfs"],
-        default=["gpipe",]# "looped_bfs", "looped_dfs"],
+        default=[
+            "gpipe",
+        ],  # "looped_bfs", "looped_dfs"],
     )
     parser.add_argument("--device", type=str, default="cuda")
     args = parser.parse_args()
     kwargs = vars(args)
 
-    if (
-        rank is None
-        or local_rank is None
-        or world_size is None
-        or master_addr is None
-    ):
+    if rank is None or local_rank is None or world_size is None or master_addr is None:
         # single host code path
         master_port = "23456"
         master_addr = "localhost"
