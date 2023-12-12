@@ -265,9 +265,7 @@ if __name__ == "__main__":
         type=str,
         nargs="+",
         choices=["gpipe", "looped_bfs", "looped_dfs"],
-        default=[
-            "gpipe",
-        ],  # "looped_bfs", "looped_dfs"],
+        default=["gpipe", "looped_bfs", "looped_dfs"],
     )
     parser.add_argument("--device", type=str, default="cuda")
     args = parser.parse_args()
