@@ -492,20 +492,25 @@ class QualnameMapMixin:
 
     def __init__(
         self,
-        qualname_mapping: Dict[str, str] = None,
+        splitter_qualname_map: Dict[str, str] = None,
+        tracer_qualname_map: Dict[str, str] = None,
     ):
         self.new_to_old_qualname_mapping: Dict[str, str] = (
-            qualname_mapping or {}
+            splitter_qualname_map or {}
         )
+        self.tracer_qualname_map = tracer_qualname_map
 
     def remap_qualname(self, qualname: str):
         # TODO: annoying
         if qualname.startswith("split_gm."):
             qualname = qualname[len("split_gm.") :]
 
-        # The qualname map does not store recursive items, thus,
-        # when passed a qualname with leaves, we need to perform longest prefix match
-        if qualname not in self.new_to_old_qualname_mapping:
+        name_before_split = None
+        if qualname in self.new_to_old_qualname_mapping:
+            name_before_split = self.new_to_old_qualname_mapping[qualname]
+        else:
+            # The qualname map does not store recursive items, thus,
+            # when passed a qualname with leaves, we need to perform longest prefix match
             # Split from the right, one each time
             split_names = qualname.rsplit(".", 1)
             leaf = split_names[-1]
@@ -513,25 +518,31 @@ class QualnameMapMixin:
                 prefix = split_names[0]
                 if prefix in self.new_to_old_qualname_mapping:
                     old_prefix = self.new_to_old_qualname_mapping[prefix]
-                    return ".".join([old_prefix, leaf])
+                    name_before_split = ".".join([old_prefix, leaf])
+                    break
                 split_names = prefix.rsplit(".", 1)
                 leaf = ".".join([split_names[-1], leaf])
 
-        # Either full name match, or key not found
-        return self.new_to_old_qualname_mapping[qualname]
+        if name_before_split is None:
+            raise RuntimeError(f"Could not find mapping for {qualname}")
 
+        if self.tracer_qualname_map is not None:
+            return self.tracer_qualname_map[name_before_split]
+        else:
+            return name_before_split
 
 class Pipe(QualnameMapMixin, torch.nn.Module):
     def __init__(
         self,
         split_gm: fx.GraphModule,
-        qualname_mapping: Dict[str, str],
+        splitter_qualname_map: Dict[str, str],
         num_stages: int,
         has_loss_and_backward: bool,
         loss_spec,
+        tracer_qualname_map: Optional[Dict[str, str]] = None,
     ):
         # TODO: is there a way not to hard wire init?
-        QualnameMapMixin.__init__(self, qualname_mapping)
+        QualnameMapMixin.__init__(self, splitter_qualname_map, tracer_qualname_map)
         torch.nn.Module.__init__(self)
         self.split_gm: fx.GraphModule = split_gm
         self.executor: DetachExecutor = DetachExecutor(self.split_gm)
@@ -728,10 +739,10 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
             return part_idx
 
         # Ask split_module to return mapping from new qualname to old qualname
-        qualname_map: Dict[str, str] = {}
+        splitter_qualname_map: Dict[str, str] = {}
         # TODO: what does split do with module invocations? does it move the modules
         # into the submodules?
-        split = split_module(traced, mod, split_callback, qualname_map)
+        split = split_module(traced, mod, split_callback, splitter_qualname_map)
         # a (custom) tracer can produce dead code like orphan get_attr nodes
         split.graph.eliminate_dead_code()
 
@@ -783,13 +794,13 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
             # Update qualname mapping
             # New qualname will have submodule prefix
             new_qualname = f"{callee_name}.{new_param_name}"
-            if node.target in qualname_map:
-                # Just in case the target name is already in the qualname_map
+            if node.target in splitter_qualname_map:
+                # Just in case the target name is already in the splitter_qualname_map
                 # returned by split_module() -- we update the mapping using the
                 # new name as a new key
-                qualname_map[new_qualname] = qualname_map.pop(node.target)
+                splitter_qualname_map[new_qualname] = splitter_qualname_map.pop(node.target)
             else:
-                qualname_map[new_qualname] = node.target
+                splitter_qualname_map[new_qualname] = node.target
 
             ph_counter = 0
             for sn in callee.graph.nodes:
@@ -1005,12 +1016,17 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
                 "Pipeline is in inference mode, backward pass not generated"
             )
 
+        # Tracer may modify qualname, get the qualname mapping before and after tracing.
+        # This qualname mapping is different from the mapping before and after splitting.
+        tracer_qualname_map = Pipe._get_param_buffer_mapping(mod, traced)
+
         return Pipe(
             split,
-            qualname_map,
+            splitter_qualname_map,
             num_stages,
             has_loss_and_backward,
             generated_loss_spec,
+            tracer_qualname_map,
         )
 
     @staticmethod
@@ -1117,6 +1133,40 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
     def __repr__(self):
         return self.split_gm.__repr__()
 
+    @staticmethod
+    def _get_param_buffer_mapping(
+        original_module: torch.nn.Module,
+        traced_module: torch.nn.Module,
+    ) -> Dict[str, str]:
+        """
+        Returns a mapping of parameter/buffer names from the new module to the
+        original model. This is to help with restoring the FQN for parameter/buffers
+        of a traced module to what the original module contains.
+        """
+
+        param_lookup: Dict[int, List[str]] = {}
+        buffer_lookup: Dict[int, List[str]] = {}
+        for name, param in original_module.named_parameters(remove_duplicate=False):
+            param_lookup.setdefault(id(param), []).append(name)
+        for name, buffer in original_module.named_buffers(remove_duplicate=False):
+            buffer_lookup.setdefault(id(buffer), []).append(name)
+
+        param_buffer_table: Dict[str, str] = {}
+        for dynamo_name, dynamo_param in traced_module.named_parameters(
+            remove_duplicate=False
+        ):
+            assert dynamo_name not in param_buffer_table
+            if id(dynamo_param) in param_lookup:
+                param_buffer_table[dynamo_name] = param_lookup[id(dynamo_param)].pop()
+
+        for dynamo_name, dynamo_buffer in traced_module.named_buffers(
+            remove_duplicate=False
+        ):
+            assert dynamo_name not in param_buffer_table
+            if id(dynamo_buffer) in buffer_lookup:
+                param_buffer_table[dynamo_name] = buffer_lookup[id(dynamo_buffer)].pop()
+
+        return param_buffer_table
 
 class PipeSplitWrapper(torch.nn.Module):
     class SplitPoint(Enum):

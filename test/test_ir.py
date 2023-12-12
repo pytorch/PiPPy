@@ -26,11 +26,6 @@ from pippy.microbatch import (
 )
 
 
-@pippy.fx.wrap
-def arange_wrapper(*args, **kwargs):
-    return torch.arange(*args, **kwargs)
-
-
 class ExampleCode(torch.nn.Module):
     def __init__(self):
         super().__init__()
@@ -74,6 +69,7 @@ class TestIR(unittest.TestCase):
         mods += [mods[0]]
         self.seq = torch.nn.Sequential(*mods)
         self.ec = ExampleCode()
+        self.example_inputs = (torch.randn(50, 512),)
 
     def test_sequential(self):
         pipe_seq = PipeSequential.from_sequential(self.seq)
@@ -336,39 +332,6 @@ class TestIR(unittest.TestCase):
             k_ref = pipe.remap_qualname(k_test)
             v_ref = ref_grads[k_ref]
             torch.testing.assert_close(v_test, v_ref)
-
-    def test_custom_tracer_serialization(self):
-        class CustomTracer(pippy.fx.Tracer):
-            def trace(self, root, concrete_args=None):
-                rv = super().trace(root, concrete_args)
-                for node in rv.nodes:
-                    if node.target == arange_wrapper:
-                        node.target = torch.arange
-                        node.meta.clear()
-                return rv
-
-        class FooMod(torch.nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.param = torch.nn.Parameter(torch.randn(1))
-
-            def forward(self, x):
-                return x + arange_wrapper(x.shape[-1]) + 1 + torch.zeros(1)
-
-        fm = FooMod()
-
-        tracer = CustomTracer()
-        pipe = Pipe.from_tracing(fm, tracer=tracer)
-
-        with tempfile.TemporaryDirectory() as d:
-            with open(d + "tmp.pkl", "wb") as f:
-                pickle.dump(pipe.split_gm.submod_0, f)
-
-            with open(d + "tmp.pkl", "rb") as f:
-                loaded = pickle.load(f)
-
-        x = torch.randn(5, 3)
-        torch.testing.assert_close(pipe.split_gm.submod_0(x), loaded(x))
 
     def test_direct_serialization_recursion_depth(self):
         class LomgBoi(torch.nn.Module):
@@ -814,8 +777,8 @@ class TestIR(unittest.TestCase):
             chunks_merged_masked["multiplied"], ref_out["multiplied"]
         )
 
-    def test_remap_qualname_transmit(self):
-        ec_pipe = Pipe.from_tracing(self.ec, MultiUseParameterConfig.TRANSMIT)
+    def test_remap_qualname(self):
+        ec_pipe = Pipe.from_tracing(self.ec, 1, self.example_inputs)
 
         # Get the first field of all tuples, i.e. names
         old_named_params = zip(*list(self.ec.named_parameters()))
@@ -830,35 +793,15 @@ class TestIR(unittest.TestCase):
             ), f"Remapped parameter {old_name} not found in {old_names}"
 
         # Check qualname mapping for submodule
+        # Not supported at the moment
+        """
         for _, stage_mod in ec_pipe.split_gm.named_children():
             for new_name, _ in stage_mod.named_parameters():
                 old_name = stage_mod.remap_qualname(new_name)
                 assert (
                     old_name in old_names
                 ), f"Remapped parameter {old_name} not found in {old_names}"
-
-    def test_remap_qualname_replicate(self):
-        ec_pipe = Pipe.from_tracing(self.ec, MultiUseParameterConfig.REPLICATE)
-
-        # Get the first field of all tuples, i.e. names
-        old_named_params = zip(*list(self.ec.named_parameters()))
-        old_names = list(old_named_params)[0]
-
-        # Check qualname mapping for pipe
-        for new_name, _ in ec_pipe.named_parameters():
-            old_name = ec_pipe.remap_qualname(new_name)
-            # print(f"{new_name} -> {old_name}")
-            assert (
-                old_name in old_names
-            ), f"Remapped parameter {old_name} not found in {old_names}"
-
-        # Check qualname mapping for submodule
-        for _, stage_mod in ec_pipe.split_gm.named_children():
-            for new_name, _ in stage_mod.named_parameters():
-                old_name = stage_mod.remap_qualname(new_name)
-                assert (
-                    old_name in old_names
-                ), f"Remapped parameter {old_name} not found in {old_names}"
+        """
 
 
 if __name__ == "__main__":

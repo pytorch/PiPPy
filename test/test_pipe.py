@@ -89,6 +89,16 @@ def run_worker(args, model_class):
     torch.testing.assert_close(out, ref_out)
     print(f"equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}")
 
+    # Check qualname
+    old_names = set(mod.state_dict().keys())
+    new_names = set(pipe.state_dict().keys())
+    for new_name in new_names:
+        old_name = pipe.remap_qualname(new_name)
+        assert (
+            old_name in old_names
+        ), f"Remapped parameter {old_name} not found in {old_names}"
+        print(f"{new_name} -> {old_name}")
+    print("Qualname check passed")
 
 def main(args=None):
     parser = argparse.ArgumentParser()
