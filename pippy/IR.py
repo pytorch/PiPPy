@@ -531,6 +531,7 @@ class QualnameMapMixin:
         else:
             return name_before_split
 
+
 class Pipe(QualnameMapMixin, torch.nn.Module):
     def __init__(
         self,
@@ -542,7 +543,9 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         tracer_qualname_map: Optional[Dict[str, str]] = None,
     ):
         # TODO: is there a way not to hard wire init?
-        QualnameMapMixin.__init__(self, splitter_qualname_map, tracer_qualname_map)
+        QualnameMapMixin.__init__(
+            self, splitter_qualname_map, tracer_qualname_map
+        )
         torch.nn.Module.__init__(self)
         self.split_gm: fx.GraphModule = split_gm
         self.executor: DetachExecutor = DetachExecutor(self.split_gm)
@@ -798,7 +801,9 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
                 # Just in case the target name is already in the splitter_qualname_map
                 # returned by split_module() -- we update the mapping using the
                 # new name as a new key
-                splitter_qualname_map[new_qualname] = splitter_qualname_map.pop(node.target)
+                splitter_qualname_map[new_qualname] = splitter_qualname_map.pop(
+                    node.target
+                )
             else:
                 splitter_qualname_map[new_qualname] = node.target
 
@@ -1146,9 +1151,13 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
 
         param_lookup: Dict[int, List[str]] = {}
         buffer_lookup: Dict[int, List[str]] = {}
-        for name, param in original_module.named_parameters(remove_duplicate=False):
+        for name, param in original_module.named_parameters(
+            remove_duplicate=False
+        ):
             param_lookup.setdefault(id(param), []).append(name)
-        for name, buffer in original_module.named_buffers(remove_duplicate=False):
+        for name, buffer in original_module.named_buffers(
+            remove_duplicate=False
+        ):
             buffer_lookup.setdefault(id(buffer), []).append(name)
 
         param_buffer_table: Dict[str, str] = {}
@@ -1157,16 +1166,21 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         ):
             assert dynamo_name not in param_buffer_table
             if id(dynamo_param) in param_lookup:
-                param_buffer_table[dynamo_name] = param_lookup[id(dynamo_param)].pop()
+                param_buffer_table[dynamo_name] = param_lookup[
+                    id(dynamo_param)
+                ].pop()
 
         for dynamo_name, dynamo_buffer in traced_module.named_buffers(
             remove_duplicate=False
         ):
             assert dynamo_name not in param_buffer_table
             if id(dynamo_buffer) in buffer_lookup:
-                param_buffer_table[dynamo_name] = buffer_lookup[id(dynamo_buffer)].pop()
+                param_buffer_table[dynamo_name] = buffer_lookup[
+                    id(dynamo_buffer)
+                ].pop()
 
         return param_buffer_table
+
 
 class PipeSplitWrapper(torch.nn.Module):
     class SplitPoint(Enum):

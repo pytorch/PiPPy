@@ -100,6 +100,7 @@ def run_worker(args, model_class):
         print(f"{new_name} -> {old_name}")
     print("Qualname check passed")
 
+
 def main(args=None):
     parser = argparse.ArgumentParser()
     parser.add_argument(
