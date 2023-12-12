@@ -5,7 +5,6 @@ import tempfile
 import unittest
 from typing import NamedTuple
 
-import pippy.fx
 import torch
 
 from pippy.IR import (
