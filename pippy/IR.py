@@ -1138,6 +1138,9 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
     def __repr__(self):
         return self.split_gm.__repr__()
 
+    # TODO: this util comes from pytorch/pytorch#115462, delete it from PiPPy
+    # when PyTorch 2.3 comes with support, or when PiPPy migrates from
+    # `_export_to_torch_ir` to export + unflattener.
     @staticmethod
     def _get_param_buffer_mapping(
         original_module: torch.nn.Module,
