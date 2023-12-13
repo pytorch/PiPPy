@@ -23,10 +23,7 @@ import logging
 import os
 from contextlib import contextmanager, nullcontext
 
-from datetime import timedelta
-
 import torch
-import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.nn as nn
 from pippy.PipelineSchedule import (
@@ -35,7 +32,9 @@ from pippy.PipelineSchedule import (
     PipelineScheduleLoopedDFS,
     PipelineStageV2Impl,
 )
+from torch.distributed._tensor.device_mesh import init_device_mesh
 from torch.profiler import record_function
+
 
 logger = logging.getLogger(__name__)
 
@@ -97,36 +96,53 @@ class MLP(nn.Module):
         return c
 
 
-def setup(local_rank, world_size):
+def setup(local_rank, init_process_group=False):
     # If this is a child process (i.e., its PID is not the same as the PID of the process that started this script)
     if os.getppid() != os.getpid():
         set_up_logging(local_rank)
 
-    # initialize the process group
-    logger.info(f"init for rank {local_rank}")
-    dist.init_process_group("nccl", timeout=timedelta(seconds=20))
-    if torch.distributed.is_initialized():
-        torch.cuda.set_device(local_rank)
+    # initialize the process group (not needed if using device_mesh)
+    if init_process_group:
+        logger.info(f"init for rank {local_rank}")
+        if torch.distributed.is_initialized():
+            torch.cuda.set_device(local_rank)
 
     logger.info(f"finish init for rank {local_rank}")
 
 
 def main(**kwargs):
     torch.manual_seed(42)
-
-    rank = kwargs["rank"]
-    local_rank = kwargs["local_rank"]
-    world_size = kwargs["world_size"]
     device = torch.device(kwargs["device"])
 
-    setup(local_rank, world_size)
-    logger.info(
-        f"====== World Rank {rank}, Local Rank {local_rank}, World Size {world_size}, Device {device} main ======"
-    )
+    local_rank = kwargs["local_rank"]
+    world_size = kwargs["world_size"]
 
     def rank_print(msg):
         if rank == 0:
             print(f"{msg}")
+
+    # use device mesh for cuda - create a device mesh based on the given world_size.
+    device_mesh = None
+    rank = None
+
+    if device.type == "cuda":
+        device_mesh = init_device_mesh(
+            device_type="cuda", mesh_shape=(int(os.environ["WORLD_SIZE"]),)
+        )
+
+        rank = device_mesh.get_rank()
+        rank_print(f"using {device_mesh=}")
+
+    if not device_mesh:
+        rank = kwargs["rank"]
+
+    init_process_group = bool(device_mesh is not None)
+
+    setup(local_rank, init_process_group=init_process_group)
+
+    logger.info(
+        f"====== World Rank {rank}, Local Rank {local_rank}, World Size {world_size}, Device {device} main ======"
+    )
 
     rank_print(f"My KWARGS are {kwargs}")
 
