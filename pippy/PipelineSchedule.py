@@ -192,13 +192,13 @@ class PipelineStageV2Impl(PipelineStage):
         # perform forward pass on module
         self.fwd_outputs = self.module(*self.fwd_inputs)
 
-        fwd_outputs_for_backward  = (
+        fwd_outputs_for_backward = (
             self.compute_loss() if self.is_last_stage else self.fwd_outputs
         )
 
         # we store a ref to the input/output pair for this forward to be later used by the corresponding backward
         self.fwd_outputs_for_backward.append(
-            (self.fwd_inputs, fwd_outputs_for_backward )
+            (self.fwd_inputs, fwd_outputs_for_backward)
         )
 
         return self.fwd_outputs
