@@ -16,14 +16,11 @@ from pippy.PipelineStage import PipelineStage
 def add_split_points(llama, nranks):
     layers_per_rank = (llama.config.num_hidden_layers + nranks - 1) // nranks
     print(f"layers_per_rank = {layers_per_rank}")
-    nstages = 1
     for i in range(1, nranks):
         annotate_split_points(
             llama,
             {f'model.layers.{i * layers_per_rank}': PipeSplitWrapper.SplitPoint.BEGINNING},
         )
-        nstages += 1
-    assert nstages == nranks, f"nstages = {nstages} nranks = {nranks}"
 
 
 def get_number_of_params(model):
