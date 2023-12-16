@@ -1,4 +1,5 @@
 # Minimum effort to run this example:
+# $ pip install transformers
 # $ torchrun --nproc-per-node 2 pippy_llama.py
 
 import argparse
