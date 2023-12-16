@@ -14,6 +14,7 @@ from pippy.PipelineStage import PipelineStage
 
 
 def add_split_points(llama, nranks):
+    # Cut model by equal number of layers per rank
     layers_per_rank = (llama.config.num_hidden_layers + nranks - 1) // nranks
     print(f"layers_per_rank = {layers_per_rank}")
     for i in range(1, nranks):
