@@ -185,9 +185,10 @@ class PipelineStageV2Impl(PipelineStage):
             self.fwd_inputs = args
 
         # this is needed when we access the gradients for this in backward()
-        for tensor in self.fwd_inputs:
-            tensor.requires_grad = True
-            tensor.retain_grad()
+        if not self.is_first_stage:
+            for tensor in self.fwd_inputs:
+                tensor.requires_grad = True
+                tensor.retain_grad()
 
         # perform forward pass on module
         self.fwd_outputs = self.module(*self.fwd_inputs)
@@ -234,6 +235,9 @@ class PipelineStageV2Impl(PipelineStage):
             ) = self.fwd_outputs_for_backward.popleft()
 
         # Compute gradients
+        # TODO: HACK materialize_grads=True sets gradients to 0s on backward pass,
+        # we need set all the gradients for the inputs that need it, but should not send 0s
+        # due to extra communication
         if self.is_last_stage:
             gradients = torch.autograd.grad(
                 outputs=loss,
