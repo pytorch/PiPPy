@@ -86,14 +86,14 @@ class MLP(nn.Module):
         self.wo = nn.Linear(hidden_dim, out_dim, bias=False)
         self.gelu_act = nn.GELU(approximate="tanh")
 
-    def forward(self, x):
+    def forward(self, x, arg1):
         a = self.wi(x)
         a = self.wh1(a)
         a = self.wh2(a)
         a = self.wh3(a)
         b = self.gelu_act(a)
         c = self.wo(b)
-        return c
+        return c, arg1
 
 
 def setup(local_rank, init_process_group=False):
@@ -106,7 +106,6 @@ def setup(local_rank, init_process_group=False):
         logger.info(f"init for rank {local_rank}")
         if torch.distributed.is_initialized():
             torch.cuda.set_device(local_rank)
-
     logger.info(f"finish init for rank {local_rank}")
 
 
@@ -162,9 +161,17 @@ def main(**kwargs):
     n_pp = world_size
 
     x = torch.randn([microbatch_size, input_dim]).to("meta")
+    unused = torch.ones((1, 1), device="meta")
+    input_args = (x, unused)
 
     stage_model = PipelineStageV2Impl(
-        module_list[rank], rank, world_size, rank, world_size, x, device
+        module_list[rank],
+        rank,
+        world_size,
+        rank,
+        world_size,
+        input_args,
+        device,
     )
     stage_model.init_p2p_neighbors()
 
@@ -175,26 +182,21 @@ def main(**kwargs):
             num_stages=world_size * world_size,
             rank=rank,
             world_size=world_size,
-            meta_input=x,
+            input_args=input_args,
             device=device,
         )
         for i in range(world_size)
     ]
     x_cuda_empty = torch.empty_like(x, device="cuda")
-    microbatches = [
-        torch.randn_like(x_cuda_empty) for _ in range(n_microbatches)
-    ]
 
-    # profiling setup (enable with --profiler True)
+    microbatches = []
+    for i in range(n_microbatches):
+        microbatches.append(
+            (torch.randn_like(x_cuda_empty), torch.ones((1, 1), device="cuda"))
+        )
+
     _run_profiler = kwargs["profiler"]
-    _torch_profiler = None
     _trace_dir = kwargs["trace_dir"]
-
-    if _run_profiler:
-        if not os.path.exists(_trace_dir):
-            os.mkdir(_trace_dir)
-        rank_print(f"Profiling active -- saving traces to {_trace_dir}")
-
     for schedule in kwargs["schedules"]:
         logger.info(f"====== Rank {rank} running schedule {schedule} ======")
         if schedule == "gpipe":
@@ -217,7 +219,6 @@ def main(**kwargs):
         ) as _torch_profiler:
             with record_function(schedule):
                 pipeline.step(microbatches)
-
         logger.info(f"====== Rank {rank} finished {schedule} ======")
 
 
@@ -282,7 +283,7 @@ if __name__ == "__main__":
         master_addr = "localhost"
         os.environ["MASTER_ADDR"] = master_addr
         os.environ["MASTER_PORT"] = master_port
-        n_gpus = 4
+        n_gpus = 2
         world_size = n_gpus
         os.environ["WORLD_SIZE"] = str(world_size)
         print(

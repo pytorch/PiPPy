@@ -3,7 +3,7 @@
 import logging
 from abc import ABC, abstractmethod
 from collections import deque
-from typing import Deque, List, Optional, Tuple
+from typing import Deque, List, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -19,10 +19,8 @@ logger.addHandler(handler)
 
 class PipelineStage(ABC, nn.Module):
     @abstractmethod
-    def forward(self, microbatch):
+    def forward(self, args: List[torch.tensor]) -> torch.tensor:
         """
-        TODO: this will be updated to support multiple arguments
-
         Perform forward pass on the module.
         This should only be called once per microbatch.
 
@@ -75,6 +73,23 @@ class PipelineStage(ABC, nn.Module):
         raise NotImplementedError
 
 
+def create_buffers(
+    input: Union[torch.Tensor, List[torch.tensor]], device: torch.device
+) -> List[torch.Tensor]:
+    """
+    Creates buffers for a given input on a specified device.
+    This function takes as input a tensor or a list of tensors and returns a tensor or a list of tensors (respectively)
+    of the same shape, but located on the specified device and uninitialized (i.e., filled with arbitrary data).
+    """
+    if isinstance(input, torch.Tensor):
+        return [torch.empty_like(input, device=device)]
+    elif isinstance(input, (list, tuple)):
+        return [torch.empty_like(inp, device=device) for inp in input]
+    raise ValueError(
+        f"Unsupported input type {type(input)} cannot create buffers"
+    )
+
+
 class PipelineStageV2Impl(PipelineStage):
     def __init__(
         self,
@@ -83,7 +98,7 @@ class PipelineStageV2Impl(PipelineStage):
         num_stages: int,
         rank: int,
         world_size: int,
-        meta_input: torch.Tensor,
+        input_args: List[torch.tensor],
         device: torch.device,
     ):
         super().__init__()
@@ -94,11 +109,13 @@ class PipelineStageV2Impl(PipelineStage):
         self.num_stages = num_stages
         # When we materialize the model partition on cuda, we call reset_parameters() if it is available
         self.module = module.to(device)
-
-        meta_output = self.module(meta_input)
-        self.fwd_input = torch.empty_like(meta_input, device=device)
-        self.fwd_output = None
-        self.fwd_output_grads = torch.empty_like(meta_output, device=device)
+        logger.info(f"input args {input_args=}")
+        meta_output = self.module(*input_args)
+        self.fwd_inputs: List[torch.tensor] = create_buffers(input_args, device)
+        self.fwd_outputs = None
+        self.fwd_output_grads: List[torch.tensor] = create_buffers(
+            meta_output, device
+        )
         self.fwd_outputs_for_backward: Deque[
             Tuple[torch.tensor, torch.tensor]
         ] = deque()
@@ -110,8 +127,13 @@ class PipelineStageV2Impl(PipelineStage):
         self.bwd_recv_queue = None
 
         self.requests: List[dist.P2POp] = []
-        logger.info(
-            f"finished pipeline stage init, {self.stage_id=}, {self.is_first_stage=}, {self.is_last_stage=}, {self.num_stages=}, {self.fwd_input.shape=}, {self.fwd_output_grads.shape=}"
+        logger.debug(
+            f"""
+            finished pipeline stage init, {self.stage_id=}, {self.is_first_stage=},
+            {self.is_last_stage=}, {self.num_stages=},
+            {[fwd_input.shape for fwd_input in self.fwd_inputs]},
+            {[fwd_output_grad.shape for fwd_output_grad in self.fwd_output_grads]}
+            """
         )
 
     def init_p2p_neighbors(self):
@@ -141,83 +163,110 @@ class PipelineStageV2Impl(PipelineStage):
     def get_fwd_recv_ops(self) -> List[dist.P2POp]:
         if self.is_first_stage:
             return []
-        return [dist.P2POp(dist.irecv, self.fwd_input, self.prev_stage)]
+        return [
+            dist.P2POp(dist.irecv, fwd_input, self.prev_stage)
+            for fwd_input in self.fwd_inputs
+        ]
 
     def get_fwd_send_ops(self) -> List[dist.P2POp]:
+        assert (
+            self.fwd_outputs is not None
+        ), "forward() must be called before get_fwd_send_ops"
         if self.is_last_stage:
             return []
-        return [dist.P2POp(dist.isend, self.fwd_output, self.next_stage)]
+        return [
+            dist.P2POp(dist.isend, fwd_output, self.next_stage)
+            for fwd_output in self.fwd_outputs
+        ]
 
-    def forward(self, microbatch: torch.Tensor):
+    def forward(self, args: List[torch.tensor]) -> torch.tensor:
         logger.info(f"[{self.rank} FORWARD {self.stage_id}")
         if self.is_first_stage:
-            self.fwd_input = microbatch
+            self.fwd_inputs = args
 
         # this is needed when we access the gradients for this in backward()
-        self.fwd_input.requires_grad = True
-        self.fwd_input.retain_grad()
+        if not self.is_first_stage:
+            for tensor in self.fwd_inputs:
+                tensor.requires_grad = True
+                tensor.retain_grad()
 
         # perform forward pass on module
-        self.fwd_output = self.module(self.fwd_input)
+        self.fwd_outputs = self.module(*self.fwd_inputs)
 
-        output_for_backward = (
-            self.compute_loss() if self.is_last_stage else self.fwd_output
+        fwd_outputs_for_backward = (
+            self.compute_loss() if self.is_last_stage else self.fwd_outputs
         )
 
         # we store a ref to the input/output pair for this forward to be later used by the corresponding backward
         self.fwd_outputs_for_backward.append(
-            (self.fwd_input, output_for_backward)
+            (self.fwd_inputs, fwd_outputs_for_backward)
         )
 
-        return self.fwd_output
-
-    def get_bwd_send_ops(self) -> List[dist.P2POp]:
-        if self.is_first_stage:
-            return []
-        assert self.fwd_input.grad is not None, "grad must be valid"
-        return [dist.P2POp(dist.isend, self.fwd_input.grad, self.prev_stage)]
+        return self.fwd_outputs
 
     def get_bwd_recv_ops(self) -> List[dist.P2POp]:
         if self.is_last_stage:
             return []
-        return [dist.P2POp(dist.irecv, self.fwd_output_grads, self.next_stage)]
+        return [
+            dist.P2POp(dist.irecv, output_grad, self.next_stage)
+            for output_grad in self.fwd_output_grads
+        ]
 
-    def sync_recv_backward_inputs(self) -> None:
-        ops = self.get_bwd_recv_ops()
-        if ops:
-            dist.batch_isend_irecv(ops).pop().wait()
-
-    def _wait_backward_inputs(self):
-        assert (
-            self.bwd_recv_queue is not None
-        ), "Waiting for backward input without enqueueing one"
-        self.bwd_recv_queue.wait()
-        self.bwd_recv_queue = None
-        return self.fwd_output_grads
+    def get_bwd_send_ops(self) -> List[dist.P2POp]:
+        if self.is_first_stage:
+            return []
+        for fwd_input in self.fwd_inputs:
+            logger.info(f"{fwd_input.grad=}")
+            assert fwd_input.grad is not None, "grad must be valid"
+        return [
+            dist.P2POp(dist.isend, fwd_input.grad, self.prev_stage)
+            for fwd_input in self.fwd_inputs
+        ]
 
     def backward(self):
         logger.info(f"[{self.rank} BACKWARD {self.stage_id}]")
 
         if self.is_last_stage:
-            fwd_inputs, loss = self.fwd_outputs_for_backward.popleft()
+            self.fwd_inputs, loss = self.fwd_outputs_for_backward.popleft()
         else:
-            fwd_inputs, fwd_outputs = self.fwd_outputs_for_backward.popleft()
+            (
+                self.fwd_inputs,
+                fwd_outputs,
+            ) = self.fwd_outputs_for_backward.popleft()
 
         # Compute gradients
+        # TODO: HACK materialize_grads=True sets gradients to 0s on backward pass,
+        # we need set all the gradients for the inputs that need it, but should not send 0s
+        # due to extra communication
         if self.is_last_stage:
-            torch.autograd.backward(loss, retain_graph=True)
+            gradients = torch.autograd.grad(
+                outputs=loss,
+                inputs=self.fwd_inputs,
+                retain_graph=True,
+                allow_unused=True,
+                materialize_grads=True,
+            )
         else:
-            torch.autograd.backward(
-                fwd_outputs, self.fwd_output_grads, retain_graph=True
+            gradients = torch.autograd.grad(
+                outputs=fwd_outputs,
+                inputs=self.fwd_inputs,
+                grad_outputs=self.fwd_output_grads,
+                retain_graph=True,
+                allow_unused=True,
+                materialize_grads=True,
             )
 
-        return fwd_inputs
+        # Set the gradients for each tensor in self.fwd_inputs
+        for i in range(len(self.fwd_inputs)):
+            self.fwd_inputs[i].grad = gradients[i]
+
+        return self.fwd_inputs
 
     def compute_loss(self):
-        if self.fwd_output is None:
+        if self.fwd_outputs is None:
             raise RuntimeError("forward() must be called before compute_loss()")
         # TODO: use a real loss function passed in
-        return self.fwd_output.mean()
+        return self.fwd_outputs[0].mean()
 
 
 class PipelineSchedule(ABC):
@@ -251,7 +300,7 @@ class PipelineScheduleGPipe(PipelineSchedule):
                     dist.batch_isend_irecv(ops)
 
                 logger.info(
-                    f"{self._stage.stage_id} forward {i} finished, microbatch: {mb.shape}"
+                    f"{self._stage.stage_id} forward mb {i} finished, microbatch: {[inp.shape for inp in mb]}"
                 )
 
         for i, _ in enumerate(microbatches):
@@ -266,7 +315,7 @@ class PipelineScheduleGPipe(PipelineSchedule):
                 if ops:
                     dist.batch_isend_irecv(ops)
 
-            logger.info(f"{self._stage.stage_id} backward {i} finished")
+            logger.info(f"{self._stage.stage_id} backward mb {i} finished")
 
 
 class PipelineScheduleLoopedBFS(PipelineSchedule):
