@@ -48,6 +48,7 @@ class MyNetwork(torch.nn.Module):
 # To learn more about `torchrun`, see
 # https://pytorch.org/docs/stable/elastic/run.html
 
+torch.manual_seed(0)
 rank = int(os.environ["RANK"])
 world_size = int(os.environ["WORLD_SIZE"])
 
@@ -95,6 +96,8 @@ dist.init_process_group(rank=rank, world_size=world_size)
 # Pipeline stage is our main pipeline runtime. It takes in the pipe object,
 # the rank of this process, and the device.
 stage = PipelineStage(pipe, rank, device)
+
+# Input data
 x = torch.randn(batch_size, in_dim, device=device)
 
 # Run the pipeline with input `x`. Divide the batch into 4 micro-batches
@@ -102,13 +105,13 @@ x = torch.randn(batch_size, in_dim, device=device)
 if rank == 0:
     stage(x)
 elif rank == world_size - 1:
-    out = stage()
+    output = stage()
 else:
     stage()
 
 if rank == world_size - 1:
     # Run the original code and get the output for comparison
-    # reference_output = mn(x)
+    reference_output = mn(x)
     # Compare numerics of pipeline and original model
-    # torch.testing.assert_close(output, reference_output)
+    torch.testing.assert_close(output, reference_output)
     print(" Pipeline parallel model ran successfully! ".center(80, "*"))
