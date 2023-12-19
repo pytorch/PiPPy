@@ -98,6 +98,8 @@ jobs:
         run: torchrun --nproc-per-node 4 test/test_fwd.py
       - name: Run forward-loss-backward integration test
         run: torchrun --nproc-per-node 4 test/test_bwd.py --schedule ${{ matrix.schedule }}
+      - name: Run example
+        run: torchrun --nproc-per-node 3 example.py
       # - name: Run null_coalesce_accumulate integration test
       #   run: python test/local_test_null_coalesce_accumulate.py --replicate ${{ matrix.replicate }} --schedule ${{ matrix.schedule }}
       # - name: Run PP + DDP test
