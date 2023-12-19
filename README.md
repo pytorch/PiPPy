@@ -10,7 +10,7 @@
 
 # Why PiPPy?
 
-One of the most important techniques for advancing the state of the art in deep learning is scaling. Common techniques for scaling neural networks include _data parallelism_, _tensor/model parallelism_, and _pipeline parallelism_. In many cases, pipeline parallelism in particular can be an effective technique for scaling, however it is often difficult to implement, requiring intrusive code changes to model code and difficult-to-implement runtime orchestration code. PiPPy aims to provide a toolkit that does said things automatically to allow high-productivity scaling of models.
+One of the most important techniques for advancing the state of the art in deep learning is scaling. Common techniques for scaling neural networks include _data parallelism_, _tensor/operation parallelism_, and _pipeline parallelism_. In many cases, pipeline parallelism in particular can be an effective technique for scaling, however it is often difficult to implement, requiring intrusive code changes to model code and difficult-to-implement runtime orchestration code. PiPPy aims to provide a toolkit that does said things automatically to allow high-productivity scaling of models.
 
 # What is PiPPy?
 
@@ -21,17 +21,17 @@ The PiPPy project consists of a compiler and runtime stack for automated paralle
 
 PiPPy provides the following features that make pipeline parallelism easier:
 
-* Automatic splitting of model code via `torch.fx`. The goal is for the user to provide model code as-is to the system for parallelization, without having to make heavyweight modifications to make parallelism work.
+* Automatic splitting of model code via PyTorch tracer. The goal is for the user to provide model code as-is to the system for parallelization, without having to make heavyweight modifications to make parallelism work.
 * Related to the last point, PiPPy supports non-trivial topologies, including skip connections and tied weights/layers. PiPPy provides configurable behavior for tied weights, allowing for transmission across pipeline stages or replication and gradient synchronization.
 * First-class support for cross-host pipeline parallelism, as this is where PP is typically used (over slower interconnects). This is currently missing from the torchgpipe-based `torch.distributed.pipeline.sync.Pipe`.
 * Composability with other parallelism schemes such as data parallelism or tensor splitting model parallelism (overall, known as "3d parallelism"). Currently, pipelining and data parallelism can be composed. Other compositions will be available in the future.
-* Support for pipeline scheduling paradigms, including static schedules like fill-drain (GPipe), 1f1b, interleaved 1f1b and dynamic schedules like lookahead or registers/back-pressure.
+* Support for pipeline scheduling paradigms, including schedules like fill-drain (GPipe), 1F1B and interleaved 1F1B. More schedules will be added too.
 
 For in-depth technical architecture, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 # Install
 
-PiPPy requires PyTorch version newer than 1.12 to work. To quickly install, for example, PyTorch nightly, run the following command from the same directory as this README:
+PiPPy requires PyTorch version newer than 2.2.0.dev to work. To quickly install, for example, PyTorch nightly, run the following command from the same directory as this README:
 
 ```
 pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html
@@ -40,7 +40,7 @@ pip install -r requirements.txt --find-links https://download.pytorch.org/whl/ni
 You can also select the CUDA build of PyTorch if your system has NVIDIA GPUs, for example:
 
 ```
-pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cu116/torch_nightly.html
+pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cu118/torch_nightly.html
 ```
 
 To install PiPPy from source, run the following command in the same directory as this README:
@@ -57,7 +57,7 @@ python setup.py develop
 
 # PiPPy Quickstart
 
-PiPPy consists of two parts: a _compiler_ and a _runtime_. The compiler takes your model code, splits it up, and transforms it into a `Pipe`, which is a wrapper that describes how to execute the model in pipeline parallelism. The runtime executes the `Pipe` in parallel, handling things like micro-batch splitting and gradient propagation/syncing. We will cover the APIs for these concepts in this section.
+PiPPy consists of two parts: a _compiler_ and a _runtime_. The compiler takes your model code, splits it up, and transforms it into a `Pipe`, which is a wrapper that describes the model at each pipeline stage and their data-flow relationship. The runtime executes the `Pipe` in parallel, handling things like micro-batch splitting, scheduling, communication, and gradient propagation, etc. We will cover the APIs for these concepts in this section.
 
 ## Splitting a Model with Pipe
 
@@ -97,7 +97,9 @@ class MyNetwork(torch.nn.Module):
         return self.output_proj(x)
 
 
-mn = MyNetwork(512, [512, 1024, 256])
+in_dim = 512
+layer_dims = [512, 1024, 256]
+mn = MyNetwork(in_dim, layer_dims).to(device)
 ```
 
 This network is written as free-form Python code; it has not been modified for any specific parallelism technique.
@@ -105,241 +107,94 @@ This network is written as free-form Python code; it has not been modified for a
 Let us see our first usage of the `pippy.IR.Pipe` interface:
 
 ```python
-from pippy.IR import annotate_split_points, PipeSplitWrapper
+from pippy.IR import annotate_split_points, Pipe, PipeSplitWrapper
 
 annotate_split_points(mn, {'layer0': PipeSplitWrapper.SplitPoint.END,
                            'layer1': PipeSplitWrapper.SplitPoint.END})
 
-pipe = Pipe.from_tracing(mn)
+batch_size = 32
+example_input = torch.randn(batch_size, in_dim, device=device)
+chunks = 4
+
+pipe = Pipe.from_tracing(mn, chunks, example_args=(example_input,))
 print(pipe)
 
 """
 ************************************* pipe *************************************
 GraphModule(
-  (submod_0): GraphModule(
-    (layer0_mod_lin): Linear(in_features=512, out_features=512, bias=True)
+  (submod_0): PipeStageModule(
+    (L__self___layer0_mod_lin): Linear(in_features=512, out_features=512, bias=True)
   )
-  (submod_1): GraphModule(
-    (layer1_mod_lin): Linear(in_features=512, out_features=1024, bias=True)
+  (submod_1): PipeStageModule(
+    (L__self___layer1_mod_lin): Linear(in_features=512, out_features=1024, bias=True)
   )
-  (submod_2): GraphModule(
-    (layer2_lin): Linear(in_features=1024, out_features=256, bias=True)
-    (output_proj): Linear(in_features=256, out_features=10, bias=True)
+  (submod_2): PipeStageModule(
+    (L__self___layer2_lin): Linear(in_features=1024, out_features=256, bias=True)
+    (L__self___output_proj): Linear(in_features=256, out_features=10, bias=True)
   )
 )
 
-def forward(self, x):
-    submod_0 = self.submod_0(x);  x = None
+def forward(self, arg0):
+    submod_0 = self.submod_0(arg0);  arg0 = None
     submod_1 = self.submod_1(submod_0);  submod_0 = None
     submod_2 = self.submod_2(submod_1);  submod_1 = None
-    return submod_2
-"""
-
-print(pipe.split_gm.submod_0)
-
-"""
-*********************************** submod0 ************************************
-GraphModule(
-  (layer0_mod_lin): Linear(in_features=512, out_features=512, bias=True)
-)
-
-def forward(self, x):
-    layer0_mod_lin = self.layer0_mod_lin(x);  x = None
-    relu = torch.relu(layer0_mod_lin);  layer0_mod_lin = None
-    return relu
-"""
-
-print(pipe.split_gm.submod_1)
-
-"""
-*********************************** submod1 ************************************
-GraphModule(
-  (layer1_mod_lin): Linear(in_features=512, out_features=1024, bias=True)
-)
-
-def forward(self, relu):
-    layer1_mod_lin = self.layer1_mod_lin(relu);  relu = None
-    relu_1 = torch.relu(layer1_mod_lin);  layer1_mod_lin = None
-    return relu_1
-"""
-
-print(pipe.split_gm.submod_2)
-
-"""
-*********************************** submod2 ************************************
-GraphModule(
-  (layer2_lin): Linear(in_features=1024, out_features=256, bias=True)
-  (output_proj): Linear(in_features=256, out_features=10, bias=True)
-)
-
-def forward(self, relu_1):
-    layer2_lin = self.layer2_lin(relu_1);  relu_1 = None
-    relu = torch.relu(layer2_lin);  layer2_lin = None
-    output_proj = self.output_proj(relu);  relu = None
-    return output_proj
+    return [submod_2]
 """
 ```
 
-So what's going on here? First, `Pipe.from_tracing` uses `torch.fx` symbolic tracing to turn our model into a directed acyclic graph (DAG) representation. Then, it groups together the operations and parameters into _pipeline stages_. Stages are represented as `submod_N` submodules, where `N` is a natural number.
+So what's going on here? First, `Pipe.from_tracing` uses a PyTorch tracer to turn our model into a directed acyclic graph (DAG) representation. Then, it groups together the operations and parameters into _pipeline stages_. Stages are represented as `submod_N` submodules, where `N` is a natural number.
 
-Our code has now been split into _three_ pipeline stages. We used `annotate_split_points` to specify that the code should be split and the end of `layer0` and `layer1`.
+We used `annotate_split_points` to specify that the code should be split and the end of `layer0` and `layer1`. Our code has thus been split into _three_ pipeline stages. PiPPy also provides `SplitPoint.BEGINNING` if a user wants to split before certain annotation point.
 
-In addition to custom splitting policy, PiPPy also provides automatic splitting policies. For example:
-* `split_on_size_threshold(numel)`: create a new pipeline stage upon reaching a given number of parameters;
-* `split_into_equal_size(num_stages)`: split the model in to specified number of equal-size stages.
-
-We can pass the splitting policy to the `from_tracing` API:
-
-```python
-from pippy import split_into_equal_size
-
-split_policy = split_into_equal_size(world_size)
-
-pipe = Pipe.from_tracing(mn, split_policy=split_policy)
-```
+While the `annotate_split_points` API gives users a way to specify the split points without modifying the model, PiPPy also provides an API for in-model annotation: `pipe_split()`. For details, you can read [this example](https://github.com/pytorch/PiPPy/blob/main/test/test_pipe.py).
 
 This covers the basic usage of the `Pipe` API. For more information, see the documentation.
 
 <!-- (TODO: link to docs when live) -->
 
-## Using PipelineDriver for Pipelined Execution
+## Using PipelineStage for Pipelined Execution
 
-Given the above `Pipe` object, we can use one of the `PipelineDriver` classes to execute our model in a pipelined fashion. First off, let us instantiate a `PipelineDriverFillDrain` instance:
+Given the above `Pipe` object, we can use one of the `PipelineStage` classes to execute our model in a pipelined fashion. First off, let us instantiate a `PipelineStage` instance:
 
 ```python
-# To run a distributed training job, we must launch the script in multiple
-# different processes. We are using `torchrun` to do so in this example.
-# `torchrun` defines two environment variables: `LOCAL_RANK` and `WORLD_SIZE`,
-# which represent the index of this process within the set of processes and
-# the total number of processes, respectively.
-#
-# To learn more about `torchrun`, see
-# https://pytorch.org/docs/stable/elastic/run.html
-import os
-local_rank = int(os.environ["LOCAL_RANK"])
-world_size = int(os.environ['WORLD_SIZE'])
+# We are using `torchrun` to run this example with multiple processes.
+# `torchrun` defines two environment variables: `RANK` and `WORLD_SIZE`.
+rank = int(os.environ["RANK"])
+world_size = int(os.environ["WORLD_SIZE"])
 
-# PiPPy uses the PyTorch RPC interface. To use RPC, we must call `init_rpc`
-# and inform the RPC framework of this process's rank and the total world
-# size. We can directly pass values `torchrun` provided.`
-#
-# To learn more about the PyTorch RPC framework, see
-# https://pytorch.org/docs/stable/rpc.html
-import torch.distributed.rpc as rpc
-rpc.init_rpc(f'worker{local_rank}', rank=local_rank, world_size=world_size)
+# Initialize distributed environment
+import torch.distributed as dist
+dist.init_process_group(rank=rank, world_size=world_size)
 
-# PiPPy relies on the concept of a "driver" process. The driver process
-# should be a single process within the RPC group that instantiates the
-# PipelineDriver and issues commands on that object. The other processes
-# in the RPC group will receive commands from this process and execute
-# the pipeline stages
-if local_rank == 0:
-    # We are going to use the PipelineDriverFillDrain class. This class
-    # provides an interface for executing the `Pipe` in a style similar
-    # to the GPipe fill-drain schedule. To learn more about GPipe and
-    # the fill-drain schedule, see https://arxiv.org/abs/1811.06965
-    from pippy.PipelineDriver import PipelineDriverFillDrain
-    from pippy.microbatch import TensorChunkSpec
-
-    # Pipelining relies on _micro-batching_--that is--the process of
-    # dividing the program's input data into smaller chunks and
-    # feeding those chunks through the pipeline sequentially. Doing
-    # this requires that the data and operations be _separable_, i.e.
-    # there should be at least one dimension along which data can be
-    # split such that the program does not have interactions across
-    # this dimension. PiPPy provides `chunk_spec` arguments for this
-    # purpose, to specify the batch dimension for tensors in each of
-    # the args, kwargs, and outputs. The structure of the `chunk_spec`s
-    # should mirror that of the data type. Here, the program has a
-    # single tensor input and single tensor output, so we specify
-    # a single `TensorChunkSpec` instance indicating dimension 0
-    # for args[0] and the output value.
-    args_chunk_spec = (TensorChunkSpec(0),)
-    kwargs_chunk_spec = {}
-    output_chunk_spec = TensorChunkSpec(0)
-
-    # Finally, we instantiate the PipelineDriver. We pass in the pipe,
-    # chunk specs, and world size, and the constructor will distribute
-    # our code to the processes in the RPC group. `driver` is an object
-    # we can invoke to run the pipeline.
-    driver = PipelineDriverFillDrain(
-        pipe, args_chunk_spec=args_chunk_spec, kwargs_chunk_spec=kwargs_chunk_spec,
-        output_chunk_spec=output_chunk_spec, world_size=world_size)
-
-    # <following code goes here>
-
-rpc.shutdown()
+# Pipeline stage is our main pipeline runtime. It takes in the pipe object,
+# the rank of this process, and the device.
+from pippy.PipelineStage import PipelineStage
+stage = PipelineStage(pipe, rank, device)
 ```
 
-Note that our script must now be replicated across multiple workers. For this example, we will use `torchrun` to run multiple processes within a single machine for demonstration purposes. We can collect up all of the code blocks above into a file named [example.py](example.py) and then run it with `torchrun` like so:
+We can now run the pipeline by passing input to the first `PipelineStage`:
+
+```python
+# Input data
+x = torch.randn(batch_size, in_dim, device=device)
+
+# Run the pipeline with input `x`. Divide the batch into 4 micro-batches
+# and run them in parallel on the pipeline
+if rank == 0:
+    stage(x)
+elif rank == world_size - 1:
+    output = stage()
+else:
+    stage()
+```
+
+Note that since we split our model into three stages, we must run this script with three workers. For this example, we will use `torchrun` to run multiple processes within a single machine for demonstration purposes. We can collect up all of the code blocks above into a file named [example.py](example.py) and then run it with `torchrun` like so:
 
 ```
 torchrun --nproc_per_node=3 example.py
 ```
 
-Note that we have launched 3 processes, as we have 3 pipeline stages.
-
-We can now run the pipeline by passing input to the `PipelineDriver` because `PipelineDriver` is also a `nn.module`:
-
-```python
-    # Instantiate a random input for testing purposes.
-    x = torch.randn(512, 512)
-
-    # Run the pipeline with input `x`. Divide the batch into 64 micro-batches
-    # and run them in parallel on the pipeline
-    driver.chunks = 64
-    output = driver(x)
-
-    # Run the original code and get the output for comparison
-    reference_output = mn(x)
-
-    # Compare numerics of pipeline and original model
-    torch.testing.assert_close(output, reference_output)
-
-    print(' Pipeline parallel model ran successfully! '.center(80, '*'))
-```
-
-We can see that we can now execute our model in a pipelined fashion and get the same numeric outputs.
-
-## pippy.compile and pippy.all_compile
-
-Most users do not need to use the `pipe` object generated by `Pipe.from_tracing`. For convenience, PiPPy provides a `compile` API that directly generates a `PipelineDriver` from user's model.
-
-```python
-import pippy
-
-if rank == 0:
-    # Create pipeline driver
-    driver = pippy.compile(
-        mn,
-        num_ranks=world_size,
-        num_chunks=world_size,
-        schedule="FillDrain",
-        split_policy=split_poicy,
-    )
-
-    output = driver(x)
-```
-
-All examples above assume that the driver process has enough memory to materialize the model (before splitting). In case that the model is so large that the driver process cannot materialize it on a single device, it would be necessary to first split the model and then let each process materialize its pipeline stage on its own device. `pippy.all_compile` provides such functionality. Different from `pippy.compile`, `pippy.all_compile` requires all ranks to call into it so that they all know which part of the model they should materialize. For example:
-
-```python
-import pippy
-
-# All ranks call into it
-driver, stage_mod = pippy.all_compile(
-    mn,
-    num_ranks=world_size,
-    num_chunks=world_size,
-    schedule="FillDrain",
-    split_policy=split_poicy,
-)
-
-if rank == 0:
-    output = driver(x)
-```
-
-Only rank 0 will have the pipeline driver returned, but all ranks will be returned a handle to their local stage module (`stage_mod`).
+## Note: the following section needs to be updated. ##
 
 ## Forward vs. Forward-loss-backward
 
