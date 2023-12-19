@@ -194,7 +194,7 @@ Note that since we split our model into three stages, we must run this script wi
 torchrun --nproc_per_node=3 example.py
 ```
 
-## Note: the following section needs to be updated. ##
+## Note: the following sections need to be updated. ##
 
 ## Forward vs. Forward-loss-backward
 
