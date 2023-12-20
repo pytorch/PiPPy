@@ -8,8 +8,8 @@ from pippy.IR import (
     PipeSplitWrapper,
     TrivialLossWrapper,
 )
-from pippy.PipelineStage import PipelineStage
 from pippy.ModelSplit import split_into_equal_size, split_on_size_threshold
+from pippy.PipelineStage import PipelineStage
 
 
 __all__ = [
