@@ -140,11 +140,10 @@ class PipelineStage(torch.nn.Module):
         # Note: we cannot move meta module to real devices because meta tensors
         # do not support to() method. One needs to do an in-place tensor swap in
         # that case.
-        has_meta_param = False
-        for k, v in self.submod.named_parameters():
-            if isinstance(v, FakeTensor) or v.is_meta:
-                has_meta_param = True
-                break
+        has_meta_param = any(
+            isinstance(p, FakeTensor) or p.is_meta
+            for p in self.submod.parameters()
+        )
         if has_meta_param:
             logger.debug(f"[{self.group_rank}] Found meta parameters!")
         else:
