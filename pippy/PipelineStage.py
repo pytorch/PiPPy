@@ -136,6 +136,21 @@ class PipelineStage(torch.nn.Module):
         # Prepare send/recv infrastructure
         self._prepare_send_recv_infra()
 
+        # Move submodule to indicated device if possible
+        # Note: we cannot move meta module to real devices because meta tensors
+        # do not support to() method. One needs to do an in-place tensor swap in
+        # that case.
+        has_meta_param = False
+        for k, v in self.submod.named_parameters():
+            if isinstance(v, FakeTensor) or v.is_meta:
+                has_meta_param = True
+                break
+        if has_meta_param:
+            logger.debug(f"[{self.group_rank}] Found meta parameters!")
+        else:
+            logger.debug(f"[{self.group_rank}] No meta parameters found!")
+            self.submod.to(self.device)
+
     def is_first(self):
         return self.stage_index == 0
 
