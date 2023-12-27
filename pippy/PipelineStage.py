@@ -13,7 +13,7 @@ from pippy.backward import stage_backward
 from pippy.debug import map_debug_info
 from pippy.IR import Pipe
 from pippy.microbatch import merge_chunks, split_args_kwargs_into_chunks
-from pippy.utils import flatten_args
+from pippy.utils import flatten_args, modify_graph_op_device
 
 
 logger = logging.getLogger(__name__)
@@ -135,7 +135,10 @@ class PipelineStage(torch.nn.Module):
 
         # Prepare send/recv infrastructure
         self._prepare_send_recv_infra()
+        # Cast submodule to device
+        self._move_submod_to_device()
 
+    def _move_submod_to_device(self):
         # Move submodule to indicated device if possible
         # Note: we cannot move meta module to real devices because meta tensors
         # do not support to() method. One needs to do an in-place tensor swap in
@@ -149,6 +152,17 @@ class PipelineStage(torch.nn.Module):
         else:
             logger.debug(f"[{self.group_rank}] No meta parameters found!")
             self.submod.to(self.device)
+
+    def _move_ops_to_device(
+        self,
+        device: torch.device,
+    ):
+        # Today PT2 tracer does not treat `x.device` as a symbolic device;
+        # instead, the device of tracing time got burned into the generated
+        # code.  Here we provide a workaround for users to manually modify the
+        # "device" kwarg of operations. Such operation may include:
+        # `torch.ones`, `torch.zeros`, `torch.rand`, etc.
+        modify_graph_op_device(self.submod, device)
 
     def is_first(self):
         return self.stage_index == 0
