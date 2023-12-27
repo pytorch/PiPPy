@@ -56,11 +56,6 @@ def run_worker(args):
         device=args.device,
     )
 
-    # Today the tracer does not treat `x.device` as a symbolic device; instead,
-    # "cpu" got burned into the traced code.  We need to manually modify the
-    # "device" kwarg of `torch.ones` here.
-    stage._move_ops_to_device(args.device)
-
     # Create real input on real device
     x = torch.randn(batch_size, d_hid, device=args.device)
 

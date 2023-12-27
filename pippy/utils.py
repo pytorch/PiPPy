@@ -83,11 +83,11 @@ def modify_graph_op_device(
     modified = False
     for node in gm.graph.nodes:
         if node.op == "call_function":
-            if "device" in node.kwargs:
-                node.update_kwarg("device", new_device)
+            if "device" in node.kwargs and node.kwargs["device"] != new_device:
                 logger.debug(
-                    f"Changed device of Node {node.name} to {new_device}"
+                    f"Changing device of Node {node.name} from {node.kwargs['device']} to {new_device}"
                 )
+                node.update_kwarg("device", new_device)
                 modified = True
 
     if modified:

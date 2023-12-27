@@ -63,7 +63,6 @@ def run(args):
         args.rank,
         device=args.device,
     )
-    stage._move_ops_to_device(args.device)
 
     # Real input on GPU
     real_input = torch.randint(
