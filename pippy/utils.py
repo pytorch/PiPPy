@@ -1,7 +1,12 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+import logging
+
 import torch
 import torch.distributed as dist
 from torch import fx
+
+
+logger = logging.getLogger(__name__)
 
 
 def flatten_args_detach(args):
@@ -69,3 +74,21 @@ def _get_binary_filename(cur_idx: int, is_optim: bool = False) -> str:  # type: 
     state_type = "optim" if is_optim else "model"
 
     return f"pytorch_{state_type}-{idx}-of-{world_size}.bin"
+
+
+def modify_graph_op_device(
+    gm: torch.fx.GraphModule,
+    new_device: torch.device,
+):
+    modified = False
+    for node in gm.graph.nodes:
+        if node.op == "call_function":
+            if "device" in node.kwargs and node.kwargs["device"] != new_device:
+                logger.debug(
+                    f"Changing device of Node {node.name} from {node.kwargs['device']} to {new_device}"
+                )
+                node.update_kwarg("device", new_device)
+                modified = True
+
+    if modified:
+        gm.recompile()
