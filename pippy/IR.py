@@ -9,6 +9,7 @@ import torch
 import torch.fx as fx
 from packaging import version
 from torch.export import Constraint
+from torch.export._trace import _export_to_torch_ir
 from torch.fx.interpreter import Interpreter
 from torch.fx.passes.split_module import split_module
 
@@ -1047,7 +1048,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         logger.info("Tracing model ...")
         try:
             torch._dynamo.allow_in_graph(pipe_split)
-            traced: torch.fx.GraphModule = torch._export._export_to_torch_ir(
+            traced: torch.fx.GraphModule = _export_to_torch_ir(
                 mod,
                 example_args,
                 example_kwargs,
