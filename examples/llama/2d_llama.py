@@ -6,12 +6,15 @@ from pippy import Pipe, PipeSplitWrapper, annotate_split_points, PipelineStage
 from torch.distributed._tensor import init_device_mesh
 
 
+# Utility
 def modify_view(
     gm: torch.fx.GraphModule,
     tp: int
 ):
     """
-    Adjust dimension size of view ops to make them compatible with tensor parallelism.
+    Adjust dimension size of view ops to make them compatible with tensor
+    parallelism.  For example, when TP is 4, we need to adjust `num_heads` from
+    32 to 8.  This is needed for attention layers.
     """
     for node in gm.graph.nodes:
         if node.op == "call_method" and (
