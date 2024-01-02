@@ -4,25 +4,12 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from pippy import Pipe, PipeSplitWrapper, annotate_split_points, PipelineStage
 from torch.distributed._tensor import init_device_mesh
+from torch.distributed._tensor import DTensor
 
 
-# Utility
-def modify_view(
-    gm: torch.fx.GraphModule,
-    tp: int
-):
-    """
-    Adjust dimension size of view ops to make them compatible with tensor
-    parallelism.  For example, when TP is 4, we need to adjust `num_heads` from
-    32 to 8.  This is needed for attention layers.
-    """
-    for node in gm.graph.nodes:
-        if node.op == "call_method" and (
-            node.target == "view" or node.target == "reshape"
-        ):
-            assert len(node.args) >= 4
-            node.update_arg(3, node.args[3] // tp)
-    gm.recompile()
+# We set this flag to true to allow operations on a mix of tensor and dtensor
+# arguments. The mix is a result of `use_local_output=False`
+DTensor._op_dispatcher._allow_implicit_replication = True
 
 
 # Grab the model
@@ -63,8 +50,6 @@ llama_pipe = Pipe.from_tracing(llama, pp_group_size, example_args=(inputs["input
 stage_idx = rank // tp_group_size
 stage = PipelineStage(llama_pipe, stage_idx, device=device, group=pp_group)
 
-modify_view(stage.submod, tp_group_size)
-
 # Tensor parallel
 from torch.distributed.tensor.parallel import parallelize_module, ColwiseParallel, RowwiseParallel
 starting_layer = stage_idx * layers_per_stage
@@ -75,12 +60,13 @@ for i in range(layers_per_stage):
     extra = "_mod" if starting_layer > 0 and i == 0 else ""
     layer_name = f"L__self___model_layers_{starting_layer + i}{extra}"
     attn_plan.update({
-        # Parallel self attention not working yet due to the dimension mismatch
-        # after TP in view operation
-        f"{layer_name}_self_attn_q_proj": ColwiseParallel(),
-        f"{layer_name}_self_attn_k_proj": ColwiseParallel(),
-        f"{layer_name}_self_attn_v_proj": ColwiseParallel(),
-        f"{layer_name}_self_attn_o_proj": RowwiseParallel(),
+        # We set `use_local_output` to False to keep the output tensor in
+        # DTensor form, so that it works with the view/reshape operations
+        # without code change.
+        f"{layer_name}_self_attn_q_proj": ColwiseParallel(use_local_output=False),
+        f"{layer_name}_self_attn_k_proj": ColwiseParallel(use_local_output=False),
+        f"{layer_name}_self_attn_v_proj": ColwiseParallel(use_local_output=False),
+        f"{layer_name}_self_attn_o_proj": RowwiseParallel(use_local_output=False),
     })
     mlp_plan.update({
         f"{layer_name}_mlp_gate_proj": ColwiseParallel(),
@@ -101,6 +87,10 @@ output = stage(args)
 
 # Decode
 if output is not None:
-    next_token_logits = output[0][:, -1, :]
+    next_token_logits = output[0]
+    if isinstance(next_token_logits, DTensor):
+        # Convert DTensor back to regular tensor
+        next_token_logits = next_token_logits.to_local()
+    next_token_logits = next_token_logits[:, -1, :]
     next_token = torch.argmax(next_token_logits, dim=-1)
     print(tokenizer.batch_decode(next_token))
