@@ -12,6 +12,19 @@ from torch.export import Constraint
 from torch.fx.interpreter import Interpreter
 from torch.fx.passes.split_module import split_module
 
+try:
+    # New import path
+    from torch.export._trace import _export_to_torch_ir
+except ImportError:
+    try:
+        # Old import path
+        from torch._export import _export_to_torch_ir
+    except ImportError:
+        print(
+            "Could not import _export_to_torch_ir. Please make sure your PyTorch "
+            "version is newer than 2.2.0."
+        )
+
 from pippy.backward import _null_coalesce_accumulate, stage_backward
 from pippy.debug import PIPPY_VERBOSITY
 from pippy.microbatch import LossReducer, split_args_kwargs_into_chunks
@@ -1052,7 +1065,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         logger.info("Tracing model ...")
         try:
             torch._dynamo.allow_in_graph(pipe_split)
-            traced: torch.fx.GraphModule = torch._export._export_to_torch_ir(
+            traced: torch.fx.GraphModule = _export_to_torch_ir(
                 mod,
                 example_args,
                 example_kwargs,
