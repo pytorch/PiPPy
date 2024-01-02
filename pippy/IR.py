@@ -9,9 +9,21 @@ import torch
 import torch.fx as fx
 from packaging import version
 from torch.export import Constraint
-from torch.export._trace import _export_to_torch_ir
 from torch.fx.interpreter import Interpreter
 from torch.fx.passes.split_module import split_module
+
+try:
+    # New import path
+    from torch.export._trace import _export_to_torch_ir
+except ImportError:
+    try:
+        # Old import path
+        from torch._export import _export_to_torch_ir
+    except ImportError:
+        print(
+            "Could not import _export_to_torch_ir. Please make sure your PyTorch "
+            "version is newer than 2.2.0."
+        )
 
 from pippy.backward import _null_coalesce_accumulate, stage_backward
 from pippy.debug import PIPPY_VERBOSITY
