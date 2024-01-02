@@ -478,7 +478,9 @@ class PipelineStage(torch.nn.Module):
                 work = dist.isend(
                     # HACK: we convert DTensor to regular tensor here for it to
                     # work with send ops. DTensor may show up in PP + TP cases.
-                    out.to_local() if isinstance(out, torch.distributed._tensor.DTensor) else out,
+                    out.to_local()
+                    if isinstance(out, torch.distributed._tensor.DTensor)
+                    else out,
                     peer_rank
                     if self.group is None
                     else dist.get_global_rank(self.group, peer_rank),  # TODO
