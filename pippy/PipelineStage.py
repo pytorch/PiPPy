@@ -6,8 +6,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import torch
 import torch.distributed as dist
 import torch.fx as fx
-from torch.fx.node import map_aggregate, map_arg
 from torch._subclasses.fake_tensor import FakeTensor
+from torch.fx.node import map_aggregate, map_arg
 from torch.nn.parallel import DistributedDataParallel
 
 from pippy.backward import stage_backward
@@ -281,7 +281,8 @@ class PipelineStage(torch.nn.Module):
         kwargs_recv_info = map_arg(self.node.kwargs, create_recv_tensor)
 
         logger.info(
-            f"[{self.group_rank}] " f"Activation recv / args info: {args_recv_info}"
+            f"[{self.group_rank}] "
+            f"Activation recv / args info: {args_recv_info}"
         )
         return args_recv_info, kwargs_recv_info
 
@@ -427,6 +428,7 @@ class PipelineStage(torch.nn.Module):
 
         act_recv = self.recv_tensor_fn(recv_reqs)
 
+        chunk_args_list: List = []
         if self.args_split:
             chunk_args = self.args_split[chunk]
             chunk_args_list = list(chunk_args)
@@ -450,16 +452,19 @@ class PipelineStage(torch.nn.Module):
             recv_args,
         )
         # Filter out kwarg placeholders
-        composite_args = tuple(x for x in composite_args if not isinstance(x, StageKwargPlaceholder))
+        composite_args = tuple(
+            x
+            for x in composite_args
+            if not isinstance(x, StageKwargPlaceholder)
+        )
 
         # Middle stages won't have incoming activations in kwargs form. So if
         # kwargs_split is not empty, it must be model inputs for stage 0. We
         # hence pass it as is to the interal submodule, without performing
         # `recv_args` on it.
+        composite_kwargs: Dict = {}
         if self.kwargs_split:
             composite_kwargs = self.kwargs_split[chunk]
-        else:
-            composite_kwargs = {}
 
         # Wait for all recvs to finish
         for work in recv_reqs:

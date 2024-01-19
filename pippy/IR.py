@@ -1015,7 +1015,9 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         # `_replace` is actually not "private" or internal. based on this doc:
         # To prevent conflicts with field names, the method and attribute names
         # start with an underscore
-        submod0.graph._codegen.pytree_info = submod0.graph._codegen.pytree_info._replace(out_spec=None)
+        submod0.graph._codegen.pytree_info = (
+            submod0.graph._codegen.pytree_info._replace(out_spec=None)
+        )
         submod0.recompile()
 
         split.graph.lint()
