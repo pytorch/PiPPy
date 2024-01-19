@@ -1005,6 +1005,19 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
 
         split.delete_all_unused_submodules()
 
+        # Users want the first pipeline stage to accept kwargs if the original
+        # program does. This is controlled by the `_codegen` field of the graph,
+        # so we make a copy here. Note: we only want the input spec and not the
+        # output spec, because the output spec is for the last stage. Maybe a
+        # TODO? Not sure yet.
+        submod0 = list(split.children())[0]
+        submod0.graph._codegen = copy.deepcopy(traced.graph._codegen)
+        # `_replace` is actually not "private" or internal. based on this doc:
+        # To prevent conflicts with field names, the method and attribute names
+        # start with an underscore
+        submod0.graph._codegen.pytree_info = submod0.graph._codegen.pytree_info._replace(out_spec=None)
+        submod0.recompile()
+
         split.graph.lint()
         split.recompile()
 
@@ -1071,6 +1084,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
                 example_kwargs,
                 constraints,
             )
+            logger.debug(f"Traced model: {traced}")
             if split_policy is not None:
                 traced = split_policy(traced)
         finally:
