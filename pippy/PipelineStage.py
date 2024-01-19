@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import torch
 import torch.distributed as dist
 import torch.fx as fx
+from torch.fx.node import map_aggregate, map_arg
 from torch._subclasses.fake_tensor import FakeTensor
 from torch.nn.parallel import DistributedDataParallel
 
@@ -44,6 +45,10 @@ class RecvInfo:
 
 
 class StageArgPlaceholder:
+    pass
+
+
+class StageKwargPlaceholder:
     pass
 
 
@@ -269,14 +274,14 @@ class PipelineStage(torch.nn.Module):
 
         # `args` is a Tuple, hence we will have:
         # Tuple[RecvInfo]
-        args_recv_info = fx.node.map_arg(self.node.args, create_recv_tensor)
+        args_recv_info = map_arg(self.node.args, create_recv_tensor)
 
         # `kwargs` is a Dict, hence we will have:
         # Dict[keyword, RecvInfo]
-        kwargs_recv_info = fx.node.map_arg(self.node.kwargs, create_recv_tensor)
+        kwargs_recv_info = map_arg(self.node.kwargs, create_recv_tensor)
 
         logger.info(
-            f"[{self.group_rank}] " f"Activation recv info: {args_recv_info}"
+            f"[{self.group_rank}] " f"Activation recv / args info: {args_recv_info}"
         )
         return args_recv_info, kwargs_recv_info
 
@@ -370,9 +375,9 @@ class PipelineStage(torch.nn.Module):
                 grad_send_info.append(None)
                 return None
 
-        fx.node.map_aggregate(args_recv_info, map_recv_to_send)
+        map_aggregate(args_recv_info, map_recv_to_send)
 
-        fx.node.map_aggregate(kwargs_recv_info, map_recv_to_send)
+        map_aggregate(kwargs_recv_info, map_recv_to_send)
 
         logger.info(f"[{self.group_rank}] " f"Grad send info: {grad_send_info}")
         return grad_send_info
@@ -428,29 +433,33 @@ class PipelineStage(torch.nn.Module):
 
         def recv_args(info):
             if isinstance(info, RecvInfo):
+                # This is an activation to receive
                 return act_recv(info)
             else:
-                return chunk_args_list.pop(0)  # type: ignore[has-type]
+                # This is a pass-in argument
+                if len(chunk_args_list):
+                    return chunk_args_list.pop(0)  # type: ignore[has-type]
+                else:
+                    # kwargs were treated as args in graph phase. That's why
+                    # there are extra placeholders here. We mark them and filter
+                    # them out later.
+                    return StageKwargPlaceholder()
 
-        composite_args = fx.node.map_aggregate(
+        composite_args = map_aggregate(
             self.args_recv_info[chunk],
             recv_args,
         )
+        # Filter out kwarg placeholders
+        composite_args = tuple(x for x in composite_args if not isinstance(x, StageKwargPlaceholder))
 
+        # Middle stages won't have incoming activations in kwargs form. So if
+        # kwargs_split is not empty, it must be model inputs for stage 0. We
+        # hence pass it as is to the interal submodule, without performing
+        # `recv_args` on it.
         if self.kwargs_split:
-            chunk_kwargs = self.kwargs_split[chunk]
-
-        def recv_kwargs(info):
-            if isinstance(info, RecvInfo):
-                return act_recv(info)
-            else:
-                k = next(iter(chunk_kwargs))  # type: ignore[has-type]
-                return chunk_kwargs.pop(k)  # type: ignore[has-type]
-
-        composite_kwargs = fx.node.map_aggregate(
-            self.kwargs_recv_info[chunk],
-            recv_kwargs,
-        )
+            composite_kwargs = self.kwargs_split[chunk]
+        else:
+            composite_kwargs = {}
 
         # Wait for all recvs to finish
         for work in recv_reqs:
@@ -496,7 +505,7 @@ class PipelineStage(torch.nn.Module):
         recv_grad = self.recv_tensor_fn(grad_recv_reqs)
 
         # Receive gradients
-        grads = fx.node.map_aggregate(
+        grads = map_aggregate(
             self.grad_recv_info[bwd_chunk],
             recv_grad,
         )
