@@ -26,7 +26,7 @@ class ExampleCode(torch.nn.Module):
         self.mm_param2 = torch.nn.Parameter(torch.randn(d_hid, d_hid))
         self.lin = torch.nn.Linear(d_hid, d_hid)
 
-    def forward(self, x, y):
+    def forward(self, x, y=torch.zeros(batch_size, d_hid)):
         x = torch.mm(x, self.mm_param)
         skip_connection = x
         x = x + y
@@ -54,7 +54,8 @@ def run_worker(args):
     pipe = Pipe.from_tracing(
         mod,
         args.chunks,
-        example_args=(x, y),
+        example_args=(x,),
+        example_kwargs={"y": y},
     )
 
     stage = PipelineStage(
@@ -65,7 +66,7 @@ def run_worker(args):
 
     # Run
     if args.rank == 0:
-        stage(x, y)
+        stage(x, y=y)
     elif args.rank == args.world_size - 1:
         out = stage()
     else:
@@ -76,7 +77,7 @@ def run_worker(args):
 
     # Last rank checks result
     if args.rank == args.world_size - 1:
-        ref_out = mod(x, y)
+        ref_out = mod(x, y=y)
         torch.testing.assert_close(out, ref_out)
         print(
             f"equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}"
