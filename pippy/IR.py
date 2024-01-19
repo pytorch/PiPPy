@@ -3,6 +3,7 @@ import copy
 import logging
 import operator
 from enum import Enum
+from inspect import Parameter, signature, Signature
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
@@ -655,8 +656,6 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
     def forward(self, *args, **kwargs):
         executor_args = args
         if len(kwargs) > 0:
-            from inspect import Parameter, Signature
-
             parameters = []
             for node in self.split_gm.graph.nodes:
                 if node.op == "placeholder":
@@ -1011,14 +1010,27 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         # output spec, because the output spec is for the last stage. Maybe a
         # TODO? Not sure yet.
         submod0 = list(split.children())[0]
-        submod0.graph._codegen = copy.deepcopy(traced.graph._codegen)
-        # `_replace` is actually not "private" or internal. based on this doc:
-        # To prevent conflicts with field names, the method and attribute names
-        # start with an underscore
-        submod0.graph._codegen.pytree_info = (
-            submod0.graph._codegen.pytree_info._replace(out_spec=None)
-        )
-        submod0.recompile()
+        model_sign = signature(traced.forward)
+        model_num_args = len(model_sign.parameters)
+        submod0_sign = signature(submod0.forward)
+        submod0_num_args = len(submod0_sign.parameters)
+        if model_num_args != submod0_num_args:
+            # We don't change the signature of the first stage if it takes
+            # different number of args than original model
+            logger.info(
+                f"Original model takes {model_num_args} args but the first pipeline stage takes {submod0_num_args}. "
+                "Please provide args to respective pipeline stages."
+            )
+        else:
+            # Support kwargs for the first stage
+            submod0.graph._codegen = copy.deepcopy(traced.graph._codegen)
+            # `_replace` is actually not "private" or internal. based on this doc:
+            # To prevent conflicts with field names, the method and attribute names
+            # start with an underscore
+            submod0.graph._codegen.pytree_info = (
+                submod0.graph._codegen.pytree_info._replace(out_spec=None)
+            )
+            submod0.recompile()
 
         split.graph.lint()
         split.recompile()
