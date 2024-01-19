@@ -46,7 +46,6 @@ def run(args):
     # Input configs
     example_inputs = generate_inputs_for_model(
         model_class, albert, model_name, args.batch_size, args.device)
-    input_ids = example_inputs["input_ids"]
 
     # Annotate split points
     add_split_points(albert, args.world_size)
@@ -55,7 +54,8 @@ def run(args):
     albert_pipe = Pipe.from_tracing(
         albert,
         num_chunks=args.chunks,
-        example_args=(input_ids, ),
+        example_args=(),
+        example_kwargs=example_inputs,
     )
     nstages = len(list(albert_pipe.split_gm.children()))
     assert nstages == args.world_size, f"nstages = {nstages} nranks = {args.world_size}"
@@ -72,7 +72,7 @@ def run(args):
 
     # Run
     if args.rank == 0:
-        stage(input_ids)
+        stage(**example_inputs)
     elif args.rank == args.world_size - 1:
         out = stage()
     else:
