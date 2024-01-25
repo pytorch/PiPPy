@@ -14,7 +14,7 @@ from pippy.backward import stage_backward
 from pippy.debug import map_debug_info
 from pippy.IR import Pipe
 from pippy.microbatch import merge_chunks, split_args_kwargs_into_chunks
-from pippy.utils import flatten_args, modify_graph_op_device
+from pippy.utils import flatten_args, modify_graph_op_device, QualnameMapMixin
 
 
 logger = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ class StageKwargPlaceholder:
     pass
 
 
-class PipelineStage(torch.nn.Module):
+class PipelineStage(torch.nn.Module, QualnameMapMixin):
     def __init__(
         self,
         pipe: Pipe,
@@ -96,6 +96,13 @@ class PipelineStage(torch.nn.Module):
             f"[{self.group_rank}] "
             f"Creating PipelineStage:\n"
             f"{self.submod}"
+        )
+
+        # Enable `remap_qualname` method
+        QualnameMapMixin.__init__(
+            self,
+            pipe.submod_qualname_mappings[self.name],
+            pipe.tracer_qualname_map,
         )
 
         # Find my forward node in graph

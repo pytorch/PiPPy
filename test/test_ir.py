@@ -791,17 +791,6 @@ class TestIR(unittest.TestCase):
                 old_name in old_names
             ), f"Remapped parameter {old_name} not found in {old_names}"
 
-        # Check qualname mapping for submodule
-        # Not supported at the moment
-        """
-        for _, stage_mod in ec_pipe.split_gm.named_children():
-            for new_name, _ in stage_mod.named_parameters():
-                old_name = stage_mod.remap_qualname(new_name)
-                assert (
-                    old_name in old_names
-                ), f"Remapped parameter {old_name} not found in {old_names}"
-        """
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -29,6 +29,7 @@ except ImportError:
 from pippy.backward import _null_coalesce_accumulate, stage_backward
 from pippy.debug import PIPPY_VERBOSITY
 from pippy.microbatch import LossReducer, split_args_kwargs_into_chunks
+from pippy.utils import QualnameMapMixin
 
 
 logger = logging.getLogger(__name__)
@@ -498,54 +499,6 @@ def _direct_serialization_reduce(self):
     )
 
 
-class QualnameMapMixin:
-    """
-    A mixin class to provide qualname remap functionality for both Pipe object
-    and submodules
-    """
-
-    def __init__(
-        self,
-        splitter_qualname_map: Dict[str, str] = None,
-        tracer_qualname_map: Dict[str, str] = None,
-    ):
-        self.new_to_old_qualname_mapping: Dict[str, str] = (
-            splitter_qualname_map or {}
-        )
-        self.tracer_qualname_map = tracer_qualname_map
-
-    def remap_qualname(self, qualname: str):
-        # TODO: annoying
-        if qualname.startswith("split_gm."):
-            qualname = qualname[len("split_gm.") :]
-
-        name_before_split = None
-        if qualname in self.new_to_old_qualname_mapping:
-            name_before_split = self.new_to_old_qualname_mapping[qualname]
-        else:
-            # The qualname map does not store recursive items, thus,
-            # when passed a qualname with leaves, we need to perform longest prefix match
-            # Split from the right, one each time
-            split_names = qualname.rsplit(".", 1)
-            leaf = split_names[-1]
-            while len(split_names) > 1:
-                prefix = split_names[0]
-                if prefix in self.new_to_old_qualname_mapping:
-                    old_prefix = self.new_to_old_qualname_mapping[prefix]
-                    name_before_split = ".".join([old_prefix, leaf])
-                    break
-                split_names = prefix.rsplit(".", 1)
-                leaf = ".".join([split_names[-1], leaf])
-
-        if name_before_split is None:
-            raise RuntimeError(f"Could not find mapping for {qualname}")
-
-        if self.tracer_qualname_map is not None:
-            return self.tracer_qualname_map[name_before_split]
-        else:
-            return name_before_split
-
-
 class Pipe(QualnameMapMixin, torch.nn.Module):
     def __init__(
         self,
@@ -615,6 +568,10 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
                 )
 
         # Create qualname mapping for each submodule
+        # Dict looks like this:
+        # {submod_name : Dict{old_qualname : new_qualname}}
+        # We save this information here for use during pipeline stage creation.
+        self.submod_qualname_mappings: Dict[str, Dict[str, str]] = {}
         for m_qualname, mod in self.split_gm.named_children():
             # "submod_x." prefix
             mod_prefix = m_qualname + "."
@@ -624,16 +581,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
                     # Remove prefix
                     new_key = k[len(mod_prefix) :]
                     mod_qualname_mapping.setdefault(new_key, v)
-            # Add a remap mixin to submodule instance
-            # TODO: this class change is commented out because it breaks
-            # recompilation if we want to recompile mod after. For example, we
-            # may recompile mod to modify the "device" kwarg of a `torch.ones`
-            # node (trace on cpu/meta, run on cuda).
-            # See: https://github.com/pytorch/vision/issues/5826
-            # mod.__class__ = type(
-            #     "PipeStageModule", (QualnameMapMixin, mod.__class__), {}
-            # )
-            setattr(mod, "new_to_old_qualname_mapping", mod_qualname_mapping)
+            self.submod_qualname_mappings[m_qualname] = mod_qualname_mapping
 
         def throw(self, *args, **kwargs):
             raise RuntimeError(
