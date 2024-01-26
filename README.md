@@ -2,11 +2,9 @@
 
 [**Why PiPPy?**](#why-pippy)
 | [**Install guide**](#install)
-| [**PiPPy Quickstart**](#pippy-quickstart)
+| [**Examples**](#examples)
+| [**PiPPy Explained**](#pippy-explained)
 | [**Future Work**](#future-work)
-| [**References**](#references)
-| [**License**](#license)
-| [**Citing PiPPy**](#citing-pippy)
 
 # Why PiPPy?
 
@@ -55,7 +53,11 @@ To expose PiPPy for development such that changes to this repo are reflected in 
 python setup.py develop
 ```
 
-# PiPPy Quickstart
+# Examples
+
+In this repo, we provide rich examples based on realistic models. In particular, we show how to apply PiPPy without any code change to the model. Please refer to the [HuggingFace examples directory](examples/huggingface/). Examples include: [BERT](examples/huggingface/pippy_bert.py), [GPT2](examples/huggingface/pippy_gpt2.py), [T5](examples/huggingface/pippy_t5.py), [LLaMA](examples/llama/), etc.
+
+# PiPPy Explained
 
 PiPPy consists of two parts: a _compiler_ and a _runtime_. The compiler takes your model code, splits it up, and transforms it into a `Pipe`, which is a wrapper that describes the model at each pipeline stage and their data-flow relationship. The runtime executes the `Pipe` in parallel, handling things like micro-batch splitting, scheduling, communication, and gradient propagation, etc. We will cover the APIs for these concepts in this section.
 
@@ -188,280 +190,10 @@ else:
     stage()
 ```
 
-Note that since we split our model into three stages, we must run this script with three workers. For this example, we will use `torchrun` to run multiple processes within a single machine for demonstration purposes. We can collect up all of the code blocks above into a file named [example.py](example.py) and then run it with `torchrun` like so:
+Note that since we split our model into three stages, we must run this script with three workers. For this example, we will use `torchrun` to run multiple processes within a single machine for demonstration purposes. We can collect up all of the code blocks above into a file named [example.py](examples/basic/example.py) and then run it with `torchrun` like so:
 
 ```
 torchrun --nproc_per_node=3 example.py
-```
-
-## Note: the following sections need to be updated. ##
-
-## Forward vs. Forward-loss-backward
-
-The above example demonstrated only pipelining the `forward()` computation, for example for the purposes of model evaluation. We can extend the example to include the loss and back-propagation computation for the purposes of model training. Let us replace the code under the `if local_rank == 0:` block in the example:
-
-```python
-if local_rank == 0:
-    from pippy.PipelineDriver import PipelineDriverFillDrain
-    from pippy.microbatch import TensorChunkSpec
-
-    # LossWrapper is a convenient base class you can use to compose your model
-    # with the desired loss function for the purpose of pipeline parallel training.
-    # Since the loss is executed as part of the pipeline, it cannot reside in the
-    # training loop, so you must embed it like this
-    from pippy.IR import LossWrapper
-    class ModelLossWrapper(LossWrapper):
-        def forward(self, x, target):
-            return self.loss_fn(self.module(x), target)
-
-    # TODO: mean reduction
-    loss_wrapper = ModelLossWrapper(module=mn, loss_fn=torch.nn.MSELoss(reduction='sum'))
-
-    # Instantiate the `Pipe` similarly to before, but with two differences:
-    #   1) We pass in the `loss_wrapper` module to include the loss in the
-    #      computation
-    #   2) We specify `output_loss_value_spec`. This is a data structure
-    #      that should mimic the structure of the output of LossWrapper
-    #      and has a True value in the position where the loss value will
-    #      be. Since LossWrapper returns just the loss, we just pass True
-    pipe = Pipe.from_tracing(loss_wrapper, output_loss_value_spec=True)
-
-    # We now have two args: `x` and `target`, so specify batch dimension
-    # for both.
-    args_chunk_spec = (TensorChunkSpec(0), TensorChunkSpec(0))
-    kwargs_chunk_spec = {}
-    # The output is now a `loss` value, which is a scalar tensor.
-    # PiPPy's default is to concatenate outputs, but that will not
-    # work with a scalar tensor. So we use a LossReducer instead
-    # to merge together the partial loss values.
-    from pippy.microbatch import LossReducer
-    output_chunk_spec = LossReducer(0.0, lambda a, b: a + b)
-
-    # Instantiate the driver as usual.
-    driver = PipelineDriverFillDrain(
-        pipe, args_chunk_spec=args_chunk_spec, kwargs_chunk_spec=kwargs_chunk_spec,
-        output_chunk_spec=output_chunk_spec, world_size=world_size)
-```
-
-The comments describe the new components that have been added to enable training. We can print out the new `pipe` to see the loss and backward stages:
-
-```python
-  print(pipe)
-
-  """
-  def forward(self, x, target):
-      submod_0 = self.submod_0(x)
-      submod_1 = self.submod_1(submod_0)
-      submod_2 = self.submod_2(submod_1, target)
-      stage_backward = pippy_IR_stage_backward(stage_output = (submod_2,), output_grads = (None,), input_values = [submod_1, target], outputs_with_grads_idxs = [0], stage_info = 'stage_backward for stage %submod_2 : [#users=2] = call_module[target=submod_2](args = (%submod_1, %target), kwargs = {})');  target = None
-      getitem = stage_backward[0]
-      getitem_1 = stage_backward[1];  stage_backward = None
-      getitem_2 = getitem[0]
-      getitem_3 = getitem[1];  getitem = None
-      stage_backward_1 = pippy_IR_stage_backward(stage_output = (submod_1,), output_grads = (getitem_2,), input_values = [submod_0], outputs_with_grads_idxs = [0], stage_info = 'stage_backward_1 for stage %submod_1 : [#users=3] = call_module[target=submod_1](args = (%submod_0,), kwargs = {})');  submod_1 = getitem_2 = None
-      getitem_4 = stage_backward_1[0]
-      getitem_5 = stage_backward_1[1];  stage_backward_1 = None
-      getitem_6 = getitem_4[0];  getitem_4 = None
-      stage_backward_2 = pippy_IR_stage_backward(stage_output = (submod_0,), output_grads = (getitem_6,), input_values = [x], outputs_with_grads_idxs = [0], stage_info = 'stage_backward_2 for stage %submod_0 : [#users=3] = call_module[target=submod_0](args = (%x,), kwargs = {})');  submod_0 = getitem_6 = x = None
-      getitem_7 = stage_backward_2[0]
-      getitem_8 = stage_backward_2[1];  stage_backward_2 = None
-      getitem_9 = getitem_7[0];  getitem_7 = None
-      sync_barrier = pippy_IR_sync_barrier(submod_2, [getitem_1, getitem_5, getitem_8]);  submod_2 = getitem_1 = getitem_5 = getitem_8 = None
-      return sync_barrier
-  """
-```
-
-As before, we can now call the `driver` object to execute the pipeline; However this time, the forward, loss, and backward passes will all be executed:
-
-```python
-    x = torch.randn(512, 512)
-    target = torch.randn(512, 256)
-
-    # note the additional `target` argument, as the module we're running is
-    # ModelLossWrapper
-    driver.chunks = 64
-    output = driver(x, target)
-
-    # NOTE: Backpropagation is run implicitly by `driver.forward()` when supplied with
-    # a Pipe with loss computation. You should not run `output.backward()`; PiPPy's
-    # runtime has already done that. This divergence from the PyTorch API exists
-    # because of the distributed nature of pipeline parallelism.
-
-    reference_output = loss_wrapper(x, target)
-
-    # Compare numerics of pipeline and original model
-    torch.testing.assert_close(output, reference_output)
-
-    print(' Pipeline parallel model ran successfully! '.center(80, '*'))
-```
-
-<!-- TODO: check gradients -->
-
-The above code has computed the gradients for the parameters of the model, but has not applied updates to the parameters. We use an `Optimizer` to do this by using the `instantiate_optimizer()` method on the pipeline driver:
-
-```python
-    # Instantiate remote Adam optimizers. `instantiate_optimizer` takes the
-    # optimizer class as the first argument, then additional arguments to that
-    # optimizer. Note that the `parameters` argument is omitted; PiPPy will
-    # populate that value for each pipeline stage for you.
-    optimizer = driver.instantiate_optimizer(torch.optim.Adam)
-    # Also instantiate a learning rate scheduler. Note that the `optimizer` argument is
-    # omitted; PiPPy will populate that argument for each pipeline stage
-    lr_scheduler = driver.instantiate_lr_scheduler(torch.optim.lr_scheduler.LinearLR, total_iters=100)
-
-    N_TRAINING_STEPS = 100
-
-    x = torch.randn(512, 512)
-    target = torch.randn(512, 10)
-    driver.chunks = 64
-    for i in range(N_TRAINING_STEPS):
-      optimizer.zero_grad()
-      pipe_loss = driver(x, target)
-      optimizer.step()
-      lr_scheduler.step()
-
-      log_info = f' Training step {i}, loss: {pipe_loss}, LR: {lr_scheduler.get_last_lr()} '
-      print(log_info.center(80, '*'))
-
-
-    print(' Pipeline parallel model ran successfully! '.center(80, '*'))
-```
-
-Launching this file [example_train.py](example_train.py) with torchrun similarly as before:
-
-```
-torchrun --nproc_per_node=3 example_train.py
-```
-
-We see the model train, memorizing the 512 examples in our input batch:
-
-```
-***** Training step 0, loss: 5197.943359375, LR: [0.00033999999999999997] ******
-***** Training step 1, loss: 5104.2080078125, LR: [0.0003466666666666666] ******
-**** Training step 2, loss: 5025.17236328125, LR: [0.00035333333333333327] *****
-****** Training step 3, loss: 4940.39453125, LR: [0.0003599999999999999] *******
-***** Training step 4, loss: 4845.97998046875, LR: [0.0003666666666666666] *****
-**** Training step 5, loss: 4742.01220703125, LR: [0.00037333333333333326] *****
-<...>
-**** Training step 94, loss: 16.55620765686035, LR: [0.0009666666666666657] ****
-*** Training step 95, loss: 12.990996360778809, LR: [0.0009733333333333323] ****
-**** Training step 96, loss: 8.712753295898438, LR: [0.000979999999999999] *****
-*** Training step 97, loss: 3.0083038806915283, LR: [0.0009866666666666659] ****
-*** Training step 98, loss: 6.2024617195129395, LR: [0.0009933333333333326] ****
-*** Training step 99, loss: 12.104667663574219, LR: [0.0009999999999999994] ****
-****************** Pipeline parallel model ran successfully! *******************
-```
-
-## PiPPy on CUDA
-
-When using PiPPy on CUDA devices, the model can be on a CUDA device before being passed to PiPPy, for example:
-
-```python
-model = MyNetwork()
-# `dev_id` is the GPU index
-model.to(f'cuda:{dev_id}')
-pipe = Pipe.from_tracing(model)
-```
-
-Note: in cases where a model's parameters do not fit into the memory of a single GPU, PiPPy also supports deferred
-distributed initialization which only materializes a pipeline stage on its corresponding GPU worker. For details,
-please see PiPPy's `Pipe.defer_stage_init` API.
-
-In addition, some backend options need to be passed to RPC initialization. RPC by default uses the TensorPipe backend
-that supports point-to-point communication in an asynchronous manner. Configurations for TensorPipe can be specified
-with a `TensorPipeRpcBackendOptions` object. Here is an example:
-
-```python
-# Create a backend option with 256 threads in the thread-pool used by
-# TensorPipeAgent to execute requests
-options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256)
-
-# Number of GPUs per node
-# (Assuming each node has the same number of GPUs)
-n_devs = torch.cuda.device_count()
-# Local GPU index of this worker within the node
-dev_id = rank % n_devs
-# Set device mappings from this worker to other RPC callees
-for i in range(world_size):
-    options.set_device_map(f"worker{i}", {dev_id: i % n_devs})
-
-# Initialize RPC
-rpc.init_rpc(f'worker{rank}', rank=rank, world_size=world_size,
-             rpc_backend_options=options)
-```
-
-The `set_device_map` call takes two arguments: the first one is the callee worker's name, the second one is a dictionary
-that maps from this worker's device to the callee worker's device. For more details, please refer to the documentation
-of `TensorPipeRpcBackendOptions`.
-
-## PiPPy + Data Parallelism
-
-![pippy-ddp](pippy-ddp.svg)
-
-PiPPy supports combination with Distributed Data Parallel (DDP) via the `init_data_parallel` API. Users can create
-multiple pipelines each targeting a distinct subset of ranks. For the same stages of the different pipelines, data
-parallel training is possible as these stages are replicas of the same model chunk. The created pipelines can
-collectively call the `init_data_parallel` API. PiPPy will then create a DDP group for each stage, across the pipelines.
-In the backward pass of the training, gradients will be exchanged among the same stages of the different pipelines via
-the DDP groups.
-
-Here is an example of PiPPy + Distributed Data Parallel:
-
-```python
-# Number of ranks in each pipeline
-pp_group_size = 3
-# Number of pipelines that coordinate in DDP fashion
-dp_group_size = 4
-# The total number of ranks
-world_size = pp_group_size * dp_group_size
-
-# In this example:
-# DP ranks are contiguous rows of size `dp_group_size`
-# PP ranks are non-contiguous columns of size `pp_group_size`
-#         PP ranks
-#             |
-#             v
-# DP ranks -> 0   1   2   3
-#             4   5   6   7
-#             8   9   10  11
-
-# The driver of each pipeline creates and runs the pipeline
-def run_driver(pp_ranks):
-    # Code to create the pipe object
-    # ...
-
-    # Create a PipelineDriver using the pipeline group size and the pipeline
-    # ranks given to this driver, e.g. [0, 4, 8] for driver 0
-    pipe_driver = PipelineDriverFillDrain(pipe, chunks, args_chunk_spec,
-                                          kwargs_chunk_spec, output_chunk_spec,
-                                          pp_group_size, pp_ranks)
-
-    # Create DDP groups for same pipeline stages, across pipelines
-    # `dp_group_size` specifies the number of pipelines expected to collectively
-    # make this call
-    pipe_driver.init_data_parallel(dp_group_size)
-
-    # Run training combining PiPPy and DDP
-    out = pipe_driver(input, target)
-
-
-# Initialize the default distributed process group (involving all ranks)
-# This is needed for DDP collectives
-torch.distributed.init_process_group(backend=backend, rank=rank,
-                                     world_size=world_size)
-
-# Initialize RPC (involving all ranks)
-# This is needed by PiPPy
-rpc.init_rpc(f'worker{rank}', rank=rank, world_size=world_size)
-
-# Assuming each driver process is the first rank in its respective pipeline,
-# then the driver processes are the first `dp_group_size` ranks of the world
-if rank < dp_group_size:
-    # The list of ranks belonging to the pipeline of this driver
-    pp_ranks = [i * dp_group_size + rank for i in range(pp_group_size)]
-    run_driver(pp_ranks)
-
-rpc.shutdown()
 ```
 
 ## Advanced: Pipeline Schedules
@@ -470,20 +202,11 @@ Pipeline parallel training of deep neural networks is _bidirectional_ since trai
 
 PiPPy provides both off-the-shelf pipeline schedules as described in the research literature as well as a programmable interface for creating new schedules. The schedules include:
 
-* Fill-Drain. Fill-drain is a schedule that executes all forward microbatches before executing any backward microbatches. This is the "standard" schedule used in GPipe (Huang, 2018). Fill-drain scheduling can be used in PiPPy via the `PipelineDriverFillDrain` driver class. A diagram illustrating the fill-drain schedule is below.
+* Fill-Drain. Fill-drain is a schedule that executes all forward microbatches before executing any backward microbatches. This is the "standard" schedule used in GPipe (Huang, 2018).
 
-<img src="https://i.imgur.com/eyUc947.png" alt="GPipe Schedule" width="800"/>
-(Diagram from Huang, 2018)
+* 1F1B (one forward, one backward) is a schedule that provides good hardware utilization as well as limits the amount of memory needed on a stage. At steady-state, a pipeline stage will alternate between processing forward and backward micro-batches. 1F1B was introduced in its asynchronous form in (Harlap, 2018) and in its synchronous form in (Narayanan, 2021).
 
-* 1F1B (one forward, one backward) is a schedule that provides good hardware utilization as well as limits the amount of memory needed on a stage. At steady-state, a pipeline stage will alternate between processing forward and backward micro-batches. 1F1B was introduced in its asynchronous form in (Harlap, 2018) and in its synchronous form in (Narayanan, 2021). 1F1B scheduling can be used in PiPPy via the `PipelineDriver1F1B` driver class. A diagram illustrating the 1F1B schedule is below.
-
-<img src="https://i.imgur.com/Voomtcd.png" alt="Synchronous 1F1B Schedule" width="800"/>
-(Diagram from Narayanan, 2021)
-
-* Interleaved 1F1B. Interleaved 1F1B is a variant of 1F1B that divides the program into smaller chunks and assigns multiple chunks per stage in a wrap-around fashion. Interleaving improves pipeline throughput with similar memory characteristics to 1F1B. Interleaved 1F1B was introduced by (Narayanan, 2021). Interleaved 1F1B can be using in PiPPy via the `PipelineDriverInterleaved1F1B` driver class.
-
-<img src="https://i.imgur.com/ujCPZAU.png" alt="Interleaved 1F1B Schedule" width="800"/>
-(Diagram from Narayanan, 2021)
+* Interleaved 1F1B. Interleaved 1F1B is a variant of 1F1B that divides the program into smaller chunks and assigns multiple chunks per stage in a wrap-around fashion. Interleaving improves pipeline throughput with similar memory characteristics to 1F1B. Interleaved 1F1B was introduced by (Narayanan, 2021).
 
 # Future Work
 
@@ -518,7 +241,7 @@ If you use PiPPy in your publication, please cite it by using the following BibT
 
 ```bibtex
 @Misc{pippy2022,
-  author =       {James Reed, Pavel Belevich, Ke Wen},
+  author =       {James Reed, Pavel Belevich, Ke Wen, Howard Huang, Will Constable},
   title =        {PiPPy: Pipeline Parallelism for PyTorch},
   howpublished = {\url{https://github.com/pytorch/PiPPy}},
   year =         {2022}
