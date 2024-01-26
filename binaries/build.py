@@ -5,10 +5,18 @@ import sys
 
 
 """
+Instructions:
+
 WARNING:
 Please make sure the "build" folder and the "dist" folder are cleaned before build.
 You can achieve that by running:
 `python setup.py clean`
+
+To build wheel file with Git hash, please run:
+`python build.py`
+
+To build wheel file with release version only, please run:
+`VERSION_NO_GIT=1 python build.py`
 """
 
 # To help discover local modules
