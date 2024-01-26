@@ -83,6 +83,16 @@ def run_worker(args):
             f"equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}"
         )
 
+    # Test qualname mapping
+    sd = stage.submod.state_dict()
+    print(f"Rank {args.rank} state dict keys: {sd.keys()}")
+    remapped_keys = [stage.remap_qualname(k) for k in sd.keys()]
+    print(f"Rank {args.rank} remapped keys: {remapped_keys}")
+    # Confirm remapped keys are consistent with original model
+    old_keys = mod.state_dict().keys()
+    assert all(rk in old_keys for rk in remapped_keys)
+    print(f"Qualname test passed")
+
 
 def main(args=None):
     parser = argparse.ArgumentParser()
