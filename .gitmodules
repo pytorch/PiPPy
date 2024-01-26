@@ -4,6 +4,3 @@
 [submodule "docs/src/pytorch-sphinx-theme"]
 	path = docs/src/pytorch-sphinx-theme
 	url = https://github.com/pytorch/pytorch_sphinx_theme.git
-[submodule "examples/selective2d/dim_solver"]
-	path = examples/selective2d/dim_solver
-	url = https://github.com/moonbucks/dim_solver.git
