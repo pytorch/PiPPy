@@ -2,7 +2,8 @@
 
 [**Why PiPPy?**](#why-pippy)
 | [**Install guide**](#install)
-| [**PiPPy Quickstart**](#pippy-quickstart)
+| [**Examples**](#examples)
+| [**PiPPy Explained**](#pippy-explained)
 | [**Future Work**](#future-work)
 
 # Why PiPPy?
@@ -52,7 +53,11 @@ To expose PiPPy for development such that changes to this repo are reflected in 
 python setup.py develop
 ```
 
-# PiPPy Quickstart
+# Examples
+
+In this repo, we provide rich examples based on realistic models. In particular, we show how to apply PiPPy without any code change to the model. Please refer to the [HuggingFace examples directory](examples/huggingface/). Examples include: [BERT](examples/huggingface/pippy_bert.py), [GPT2](examples/huggingface/pippy_gpt2.py), [T5](examples/huggingface/pippy_t5.py), [LLaMA](examples/llama/), etc.
+
+# PiPPy Explained
 
 PiPPy consists of two parts: a _compiler_ and a _runtime_. The compiler takes your model code, splits it up, and transforms it into a `Pipe`, which is a wrapper that describes the model at each pipeline stage and their data-flow relationship. The runtime executes the `Pipe` in parallel, handling things like micro-batch splitting, scheduling, communication, and gradient propagation, etc. We will cover the APIs for these concepts in this section.
 
@@ -197,20 +202,11 @@ Pipeline parallel training of deep neural networks is _bidirectional_ since trai
 
 PiPPy provides both off-the-shelf pipeline schedules as described in the research literature as well as a programmable interface for creating new schedules. The schedules include:
 
-* Fill-Drain. Fill-drain is a schedule that executes all forward microbatches before executing any backward microbatches. This is the "standard" schedule used in GPipe (Huang, 2018). Fill-drain scheduling can be used in PiPPy via the `PipelineDriverFillDrain` driver class. A diagram illustrating the fill-drain schedule is below.
+* Fill-Drain. Fill-drain is a schedule that executes all forward microbatches before executing any backward microbatches. This is the "standard" schedule used in GPipe (Huang, 2018).
 
-<img src="https://i.imgur.com/eyUc947.png" alt="GPipe Schedule" width="800"/>
-(Diagram from Huang, 2018)
+* 1F1B (one forward, one backward) is a schedule that provides good hardware utilization as well as limits the amount of memory needed on a stage. At steady-state, a pipeline stage will alternate between processing forward and backward micro-batches. 1F1B was introduced in its asynchronous form in (Harlap, 2018) and in its synchronous form in (Narayanan, 2021).
 
-* 1F1B (one forward, one backward) is a schedule that provides good hardware utilization as well as limits the amount of memory needed on a stage. At steady-state, a pipeline stage will alternate between processing forward and backward micro-batches. 1F1B was introduced in its asynchronous form in (Harlap, 2018) and in its synchronous form in (Narayanan, 2021). 1F1B scheduling can be used in PiPPy via the `PipelineDriver1F1B` driver class. A diagram illustrating the 1F1B schedule is below.
-
-<img src="https://i.imgur.com/Voomtcd.png" alt="Synchronous 1F1B Schedule" width="800"/>
-(Diagram from Narayanan, 2021)
-
-* Interleaved 1F1B. Interleaved 1F1B is a variant of 1F1B that divides the program into smaller chunks and assigns multiple chunks per stage in a wrap-around fashion. Interleaving improves pipeline throughput with similar memory characteristics to 1F1B. Interleaved 1F1B was introduced by (Narayanan, 2021). Interleaved 1F1B can be using in PiPPy via the `PipelineDriverInterleaved1F1B` driver class.
-
-<img src="https://i.imgur.com/ujCPZAU.png" alt="Interleaved 1F1B Schedule" width="800"/>
-(Diagram from Narayanan, 2021)
+* Interleaved 1F1B. Interleaved 1F1B is a variant of 1F1B that divides the program into smaller chunks and assigns multiple chunks per stage in a wrap-around fashion. Interleaving improves pipeline throughput with similar memory characteristics to 1F1B. Interleaved 1F1B was introduced by (Narayanan, 2021).
 
 # Future Work
 
