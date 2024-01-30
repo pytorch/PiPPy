@@ -6,6 +6,21 @@ import sys
 import subprocess
 
 
+"""
+Instructions:
+
+Make sure you have installed the following packages before running this script:
+`pip install twine`
+
+Make sure you have cleaned and then built wheel files locally:
+see instructions in `build.py`
+
+To upload to pypi, run:
+`python upload.py --upload`
+Then copy and paste the pypi token when prompted.
+"""
+
+
 # To help discover local modules
 REPO_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.append(REPO_ROOT)
