@@ -3,7 +3,7 @@
 import logging
 from abc import ABC, abstractmethod
 from collections import deque
-from typing import Deque, List, Optional, Tuple, Union
+from typing import Deque, List, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -73,23 +73,6 @@ class PipelineStage(ABC, nn.Module):
         raise NotImplementedError
 
 
-def create_buffers(
-    input: Union[torch.Tensor, List[torch.tensor]], device: torch.device
-) -> List[torch.Tensor]:
-    """
-    Creates buffers for a given input on a specified device.
-    This function takes as input a tensor or a list of tensors and returns a tensor or a list of tensors (respectively)
-    of the same shape, but located on the specified device and uninitialized (i.e., filled with arbitrary data).
-    """
-    if isinstance(input, torch.Tensor):
-        return [torch.empty_like(input, device=device)]
-    elif isinstance(input, (list, tuple)):
-        return [torch.empty_like(inp, device=device) for inp in input]
-    raise ValueError(
-        f"Unsupported input type {type(input)} cannot create buffers"
-    )
-
-
 class PipelineStageV2Impl(PipelineStage):
     def __init__(
         self,
@@ -98,27 +81,34 @@ class PipelineStageV2Impl(PipelineStage):
         num_stages: int,
         rank: int,
         world_size: int,
-        input_args: List[torch.tensor],
-        device: torch.device,
+        inputs_meta: List[torch.tensor],
+        outputs_meta: Optional[List[torch.tensor]] = None,
     ):
         super().__init__()
+        self.module = module
         self.rank = rank
         self.stage_id = stage_id
         self.is_first_stage = stage_id == 0
         self.is_last_stage = stage_id == num_stages - 1
         self.num_stages = num_stages
-        # When we materialize the model partition on cuda, we call reset_parameters() if it is available
-        self.module = module.to(device)
-        logger.info(f"input args {input_args=}")
-        meta_output = self.module(*input_args)
-        self.fwd_inputs: List[torch.tensor] = create_buffers(input_args, device)
+
+        if outputs_meta is None:
+            outputs_meta = module.forward(*inputs_meta)
+
+        self.fwd_inputs: List[torch.tensor] = self.create_buffers(inputs_meta)
         self.fwd_outputs = None
-        self.fwd_output_grads: List[torch.tensor] = create_buffers(
-            meta_output, device
+        self.fwd_output_grads: List[torch.tensor] = self.create_buffers(
+            outputs_meta
         )
         self.fwd_outputs_for_backward: Deque[
             Tuple[torch.tensor, torch.tensor]
         ] = deque()
+        logger.debug(
+            f"""
+            {[fwd_input.shape for fwd_input in self.fwd_inputs if isinstance(fwd_input, torch.Tensor)]},
+            {[fwd_output_grad.shape for fwd_output_grad in self.fwd_output_grads]}
+            """
+        )
 
         self.prev_stage = (rank - 1) % world_size
         self.next_stage = (rank + 1) % world_size
@@ -131,9 +121,49 @@ class PipelineStageV2Impl(PipelineStage):
             f"""
             finished pipeline stage init, {self.stage_id=}, {self.is_first_stage=},
             {self.is_last_stage=}, {self.num_stages=},
-            {[fwd_input.shape for fwd_input in self.fwd_inputs]},
-            {[fwd_output_grad.shape for fwd_output_grad in self.fwd_output_grads]}
             """
+        )
+
+    def to(self, *args, **kwargs):
+        """
+        Move the module to a new device or data type, including the buffers.
+        """
+        super().to(*args, **kwargs)
+
+        # find the device of the underlying module and move the buffers to it if they are meta
+        device = next(self.module.parameters()).device
+
+        for i, fwd_input in enumerate(self.fwd_inputs):
+            if fwd_input.is_meta:
+                self.fwd_inputs[i] = torch.empty_like(fwd_input, device=device)
+            self.fwd_inputs[i] = self.fwd_inputs[i].to(*args, **kwargs)
+        for i, fwd_output_grad in enumerate(self.fwd_output_grads):
+            if fwd_output_grad.is_meta:
+                self.fwd_output_grads[i] = torch.empty_like(
+                    fwd_output_grad, device=device
+                )
+            self.fwd_output_grads[i] = self.fwd_output_grads[i].to(
+                *args, **kwargs
+            )
+
+    def create_buffers(
+        self, inputs_meta: List[torch.tensor]
+    ) -> List[torch.Tensor]:
+        """
+        Creates buffers for a given input on a specified device.
+        This function takes as input a meta tensor or a list of meta tensors
+        and returns a flattened list of empty tensors of the same shape.
+        """
+        if isinstance(inputs_meta, torch.Tensor):
+            return [inputs_meta]
+        elif isinstance(inputs_meta, (list, tuple)):
+            return [
+                item
+                for sublist in [self.create_buffers(inp) for inp in inputs_meta]
+                for item in sublist
+            ]
+        raise ValueError(
+            f"Unsupported input type {type(inputs_meta)} cannot create buffers"
         )
 
     def init_p2p_neighbors(self):
@@ -180,26 +210,25 @@ class PipelineStageV2Impl(PipelineStage):
         ]
 
     def forward(self, args: List[torch.tensor]) -> torch.tensor:
-        logger.info(f"[{self.rank} FORWARD {self.stage_id}")
+        logger.debug(f"[{self.rank} FORWARD {self.stage_id}")
         if self.is_first_stage:
             self.fwd_inputs = args
 
         # this is needed when we access the gradients for this in backward()
-        if not self.is_first_stage:
-            for tensor in self.fwd_inputs:
-                tensor.requires_grad = True
-                tensor.retain_grad()
+        for tensor in self.fwd_inputs:
+            tensor.requires_grad = True
+            tensor.retain_grad()
 
         # perform forward pass on module
         self.fwd_outputs = self.module(*self.fwd_inputs)
 
-        fwd_outputs_for_backward = (
+        output_for_backward = (
             self.compute_loss() if self.is_last_stage else self.fwd_outputs
         )
 
         # we store a ref to the input/output pair for this forward to be later used by the corresponding backward
         self.fwd_outputs_for_backward.append(
-            (self.fwd_inputs, fwd_outputs_for_backward)
+            (self.fwd_inputs, output_for_backward)
         )
 
         return self.fwd_outputs
@@ -216,7 +245,7 @@ class PipelineStageV2Impl(PipelineStage):
         if self.is_first_stage:
             return []
         for fwd_input in self.fwd_inputs:
-            logger.info(f"{fwd_input.grad=}")
+            logger.debug(f"{fwd_input.grad=}")
             assert fwd_input.grad is not None, "grad must be valid"
         return [
             dist.P2POp(dist.isend, fwd_input.grad, self.prev_stage)
@@ -224,7 +253,7 @@ class PipelineStageV2Impl(PipelineStage):
         ]
 
     def backward(self):
-        logger.info(f"[{self.rank} BACKWARD {self.stage_id}]")
+        logger.debug(f"[{self.rank} BACKWARD {self.stage_id}]")
 
         if self.is_last_stage:
             self.fwd_inputs, loss = self.fwd_outputs_for_backward.popleft()
@@ -235,9 +264,6 @@ class PipelineStageV2Impl(PipelineStage):
             ) = self.fwd_outputs_for_backward.popleft()
 
         # Compute gradients
-        # TODO: HACK materialize_grads=True sets gradients to 0s on backward pass,
-        # we need set all the gradients for the inputs that need it, but should not send 0s
-        # due to extra communication
         if self.is_last_stage:
             gradients = torch.autograd.grad(
                 outputs=loss,
@@ -293,13 +319,15 @@ class PipelineScheduleGPipe(PipelineSchedule):
                 if ops:
                     dist.batch_isend_irecv(ops).pop().wait()
 
+                logger.debug(f"{mb=}")
+                logger.debug(f"len {len(mb)}")
                 self._stage.forward(mb)
 
                 ops = self._stage.get_fwd_send_ops()
                 if ops:
                     dist.batch_isend_irecv(ops)
 
-                logger.info(
+                logger.debug(
                     f"{self._stage.stage_id} forward mb {i} finished, microbatch: {[inp.shape for inp in mb]}"
                 )
 
@@ -315,7 +343,7 @@ class PipelineScheduleGPipe(PipelineSchedule):
                 if ops:
                     dist.batch_isend_irecv(ops)
 
-            logger.info(f"{self._stage.stage_id} backward mb {i} finished")
+            logger.debug(f"{self._stage.stage_id} backward mb {i} finished")
 
 
 class PipelineScheduleLoopedBFS(PipelineSchedule):
@@ -380,7 +408,7 @@ class PipelineScheduleLoopedDFS(PipelineSchedule):
         self.warmup_steps += 2 * ((n_pp - 1) - pp_id)
         self.forward_steps = len(stages) * n_microbatch
         self.total_steps = self.warmup_steps + (len(stages) * n_microbatch)
-        logger.info(
+        logger.debug(
             f"pp_id {pp_id} warmup_steps {self.warmup_steps} forward_steps {self.forward_steps} total_steps {self.total_steps}"
         )
 
@@ -428,10 +456,10 @@ class PipelineScheduleLoopedDFS(PipelineSchedule):
         my theory was that the hang could be fixed if I orchestrate the recvs after the sends from the schedule side, but i should probably
         see if i can prove what caused the hang before i work on it further
         """
-        logger.info(
+        logger.debug(
             f"rank {self.pp_id} - minibatch_index {[minibatch_index(step) for step in range(self.total_steps)]}"
         )
-        logger.info(
+        logger.debug(
             f"rank {self.pp_id} - stage_index {[stage_index(step) for step in range(self.total_steps)]}"
         )
 
@@ -473,21 +501,21 @@ class PipelineScheduleLoopedDFS(PipelineSchedule):
 
             if step < self.forward_steps:
                 if forward_first_recv:
-                    logger.info(
+                    logger.debug(
                         f"rank {self.pp_id} - forward edge case for first stage"
                     )
                     dist.batch_isend_irecv(forward_first_recv).pop().wait()
                     forward_first_recv = None
 
                 if forward_batched_op_handle:
-                    logger.info(
+                    logger.debug(
                         f"rank: {self.pp_id} - waiting on batched_op_handle before fwd"
                     )
                     forward_batched_op_handle.wait()
                     forward_batched_op_handle = None
 
                 with record_function(f"Stage {forward_stage.stage_id} Forward"):
-                    logger.info(
+                    logger.debug(
                         f"pp_id {self.pp_id} step {step} forward_stage {forward_stage.stage_id} mb_id {mb_id_fwd}"
                     )
                     forward_stage.forward(microbatches[mb_id_fwd])
@@ -505,7 +533,7 @@ class PipelineScheduleLoopedDFS(PipelineSchedule):
                         requests.extend(ops)
 
                 if requests:
-                    logger.info(
+                    logger.debug(
                         f"rank: {self.pp_id}, current stage_id {self.stage_id_to_global_stage_id[fwd_stage_id]}, - {[(req.op, req.peer) for req in requests]}"
                     )
                     forward_batched_op_handle = dist.batch_isend_irecv(
@@ -514,14 +542,14 @@ class PipelineScheduleLoopedDFS(PipelineSchedule):
 
             if step >= self.warmup_steps:
                 if backward_first_recv:
-                    logger.info(
+                    logger.debug(
                         f"rank {self.pp_id} - backward edge case for last stage"
                     )
                     dist.batch_isend_irecv(backward_first_recv).pop().wait()
                     backward_first_recv = None
 
                 if backward_batched_op_handle:
-                    logger.info(
+                    logger.debug(
                         f"rank: {self.pp_id} - waiting on batched_op_handles before bwd"
                     )
                     backward_batched_op_handle.wait()
@@ -530,7 +558,7 @@ class PipelineScheduleLoopedDFS(PipelineSchedule):
                 with record_function(
                     f"Stage {backward_stage.stage_id} Backward"
                 ):
-                    logger.info(
+                    logger.debug(
                         f"pp_id {self.pp_id} step {step}/{self.total_steps} backward_step {backward_step} backward_stage_id {backward_stage.stage_id} mb_id {mb_id_bwd}"
                     )
                     backward_stage.backward()
@@ -548,11 +576,11 @@ class PipelineScheduleLoopedDFS(PipelineSchedule):
                         requests.extend(ops)
 
                 if requests:
-                    logger.info(
+                    logger.debug(
                         f"rank: {self.pp_id} - {[(req.op, req.peer) for req in requests]}"
                     )
                     backward_batched_op_handle = dist.batch_isend_irecv(
                         requests
                     ).pop()
 
-        logger.info("Step exiting")
+        logger.debug("Step exiting")
