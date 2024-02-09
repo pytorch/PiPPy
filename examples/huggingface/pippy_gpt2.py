@@ -53,16 +53,26 @@ def run(args):
     example_inputs = generate_inputs_for_model(
         model_class, gpt2, model_name, args.batch_size, args.device)
 
-    # Annotate split points
-    add_split_points(gpt2, args.world_size)
+    if args.autosplit:
+        # Automatic split
+        from pippy import split_into_equal_size
+        gpt2_pipe = Pipe.from_tracing(
+            gpt2,
+            num_chunks=args.chunks,
+            example_args=(),
+            example_kwargs=example_inputs,
+            split_policy=split_into_equal_size(args.world_size),
+        )
+    else:
+        # Manually annotate split points
+        add_split_points(gpt2, args.world_size)
+        gpt2_pipe = Pipe.from_tracing(
+            gpt2,
+            num_chunks=args.chunks,
+            example_args=(),
+            example_kwargs=example_inputs,
+        )
 
-    # Create pipeline
-    gpt2_pipe = Pipe.from_tracing(
-        gpt2,
-        num_chunks=args.chunks,
-        example_args=(),
-        example_kwargs=example_inputs,
-    )
     assert len(list(gpt2_pipe.split_gm.children())) == args.world_size
     if args.rank == 0:
         for i, sm in enumerate(gpt2_pipe.split_gm.children()):
@@ -103,6 +113,7 @@ if __name__ == "__main__":
     parser.add_argument('--n_embd', type=int, default=None)
     parser.add_argument('--n_layer', type=int, default=None)
     parser.add_argument('--n_head', type=int, default=None)
+    parser.add_argument('--autosplit', action="store_true")
 
     args = parser.parse_args()
 

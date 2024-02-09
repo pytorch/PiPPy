@@ -100,6 +100,8 @@ jobs:
         run: torchrun --nproc-per-node 4 test/test_bwd.py --schedule ${{ matrix.schedule }}
       - name: Run example
         run: torchrun --nproc-per-node 3 examples/basic/example.py
+      - name: Run auto-split test
+        run: torchrun --nproc-per-node 4 test/test_autosplit.py
       # - name: Run null_coalesce_accumulate integration test
       #   run: python test/local_test_null_coalesce_accumulate.py --replicate ${{ matrix.replicate }} --schedule ${{ matrix.schedule }}
       # - name: Run PP + DDP test
