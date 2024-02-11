@@ -162,7 +162,8 @@ def main(**kwargs):
 
     x = torch.randn([microbatch_size, input_dim]).to("meta")
     unused = torch.ones((1, 1), device="meta")
-    input_args = (x, unused)
+    inputs_meta = (x, unused)
+    outputs_meta = module_list[rank](*inputs_meta)
 
     stage_model = PipelineStageV2Impl(
         module_list[rank],
@@ -170,8 +171,8 @@ def main(**kwargs):
         world_size,
         rank,
         world_size,
-        input_args,
-        device,
+        inputs_meta,
+        outputs_meta,
     )
     stage_model.init_p2p_neighbors()
 
@@ -182,11 +183,17 @@ def main(**kwargs):
             num_stages=world_size * world_size,
             rank=rank,
             world_size=world_size,
-            input_args=input_args,
-            device=device,
+            inputs_meta=inputs_meta,
+            outputs_meta=outputs_meta,
         )
         for i in range(world_size)
     ]
+
+    # set the pipeline stages to cuda
+    stage_model.to(device)
+    for stage in stage_model_looped:
+        stage.to(device)
+
     x_cuda_empty = torch.empty_like(x, device="cuda")
 
     microbatches = []
@@ -220,6 +227,7 @@ def main(**kwargs):
             with record_function(schedule):
                 pipeline.step(microbatches)
         logger.info(f"====== Rank {rank} finished {schedule} ======")
+    print("successfully finished")
 
 
 def main_wrapper(rank, local_rank, world_size, kwargs):
