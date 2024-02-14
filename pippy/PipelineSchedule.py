@@ -3,7 +3,7 @@
 import logging
 from abc import ABC, abstractmethod
 from collections import deque
-from typing import Deque, List, Optional, Tuple, Union
+from typing import Any, Deque, List, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -98,7 +98,7 @@ class PipelineStageV2Impl(PipelineStage):
         num_stages: int,
         rank: int,
         world_size: int,
-        input_args: List[torch.tensor],
+        input_args: Union[torch.Tensor, List[torch.tensor]],
         device: torch.device,
     ):
         super().__init__()
@@ -109,10 +109,27 @@ class PipelineStageV2Impl(PipelineStage):
         self.num_stages = num_stages
         # When we materialize the model partition on cuda, we call reset_parameters() if it is available
         self.module = module.to(device)
-        logger.info(f"input args {input_args=}")
-        meta_output = self.module(*input_args)
+        # logger.info(f"input args {input_args=}")
         self.fwd_inputs: List[torch.tensor] = create_buffers(input_args, device)
-        self.fwd_outputs = None
+        self.fwd_outputs: Any = []
+
+        # we always expect to unpack a list, so if its a single tensor, wrap it in a list
+        if isinstance(input_args, torch.Tensor):
+            input_args = [input_args]
+        meta_output = self.module(*input_args)
+
+        # validate the output of the module is a type supported
+        if not isinstance(meta_output, (torch.Tensor, tuple, list)):
+            raise ValueError(
+                f"Module output of type {type(meta_output)} is not supported"
+            )
+        if isinstance(meta_output, (tuple, list)) and any(
+            not isinstance(output, torch.Tensor) for output in meta_output
+        ):
+            raise ValueError(
+                f"All elements in module output must be torch.Tensor instances, but got {[type(x) for x in meta_output]}"
+            )
+
         self.fwd_output_grads: List[torch.tensor] = create_buffers(
             meta_output, device
         )
@@ -170,25 +187,36 @@ class PipelineStageV2Impl(PipelineStage):
 
     def get_fwd_send_ops(self) -> List[dist.P2POp]:
         assert (
-            self.fwd_outputs is not None
+            len(self.fwd_outputs) != 0
         ), "forward() must be called before get_fwd_send_ops"
         if self.is_last_stage:
             return []
-        return [
-            dist.P2POp(dist.isend, fwd_output, self.next_stage)
-            for fwd_output in self.fwd_outputs
-        ]
+        if isinstance(self.fwd_outputs, torch.Tensor):
+            return [dist.P2POp(dist.isend, self.fwd_outputs, self.next_stage)]
+        elif isinstance(self.fwd_outputs, (list, tuple)):
+            return [
+                dist.P2POp(dist.isend, fwd_output, self.next_stage)
+                for fwd_output in self.fwd_outputs
+            ]
+        raise AssertionError("invalid fwd_outputs type, cannot send")
 
-    def forward(self, args: List[torch.tensor]) -> torch.tensor:
-        logger.info(f"[{self.rank} FORWARD {self.stage_id}")
+    def forward(self, args: Union[torch.Tensor, List[torch.tensor]]) -> Any:
         if self.is_first_stage:
             self.fwd_inputs = args
 
+        # we always expect to unpack an iterable of inputs, so if its a single tensor (input argument), wrap it in a list
+        if isinstance(self.fwd_inputs, torch.Tensor):
+            self.fwd_inputs = [self.fwd_inputs]
+
+        logger.info(
+            f"[{self.rank} FORWARD {self.stage_id} {[fwd_input.shape for fwd_input in self.fwd_inputs]}"
+        )
+
         # this is needed when we access the gradients for this in backward()
-        if not self.is_first_stage:
-            for tensor in self.fwd_inputs:
-                tensor.requires_grad = True
-                tensor.retain_grad()
+        # TODO: requires_grad should not be set, it should depend on input (https://github.com/pytorch/PiPPy/issues/945)
+        for tensor in self.fwd_inputs:
+            tensor.requires_grad = True
+            tensor.retain_grad()
 
         # perform forward pass on module
         self.fwd_outputs = self.module(*self.fwd_inputs)
@@ -291,6 +319,8 @@ class PipelineScheduleGPipe(PipelineSchedule):
             with record_function(f"Forward {i}"):
                 ops = self._stage.get_fwd_recv_ops()
                 if ops:
+                    print(ops[0].tensor.shape)
+                    print(ops[0].peer)
                     dist.batch_isend_irecv(ops).pop().wait()
 
                 self._stage.forward(mb)
@@ -298,10 +328,6 @@ class PipelineScheduleGPipe(PipelineSchedule):
                 ops = self._stage.get_fwd_send_ops()
                 if ops:
                     dist.batch_isend_irecv(ops)
-
-                logger.info(
-                    f"{self._stage.stage_id} forward mb {i} finished, microbatch: {[inp.shape for inp in mb]}"
-                )
 
         for i, _ in enumerate(microbatches):
             with record_function(f"Backward {i}"):
