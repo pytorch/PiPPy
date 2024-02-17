@@ -158,6 +158,7 @@ def create_metadata_tensor(
     """
     Create a metadata tensor that can be sent over the wire.
     This tensor contains the number of dimensions and the shape of each tensor being sent.
+
     The data is of format [num_dims, dim1, dim2, ...].
     If the tensor is None, a tensor of only placeholder values will be returned.
 
@@ -165,6 +166,7 @@ def create_metadata_tensor(
         tensors: A list of tensors, the tensors will converted into its shape dimensions and
                  these dimensions will be concatenated.
         device: The device where the metadata tensor will be created.
+    If the tensor is None, then this tensor will contain 0s.
 
     """
     metadata_tensor = torch.full(
@@ -288,14 +290,29 @@ def validate_stage_shapes(pipeline_stages: List[PipelineStageBase]):
     all stages. Assumes that buffers have been initialized already such that get_fwd_recv_ops() and
     get_fwd_send_ops() return valid lists of p2p ops.
     """
+    if len(pipeline_stages) == 0:
+        raise ValueError("No pipeline stages provided.")
+
     virtual_pipeline_size = len(pipeline_stages)
     all_inputs = []
     all_outputs = []
+    world_size = pipeline_stages[0].world_size
+    num_stages = pipeline_stages[0].num_stages
+
     # perform all gathers between all stages
     for virtual_id, stage in enumerate(pipeline_stages):
         world_size = stage.world_size
         stage_id = stage.stage_index
         rank = stage.rank
+        # check that world_size and num_stages are consistent across all stages
+        if stage.world_size != world_size:
+            raise ValueError(
+                f"Stage id {stage_id} has world size ({stage.world_size}) which does not match world size ({world_size}) of other stages."
+            )
+        if stage.num_stages != num_stages:
+            raise ValueError(
+                f"Stage id {stage_id} has num stages ({stage.num_stages}) which does not match num stages ({num_stages}) of other stages."
+            )
 
         # TODO: once we pass in pg to stage, check the pg rank is same as stage rank
         if rank != (pg_rank := dist.get_rank()):
@@ -416,8 +433,8 @@ class PipelineStageV2Impl(PipelineStageBase):
             f"""
             finished pipeline stage init, {self.stage_index=}, {self.is_first_stage=},
             {self.is_last_stage=}, {self.num_stages=},
-            {[inp.shape for inp in self.inputs]},
-            {[output.shape for output in self.outputs]}
+            inputs: {[inp.shape for inp in self.inputs]},
+            output: {[output.shape for output in self.outputs]}
             """
         )
 
@@ -728,6 +745,92 @@ class PipelineScheduleGPipe(PipelineSchedule):
         return self._stage.merge_outputs()
 
 
+class PipelineSchedule1F1B(PipelineSchedule):
+    def __init__(self, stage: PipelineStageBase):
+        self._stage = stage
+        self.stage_index = stage.stage_index
+        self.rank = stage.rank
+        self.pp_group_size = stage.world_size
+
+    def step_microbatches(
+        self,
+        arg_mbs: Optional[List] = None,
+        kwarg_mbs: Optional[List] = None,
+    ):
+        if arg_mbs is not None:
+            # TODO: fix this so it is preset
+            self._n_microbatches = len(arg_mbs)
+            assert len(arg_mbs) == self._n_microbatches
+        else:
+            arg_mbs = [()] * self._n_microbatches
+
+        # forward for num_microbatches + backward for num_microbatches
+        total_ops = self._n_microbatches * 2
+
+        # Example, 4 GPUs, 8 microbatches
+        # Stage 0: 6 warmup, 2 1f1b, 6 cooldown
+        # Stage 1: 4 warmup, 4 1f1b, 4 cooldown
+        # Stage 2: 2 warmup, 6 1f1b, 2 cooldown
+        # Stage 3: 0 warmup, 8 1f1b, 0 cooldown
+        # fwd only
+        warmup_steps = min(
+            self._n_microbatches,
+            2 * (self.pp_group_size - self.stage_index - 1),
+        )
+
+        # fwd + bwd
+        main_1f1b_steps = self._n_microbatches - warmup_steps
+
+        # bwd only
+        cooldown_steps = total_ops - (warmup_steps + (2 * main_1f1b_steps))
+
+        total_steps = warmup_steps + main_1f1b_steps + cooldown_steps
+
+        logger.debug(
+            f"""
+            Rank {self.rank}:
+            Warmup steps: {warmup_steps}
+            Main 1F1B steps: {main_1f1b_steps}
+            Cooldown steps: {cooldown_steps}
+            Total steps: {total_steps}
+        """
+        )
+
+        for i in range(total_steps):
+            if i < self._n_microbatches:
+                # forward
+                with record_function(f"Forward {i}"):
+                    ops = self._stage.get_fwd_recv_ops()
+                    if ops:
+                        dist.batch_isend_irecv(ops).pop().wait()
+
+                    self._stage.forward_one_chunk(arg_mbs[i])
+
+                    ops = self._stage.get_fwd_send_ops()
+                    if ops:
+                        dist.batch_isend_irecv(ops)
+            if (
+                warmup_steps
+                <= i
+                < warmup_steps + main_1f1b_steps + cooldown_steps
+            ):
+                # backward
+                with record_function(f"Backward {i}"):
+                    ops = self._stage.get_bwd_recv_ops()
+                    if ops:
+                        dist.batch_isend_irecv(ops).pop().wait()
+
+                    self._stage.backward_one_chunk()
+
+                    ops = self._stage.get_bwd_send_ops()
+                    if ops:
+                        dist.batch_isend_irecv(ops)
+
+    def step(self, *args, **kwargs):
+        # TODO
+        pass
+
+
 class PipelineScheduleLoopedBFS(PipelineSchedule):
     def __init__(self, stages: List[PipelineStageBase]):
         self._stages = stages
@@ -739,6 +842,8 @@ class PipelineScheduleLoopedBFS(PipelineSchedule):
     ):
         # Pre-process inputs
         if arg_mbs is not None:
+            # TODO: fix this so it is preset
+            self._n_microbatches = len(arg_mbs)
             assert len(arg_mbs) == self._n_microbatches
         else:
             arg_mbs = [()] * self._n_microbatches
@@ -774,42 +879,27 @@ class PipelineScheduleLoopedBFS(PipelineSchedule):
                     if ops:
                         dist.batch_isend_irecv(ops)
 
+    def step(self, *args, **kwargs):
+        # TODO
+        pass
 
-class PipelineScheduleLoopedDFS(PipelineSchedule):
-    def __init__(
-        self, stages: List[PipelineStageBase], n_microbatch, pp_id, n_pp
-    ):
-        assert (
-            n_microbatch % n_pp == 0
-        ), f"Looped DFS schedule requires microbatch_size ({n_microbatch}) to be a multiple of n_pp ({n_pp})"
+
+class PipelineScheduleInterleaved1F1B(PipelineSchedule):
+    def __init__(self, stages: List[PipelineStageBase]):
+        if len(stages) <= 1:
+            raise ValueError(
+                "Looped DFS schedule requires at least two stages to be used."
+            )
 
         self.stages = stages
-        self.n_microbatch = n_microbatch
-
         self.n_local_stages = len(stages)
-        self.total_stages = self.n_local_stages * n_pp
-        # world_size
-        self.n_pp = n_pp
-
-        self.stage_id_to_global_stage_id = [
-            (i * n_pp) + pp_id for i in range(self.n_local_stages)
+        stage = stages[0]
+        self.pp_group_size = stage.world_size
+        self.rank = stage.rank
+        self.total_stages = self.n_local_stages * self.pp_group_size
+        self.local_idx_to_global_stage_id = [
+            stage.stage_index for stage in self.stages
         ]
-
-        # pp_id is the same as local rank within the PP dimension
-        self.pp_id = pp_id
-
-        # number of sequences (chunks)
-        self.seq_size = n_pp
-
-        # warmup steps for latest pp stage is trivial to compute
-        # increment warmup_steps by 2 for each hop away
-        self.warmup_steps = (len(stages) - 1) * self.seq_size
-        self.warmup_steps += 2 * ((n_pp - 1) - pp_id)
-        self.forward_steps = len(stages) * n_microbatch
-        self.total_steps = self.warmup_steps + (len(stages) * n_microbatch)
-        logger.info(
-            f"pp_id {pp_id} warmup_steps {self.warmup_steps} forward_steps {self.forward_steps} total_steps {self.total_steps}"
-        )
 
     def step_microbatches(
         self,
@@ -834,171 +924,127 @@ class PipelineScheduleLoopedDFS(PipelineSchedule):
         Rank 0: 0F 0F 0F 0F 2F 2F 2F 2F
         Rank 1:    1F 1F 1F 1F 3F3B 3F 3F 3F
         """
-
-        def minibatch_index(step):
-            # Given the step index, find the corresponding minibatch index.
-
-            # equivalent to a triple nested loop like this
-            # for sequence_id in range(self.seq_size):
-            #     for stage in self.stages:
-            #         for microbatch_within_sequence:
-            #             ...
-            # step: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
-            # index:0, 1, 0, 1, 2, 3, 2, 3, 4, 5, 4,  5,  6,  7,  6,  7
-            return (step % self.seq_size) + self.seq_size * int(
-                step / (self.seq_size * self.n_local_stages)
-            )
-
-        def stage_index(step):
-            # step: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
-            # index:0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1,  1,  0,  0,  1,  1
-            return int((step / self.seq_size) % self.n_local_stages)
-
-        """
-
-        my theory was that the hang could be fixed if I orchestrate the recvs after the sends from the schedule side, but i should probably
-        see if i can prove what caused the hang before i work on it further
-        """
-        logger.info(
-            f"rank {self.pp_id} - minibatch_index {[minibatch_index(step) for step in range(self.total_steps)]}"
-        )
-        logger.info(
-            f"rank {self.pp_id} - stage_index {[stage_index(step) for step in range(self.total_steps)]}"
-        )
-
-        # Pre-process inputs
         if arg_mbs is not None:
+            # TODO: fix this so it is preset
+            self._n_microbatches = len(arg_mbs)
             assert len(arg_mbs) == self._n_microbatches
         else:
             arg_mbs = [()] * self._n_microbatches
 
-        if kwarg_mbs is not None:
-            assert len(kwarg_mbs) == self._n_microbatches
-        else:
-            kwarg_mbs = [{}] * self._n_microbatches
+        if self._n_microbatches % self.pp_group_size != 0:
+            raise ValueError(
+                f"Looped DFS schedule requires the number of microbatches ({self._n_microbatches}) \
+                to be a multiple of the number of pipelined ranks ({self.pp_group_size})."
+            )
 
-        forward_batched_op_handle: Optional[dist.Work] = None
-        backward_batched_op_handle: Optional[dist.Work] = None
+        # warmup steps for latest pp stage is trivial to compute
+        # increment warmup_steps by 2 for each hop away
+        warmup_steps = (self.n_local_stages - 1) * self.pp_group_size
+        warmup_steps += 2 * ((self.pp_group_size - 1) - self.rank)
+        fwd_bwd_steps = (
+            self.n_local_stages * self._n_microbatches
+        ) - warmup_steps
+        cooldown_steps = (
+            self.n_local_stages * self._n_microbatches
+        ) - fwd_bwd_steps
 
-        # edge case for first stage on each rank we need to call receive, recv for future microbatches will be fetched after fwd
-        # TODO: move this to its own class? `OneTimeUseRecv`?
-        forward_first_recv: Optional[List[dist.P2POp]] = self.stages[
-            0
-        ].get_fwd_recv_ops()
+        assert (
+            warmup_steps + fwd_bwd_steps * 2 + cooldown_steps
+            == self.n_local_stages * self._n_microbatches * 2
+        )
+        self.total_steps = warmup_steps + fwd_bwd_steps + cooldown_steps
 
-        # edge case for the last stage on each rank we need to call receive, recv for future microbatches will be fetched after bwd
-        backward_first_recv: Optional[List[dist.P2POp]] = self.stages[
-            -1
-        ].get_bwd_recv_ops()
+        logger.debug(
+            f"""
+            rank {self.rank}
+            warmup_steps {warmup_steps}
+            1f1b {fwd_bwd_steps}
+            cooldown_steps {cooldown_steps}
+            """
+        )
 
-        backward_stages = list(reversed(self.stages))
+        def microbatch_index(step):
+            # Given the step index, find the corresponding microbatch index.
+
+            # equivalent to a triple nested loop like this          ...
+            # for gpu in range(self.pp_group_size):
+            #     for stage in self.stages:
+            #         for microbatch_within_sequence:
+            #             ...
+            return (step % self.pp_group_size) + self.pp_group_size * int(
+                step / (self.pp_group_size * self.n_local_stages)
+            )
+
+        def forward_stage_local_index(step):
+            return (step // self.pp_group_size) % self.n_local_stages
+
+        def backward_stage_local_index(step):
+            return (
+                self.n_local_stages
+                - 1
+                - ((step - warmup_steps) // self.pp_group_size)
+                % self.n_local_stages
+            )
+
         for step in range(self.total_steps):
-            mb_id_fwd = minibatch_index(step)
-            fwd_stage_id = stage_index(step)
-            forward_stage = self.stages[fwd_stage_id]
-            fwd_stage_id_next = None
-            forward_stage_next = None
+            # warmup, forward only
+            if step < warmup_steps:
+                fwd_stage = self.stages[forward_stage_local_index(step)]
+                mb_index = microbatch_index(step)
+                logger.debug(
+                    f"{self.rank}: {step=}, {fwd_stage.stage_index=}, {mb_index=}"
+                )
 
-            backward_step = step - self.warmup_steps
-            mb_id_bwd = minibatch_index(backward_step)
-            bwd_stage_id = stage_index(backward_step)
-            bwd_stage_id_next = None
-            backward_stage_next = None
-            backward_stage = backward_stages[bwd_stage_id]
+                with record_function(f"Forward {step}"):
+                    ops = fwd_stage.get_fwd_recv_ops()
+                    if ops:
+                        dist.batch_isend_irecv(ops).pop().wait()
 
-            # info for next stages
-            if step < self.total_steps:
-                fwd_stage_id_next = stage_index(step + 1)
-                forward_stage_next = self.stages[fwd_stage_id_next]
-                bwd_stage_id_next = stage_index(backward_step + 1)
-                backward_stage_next = backward_stages[bwd_stage_id_next]
+                    fwd_stage.forward(arg_mbs[mb_index])
 
-            if step < self.forward_steps:
-                if forward_first_recv:
-                    logger.info(
-                        f"rank {self.pp_id} - forward edge case for first stage"
-                    )
-                    dist.batch_isend_irecv(forward_first_recv).pop().wait()
-                    forward_first_recv = None
+                    ops = fwd_stage.get_fwd_send_ops()
+                    if ops:
+                        dist.batch_isend_irecv(ops)
+            # 1f1b
+            elif warmup_steps <= step < warmup_steps + fwd_bwd_steps:
+                fwd_stage = self.stages[forward_stage_local_index(step)]
+                bwd_stage = self.stages[backward_stage_local_index(step)]
+                logger.debug(
+                    f"{self.rank}: {step=}, {fwd_stage.stage_index=}, {bwd_stage.stage_index=}, {mb_index=}"
+                )
+                with record_function(f"1F1B {step}"):
+                    ops = fwd_stage.get_fwd_recv_ops()
+                    ops.extend(bwd_stage.get_bwd_recv_ops())
 
-                if forward_batched_op_handle:
-                    logger.info(
-                        f"rank: {self.pp_id} - waiting on batched_op_handle before fwd"
-                    )
-                    forward_batched_op_handle.wait()
-                    forward_batched_op_handle = None
+                    if ops:
+                        dist.batch_isend_irecv(ops).pop().wait()
 
-                with record_function(
-                    f"Stage {forward_stage.stage_index} Forward"
-                ):
-                    logger.info(
-                        f"pp_id {self.pp_id} step {step} forward_stage {forward_stage.stage_index} mb_id {mb_id_fwd}"
-                    )
-                    forward_stage.forward_one_chunk(
-                        arg_mbs[mb_id_fwd], kwarg_mbs[mb_id_fwd]
-                    )
+                    fwd_stage.forward_one_chunk(arg_mbs[mb_index])
+                    bwd_stage.backward_one_chunk()
 
-                requests: List[dist.P2POp] = []
+                    ops = fwd_stage.get_fwd_send_ops()
+                    ops.extend(bwd_stage.get_bwd_send_ops())
+                    if ops:
+                        dist.batch_isend_irecv(ops)
+            # cooldown
+            else:
+                bwd_stage = self.stages[backward_stage_local_index(step)]
+                logger.debug(
+                    f"{self.rank}: {step=}, {bwd_stage.stage_index=}, {mb_index=}"
+                )
+                with record_function(f"Cooldown (backward) {step}"):
+                    ops = bwd_stage.get_bwd_recv_ops()
 
-                # send output activations if this is not the last stage
-                ops = forward_stage.get_fwd_send_ops()
-                requests.extend(ops)
+                    if ops:
+                        dist.batch_isend_irecv(ops).pop().wait()
 
-                # add recv for the NEXT stage, do not do this for last stage
-                if forward_stage_next is not None:
-                    ops = forward_stage_next.get_fwd_recv_ops()
-                    if mb_id_fwd != self._n_microbatches - 1:
-                        requests.extend(ops)
+                    bwd_stage.backward_one_chunk()
 
-                if requests:
-                    logger.info(
-                        f"rank: {self.pp_id}, current stage_id {self.stage_id_to_global_stage_id[fwd_stage_id]}, - {[(req.op, req.peer) for req in requests]}"
-                    )
-                    forward_batched_op_handle = dist.batch_isend_irecv(
-                        requests
-                    ).pop()
+                    ops = bwd_stage.get_bwd_send_ops()
 
-            if step >= self.warmup_steps:
-                if backward_first_recv:
-                    logger.info(
-                        f"rank {self.pp_id} - backward edge case for last stage"
-                    )
-                    dist.batch_isend_irecv(backward_first_recv).pop().wait()
-                    backward_first_recv = None
+                    if ops:
+                        dist.batch_isend_irecv(ops)
 
-                if backward_batched_op_handle:
-                    logger.info(
-                        f"rank: {self.pp_id} - waiting on batched_op_handles before bwd"
-                    )
-                    backward_batched_op_handle.wait()
-                    backward_batched_op_handle = None
-
-                with record_function(
-                    f"Stage {backward_stage.stage_index} Backward"
-                ):
-                    logger.info(
-                        f"pp_id {self.pp_id} step {step}/{self.total_steps} backward_step {backward_step} backward_stage_id {backward_stage.stage_index} mb_id {mb_id_bwd}"
-                    )
-                    backward_stage.backward_one_chunk(chunk=mb_id_bwd)
-
-                requests = []
-
-                # send bwd grad if this is not the first stage
-                ops = backward_stage.get_bwd_send_ops()
-                requests.extend(ops)
-
-                # add recv for the NEXT stage, do not do this for first stage
-                if backward_stage_next is not None:
-                    ops = backward_stage_next.get_bwd_recv_ops()
-                    if mb_id_bwd != self._n_microbatches - 1:
-                        requests.extend(ops)
-
-                if requests:
-                    logger.info(
-                        f"rank: {self.pp_id} - {[(req.op, req.peer) for req in requests]}"
-                    )
-                    backward_batched_op_handle = dist.batch_isend_irecv(
-                        requests
-                    ).pop()
-
-        logger.info("Step exiting")
+    def step(self, *args, **kwargs):
+        # TODO
+        pass
