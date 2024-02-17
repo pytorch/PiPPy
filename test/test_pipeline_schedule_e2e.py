@@ -166,12 +166,12 @@ def main(**kwargs):
 
     stage_model = PipelineStageV2Impl(
         module_list[rank],
-        rank,
-        world_size,
-        rank,
-        world_size,
-        input_args,
-        device,
+        stage_id=rank,
+        num_stages=world_size,
+        rank=rank,
+        world_size=world_size,
+        device=device,
+        input_args=input_args,
     )
     stage_model.init_p2p_neighbors()
 
@@ -182,8 +182,8 @@ def main(**kwargs):
             num_stages=world_size * world_size,
             rank=rank,
             world_size=world_size,
-            input_args=input_args,
             device=device,
+            input_args=input_args,
         )
         for i in range(world_size)
     ]

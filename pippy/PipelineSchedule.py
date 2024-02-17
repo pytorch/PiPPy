@@ -3,7 +3,7 @@
 import logging
 from abc import ABC, abstractmethod
 from collections import deque
-from typing import Any, Deque, List, Optional, Tuple, Union
+from typing import Any, Deque, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -12,9 +12,9 @@ from torch.profiler import record_function
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-handler = logging.StreamHandler()
-handler.setLevel(logging.INFO)
-logger.addHandler(handler)
+# handler = logging.StreamHandler()
+# handler.setLevel(logging.INFO)
+# logger.addHandler(handler)
 
 
 class PipelineStage(ABC, nn.Module):
@@ -74,20 +74,241 @@ class PipelineStage(ABC, nn.Module):
 
 
 def create_buffers(
-    input: Union[torch.Tensor, List[torch.tensor]], device: torch.device
+    tensor: Union[torch.Tensor, List[torch.tensor]], device: torch.device
 ) -> List[torch.Tensor]:
     """
-    Creates buffers for a given input on a specified device.
+    Creates buffers for a given tensor on a specified device.
     This function takes as input a tensor or a list of tensors and returns a tensor or a list of tensors (respectively)
     of the same shape, but located on the specified device and uninitialized (i.e., filled with arbitrary data).
     """
-    if isinstance(input, torch.Tensor):
-        return [torch.empty_like(input, device=device)]
-    elif isinstance(input, (list, tuple)):
-        return [torch.empty_like(inp, device=device) for inp in input]
-    raise ValueError(
-        f"Unsupported input type {type(input)} cannot create buffers"
+    if isinstance(tensor, torch.Tensor):
+        return [torch.empty_like(tensor, device=device)]
+    elif isinstance(tensor, (list, tuple)):
+        return [torch.empty_like(t, device=device) for t in tensor]
+    raise TypeError(
+        f"Unsupported input type {type(tensor)} cannot create buffers"
     )
+
+
+METADATA_TENSOR_LEN = 100
+PLACEHOLDER_VAL = -1
+
+
+def create_metadata_tensor(
+    tensors: Optional[List[torch.Tensor]] = None,
+    device: Optional[torch.device] = torch.device("cpu"),
+) -> torch.Tensor:
+    """
+    Create a metadata tensor that can be sent over the wire.
+    This tensor contains the number of dimensions and the shape of each tensor being sent.
+    The data is of format [num_dims, dim1, dim2, ...].
+    If the tensor is None, a tensor of only placeholder values will be returned.
+
+    Inputs:
+        tensors: A list of tensors, the tensors will converted into its shape dimensions and
+                 these dimensions will be concatenated.
+        device: The device where the metadata tensor will be created.
+
+    """
+    metadata_tensor = torch.full(
+        (METADATA_TENSOR_LEN,),
+        PLACEHOLDER_VAL,
+        dtype=torch.int32,
+        device=device,
+    )
+    if tensors:
+        # Create a list of tensors containing the number of dimensions and the shape of each tensor
+        data = [
+            # data is of format [num_dims, dim1, dim2, ...]
+            torch.tensor(
+                [len(tensor.shape)] + list(tensor.shape),
+                dtype=torch.int32,
+                device=device,
+            )
+            for tensor in tensors
+        ]
+        # Concatenate the data into a single tensor
+        data_tensor = torch.cat(data)
+        dt_shape = data_tensor.shape[0]
+        if dt_shape > METADATA_TENSOR_LEN:
+            raise ValueError(
+                f"Metadata tensor size ({dt_shape}) exceeds maximum allowed length ({METADATA_TENSOR_LEN})."
+            )
+        metadata_tensor[:dt_shape] = data_tensor
+    return metadata_tensor
+
+
+def extract_metadata_from_tensor(tensor: torch.Tensor) -> List[torch.Size]:
+    """
+    Extract the number of dimensions and the shape of each tensor from a metadata tensor.
+    """
+    metadata = []
+    i = 0
+    while i < len(tensor) and tensor[i] != PLACEHOLDER_VAL:
+        num_dims = tensor[i].item()
+        shape = torch.Size(tensor[i + 1 : i + 1 + num_dims].tolist())
+        metadata.append(shape)
+        i += num_dims + 1
+    return metadata
+
+
+def get_stage_shapes(
+    models: List[nn.Module],
+    stage_ids: List[int],
+    num_stages: int,
+    rank: int,
+    world_size: int,
+    device: torch.device,
+    microbatch: Optional[Union[torch.tensor, List[torch.tensor]]] = None,
+):
+    """
+    Performs a dry run through all the pipeline stages (a rank can have multiple pipeline stages in the case of
+    virtual pipelining) and returns the shape of the inputs and outputs of the module.
+    Only the first stage must pass in a microbatch.
+
+    Each rank must call get_stage_shapes or the program will hang.
+
+    Args:
+        models: The chunks assigned to this rank. Rhe length should be 1 for any
+                non-interleaved schedules and >1 for any interleaved schedules.
+        stage_ids: The id of the stages assigned to this rank.
+        num_stages: Total number of stages.
+        rank: Rank of the current process.
+        world_size: Number of processes participating in the pipeline.
+        device: Device where the tensors are allocated.
+
+    Returns a dictionary containing the following keys:
+        "inputs": Shape of the inputs to the module
+        "outputs": Shape of the outputs of the module
+    """
+
+    stage_id_to_shapes: Dict[int, Dict[str, torch.Size]] = {}
+    for stage_id, model in zip(stage_ids, models, strict=True):
+        input_shape_metadata_tensor = create_metadata_tensor(device=device)
+        # TODO: Assumes prev_stage == rank - 1 and next_stage == rank + 1
+        prev_rank = (rank - 1) % world_size
+        next_rank = (rank + 1) % world_size
+        shapes = {}
+
+        # first stage doesn't receive anything and uses a microbatch
+        if stage_id == 0:
+            if microbatch is None:
+                raise RuntimeError("Microbatch is required for first stage")
+            example_fwd_inputs = microbatch
+            if isinstance(example_fwd_inputs, torch.Tensor):
+                example_fwd_inputs = [example_fwd_inputs]
+        else:
+            # other stages must receive shape information
+            # TODO: send/recv should take a group, rather than use the default group
+            dist.recv(input_shape_metadata_tensor, prev_rank)
+            metadata = extract_metadata_from_tensor(input_shape_metadata_tensor)
+            example_fwd_inputs = [
+                torch.empty(shape_list, device=device)
+                for shape_list in metadata
+            ]
+        shapes["inputs"] = [fwd_input.shape for fwd_input in example_fwd_inputs]
+
+        # perform forward
+        # TODO: if forward fails raise a more descriptive error explaining which stage failed
+        fwd_outputs = model(*example_fwd_inputs)
+        fwd_outputs = create_buffers(fwd_outputs, device)
+        shapes["outputs"] = [fwd_output.shape for fwd_output in fwd_outputs]
+
+        # send shape dims
+        if stage_id != num_stages - 1:
+            output_shape_metadata_tensor = create_metadata_tensor(
+                fwd_outputs, device=device
+            )
+            dist.send(output_shape_metadata_tensor, next_rank)
+        stage_id_to_shapes[stage_id] = shapes
+    print(stage_id_to_shapes)
+    return stage_id_to_shapes
+
+
+def validate_stage_shapes(pipeline_stages: List[PipelineStage]):
+    """
+    Check that the buffer shapes match between stages was expected by performing an all_gather between
+    all stages. Assumes that buffers have been initialized already such that get_fwd_recv_ops() and
+    get_fwd_send_ops() return valid lists of p2p ops.
+    """
+    virtual_pipeline_size = len(pipeline_stages)
+    all_inputs = []
+    all_outputs = []
+    # perform all gathers between all stages
+    for virtual_id, stage in enumerate(pipeline_stages):
+        world_size = stage.world_size
+        stage_id = stage.stage_id
+        rank = stage.rank
+
+        # TODO: once we pass in pg to stage, check the pg rank is same as stage rank
+        if rank != (pg_rank := dist.get_rank()):
+            raise ValueError(
+                f"Rank {rank} is not equal to process group rank {pg_rank}"
+            )
+
+        if (num_stages := stage.num_stages) % world_size != 0:
+            raise ValueError(
+                f"Number of stages ({num_stages}) must be a multiple of the world_size ({world_size})"
+            )
+
+        # all gather each ranks inputs
+        tensor_list = [
+            create_metadata_tensor(device=stage.device)
+            for _ in range(stage.world_size)
+        ]
+        expected_inputs = [op.tensor for op in stage.get_fwd_recv_ops()]
+        stage_input = create_metadata_tensor(
+            expected_inputs, device=stage.device
+        )
+        dist.all_gather(tensor_list, stage_input)
+        stage_input_shapes = [
+            extract_metadata_from_tensor(tensor) for tensor in tensor_list
+        ]
+
+        # all gather each ranks outputs
+        tensor_list = [
+            create_metadata_tensor(device=stage.device)
+            for _ in range(stage.world_size)
+        ]
+        expected_outputs = [op.tensor for op in stage.get_fwd_send_ops()]
+        stage_output = create_metadata_tensor(
+            expected_outputs, device=stage.device
+        )
+        dist.all_gather(tensor_list, stage_output)
+        stage_output_shapes = [
+            extract_metadata_from_tensor(tensor) for tensor in tensor_list
+        ]
+
+        logger.debug(
+            f"""
+            Rank: {pg_rank}
+            Stage id: {stage_id}
+            Stage num stages: {stage.num_stages}
+            Stage rank: {rank}
+            Stage world size: {world_size}
+            Stage {virtual_id * world_size}-{(virtual_id + 1) * world_size - 1} input shapes: {stage_input_shapes}
+            Stage {virtual_id * world_size}-{(virtual_id + 1) * world_size - 1} output shapes: {stage_output_shapes}
+        """
+        )
+
+        all_inputs.extend(stage_input_shapes)
+        all_outputs.extend(stage_output_shapes)
+
+    # log only rank 0's view, they will all be equivalent
+    if pg_rank == 0:
+        logger.info(
+            f"""
+            all stage inputs: {all_inputs}
+            all stage outputs: {all_outputs}
+        """
+        )
+
+    # Check if the output for stage 0 matches the input at stage 1, and so forth
+    for i in range(virtual_pipeline_size * world_size - 1):
+        if (out := all_outputs[i]) != (inp := all_inputs[i + 1]):
+            raise ValueError(
+                f"Stage_id {stage_id} output shape {out} at does not match stage_id {i + 1} input shape {inp}."
+            )
 
 
 class PipelineStageV2Impl(PipelineStage):
@@ -98,58 +319,54 @@ class PipelineStageV2Impl(PipelineStage):
         num_stages: int,
         rank: int,
         world_size: int,
-        input_args: Union[torch.Tensor, List[torch.tensor]],
         device: torch.device,
+        input_args: Optional[Union[torch.Tensor, List[torch.tensor]]] = None,
+        output_args: Optional[Union[torch.Tensor, List[torch.tensor]]] = None,
     ):
         super().__init__()
-        self.rank = rank
+        self.module = module.to(device)
         self.stage_id = stage_id
+        self.num_stages = num_stages
+        self.rank = rank
+        self.world_size = world_size
+        self.device = device
         self.is_first_stage = stage_id == 0
         self.is_last_stage = stage_id == num_stages - 1
-        self.num_stages = num_stages
         # When we materialize the model partition on cuda, we call reset_parameters() if it is available
-        self.module = module.to(device)
         # logger.info(f"input args {input_args=}")
-        self.fwd_inputs: List[torch.tensor] = create_buffers(input_args, device)
-        self.fwd_outputs: Any = []
+        self.inputs: List[torch.tensor] = []
+        self.outputs: List[torch.tensor] = []
 
-        # we always expect to unpack a list, so if its a single tensor, wrap it in a list
-        if isinstance(input_args, torch.Tensor):
-            input_args = [input_args]
-        meta_output = self.module(*input_args)
+        if input_args is not None:
+            self.inputs = create_buffers(input_args, device)
 
-        # validate the output of the module is a type supported
-        if not isinstance(meta_output, (torch.Tensor, tuple, list)):
-            raise ValueError(
-                f"Module output of type {type(meta_output)} is not supported"
-            )
-        if isinstance(meta_output, (tuple, list)) and any(
-            not isinstance(output, torch.Tensor) for output in meta_output
-        ):
-            raise ValueError(
-                f"All elements in module output must be torch.Tensor instances, but got {[type(x) for x in meta_output]}"
-            )
+        if output_args is None:
+            self.outputs = self.module(*self.inputs)
+            # create buffers for the output so that the data is in the correct
+            # shape in order to use in p2p op (send)
+            self.outputs = create_buffers(self.outputs, device)
+        else:
+            self.outputs = create_buffers(output_args, device)
 
-        self.fwd_output_grads: List[torch.tensor] = create_buffers(
-            meta_output, device
-        )
-        self.fwd_outputs_for_backward: Deque[
-            Tuple[torch.tensor, torch.tensor]
+        # this is used in backward
+        self.inputs_outputs: Deque[
+            Tuple[List[torch.tensor], List[torch.tensor]]
         ] = deque()
+
+        # these are the buffers used in backwards send/recv, they are allocated later
+        self.inputs_grad: List[torch.tensor] = []
+        self.outputs_grad: List[torch.tensor] = []
 
         self.prev_stage = (rank - 1) % world_size
         self.next_stage = (rank + 1) % world_size
-
-        self.fwd_recv_queue = None
-        self.bwd_recv_queue = None
 
         self.requests: List[dist.P2POp] = []
         logger.debug(
             f"""
             finished pipeline stage init, {self.stage_id=}, {self.is_first_stage=},
             {self.is_last_stage=}, {self.num_stages=},
-            {[fwd_input.shape for fwd_input in self.fwd_inputs]},
-            {[fwd_output_grad.shape for fwd_output_grad in self.fwd_output_grads]}
+            {[inp.shape for inp in self.inputs]},
+            {[output.shape for output in self.outputs]}
             """
         )
 
@@ -181,86 +398,90 @@ class PipelineStageV2Impl(PipelineStage):
         if self.is_first_stage:
             return []
         return [
-            dist.P2POp(dist.irecv, fwd_input, self.prev_stage)
-            for fwd_input in self.fwd_inputs
+            dist.P2POp(dist.irecv, inp, self.prev_stage) for inp in self.inputs
         ]
 
     def get_fwd_send_ops(self) -> List[dist.P2POp]:
         assert (
-            len(self.fwd_outputs) != 0
+            len(self.outputs) != 0
         ), "forward() must be called before get_fwd_send_ops"
         if self.is_last_stage:
             return []
-        if isinstance(self.fwd_outputs, torch.Tensor):
-            return [dist.P2POp(dist.isend, self.fwd_outputs, self.next_stage)]
-        elif isinstance(self.fwd_outputs, (list, tuple)):
-            return [
-                dist.P2POp(dist.isend, fwd_output, self.next_stage)
-                for fwd_output in self.fwd_outputs
-            ]
+        return [
+            dist.P2POp(dist.isend, out, self.next_stage) for out in self.outputs
+        ]
         raise AssertionError("invalid fwd_outputs type, cannot send")
+
+    def check_and_format_outputs(self, outputs: Any) -> List[torch.tensor]:
+        # validate the output of the module is a type supported
+        # supported types: tensor, tuple[torch.tensor], list[torch.tensor]
+        if not isinstance(outputs, (torch.Tensor, tuple, list)):
+            raise TypeError(
+                f"Module output of type {type(outputs)} is not supported"
+            )
+        if isinstance(outputs, torch.Tensor):
+            return [outputs]
+        if isinstance(outputs, (tuple, list)) and any(
+            not isinstance(x, torch.Tensor) for x in outputs
+        ):
+            raise TypeError(
+                f"All elements in module output must be torch.tensor instances, but got {[type(x) for x in outputs]}"
+            )
+        return outputs
 
     def forward(self, args: Union[torch.Tensor, List[torch.tensor]]) -> Any:
         if self.is_first_stage:
-            self.fwd_inputs = args
-
-        # we always expect to unpack an iterable of inputs, so if its a single tensor (input argument), wrap it in a list
-        if isinstance(self.fwd_inputs, torch.Tensor):
-            self.fwd_inputs = [self.fwd_inputs]
+            # we always expect to unpack an iterable of inputs, so if its a single tensor, wrap it in a list
+            if isinstance(args, torch.Tensor):
+                args = [args]
+            self.inputs = args
 
         logger.info(
-            f"[{self.rank} FORWARD {self.stage_id} {[fwd_input.shape for fwd_input in self.fwd_inputs]}"
+            f"[{self.rank} FORWARD {self.stage_id} {[inp.shape for inp in self.inputs]}"
         )
 
         # this is needed when we access the gradients for this in backward()
         # TODO: requires_grad should not be set, it should depend on input (https://github.com/pytorch/PiPPy/issues/945)
-        for tensor in self.fwd_inputs:
+        for tensor in self.inputs:
             tensor.requires_grad = True
             tensor.retain_grad()
 
         # perform forward pass on module
-        self.fwd_outputs = self.module(*self.fwd_inputs)
+        outputs = self.module(*self.inputs)
+        self.outputs = self.check_and_format_outputs(outputs)
 
-        fwd_outputs_for_backward = (
-            self.compute_loss() if self.is_last_stage else self.fwd_outputs
-        )
+        outputs_or_loss = self.compute_loss() if self.is_last_stage else outputs
 
         # we store a ref to the input/output pair for this forward to be later used by the corresponding backward
-        self.fwd_outputs_for_backward.append(
-            (self.fwd_inputs, fwd_outputs_for_backward)
-        )
+        self.inputs_outputs.append((self.inputs, outputs_or_loss))
 
-        return self.fwd_outputs
+        return outputs_or_loss
 
     def get_bwd_recv_ops(self) -> List[dist.P2POp]:
         if self.is_last_stage:
             return []
+        # grads should be same shape as the output from forward()
+        self.outputs_grad = [torch.empty_like(out) for out in self.outputs]
         return [
-            dist.P2POp(dist.irecv, output_grad, self.next_stage)
-            for output_grad in self.fwd_output_grads
+            dist.P2POp(dist.irecv, grad, self.next_stage)
+            for grad in self.outputs_grad
         ]
 
     def get_bwd_send_ops(self) -> List[dist.P2POp]:
         if self.is_first_stage:
             return []
-        for fwd_input in self.fwd_inputs:
-            logger.info(f"{fwd_input.grad=}")
-            assert fwd_input.grad is not None, "grad must be valid"
         return [
-            dist.P2POp(dist.isend, fwd_input.grad, self.prev_stage)
-            for fwd_input in self.fwd_inputs
+            dist.P2POp(dist.isend, grad, self.prev_stage)
+            for grad in self.inputs_grad
         ]
 
-    def backward(self):
+    def backward(self) -> None:
         logger.info(f"[{self.rank} BACKWARD {self.stage_id}]")
 
         if self.is_last_stage:
-            self.fwd_inputs, loss = self.fwd_outputs_for_backward.popleft()
+            inputs, loss = self.inputs_outputs.popleft()
         else:
-            (
-                self.fwd_inputs,
-                fwd_outputs,
-            ) = self.fwd_outputs_for_backward.popleft()
+            inputs, outputs = self.inputs_outputs.popleft()
 
         # Compute gradients
         # TODO: HACK materialize_grads=True sets gradients to 0s on backward pass,
@@ -269,32 +490,28 @@ class PipelineStageV2Impl(PipelineStage):
         if self.is_last_stage:
             gradients = torch.autograd.grad(
                 outputs=loss,
-                inputs=self.fwd_inputs,
+                inputs=inputs,
                 retain_graph=True,
                 allow_unused=True,
                 materialize_grads=True,
             )
         else:
             gradients = torch.autograd.grad(
-                outputs=fwd_outputs,
-                inputs=self.fwd_inputs,
-                grad_outputs=self.fwd_output_grads,
+                outputs=outputs,
+                inputs=inputs,
+                grad_outputs=self.outputs_grad,
                 retain_graph=True,
                 allow_unused=True,
                 materialize_grads=True,
             )
 
-        # Set the gradients for each tensor in self.fwd_inputs
-        for i in range(len(self.fwd_inputs)):
-            self.fwd_inputs[i].grad = gradients[i]
-
-        return self.fwd_inputs
+        self.inputs_grad = gradients
 
     def compute_loss(self):
-        if self.fwd_outputs is None:
+        if self.outputs is None:
             raise RuntimeError("forward() must be called before compute_loss()")
         # TODO: use a real loss function passed in
-        return self.fwd_outputs[0].mean()
+        return self.outputs[0].mean()
 
 
 class PipelineSchedule(ABC):
@@ -319,8 +536,6 @@ class PipelineScheduleGPipe(PipelineSchedule):
             with record_function(f"Forward {i}"):
                 ops = self._stage.get_fwd_recv_ops()
                 if ops:
-                    print(ops[0].tensor.shape)
-                    print(ops[0].peer)
                     dist.batch_isend_irecv(ops).pop().wait()
 
                 self._stage.forward(mb)
