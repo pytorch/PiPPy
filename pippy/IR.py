@@ -2,6 +2,7 @@
 import copy
 import logging
 import operator
+import types
 from enum import Enum
 from inspect import Parameter, signature, Signature
 from types import MethodType
@@ -1262,15 +1263,12 @@ class SplitPoint(Enum):
     END = 2
 
 
-import types
-
-
-def split_before_forwad(self, *args, **kwargs):
+def _split_before_forwad(self, *args, **kwargs):
     pipe_split()
     return self.orig_forward(*args, **kwargs)
 
 
-def split_after_forwad(self, *args, **kwargs):
+def _split_after_forwad(self, *args, **kwargs):
     try:
         return self.orig_forward(*args, **kwargs)
     finally:
