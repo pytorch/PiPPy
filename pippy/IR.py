@@ -31,7 +31,12 @@ from pippy.backward import _null_coalesce_accumulate, stage_backward
 from pippy.debug import PIPPY_VERBOSITY
 from pippy.microbatch import LossReducer, split_args_kwargs_into_chunks
 from pippy.utils import QualnameMapMixin
-from pippy.unflatten import _sink_params, _assign_attr, _AttrKind, _outline_submodules
+from pippy.unflatten import (
+    _sink_params,
+    _assign_attr,
+    _AttrKind,
+    _outline_submodules,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -714,7 +719,10 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
 
         def split_callback(n: fx.Node):
             nonlocal part_idx
-            if (n.op, n.target) == ("call_function", torch.ops.pippy.pipe_split.default):
+            if (n.op, n.target) == (
+                "call_function",
+                torch.ops.pippy.pipe_split.default,
+            ):
                 logger.debug(f"Found pipe_split {part_idx}")
                 part_idx += 1
             return part_idx
@@ -731,7 +739,10 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         for submodule in split.modules():
             if isinstance(submodule, fx.GraphModule):
                 for node in submodule.graph.nodes:
-                    if (node.op, node.target) == ("call_function", torch.ops.pippy.pipe_split.default):
+                    if (node.op, node.target) == (
+                        "call_function",
+                        torch.ops.pippy.pipe_split.default,
+                    ):
                         submodule.graph.erase_node(node)
                 submodule.recompile()
 
@@ -759,7 +770,9 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         to_delete = list()
 
         def move_param_to_callee(
-            root, callee_name, param_fqn,
+            root,
+            callee_name,
+            param_fqn,
         ):
             # `atoms` is a list of strings representing the path to the
             # parameter in the original model
@@ -800,7 +813,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
                     param_fqn,
                     attr_kind=_AttrKind.PARAMETER,
                 )
-            #logger.debug(f"Moved parameter {param_fqn} to {callee_name}")
+            # logger.debug(f"Moved parameter {param_fqn} to {callee_name}")
 
             # Update qualname mapping
             # New qualname will have submodule prefix
@@ -825,7 +838,9 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
             to_delete.append((mod_itr, atoms[-1]))
 
         # Get the list of all parameters in the root module
-        attr_nodes = list(filter(lambda n: n.op == "get_attr", split.graph.nodes))
+        attr_nodes = list(
+            filter(lambda n: n.op == "get_attr", split.graph.nodes)
+        )
         for node in attr_nodes:
             # Check whether the parameter is used in only one submodule
             if len(node.users) == 1:
@@ -833,15 +848,19 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
                 assert user.op == "call_module"
                 # Move parameter into submodule
                 move_param_to_callee(
-                    split, user.target, node.target,
+                    split,
+                    user.target,
+                    node.target,
                 )
             else:
                 # TODO: re-enable support for multi-use parameters
-                raise NotImplementedError(f"""
-                Parameter {node.target} used in multiple stages:
-                {node.users}.
-                Currently, we do not support multi-use parameters.
-                """)
+                raise NotImplementedError(
+                    f"""
+                    Parameter {node.target} used in multiple stages:
+                    {node.users}.
+                    Currently, we do not support multi-use parameters.
+                    """
+                )
 
         # Deferral deletion: Remove the original attributes (to params) from the
         # root GraphModule
@@ -852,7 +871,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         # need to move the `get_attr` nodes from the root of the graph to those
         # hierarchies.
         inputs_to_state: Dict[str, str] = {
-            attr.name : attr.target for attr in attr_nodes
+            attr.name: attr.target for attr in attr_nodes
         }
         # This is done by (1) `_sind_params` at each submodule;
         for name, submod in split.named_children():
@@ -1050,10 +1069,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         # This qualname mapping is different from the mapping before and after splitting.
         tracer_qualname_map = Pipe._get_param_buffer_mapping(mod, traced)
 
-        logger.info(
-            "Full pipe model:\n"
-            f"{split}"
-        )
+        logger.info("Full pipe model:\n" f"{split}")
         if PIPPY_VERBOSITY == "DEBUG":
             for submod in split.children():
                 submod.print_readable()
@@ -1236,11 +1252,14 @@ class SplitPoint(Enum):
     BEGINNING = 1
     END = 2
 
+
 import types
+
 
 def split_before_forwad(self, *args, **kwargs):
     pipe_split()
     return self.orig_forward(*args, **kwargs)
+
 
 def split_after_forwad(self, *args, **kwargs):
     try:
