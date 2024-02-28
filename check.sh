@@ -49,7 +49,7 @@ RETVAL=0
 
 if (( SKIP_FORMAT == 0 )); then
   echo; echo "Running format check ..."
-  ufmt diff pippy/*.py pippy/hf/*.py test/*.py
+  ufmt diff pippy/*.py test/*.py
   (( RETVAL |= $? ))
 fi
 

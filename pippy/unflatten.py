@@ -1,5 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 # This file is a copy of private utilities in pytorch/torch/export/unflatten.py
+# pylint: skip-file
+
 import copy
 import operator
 from enum import Enum

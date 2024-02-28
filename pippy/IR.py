@@ -14,29 +14,16 @@ from torch.export import Constraint, ExportedProgram
 from torch.fx.interpreter import Interpreter
 from torch.fx.passes.split_module import split_module
 
-try:
-    # New import path
-    from torch.export._trace import _export_to_torch_ir
-except ImportError:
-    try:
-        # Old import path
-        from torch._export import _export_to_torch_ir
-    except ImportError:
-        print(
-            "Could not import _export_to_torch_ir. Please make sure your PyTorch "
-            "version is newer than 2.2.0."
-        )
-
 from pippy.backward import _null_coalesce_accumulate, stage_backward
 from pippy.debug import PIPPY_VERBOSITY
 from pippy.microbatch import LossReducer, split_args_kwargs_into_chunks
-from pippy.utils import QualnameMapMixin
 from pippy.unflatten import (
-    _sink_params,
     _assign_attr,
     _AttrKind,
     _outline_submodules,
+    _sink_params,
 )
+from pippy.utils import QualnameMapMixin
 
 
 logger = logging.getLogger(__name__)
@@ -683,7 +670,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         traced = exported_program.module()
 
         if split_policy is not None:
-            logger.info(f"Auto-splitting model")
+            logger.info("Auto-splitting model")
             traced = split_policy(traced)
 
         if PIPPY_VERBOSITY == "DEBUG":
