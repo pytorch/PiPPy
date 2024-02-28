@@ -86,6 +86,8 @@ def run_worker(args, model_class):
         example_args=(x, y),
     )
 
+    assert pipe.num_stages == 4
+
     ref_out = mod(x, y)
     out = pipe(x, y)[0]
     torch.testing.assert_close(out, ref_out)

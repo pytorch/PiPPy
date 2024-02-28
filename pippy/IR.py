@@ -336,11 +336,33 @@ class TrivialLossWrapper(LossWrapper):
 #    accumulated separately on each stage, but there will be an additional
 #    gradient accumulation before the optimizer step.
 
-_pipeline_tracer = None
+
+# Register `_pipe_split()` as an ATen operator. This is required for Export to
+# preserve this marker in the graph.
+torch.library.define("pippy::_pipe_split", "() -> ()")
 
 
+@torch.library.impl("pippy::_pipe_split", "BackendSelect")
+def _pipe_split():
+    return None
+
+
+@torch.library.impl_abstract("pippy::_pipe_split")  # type: ignore
+def _pipe_split():  # noqa: F811
+    return None
+
+
+# Add an alias for convenience
+aten_pipe_split_alias = torch.ops.pippy._pipe_split.default
+
+# Ask Export to preserve the `_pipe_split` op.
+# See examples in pytorch/torch/fx/node.py
+fx.node._side_effectful_functions.add(aten_pipe_split_alias)
+
+
+# User facing API
 def pipe_split():
-    return torch.ops.pippy.pipe_split()
+    return torch.ops.pippy._pipe_split()
 
 
 class MultiUseParameterConfig(Enum):
@@ -708,7 +730,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
             nonlocal part_idx
             if (n.op, n.target) == (
                 "call_function",
-                torch.ops.pippy.pipe_split.default,
+                aten_pipe_split_alias,
             ):
                 logger.debug(f"Found pipe_split {part_idx}")
                 part_idx += 1
@@ -728,7 +750,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
                 for node in submodule.graph.nodes:
                     if (node.op, node.target) == (
                         "call_function",
-                        torch.ops.pippy.pipe_split.default,
+                        aten_pipe_split_alias,
                     ):
                         submodule.graph.erase_node(node)
                 submodule.recompile()
