@@ -10,7 +10,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import torch
 import torch.fx as fx
 from packaging import version
-from torch.export import Constraint
+from torch.export import Constraint, ExportedProgram
 from torch.fx.interpreter import Interpreter
 from torch.fx.passes.split_module import split_module
 
@@ -31,6 +31,7 @@ from pippy.backward import _null_coalesce_accumulate, stage_backward
 from pippy.debug import PIPPY_VERBOSITY
 from pippy.microbatch import LossReducer, split_args_kwargs_into_chunks
 from pippy.utils import QualnameMapMixin
+from pippy.unflatten import _sink_params, _assign_attr, _AttrKind, _outline_submodules
 
 
 logger = logging.getLogger(__name__)
@@ -347,8 +348,7 @@ _pipeline_tracer = None
 
 
 def pipe_split():
-    if _pipeline_tracer is not None and hasattr(_pipeline_tracer, "graph"):
-        _pipeline_tracer.graph.call_function(pipe_split, (), {})
+    return torch.ops.pippy.pipe_split()
 
 
 class MultiUseParameterConfig(Enum):
@@ -659,9 +659,12 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
     @staticmethod
     def _from_traced(
         mod: torch.nn.Module,
-        traced: fx.GraphModule,
+        exported_program: ExportedProgram,
         multi_use_param_spec: Optional[MultiUseParamSpec] = None,
         output_loss_value_spec=None,
+        split_policy: Optional[
+            Callable[[torch.fx.GraphModule], torch.fx.GraphModule]
+        ] = None,
     ):
         """
         Additionally, the ``output_loss_value_spec`` value can be specified to disambiguate
@@ -671,6 +674,15 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         a dict ``{'loss': loss_value, 'model_out': model_out}``, you can specify
         ``output_loss_value_spec={'loss': True, 'model_out': False}``
         """
+
+        traced = exported_program.module()
+
+        if split_policy is not None:
+            logger.info(f"Auto-splitting model")
+            traced = split_policy(traced)
+
+        if PIPPY_VERBOSITY == "DEBUG":
+            traced.print_readable()
 
         # Deduplicate `get_attr` nodes that refer to the same parameter . Downstream code for moving
         # parameters relies on the invariant that parameter accesses happen once. This is not necessarily
@@ -702,7 +714,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
 
         def split_callback(n: fx.Node):
             nonlocal part_idx
-            if (n.op, n.target) == ("call_function", pipe_split):
+            if (n.op, n.target) == ("call_function", torch.ops.pippy.pipe_split.default):
                 logger.debug(f"Found pipe_split {part_idx}")
                 part_idx += 1
             return part_idx
@@ -719,9 +731,15 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         for submodule in split.modules():
             if isinstance(submodule, fx.GraphModule):
                 for node in submodule.graph.nodes:
-                    if (node.op, node.target) == ("call_function", pipe_split):
+                    if (node.op, node.target) == ("call_function", torch.ops.pippy.pipe_split.default):
                         submodule.graph.erase_node(node)
                 submodule.recompile()
+
+        for name, submodule in split.named_children():
+            if isinstance(submodule, fx.GraphModule):
+                new_submod = _outline_submodules(submodule.graph)
+                # Replace old submod
+                setattr(split, name, new_submod)
 
         # lift single-use parameter fetches into the modules that use them
         # TODO: backport this into split_module
@@ -734,84 +752,121 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
             user.args = tuple(args_copy)
             if delete_node:
                 node.graph.erase_node(node)
-
             return use_idxs[0]
 
+        # A list of param referrals for deferred deletion.
+        # To be accumulated in `move_param_to_callee`.
+        to_delete = list()
+
         def move_param_to_callee(
-            root, callee_name, param_val, use_idx, is_buffer
+            root, callee_name, param_fqn,
         ):
+            # `atoms` is a list of strings representing the path to the
+            # parameter in the original model
+            atoms = param_fqn.split(".")
+            # Recursively find the parent of the parameter
+            mod_itr = split
+            for atom in atoms[:-1]:
+                mod_itr = getattr(mod_itr, atom)
+            param_val = getattr(mod_itr, atoms[-1])
+            is_buffer = atoms[-1] in mod_itr._buffers
+
             assert isinstance(param_val, torch.Tensor), (
-                f"Expected '{node.target}' to be {torch.Tensor} but got {type(param_val)}."
+                f"Expected '{param_fqn}' to be {torch.Tensor} but got {type(param_val)}."
                 + (
-                    f" It might happen if module '{node.target}' was passed to some 'leaf function'"
+                    f" It might happen if module '{param_fqn}' was passed to some 'leaf function'"
                     f"(see https://pytorch.org/docs/stable/fx.html#fx.wrap). Please inspect "
-                    f"usages of '{node.target}' in the traced graph."
+                    f"usages of '{param_fqn}' in the traced graph."
                     if isinstance(param_val, torch.nn.Module)
                     else ""
                 )
             )
             callee = root.get_submodule(callee_name)
-            new_param_name = f"moved_{node.target.replace('.', '_')}"
             assert not hasattr(
-                callee, new_param_name
-            ), f"Module {callee_name} already has a parameter named {new_param_name}"
+                callee, param_fqn
+            ), f"Module {callee_name} already has a parameter named {param_fqn}"
             if is_buffer:
-                callee.register_buffer(new_param_name, param_val)
+                _assign_attr(
+                    param_val,
+                    callee,
+                    param_fqn,
+                    attr_kind=_AttrKind.BUFFER,
+                    persistent=True,
+                )
             else:
-                setattr(callee, new_param_name, param_val)
+                _assign_attr(
+                    param_val,
+                    callee,
+                    param_fqn,
+                    attr_kind=_AttrKind.PARAMETER,
+                )
+            #logger.debug(f"Moved parameter {param_fqn} to {callee_name}")
 
             # Update qualname mapping
             # New qualname will have submodule prefix
-            new_qualname = f"{callee_name}.{new_param_name}"
-            if node.target in splitter_qualname_map:
+            new_qualname = f"{callee_name}.{param_fqn}"
+            if param_fqn in splitter_qualname_map:
                 # Just in case the target name is already in the splitter_qualname_map
                 # returned by split_module() -- we update the mapping using the
                 # new name as a new key
                 splitter_qualname_map[new_qualname] = splitter_qualname_map.pop(
-                    node.target
+                    param_fqn
                 )
             else:
-                splitter_qualname_map[new_qualname] = node.target
+                splitter_qualname_map[new_qualname] = param_fqn
 
-            ph_counter = 0
-            for sn in callee.graph.nodes:
-                if sn.op == "placeholder":
-                    if ph_counter == use_idx:
-                        with callee.graph.inserting_before(sn):
-                            get_attr = callee.graph.get_attr(new_param_name)
-                            sn.replace_all_uses_with(get_attr)
-                            callee.graph.erase_node(sn)
-                    ph_counter += 1
-            callee.graph.lint()
-            callee.recompile()
+            # Next step is to replace placeholder of submodule with a get_attr.
+            # Those placeholders are created by `split_module` inside each
+            # submodule.
+            # Update: this step is now moved to `_sink_params` because
+            # `_sink_params` can do it recursively (i.e. for modules inside
+            # submodule)
 
-            return get_attr
+            to_delete.append((mod_itr, atoms[-1]))
 
-        to_delete = list()  # a list of nodes for deferral deletion
+        # Get the list of all parameters in the root module
+        attr_nodes = list(filter(lambda n: n.op == "get_attr", split.graph.nodes))
+        for node in attr_nodes:
+            # Check whether the parameter is used in only one submodule
+            if len(node.users) == 1:
+                user = list(node.users)[0]
+                assert user.op == "call_module"
+                # Move parameter into submodule
+                move_param_to_callee(
+                    split, user.target, node.target,
+                )
+            else:
+                # TODO: re-enable support for multi-use parameters
+                raise NotImplementedError(f"""
+                Parameter {node.target} used in multiple stages:
+                {node.users}.
+                Currently, we do not support multi-use parameters.
+                """)
 
-        for node in split.graph.nodes:
-            if node.op == "get_attr" and len(node.users) == 1:
+        # Deferral deletion: Remove the original attributes (to params) from the
+        # root GraphModule
+        for mod_itr, last_atom in to_delete:
+            delattr(mod_itr, last_atom)
+
+        # After moving the params to their corresponding hierarchies, we also
+        # need to move the `get_attr` nodes from the root of the graph to those
+        # hierarchies.
+        inputs_to_state: Dict[str, str] = {
+            attr.name : attr.target for attr in attr_nodes
+        }
+        # This is done by (1) `_sind_params` at each submodule;
+        for name, submod in split.named_children():
+            if isinstance(submod, fx.GraphModule):
+                _sink_params(submod, inputs_to_state, [])
+                submod.graph.lint()
+                submod.recompile()
+
+        # And (2) remove `get_attr` nodes from the root
+        for node in attr_nodes:
+            if len(node.users) == 1:
                 user = list(node.users)[0]
                 assert user.op == "call_module"
                 use_idx = delete_user_reference(node, user)
-
-                # Move parameter into submodule and replace PH with a get_attr
-                atoms = node.target.split(".")
-                mod_itr = split
-                for atom in atoms[:-1]:
-                    mod_itr = getattr(mod_itr, atom)
-                param_val = getattr(mod_itr, atoms[-1])
-                is_buffer = atoms[-1] in mod_itr._buffers
-
-                move_param_to_callee(
-                    split, user.target, param_val, use_idx, is_buffer
-                )
-
-                to_delete.append((mod_itr, atoms))
-
-        # deferral deletion
-        for mod_itr, atoms in to_delete:
-            delattr(mod_itr, atoms[-1])
 
         split.graph.lint()
         split.recompile()
@@ -827,6 +882,10 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
             if node.op == "get_attr" and len(node.users) > 1:
                 multi_use_params_qualnames.setdefault(node.target)
 
+        # TODO: re-enable support for multi-use parameters
+        assert len(multi_use_params_qualnames) == 0
+
+        """
         for param in multi_use_params_qualnames:
             if isinstance(multi_use_param_spec, MultiUseParameterConfig):
                 multi_use_params_qualnames[param] = multi_use_param_spec
@@ -950,9 +1009,9 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
                     raise ValueError(
                         f"Unknown multi-use config value {reuse_type} specified for {node.target}"
                     )
+        """
 
         split.delete_all_unused_submodules()
-
         split.graph.lint()
         split.recompile()
 
@@ -991,6 +1050,14 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         # This qualname mapping is different from the mapping before and after splitting.
         tracer_qualname_map = Pipe._get_param_buffer_mapping(mod, traced)
 
+        logger.info(
+            "Full pipe model:\n"
+            f"{split}"
+        )
+        if PIPPY_VERBOSITY == "DEBUG":
+            for submod in split.children():
+                submod.print_readable()
+
         return Pipe(
             split,
             splitter_qualname_map,
@@ -1006,25 +1073,14 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         example_args: Tuple[Any, ...],
         example_kwargs: Optional[Dict[str, Any]] = None,
         constraints: Optional[List[Constraint]] = None,
-        split_policy: Optional[
-            Callable[[torch.fx.GraphModule], torch.fx.GraphModule]
-        ] = None,
-    ) -> torch.fx.GraphModule:
+    ) -> ExportedProgram:
         logger.info("Tracing model ...")
-        try:
-            torch._dynamo.allow_in_graph(pipe_split)
-            traced: torch.fx.GraphModule = _export_to_torch_ir(
-                mod,
-                example_args,
-                example_kwargs,
-                constraints,
-            )
-            logger.debug(f"Traced model: {traced}")
-            if split_policy is not None:
-                traced = split_policy(traced)
-        finally:
-            torch._dynamo.disallow_in_graph(pipe_split)
-        return traced
+        ep = torch.export.export(
+            mod,
+            example_args,
+            example_kwargs,
+        )
+        return ep
 
     @staticmethod
     def from_tracing(
@@ -1065,24 +1121,20 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         )
 
         # Trace with export
-        traced = Pipe._trace_with_export(
+        exported_program = Pipe._trace_with_export(
             mod,
             example_args=args_split[0],
             example_kwargs=kwargs_split[0],
             constraints=constraints,
-            split_policy=split_policy,
         )
 
         pipe = Pipe._from_traced(
             mod,
-            traced,
+            exported_program,
             multi_use_param_spec,
             output_loss_value_spec=output_loss_value_spec,
+            split_policy=split_policy,
         )
-
-        logger.info(pipe.split_gm)
-        if PIPPY_VERBOSITY == "DEBUG":
-            pipe.split_gm.graph.print_tabular()
 
         pipe.num_chunks = num_chunks
         pipe.args_chunk_spec = args_chunk_spec
@@ -1103,6 +1155,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         # output spec, because the output spec is for the last stage. Maybe a
         # TODO? Not sure yet.
         split = pipe.split_gm
+        traced = exported_program.module()
         submod0 = list(split.children())[0]
         submod0_sign = signature(submod0.forward)
         model_sign = signature(traced.forward)
@@ -1183,6 +1236,17 @@ class SplitPoint(Enum):
     BEGINNING = 1
     END = 2
 
+import types
+
+def split_before_forwad(self, *args, **kwargs):
+    pipe_split()
+    return self.orig_forward(*args, **kwargs)
+
+def split_after_forwad(self, *args, **kwargs):
+    try:
+        return self.orig_forward(*args, **kwargs)
+    finally:
+        pipe_split()
 
 # For backward compatibility, we kept the PipeSplitWrapper class because `class
 # SplitPoint` used to be defined in this class.
