@@ -1191,12 +1191,12 @@ class PipeSplitWrapper:
     SplitPoint = SplitPoint
 
 
-def _split_before_forwad(self, *args, **kwargs):
+def _split_before_forward(self, *args, **kwargs):
     pipe_split()
     return self._orig_forward(*args, **kwargs)
 
 
-def _split_after_forwad(self, *args, **kwargs):
+def _split_after_forward(self, *args, **kwargs):
     try:
         return self._orig_forward(*args, **kwargs)
     finally:
@@ -1219,9 +1219,9 @@ def annotate_split_points(mod: torch.nn.Module, spec: Dict[str, SplitPoint]):
         mod_to_wrap = getattr(predecessor_module, atoms[-1])
         mod_to_wrap._orig_forward = mod_to_wrap.forward
         if split_type == SplitPoint.BEGINNING:
-            mod_to_wrap.forward = MethodType(_split_before_forwad, mod_to_wrap)
+            mod_to_wrap.forward = MethodType(_split_before_forward, mod_to_wrap)
         elif split_type == SplitPoint.END:
-            mod_to_wrap.forward = MethodType(_split_after_forwad, mod_to_wrap)
+            mod_to_wrap.forward = MethodType(_split_after_forward, mod_to_wrap)
         else:
             raise ValueError("Unknown split point type.")
 
