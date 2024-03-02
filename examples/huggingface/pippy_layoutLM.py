@@ -9,7 +9,7 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy.IR import Pipe, PipeSplitWrapper, annotate_split_points
+from pippy.IR import Pipe, SplitPoint, annotate_split_points
 from pippy.PipelineStage import PipelineStage
 
 from transformers import LayoutLMForMaskedLM, LayoutLMConfig
@@ -20,15 +20,15 @@ from hf_utils import generate_inputs_for_model, get_number_of_params
 def add_split_points(layoutlm, nranks):
     # First stage carries the embedding layer
     annotate_split_points(
-        layoutlm, {"layoutlm.embeddings": PipeSplitWrapper.SplitPoint.END})
+        layoutlm, {"layoutlm.embeddings": SplitPoint.END})
     # Last stage carries the LM head
     annotate_split_points(
-        layoutlm, {"cls": PipeSplitWrapper.SplitPoint.BEGINNING})
+        layoutlm, {"cls": SplitPoint.BEGINNING})
     # 12 Transformer layers divided over the rest 2 ranks
     layers_per_rank = layoutlm.config.num_hidden_layers // (nranks - 2)
     for i in range(1, nranks - 2):
         annotate_split_points(
-            layoutlm, {f"layoutlm.encoder.layer.{i * layers_per_rank}": PipeSplitWrapper.SplitPoint.BEGINNING})
+            layoutlm, {f"layoutlm.encoder.layer.{i * layers_per_rank}": SplitPoint.BEGINNING})
 
 
 def run(args):

@@ -9,7 +9,7 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy.IR import Pipe, PipeSplitWrapper, annotate_split_points
+from pippy.IR import Pipe, SplitPoint, annotate_split_points
 from pippy.PipelineStage import PipelineStage
 
 from transformers import M2M100ForConditionalGeneration, M2M100Config
@@ -20,10 +20,10 @@ from hf_utils import generate_inputs_for_model, get_number_of_params
 def add_split_points(m2m100, nranks):
     # First rank takes encoder
     annotate_split_points(
-        m2m100, {"model.encoder": PipeSplitWrapper.SplitPoint.END})
+        m2m100, {"model.encoder": SplitPoint.END})
     # Second rank takes decoder
     annotate_split_points(
-        m2m100, {"model.decoder": PipeSplitWrapper.SplitPoint.END})
+        m2m100, {"model.decoder": SplitPoint.END})
     # Last rank takes LM head
 
 

@@ -6,6 +6,7 @@ from pippy.IR import (
     pipe_split,
     PipeSequential,
     PipeSplitWrapper,
+    SplitPoint,
     TrivialLossWrapper,
 )
 from pippy.ModelSplit import split_into_equal_size, split_on_size_threshold
@@ -20,6 +21,7 @@ __all__ = [
     "PipelineStage",
     "pipe_split",
     "PipeSplitWrapper",
+    "SplitPoint",
     "annotate_split_points",
     "split_into_equal_size",
     "split_on_size_threshold",

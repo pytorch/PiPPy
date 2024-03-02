@@ -9,7 +9,7 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy.IR import Pipe, PipeSplitWrapper, annotate_split_points
+from pippy.IR import Pipe, SplitPoint, annotate_split_points
 from pippy.PipelineStage import PipelineStage
 
 from transformers import BartForCausalLM, BartConfig
@@ -21,7 +21,7 @@ def add_split_points(bart, nranks):
     layers_per_rank = bart.config.num_hidden_layers // nranks
     for i in range(1, nranks):
         annotate_split_points(
-            bart, {f"model.decoder.layers.{i * layers_per_rank}": PipeSplitWrapper.SplitPoint.BEGINNING})
+            bart, {f"model.decoder.layers.{i * layers_per_rank}": SplitPoint.BEGINNING})
 
 
 def run(args):

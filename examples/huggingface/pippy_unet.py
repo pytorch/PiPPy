@@ -9,7 +9,7 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy.IR import Pipe, PipeSplitWrapper, annotate_split_points
+from pippy.IR import Pipe, SplitPoint, annotate_split_points
 from pippy.PipelineStage import PipelineStage
 
 from diffusers import UNet2DModel
@@ -37,7 +37,7 @@ def run(args):
     # Split model into two stages:
     #   Stage 0: down_blocks + mid_block
     #   Stage 2: up_blocks
-    annotate_split_points(unet, {"mid_block": PipeSplitWrapper.SplitPoint.END})
+    annotate_split_points(unet, {"mid_block": SplitPoint.END})
 
     # Create pipeline
     unet_pipe = Pipe.from_tracing(

@@ -9,7 +9,7 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy.IR import Pipe, PipeSplitWrapper, annotate_split_points
+from pippy.IR import Pipe, SplitPoint, annotate_split_points
 from pippy.PipelineStage import PipelineStage
 
 from transformers import ConvBertForMaskedLM, ConvBertConfig
@@ -19,14 +19,14 @@ from hf_utils import generate_inputs_for_model, get_number_of_params
 
 def add_split_points(convbert, nranks):
     # The first rank takes embedding
-    annotate_split_points(convbert, {"convbert.embeddings": PipeSplitWrapper.SplitPoint.END})
+    annotate_split_points(convbert, {"convbert.embeddings": SplitPoint.END})
     # The last rank takes generation
-    annotate_split_points(convbert, {"generator_predictions": PipeSplitWrapper.SplitPoint.BEGINNING})
+    annotate_split_points(convbert, {"generator_predictions": SplitPoint.BEGINNING})
     # The rest ranks divide encoder layers
     layers_per_rank = convbert.config.num_hidden_layers // (nranks - 2)
     for i in range(1, nranks - 2):
         annotate_split_points(
-            convbert, {f"convbert.encoder.layer.{i * layers_per_rank}": PipeSplitWrapper.SplitPoint.BEGINNING})
+            convbert, {f"convbert.encoder.layer.{i * layers_per_rank}": SplitPoint.BEGINNING})
 
 
 def run(args):

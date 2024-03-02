@@ -4,6 +4,7 @@ import logging
 import operator
 from enum import Enum
 from inspect import Parameter, signature, Signature
+from types import MethodType
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
@@ -1178,34 +1179,31 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         return param_buffer_table
 
 
-class PipeSplitWrapper(torch.nn.Module):
-    class SplitPoint(Enum):
-        BEGINNING = 1
-        END = 2
-
-    def __init__(
-        self,
-        mod: torch.nn.Module,
-        split_point: SplitPoint = SplitPoint.BEGINNING,
-    ):
-        super().__init__()
-        self.mod = mod
-        self.split_point = split_point
-
-    def forward(self, *args, **kwargs):
-        try:
-            if self.split_point == self.SplitPoint.BEGINNING:
-                pipe_split()
-
-            return self.mod(*args, **kwargs)
-        finally:
-            if self.split_point == self.SplitPoint.END:
-                pipe_split()
+class SplitPoint(Enum):
+    BEGINNING = 1
+    END = 2
 
 
-def annotate_split_points(
-    mod: torch.nn.Module, spec: Dict[str, PipeSplitWrapper.SplitPoint]
-):
+# For backward compatibility, we kept the PipeSplitWrapper class because `class
+# SplitPoint` used to be defined in this class.
+class PipeSplitWrapper:
+    # Create a class alias for BC
+    SplitPoint = SplitPoint
+
+
+def _split_before_forward(self, *args, **kwargs):
+    pipe_split()
+    return self._orig_forward(*args, **kwargs)
+
+
+def _split_after_forward(self, *args, **kwargs):
+    try:
+        return self._orig_forward(*args, **kwargs)
+    finally:
+        pipe_split()
+
+
+def annotate_split_points(mod: torch.nn.Module, spec: Dict[str, SplitPoint]):
     # TODO: make this implementation out-of-place?
     for qualname, split_type in spec.items():
         atoms = qualname.split(".")
@@ -1219,8 +1217,13 @@ def annotate_split_points(
                 )
 
         mod_to_wrap = getattr(predecessor_module, atoms[-1])
-        wrapped_mod = PipeSplitWrapper(mod_to_wrap, split_type)
-        setattr(predecessor_module, atoms[-1], wrapped_mod)
+        mod_to_wrap._orig_forward = mod_to_wrap.forward
+        if split_type == SplitPoint.BEGINNING:
+            mod_to_wrap.forward = MethodType(_split_before_forward, mod_to_wrap)
+        elif split_type == SplitPoint.END:
+            mod_to_wrap.forward = MethodType(_split_after_forward, mod_to_wrap)
+        else:
+            raise ValueError("Unknown split point type.")
 
 
 class PipeFakeTensorProp(Interpreter):
