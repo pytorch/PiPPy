@@ -2,7 +2,7 @@
 import os
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from pippy import Pipe, PipeSplitWrapper, annotate_split_points, PipelineStage
+from pippy import Pipe, SplitPoint, annotate_split_points, PipelineStage
 
 # Grab the model
 llama = AutoModelForCausalLM.from_pretrained(
@@ -26,7 +26,7 @@ inputs = tokenizer(prompts, return_tensors="pt", padding=True).to(device)
 layers_per_rank = llama.config.num_hidden_layers // world_size
 for i in range(1, world_size):
     annotate_split_points(llama,
-        {f"model.layers.{i * layers_per_rank}": PipeSplitWrapper.SplitPoint.BEGINNING})
+        {f"model.layers.{i * layers_per_rank}": SplitPoint.BEGINNING})
 
 # Create a pipeline representation from the model
 llama_pipe = Pipe.from_tracing(llama, world_size, example_args=(inputs["input_ids"],))

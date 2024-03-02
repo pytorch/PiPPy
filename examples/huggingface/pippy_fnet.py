@@ -9,7 +9,7 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy.IR import Pipe, PipeSplitWrapper, annotate_split_points
+from pippy.IR import Pipe, SplitPoint, annotate_split_points
 from pippy.PipelineStage import PipelineStage
 
 from transformers import FNetForMaskedLM, FNetConfig
@@ -21,7 +21,7 @@ def add_split_points(fnet, nranks):
     layers_per_rank = fnet.config.num_hidden_layers // nranks
     for i in range(1, nranks):
         annotate_split_points(
-            fnet, {f"fnet.encoder.layer.{i * layers_per_rank}": PipeSplitWrapper.SplitPoint.BEGINNING})
+            fnet, {f"fnet.encoder.layer.{i * layers_per_rank}": SplitPoint.BEGINNING})
 
 
 def run(args):

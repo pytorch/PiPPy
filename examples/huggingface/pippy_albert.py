@@ -9,7 +9,7 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy.IR import Pipe, PipeSplitWrapper, annotate_split_points
+from pippy.IR import Pipe, SplitPoint, annotate_split_points
 from pippy.PipelineStage import PipelineStage
 
 from transformers import AlbertForMaskedLM, AlbertConfig
@@ -20,7 +20,7 @@ from hf_utils import generate_inputs_for_model, get_number_of_params
 def add_split_points(albert, nranks):
     albert_layer_fqn = "albert.encoder.albert_layer_groups.0.albert_layers.0"
     annotate_split_points(
-        albert, {albert_layer_fqn: PipeSplitWrapper.SplitPoint.BEGINNING})
+        albert, {albert_layer_fqn: SplitPoint.BEGINNING})
     # Because of the for loop structure in albert's forward method, this will
     # split the albert model `num_hidden_layers` times (hence
     # `num_hidden_layers`+1 stages)

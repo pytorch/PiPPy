@@ -10,7 +10,7 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy.IR import Pipe, PipeSplitWrapper, annotate_split_points
+from pippy.IR import Pipe, SplitPoint, annotate_split_points
 from pippy.PipelineStage import PipelineStage
 
 from transformers import T5ForConditionalGeneration, T5Config
@@ -29,16 +29,16 @@ def add_split_points(t5, nranks):
     # Split encoder
     for i in range(1, t5.config.num_layers // layers_per_rank):
         annotate_split_points(
-            t5, {f'encoder.block.{i * layers_per_rank}': PipeSplitWrapper.SplitPoint.BEGINNING})
+            t5, {f'encoder.block.{i * layers_per_rank}': SplitPoint.BEGINNING})
         nstages += 1
     # Split at the boundary of encoder and decoder
     annotate_split_points(
-        t5, {f'decoder.embed_tokens': PipeSplitWrapper.SplitPoint.BEGINNING})
+        t5, {f'decoder.embed_tokens': SplitPoint.BEGINNING})
     nstages += 1
     # Split decoder
     for i in range(1, t5.config.num_decoder_layers // layers_per_rank):
         annotate_split_points(
-            t5, {f'decoder.block.{i * layers_per_rank}': PipeSplitWrapper.SplitPoint.BEGINNING})
+            t5, {f'decoder.block.{i * layers_per_rank}': SplitPoint.BEGINNING})
         nstages += 1
     assert nstages == nranks, f"nstages = {nstages} nranks = {nranks}"
 

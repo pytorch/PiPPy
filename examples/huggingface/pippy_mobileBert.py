@@ -9,7 +9,7 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy.IR import Pipe, PipeSplitWrapper, annotate_split_points
+from pippy.IR import Pipe, SplitPoint, annotate_split_points
 from pippy.PipelineStage import PipelineStage
 
 from transformers import MobileBertForMaskedLM, MobileBertConfig
@@ -20,12 +20,12 @@ from hf_utils import generate_inputs_for_model, get_number_of_params
 def add_split_points(mobilebert, nranks):
     # The last rank carries LM head
     annotate_split_points(
-        mobilebert, {"cls": PipeSplitWrapper.SplitPoint.BEGINNING})
+        mobilebert, {"cls": SplitPoint.BEGINNING})
     # The rest ranks divide the 24 layers
     layers_per_rank = mobilebert.config.num_hidden_layers // (nranks - 1)
     for i in range(1, nranks - 1):
         annotate_split_points(
-            mobilebert, {f"mobilebert.encoder.layer.{i * layers_per_rank}": PipeSplitWrapper.SplitPoint.BEGINNING})
+            mobilebert, {f"mobilebert.encoder.layer.{i * layers_per_rank}": SplitPoint.BEGINNING})
 
 
 def run(args):

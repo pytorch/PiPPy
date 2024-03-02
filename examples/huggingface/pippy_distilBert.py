@@ -9,7 +9,7 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy.IR import Pipe, PipeSplitWrapper, annotate_split_points
+from pippy.IR import Pipe, SplitPoint, annotate_split_points
 from pippy.PipelineStage import PipelineStage
 
 from transformers import DistilBertForMaskedLM, DistilBertConfig
@@ -20,12 +20,12 @@ from hf_utils import generate_inputs_for_model, get_number_of_params
 def add_split_points(distilbert, nranks):
     # The first rank carries the embedding layer
     annotate_split_points(
-        distilbert, {f"distilbert.embeddings": PipeSplitWrapper.SplitPoint.END})
+        distilbert, {f"distilbert.embeddings": SplitPoint.END})
     # 6 Transformer layers divided over the rest 3 ranks
     layers_per_rank = distilbert.config.num_hidden_layers // (nranks - 1)
     for i in range(1, nranks - 1):
         annotate_split_points(
-            distilbert, {f"distilbert.transformer.layer.{i * layers_per_rank}": PipeSplitWrapper.SplitPoint.BEGINNING})
+            distilbert, {f"distilbert.transformer.layer.{i * layers_per_rank}": PipeSplitWrapper.BEGINNING})
 
 
 def run(args):

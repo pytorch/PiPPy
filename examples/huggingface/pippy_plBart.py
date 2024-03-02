@@ -9,7 +9,7 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy.IR import Pipe, PipeSplitWrapper, annotate_split_points
+from pippy.IR import Pipe, SplitPoint, annotate_split_points
 from pippy.PipelineStage import PipelineStage
 
 from transformers import PLBartForCausalLM, PLBartConfig
@@ -20,15 +20,15 @@ from hf_utils import generate_inputs_for_model, get_number_of_params
 def add_split_points(plbart, nranks):
     # The first rank carries embedding
     annotate_split_points(
-        plbart, {f"model.decoder.embed_positions": PipeSplitWrapper.SplitPoint.END})
+        plbart, {f"model.decoder.embed_positions": SplitPoint.END})
     # The last rank carries LM head
     annotate_split_points(
-        plbart, {"lm_head": PipeSplitWrapper.SplitPoint.BEGINNING})
+        plbart, {"lm_head": SplitPoint.BEGINNING})
     # The rest ranks divide 6 layers
     layers_per_rank = plbart.config.num_hidden_layers // (nranks - 2)
     for i in range(1, nranks - 2):
         annotate_split_points(
-            plbart, {f"model.decoder.layers.{i * layers_per_rank}": PipeSplitWrapper.SplitPoint.BEGINNING})
+            plbart, {f"model.decoder.layers.{i * layers_per_rank}": SplitPoint.BEGINNING})
 
 
 def run(args):

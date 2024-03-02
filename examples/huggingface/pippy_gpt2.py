@@ -9,7 +9,7 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy.IR import Pipe, PipeSplitWrapper, annotate_split_points
+from pippy.IR import Pipe, SplitPoint, annotate_split_points
 from pippy.PipelineStage import PipelineStage
 
 from transformers import GPT2ForSequenceClassification, GPT2Config
@@ -24,7 +24,7 @@ def add_split_points(gpt2, nranks):
     for i in range(1, gpt2.config.n_layer // decoders_per_rank):
         annotate_split_points(
             gpt2,
-            {f'transformer.h.{i * decoders_per_rank}': PipeSplitWrapper.SplitPoint.BEGINNING},
+            {f'transformer.h.{i * decoders_per_rank}': SplitPoint.BEGINNING},
         )
         nstages += 1
     assert nstages == nranks, f"nstages = {nstages} nranks = {nranks}"
