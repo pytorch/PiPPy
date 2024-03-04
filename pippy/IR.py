@@ -2,7 +2,6 @@
 import copy
 import logging
 import operator
-import types
 from enum import Enum
 from inspect import Parameter, signature, Signature
 from types import MethodType
@@ -1273,6 +1272,7 @@ def _split_after_forwad(self, *args, **kwargs):
         return self.orig_forward(*args, **kwargs)
     finally:
         pipe_split()
+
 
 # For backward compatibility, we kept the PipeSplitWrapper class because `class
 # SplitPoint` used to be defined in this class.

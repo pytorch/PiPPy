@@ -1,3 +1,4 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates
 import pippy
 import torch
 from pippy import Pipe, pipe_split
