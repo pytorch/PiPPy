@@ -90,10 +90,16 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
       - name: Install pippy
         run: "python setup.py install"
+      # IR tests
       - name: Test forward pipe generation
         run: python test/test_pipe.py
       - name: Test backward pipe generation
         run: python test/test_pipe_bwd.py
+      - name: Test unflatten
+        run: python test/test_unflatten.py
+      - name: Test Transformer
+        run: python test/test_transformer.py
+      # Runtime tests
       - name: Run forward-only integration test
         run: torchrun --nproc-per-node 4 test/test_fwd.py
       - name: Run forward-loss-backward integration test
