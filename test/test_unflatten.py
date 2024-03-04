@@ -1,5 +1,4 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-import pippy
 import torch
 from pippy import Pipe, pipe_split
 
@@ -52,14 +51,14 @@ pipe = Pipe.from_tracing(
 )
 
 assert pipe.num_stages == 4
-gm = pipe.split_gm
 orig_state_dict = mod.state_dict()
 
 # Check qualnames
 print("\nParameters of each stage:")
-for name, submod in gm.named_children():
-    print(f"\nStage {name}:")
-    for param_name, param in submod.named_parameters():
+for stage_idx in range(pipe.num_stages):
+    print(f"\nStage {stage_idx}:")
+    stage_mod = pipe.get_stage_module(stage_idx)
+    for param_name, param in stage_mod.named_parameters():
         assert (
             param_name in orig_state_dict
         ), f"{param_name} not in original state dict"

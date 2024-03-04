@@ -1,5 +1,4 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-import pippy
 import torch
 from pippy import annotate_split_points, Pipe, SplitPoint
 
@@ -60,7 +59,6 @@ pipe = Pipe.from_tracing(
     (x,),
 )
 assert pipe.num_stages == 2
-gm = pipe.split_gm
 
 
 def get_layers(module):
@@ -70,9 +68,10 @@ def get_layers(module):
 
 # Collect all layers in pipe
 layers = []
-for name, submod in gm.named_children():
-    print(f"\nStage {name}: \n", submod)
-    layers += get_layers(submod)
+for stage_idx in range(pipe.num_stages):
+    stage_mod = pipe.get_stage_module(stage_idx)
+    print(f"\nStage {stage_idx}: \n", stage_mod)
+    layers += get_layers(stage_mod)
 
 # Check layer completeness
 orig_layers = get_layers(transformer)
