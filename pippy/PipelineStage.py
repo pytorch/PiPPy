@@ -426,7 +426,7 @@ class PipelineStage(torch.nn.Module, QualnameMapMixin):
                 self.pipe.kwargs_chunk_spec,
             )
 
-    def _recv_and_fill_inputs(
+    def _recv_activations(
         self,
         chunk: int,
     ):
@@ -435,49 +435,23 @@ class PipelineStage(torch.nn.Module, QualnameMapMixin):
 
         act_recv = self.recv_tensor_fn(recv_reqs)
 
-        chunk_args_list: List = []
-        if self.args_split:
-            chunk_args = self.args_split[chunk]
-            chunk_args_list = list(chunk_args)
-
         def recv_args(info):
             if isinstance(info, RecvInfo):
                 # This is an activation to receive
                 return act_recv(info)
             else:
-                # This is a pass-in argument
-                if len(chunk_args_list):
-                    return chunk_args_list.pop(0)  # type: ignore[has-type]
-                else:
-                    # kwargs were treated as args in graph phase. That's why
-                    # there are extra placeholders here. We mark them and filter
-                    # them out later.
-                    return StageKwargPlaceholder()
+                raise AssertionError(f"Expected RecvInfo but got {type(info)}")
 
         composite_args = map_aggregate(
             self.args_recv_info[chunk],
             recv_args,
         )
-        # Filter out kwarg placeholders
-        composite_args = tuple(
-            x
-            for x in composite_args
-            if not isinstance(x, StageKwargPlaceholder)
-        )
-
-        # Middle stages won't have incoming activations in kwargs form. So if
-        # kwargs_split is not empty, it must be model inputs for stage 0. We
-        # hence pass it as is to the interal submodule, without performing
-        # `recv_args` on it.
-        composite_kwargs: Dict = {}
-        if self.kwargs_split:
-            composite_kwargs = self.kwargs_split[chunk]
 
         # Wait for all recvs to finish
         for work in recv_reqs:
             work.wait()
 
-        return composite_args, composite_kwargs
+        return composite_args
 
     def _send_activations(
         self,
@@ -592,7 +566,15 @@ class PipelineStage(torch.nn.Module, QualnameMapMixin):
         self,
         chunk: int,
     ):
-        composite_args, composite_kwargs = self._recv_and_fill_inputs(chunk)
+        if self.is_first():
+            # First stage doesn't need to receive anything
+            composite_args = self.args_split[chunk]
+            composite_kwargs = self.kwargs_split[chunk]
+        else:
+            # Receive activations for this chunk
+            # Activations only come in args form
+            composite_args = self._recv_activations(chunk)
+            composite_kwargs = {}
 
         # Compute forward
         try:
