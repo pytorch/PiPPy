@@ -44,6 +44,10 @@ class RecvInfo:
         return f"RecvInfo(input={self.input_name}, source={self.source}, shape={self.buffer.size()})"
 
 
+class StageArgPlaceholder:
+    pass
+
+
 class PipelineStage(torch.nn.Module, QualnameMapMixin):
     def __init__(
         self,
@@ -223,6 +227,10 @@ class PipelineStage(torch.nn.Module, QualnameMapMixin):
             Create a tensor for receiving the `output_idx`-th value from
             `input_node`
             """
+            if input_node.op == "placeholder":
+                # Do not create buffer for placeholder
+                return StageArgPlaceholder()
+
             # In case the input is a `getitem` node, we recursively find the
             # real source e.g. getitem1 = submod0[1]
             # Here `submod0` is args[0], 1 is args[1]
