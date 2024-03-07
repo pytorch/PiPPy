@@ -552,7 +552,7 @@ class PipelineScheduleGPipe(PipelineSchedule):
                 if ops:
                     dist.batch_isend_irecv(ops).pop().wait()
 
-                self._stage.backward_one_chunk()
+                self._stage.backward_one_chunk(i)
 
                 ops = self._stage.get_bwd_send_ops()
                 if ops:
@@ -586,7 +586,7 @@ class PipelineScheduleLoopedBFS(PipelineSchedule):
                     if ops:
                         dist.batch_isend_irecv(ops).pop().wait()
 
-                    stage.backward_one_chunk()
+                    stage.backward_one_chunk(i)
 
                     ops = stage.get_bwd_send_ops()
                     if ops:
@@ -778,7 +778,7 @@ class PipelineScheduleLoopedDFS(PipelineSchedule):
                     logger.info(
                         f"pp_id {self.pp_id} step {step}/{self.total_steps} backward_step {backward_step} backward_stage_id {backward_stage.stage_id} mb_id {mb_id_bwd}"
                     )
-                    backward_stage.backward_one_chunk()
+                    backward_stage.backward_one_chunk(mb_id_bwd)
 
                 requests = []
 
