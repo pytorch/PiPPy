@@ -430,8 +430,12 @@ class PipelineStageV2Impl(PipelineStageBase):
         return outputs
 
     def forward_one_chunk(
-        self, args: Union[torch.Tensor, List[torch.tensor]]
+        self, args: Optional[Union[torch.Tensor, Tuple[torch.tensor]]] = None
     ) -> Any:
+        # Non-0 stage
+        if args is None:
+            args = self.inputs
+
         # we always expect to unpack a tuple of inputs, so if its a single tensor, wrap it in a tuple
         if isinstance(args, torch.Tensor):
             args = (args,)
@@ -520,7 +524,7 @@ class PipelineSchedule(ABC):
         self._n_microbatches = n_microbatches
 
     @abstractmethod
-    def step(self, microbatches: Optional[List]=None) -> None:
+    def step(self, microbatches: Optional[List] = None) -> None:
         """
         Run one iteration of the pipeline schedule. Will go through all the microbatches
         according to the schedule implementation.
@@ -532,7 +536,7 @@ class PipelineSchedule(ABC):
 
 
 class PipelineScheduleGPipe(PipelineSchedule):
-    def step(self, microbatches: Optional[List]=None):
+    def step(self, microbatches: Optional[List] = None):
         if microbatches is not None:
             assert len(microbatches) == self._n_microbatches
 
@@ -545,13 +549,13 @@ class PipelineScheduleGPipe(PipelineSchedule):
                 if microbatches is not None:
                     self._stage.forward_one_chunk(microbatches[i])
                 else:
-                    self._stage.forward_one_chunk(self.inputs)
+                    self._stage.forward_one_chunk()
 
                 ops = self._stage.get_fwd_send_ops()
                 if ops:
                     dist.batch_isend_irecv(ops)
 
-        for i, _ in enumerate(microbatches):
+        for i in range(self._n_microbatches):
             with record_function(f"Backward {i}"):
                 ops = self._stage.get_bwd_recv_ops()
                 if ops:
