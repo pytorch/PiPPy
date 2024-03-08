@@ -85,15 +85,29 @@ def run(args):
         device=args.device,
     )
 
-    # Run
-    if args.rank == 0:
-        stage(**example_inputs)
-    elif args.rank == args.world_size - 1:
-        out = stage()
-    else:
-        stage()
+    def iter():
+        if args.rank == 0:
+            stage(**example_inputs)
+        elif args.rank == args.world_size - 1:
+            out = stage()
+        else:
+            stage()
 
-    print(f"Rank {args.rank} completes")
+    import time
+    # Warm-up
+    for _ in range(3):
+        iter()
+
+    # Add a barrier here to synchronize all ranks
+    dist.barrier()
+    start_time = time.time()
+
+    for i in range(args.batches):
+        iter()
+
+    torch.cuda.synchronize()
+    end_time = time.time()
+    print(f"Time per batch: {(end_time - start_time) / args.batches} seconds")
 
 
 if __name__ == "__main__":
