@@ -123,7 +123,7 @@ if __name__ == "__main__":
     # the number of chunks; 2) the division result (i.e. chunk size) must be 1,
     # otherwise padding token must be provided too (see GPT-2's forward function)
     parser.add_argument('--batch_size', type=int, default=4)
-    parser.add_argument('--batches', type=int, default=1)
+    parser.add_argument('--batches', type=int, default=20)
     parser.add_argument('--n_embd', type=int, default=None)
     parser.add_argument('--n_layer', type=int, default=None)
     parser.add_argument('--n_head', type=int, default=None)
