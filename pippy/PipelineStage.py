@@ -79,8 +79,8 @@ class PipelineStage(torch.nn.Module, QualnameMapMixin):
         # map microbatch ID to list of forward tensor args
         self.fwd_cache: Dict[int, Tuple[Any, List[torch.Tensor]]] = {}
         # Split input chunks
-        self.args_split = None
-        self.kwargs_split = None
+        self.args_split: List = []
+        self.kwargs_split: List = []
         # Activation send requests of all chunk
         self.all_act_send_reqs: List[dist.Work] = []
         # Grad send requests of all chunk
@@ -188,13 +188,8 @@ class PipelineStage(torch.nn.Module, QualnameMapMixin):
         """
         # chunk : Tuple of arg buffers
         self.args_recv_info: Dict[int, Tuple] = {}
-        # chunk : Dict of kwarg buffers
-        self.kwargs_recv_info: Dict[int, Dict] = {}
         for chunk in range(self.chunks):
-            (
-                self.args_recv_info[chunk],
-                self.kwargs_recv_info[chunk],
-            ) = self._create_act_recv_buffers()
+            self.args_recv_info[chunk] = self._create_act_recv_buffers()
 
         # Send info during forward for each activation
         self.act_send_info = self._create_act_send_info()
@@ -211,10 +206,9 @@ class PipelineStage(torch.nn.Module, QualnameMapMixin):
             # Send info for input grads during backward
             # List of destinations corresponding to input grads
             # Can be None if an input has no grad
-            # `grad_send_info` is a mirror of `args_recv_info` + `kwargs_recv_info`
+            # `grad_send_info` is a mirror of `args_recv_info`
             self.grad_send_info = self._create_grad_send_info(
-                self.args_recv_info[0],
-                self.kwargs_recv_info[0],
+                self.args_recv_info[0]
             )
 
     def get_stage_index_of_submod(
@@ -283,15 +277,11 @@ class PipelineStage(torch.nn.Module, QualnameMapMixin):
         # Tuple[RecvInfo]
         args_recv_info = map_arg(self.node.args, create_recv_tensor)
 
-        # `kwargs` is a Dict, hence we will have:
-        # Dict[keyword, RecvInfo]
-        kwargs_recv_info = map_arg(self.node.kwargs, create_recv_tensor)
-
         logger.info(
             f"[{self.group_rank}] "
             f"Activation recv / args info: {args_recv_info}"
         )
-        return args_recv_info, kwargs_recv_info
+        return args_recv_info
 
     def find_dst_rank(
         self,
@@ -371,7 +361,6 @@ class PipelineStage(torch.nn.Module, QualnameMapMixin):
     def _create_grad_send_info(
         self,
         args_recv_info: Tuple,
-        kwargs_recv_info: Dict,
     ) -> List[Optional[int]]:
         grad_send_info: List[Optional[int]] = []
 
@@ -384,8 +373,6 @@ class PipelineStage(torch.nn.Module, QualnameMapMixin):
                 return None
 
         map_aggregate(args_recv_info, map_recv_to_send)
-
-        map_aggregate(kwargs_recv_info, map_recv_to_send)
 
         logger.info(f"[{self.group_rank}] " f"Grad send info: {grad_send_info}")
         return grad_send_info
@@ -415,8 +402,8 @@ class PipelineStage(torch.nn.Module, QualnameMapMixin):
         return lambda info: self._recv_tensor(info, reqs)
 
     def split_inputs(self, args, kwargs):
-        self.args_split = None
-        self.kwargs_split = None
+        self.args_split = []
+        self.kwargs_split = []
         if args or kwargs:
             self.args_split, self.kwargs_split = split_args_kwargs_into_chunks(
                 args,
@@ -426,7 +413,7 @@ class PipelineStage(torch.nn.Module, QualnameMapMixin):
                 self.pipe.kwargs_chunk_spec,
             )
 
-    def _recv_and_fill_inputs(
+    def _recv_activations(
         self,
         chunk: int,
     ):
@@ -435,49 +422,23 @@ class PipelineStage(torch.nn.Module, QualnameMapMixin):
 
         act_recv = self.recv_tensor_fn(recv_reqs)
 
-        chunk_args_list: List = []
-        if self.args_split:
-            chunk_args = self.args_split[chunk]
-            chunk_args_list = list(chunk_args)
-
         def recv_args(info):
             if isinstance(info, RecvInfo):
                 # This is an activation to receive
                 return act_recv(info)
             else:
-                # This is a pass-in argument
-                if len(chunk_args_list):
-                    return chunk_args_list.pop(0)  # type: ignore[has-type]
-                else:
-                    # kwargs were treated as args in graph phase. That's why
-                    # there are extra placeholders here. We mark them and filter
-                    # them out later.
-                    return StageKwargPlaceholder()
+                raise AssertionError(f"Expected RecvInfo but got {type(info)}")
 
         composite_args = map_aggregate(
             self.args_recv_info[chunk],
             recv_args,
         )
-        # Filter out kwarg placeholders
-        composite_args = tuple(
-            x
-            for x in composite_args
-            if not isinstance(x, StageKwargPlaceholder)
-        )
-
-        # Middle stages won't have incoming activations in kwargs form. So if
-        # kwargs_split is not empty, it must be model inputs for stage 0. We
-        # hence pass it as is to the interal submodule, without performing
-        # `recv_args` on it.
-        composite_kwargs: Dict = {}
-        if self.kwargs_split:
-            composite_kwargs = self.kwargs_split[chunk]
 
         # Wait for all recvs to finish
         for work in recv_reqs:
             work.wait()
 
-        return composite_args, composite_kwargs
+        return composite_args
 
     def _send_activations(
         self,
@@ -592,7 +553,15 @@ class PipelineStage(torch.nn.Module, QualnameMapMixin):
         self,
         chunk: int,
     ):
-        composite_args, composite_kwargs = self._recv_and_fill_inputs(chunk)
+        if self.is_first():
+            # First stage doesn't need to receive anything
+            composite_args = self.args_split[chunk]
+            composite_kwargs = self.kwargs_split[chunk]
+        else:
+            # Receive activations for this chunk
+            # Activations only come in args form
+            composite_args = self._recv_activations(chunk)
+            composite_kwargs = {}
 
         # Compute forward
         try:
