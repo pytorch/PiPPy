@@ -179,7 +179,7 @@ def get_stage_shapes(
     """
 
     stage_id_to_shapes: Dict[int, Dict[str, torch.Size]] = {}
-    for stage_id, model in zip(stage_ids, models, strict=True):
+    for stage_id, model in zip(stage_ids, models):
         input_shape_metadata_tensor = create_metadata_tensor(device=device)
         # TODO: Assumes prev_stage == rank - 1 and next_stage == rank + 1
         prev_rank = (rank - 1) % world_size
