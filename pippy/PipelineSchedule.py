@@ -183,7 +183,7 @@ def get_stage_shapes(
     """
 
     stage_id_to_shapes: Dict[int, Dict[str, torch.Size]] = {}
-    for stage_id, model in zip(stage_ids, models, strict=True):
+    for stage_id, model in zip(stage_ids, models):
         input_shape_metadata_tensor = create_metadata_tensor(device=device)
         # TODO: Assumes prev_stage == rank - 1 and next_stage == rank + 1
         prev_rank = (rank - 1) % world_size
@@ -430,34 +430,32 @@ class PipelineStageV2Impl(PipelineStageBase):
         return outputs
 
     def forward_one_chunk(
-        self, args: Optional[Union[torch.Tensor, Tuple[torch.tensor]]] = None
+        self, args: Union[torch.Tensor, List[torch.tensor]]
     ) -> Any:
-        # Non-0 stage
-        if args is None:
-            args = self.inputs
-
-        # we always expect to unpack a tuple of inputs, so if its a single tensor, wrap it in a tuple
-        if isinstance(args, torch.Tensor):
-            args = (args,)
+        if self.is_first_stage:
+            # we always expect to unpack an iterable of inputs, so if its a single tensor, wrap it in a list
+            if isinstance(args, torch.Tensor):
+                args = [args]
+            self.inputs = args
 
         logger.info(
-            f"[{self.rank} FORWARD {self.stage_id} {[inp.shape for inp in args]}"
+            f"[{self.rank} FORWARD {self.stage_id} {[inp.shape for inp in self.inputs]}"
         )
 
         # this is needed when we access the gradients for this in backward()
         # TODO: requires_grad should not be set, it should depend on input (https://github.com/pytorch/PiPPy/issues/945)
-        for tensor in args:
+        for tensor in self.inputs:
             tensor.requires_grad = True
             tensor.retain_grad()
 
         # perform forward pass on module
-        outputs = self.module(*args)
+        outputs = self.module(*self.inputs)
         self.outputs = self.check_and_format_outputs(outputs)
 
         outputs_or_loss = self.compute_loss() if self.is_last_stage else outputs
 
         # we store a ref to the input/output pair for this forward to be later used by the corresponding backward
-        self.inputs_outputs.append((args, outputs_or_loss))
+        self.inputs_outputs.append((self.inputs, outputs_or_loss))
 
         return outputs_or_loss
 
@@ -519,12 +517,8 @@ class PipelineStageV2Impl(PipelineStageBase):
 
 
 class PipelineSchedule(ABC):
-    def __init__(self, stage: PipelineStageBase, n_microbatches: int):
-        self._stage = stage
-        self._n_microbatches = n_microbatches
-
     @abstractmethod
-    def step(self, microbatches: Optional[List] = None) -> None:
+    def step(self, microbatches: List[torch.Tensor]) -> None:
         """
         Run one iteration of the pipeline schedule. Will go through all the microbatches
         according to the schedule implementation.
@@ -536,26 +530,23 @@ class PipelineSchedule(ABC):
 
 
 class PipelineScheduleGPipe(PipelineSchedule):
-    def step(self, microbatches: Optional[List] = None):
-        if microbatches is not None:
-            assert len(microbatches) == self._n_microbatches
+    def __init__(self, stage: PipelineStageBase):
+        self._stage = stage
 
-        for i in range(self._n_microbatches):
+    def step(self, microbatches):
+        for i, mb in enumerate(microbatches):
             with record_function(f"Forward {i}"):
                 ops = self._stage.get_fwd_recv_ops()
                 if ops:
                     dist.batch_isend_irecv(ops).pop().wait()
 
-                if microbatches is not None:
-                    self._stage.forward_one_chunk(microbatches[i])
-                else:
-                    self._stage.forward_one_chunk()
+                self._stage.forward_one_chunk(mb)
 
                 ops = self._stage.get_fwd_send_ops()
                 if ops:
                     dist.batch_isend_irecv(ops)
 
-        for i in range(self._n_microbatches):
+        for i, _ in enumerate(microbatches):
             with record_function(f"Backward {i}"):
                 ops = self._stage.get_bwd_recv_ops()
                 if ops:
