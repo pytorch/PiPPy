@@ -8,6 +8,7 @@ import pippy
 import torch
 import torch.distributed as dist
 from pippy.IR import Pipe, pipe_split
+from pippy.PipelineSchedule import PipelineScheduleGPipe
 from pippy.PipelineStage import PipelineStage
 
 
@@ -28,7 +29,6 @@ class ExampleCode(torch.nn.Module):
 
     def forward(self, x, y=torch.zeros(batch_size, d_hid)):
         x = torch.mm(x, self.mm_param)
-        skip_connection = x
         x = x + y
         x = torch.relu(x)
         pipe_split()
@@ -36,7 +36,6 @@ class ExampleCode(torch.nn.Module):
         x = self.lin(x)
         pipe_split()
         x = torch.relu(x)
-        x = x + skip_connection
         x = torch.mm(x, self.mm_param2)
         pipe_split()
         x = self.lin(x)
@@ -64,13 +63,14 @@ def run_worker(args):
         device=args.device,
     )
 
+    # Attach to a schedule
+    schedule = PipelineScheduleGPipe(stage, args.chunks)
+
     # Run
     if args.rank == 0:
-        stage(x, y=y)
-    elif args.rank == args.world_size - 1:
-        out = stage()
+        schedule.step(x, y=y)
     else:
-        stage()
+        out = schedule.step()
 
     dist.barrier()
     print(f"Rank {args.rank} completes")
