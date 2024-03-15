@@ -5,6 +5,7 @@
 import os
 import torch
 from pippy.IR import annotate_split_points, Pipe, PipeSplitWrapper
+from pippy.PipelineSchedule import PipelineScheduleGPipe
 from pippy.PipelineStage import PipelineStage
 
 
@@ -97,17 +98,18 @@ dist.init_process_group(rank=rank, world_size=world_size)
 # the rank of this process, and the device.
 stage = PipelineStage(pipe, rank, device)
 
+# Attach to a schedule
+schedule = PipelineScheduleGPipe(stage, chunks)
+
 # Input data
 x = torch.randn(batch_size, in_dim, device=device)
 
 # Run the pipeline with input `x`. Divide the batch into 4 micro-batches
 # and run them in parallel on the pipeline
 if rank == 0:
-    stage(x)
-elif rank == world_size - 1:
-    output = stage()
+    schedule.step(x)
 else:
-    stage()
+    output = schedule.step()
 
 if rank == world_size - 1:
     # Run the original code and get the output for comparison
