@@ -48,10 +48,6 @@ class StageArgPlaceholder:
     pass
 
 
-class StageKwargPlaceholder:
-    pass
-
-
 class PipelineStage(torch.nn.Module, QualnameMapMixin):
     def __init__(
         self,
