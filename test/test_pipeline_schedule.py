@@ -158,7 +158,7 @@ class TestPipelineSchedule(MultiProcessTestCase):
         model = MLP(dim=8, hidden_dim=4, out_dim=4)
         input1 = torch.rand((2, 8), device=device)
         pipeline_stage = self._create_pipline_stage(model, input1, device)
-        output = pipeline_stage(input1)
+        output = pipeline_stage.forward_one_chunk(input1)
         if self.rank == self.world_size - 1:
             self.assertIsInstance(output, torch.Tensor)
         else:
@@ -171,7 +171,7 @@ class TestPipelineSchedule(MultiProcessTestCase):
         pipeline_stage = self._create_pipline_stage(
             model, [input1, input2], device
         )
-        output = pipeline_stage([input1, input2])
+        output = pipeline_stage.forward_one_chunk([input1, input2])
         if self.rank == self.world_size - 1:
             self.assertIsInstance(output, torch.Tensor)
         else:
@@ -181,7 +181,7 @@ class TestPipelineSchedule(MultiProcessTestCase):
         model = MultiOutputArgMLP(dim=8, out_dim=4)
         input1 = torch.rand((2, 8), device=device)
         pipeline_stage = self._create_pipline_stage(model, input1, device)
-        output = pipeline_stage(input1)
+        output = pipeline_stage.forward_one_chunk(input1)
         if self.rank == self.world_size - 1:
             self.assertIsInstance(output, torch.Tensor)
         else:
