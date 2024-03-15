@@ -49,3 +49,7 @@ jobs:
         run: python setup.py install
       - name: Run forward-only integration test
         run: torchrun --nproc-per-node 4 test/test_fwd.py
+      - name: Run example
+        run: torchrun --nproc-per-node 3 examples/basic/example.py
+      - name: Run auto-split test
+        run: torchrun --nproc-per-node 4 test/test_autosplit.py
