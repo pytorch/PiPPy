@@ -19,6 +19,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    shell: bash -l -eo pipefail {0}
+
 jobs:
   unit_tests_4gpu:
     runs-on: linux.g5.12xlarge.nvidia.gpu
