@@ -35,6 +35,8 @@ jobs:
           miniconda-version: "latest"
           activate-environment: test
           python-version: ${{ matrix.python-version }}
+      - name: Activate conda env
+        run: conda activate test
       - name: Install dependencies
         run:
           pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cu121
