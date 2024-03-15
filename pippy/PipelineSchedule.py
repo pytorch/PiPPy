@@ -183,7 +183,7 @@ def get_stage_shapes(
     """
 
     stage_id_to_shapes: Dict[int, Dict[str, torch.Size]] = {}
-    for stage_id, model in zip(stage_ids, models, strict=True):
+    for stage_id, model in zip(stage_ids, models):
         input_shape_metadata_tensor = create_metadata_tensor(device=device)
         # TODO: Assumes prev_stage == rank - 1 and next_stage == rank + 1
         prev_rank = (rank - 1) % world_size
@@ -552,7 +552,7 @@ class PipelineScheduleGPipe(PipelineSchedule):
                 if ops:
                     dist.batch_isend_irecv(ops).pop().wait()
 
-                self._stage.backward_one_chunk(chunk=i)
+                self._stage.backward_one_chunk()
 
                 ops = self._stage.get_bwd_send_ops()
                 if ops:
@@ -586,7 +586,7 @@ class PipelineScheduleLoopedBFS(PipelineSchedule):
                     if ops:
                         dist.batch_isend_irecv(ops).pop().wait()
 
-                    stage.backward_one_chunk(chunk=i)
+                    stage.backward_one_chunk()
 
                     ops = stage.get_bwd_send_ops()
                     if ops:
@@ -778,7 +778,7 @@ class PipelineScheduleLoopedDFS(PipelineSchedule):
                     logger.info(
                         f"pp_id {self.pp_id} step {step}/{self.total_steps} backward_step {backward_step} backward_stage_id {backward_stage.stage_id} mb_id {mb_id_bwd}"
                     )
-                    backward_stage.backward_one_chunk(chunk=mb_id_bwd)
+                    backward_stage.backward_one_chunk()
 
                 requests = []
 

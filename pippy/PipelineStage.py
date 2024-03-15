@@ -599,19 +599,19 @@ class PipelineStage(torch.nn.Module, QualnameMapMixin):
 
     def backward_one_chunk(
         self,
-        chunk: int,
+        bwd_chunk: int,
     ):
         if not self.pipe.has_loss_and_backwards:
             return None
 
-        grads = self._recv_grads(chunk)
+        grads = self._recv_grads(bwd_chunk)
 
         # Pack args for `stage_backward``
         bwd_kwargs = dict(self.bwd_node.kwargs)
         (
             bwd_kwargs["stage_output"],
             bwd_kwargs["input_values"],
-        ) = self.fwd_cache.pop(chunk)
+        ) = self.fwd_cache.pop(bwd_chunk)
         # Fill actual gradients received for outputs
         # If nothing received, as in the case of last stage, then we
         # would use the default `output_grads` prepared in the IR phase,
@@ -623,7 +623,7 @@ class PipelineStage(torch.nn.Module, QualnameMapMixin):
         # `stage_backward` node does not have `args`, only `kwargs`
         grads_input = self.backward_maybe_with_nosync(
             bwd_kwargs,
-            chunk == self.chunks - 1,
+            bwd_chunk == self.chunks - 1,
         )
 
         grad_send_reqs = self._send_grads(grads_input)
