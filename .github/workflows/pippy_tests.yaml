@@ -6,7 +6,7 @@ on:
     - main
   pull_request:
     paths:
-      - '.github/workflows/pippy**'
+      - '.github/workflows/**.yaml'
       - 'pippy/**'
       - 'test/**'
       - 'examples/**'
@@ -75,6 +75,7 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.9"]
+        schedule: ["FillDrain"]
     env:
       OMP_NUM_THREADS: "1"
     container:
@@ -85,7 +86,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install flake8 pytest pytest-cov numpy datasets evaluate scikit-learn sacrebleu
+          pip install flake8 pytest pytest-cov numpy datasets evaluate scikit-learn sacrebleu expecttest
           if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
       - name: Install pippy
         run: "python setup.py install"
@@ -95,10 +96,14 @@ jobs:
         run: python test/test_pipe_bwd.py
       - name: Run forward-only integration test
         run: torchrun --nproc-per-node 4 test/test_fwd.py
+      - name: Run forward-loss-backward integration test
+        run: torchrun --nproc-per-node 4 test/test_bwd.py --schedule ${{ matrix.schedule }}
       - name: Run example
         run: torchrun --nproc-per-node 3 examples/basic/example.py
       - name: Run auto-split test
         run: torchrun --nproc-per-node 4 test/test_autosplit.py
+      - name: Test pipeline schedule
+        run: python test/test_pipeline_schedule.py
       # - name: Run null_coalesce_accumulate integration test
       #   run: python test/local_test_null_coalesce_accumulate.py --replicate ${{ matrix.replicate }} --schedule ${{ matrix.schedule }}
       # - name: Run PP + DDP test
