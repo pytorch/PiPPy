@@ -421,6 +421,55 @@ class PipelineStage(torch.nn.Module, QualnameMapMixin):
             # Return a list of empty tuples/dicts with matching length as chunks
             return [()] * self.chunks, [{}] * self.chunks
 
+    def get_fwd_recv_ops(self) -> List[dist.P2POp]:
+        """
+        Returns a list of ops that are needed to receive the input arguments
+        for this stage.
+        """
+        ops = []
+        recv_infos = self.args_recv_info[self.fwd_chunk_id]
+        for info in recv_infos:
+            if isinstance(info, RecvInfo):
+                peer_rank = self.stage_index_to_group_rank[info.source]
+                peer_global_rank = (
+                    peer_rank
+                    if self.group is None
+                    else dist.get_global_rank(self.group, peer_rank)
+                )  # TODO
+                ops.append(
+                    dist.P2POp(
+                        dist.irecv, info.buffer, peer_global_rank, self.group
+                    )
+                )
+        return ops
+
+    def get_fwd_send_ops(self) -> List[dist.P2POp]:
+        # Get the send ops for the current stage
+        # Use "-1" to get the outputs created by the last chunk
+        output_tuple = self.output_chunks[-1]
+        ops: List[dist.P2POp] = []
+
+        for idx, out in enumerate(output_tuple):
+            dst_stages = self.act_send_info[idx]
+            for dst in dst_stages:
+                if dst is None:
+                    continue
+                logger.debug(
+                    f"[{self.group_rank}] "
+                    f"Sending tensor to Rank {dst}: {out.size()}"
+                )
+                peer_rank = self.stage_index_to_group_rank[dst]
+                peer_global_rank = (
+                    peer_rank
+                    if self.group is None
+                    else dist.get_global_rank(self.group, peer_rank)
+                )  # TODO
+                ops.append(
+                    dist.P2POp(dist.isend, out, peer_global_rank, self.group)
+                )
+
+        return ops
+
     def _recv_activations(
         self,
     ):
