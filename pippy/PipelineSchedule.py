@@ -19,7 +19,7 @@ logger.setLevel(logging.INFO)
 
 class PipelineStage(ABC, nn.Module):
     @abstractmethod
-    def forward_one_chunk(self, args: List[torch.tensor]) -> torch.tensor:
+    def forward(self, args: List[torch.tensor]) -> torch.tensor:
         """
         Perform forward pass on the module.
         This should only be called once per microbatch.
@@ -44,7 +44,7 @@ class PipelineStage(ABC, nn.Module):
         raise NotImplementedError
 
     @abstractmethod
-    def backward_one_chunk(self):
+    def backward(self):
         """
         Perform backward pass on the module.
         This should only be called once per microbatch.
@@ -183,7 +183,7 @@ def get_stage_shapes(
     """
 
     stage_id_to_shapes: Dict[int, Dict[str, torch.Size]] = {}
-    for stage_id, model in zip(stage_ids, models, strict=True):
+    for stage_id, model in zip(stage_ids, models):
         input_shape_metadata_tensor = create_metadata_tensor(device=device)
         # TODO: Assumes prev_stage == rank - 1 and next_stage == rank + 1
         prev_rank = (rank - 1) % world_size
@@ -429,9 +429,7 @@ class PipelineStageV2Impl(PipelineStage):
             )
         return outputs
 
-    def forward_one_chunk(
-        self, args: Union[torch.Tensor, List[torch.tensor]]
-    ) -> Any:
+    def forward(self, args: Union[torch.Tensor, List[torch.tensor]]) -> Any:
         if self.is_first_stage:
             # we always expect to unpack an iterable of inputs, so if its a single tensor, wrap it in a list
             if isinstance(args, torch.Tensor):
@@ -477,7 +475,7 @@ class PipelineStageV2Impl(PipelineStage):
             for grad in self.inputs_grad
         ]
 
-    def backward_one_chunk(self) -> None:
+    def backward(self) -> None:
         logger.info(f"[{self.rank} BACKWARD {self.stage_id}]")
 
         if self.is_last_stage:
@@ -540,7 +538,7 @@ class PipelineScheduleGPipe(PipelineSchedule):
                 if ops:
                     dist.batch_isend_irecv(ops).pop().wait()
 
-                self._stage.forward_one_chunk(mb)
+                self._stage.forward(mb)
 
                 ops = self._stage.get_fwd_send_ops()
                 if ops:
@@ -552,7 +550,7 @@ class PipelineScheduleGPipe(PipelineSchedule):
                 if ops:
                     dist.batch_isend_irecv(ops).pop().wait()
 
-                self._stage.backward_one_chunk()
+                self._stage.backward()
 
                 ops = self._stage.get_bwd_send_ops()
                 if ops:
@@ -573,7 +571,7 @@ class PipelineScheduleLoopedBFS(PipelineSchedule):
                     if ops:
                         dist.batch_isend_irecv(ops).pop().wait()
 
-                    stage.forward_one_chunk(mb)
+                    stage.forward(mb)
 
                     ops = stage.get_fwd_send_ops()
                     if ops:
@@ -586,7 +584,7 @@ class PipelineScheduleLoopedBFS(PipelineSchedule):
                     if ops:
                         dist.batch_isend_irecv(ops).pop().wait()
 
-                    stage.backward_one_chunk()
+                    stage.backward()
 
                     ops = stage.get_bwd_send_ops()
                     if ops:
@@ -733,7 +731,7 @@ class PipelineScheduleLoopedDFS(PipelineSchedule):
                     logger.info(
                         f"pp_id {self.pp_id} step {step} forward_stage {forward_stage.stage_id} mb_id {mb_id_fwd}"
                     )
-                    forward_stage.forward_one_chunk(microbatches[mb_id_fwd])
+                    forward_stage.forward(microbatches[mb_id_fwd])
 
                 requests: List[dist.P2POp] = []
 
@@ -776,7 +774,7 @@ class PipelineScheduleLoopedDFS(PipelineSchedule):
                     logger.info(
                         f"pp_id {self.pp_id} step {step}/{self.total_steps} backward_step {backward_step} backward_stage_id {backward_stage.stage_id} mb_id {mb_id_bwd}"
                     )
-                    backward_stage.backward_one_chunk()
+                    backward_stage.backward()
 
                 requests = []
 
