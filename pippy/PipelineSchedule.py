@@ -17,9 +17,9 @@ logger.setLevel(logging.INFO)
 # logger.addHandler(handler)
 
 
-class PipelineStage(ABC, nn.Module):
+class PipelineStageBase(ABC, nn.Module):
     @abstractmethod
-    def forward_one_chunk(self, args: List[torch.tensor]) -> torch.tensor:
+    def forward_one_chunk(self, *args, **kwargs):
         """
         Perform forward pass on the module.
         This should only be called once per microbatch.
@@ -44,7 +44,7 @@ class PipelineStage(ABC, nn.Module):
         raise NotImplementedError
 
     @abstractmethod
-    def backward_one_chunk(self):
+    def backward_one_chunk(self, **kwargs):
         """
         Perform backward pass on the module.
         This should only be called once per microbatch.
@@ -225,7 +225,7 @@ def get_stage_shapes(
     return stage_id_to_shapes
 
 
-def validate_stage_shapes(pipeline_stages: List[PipelineStage]):
+def validate_stage_shapes(pipeline_stages: List[PipelineStageBase]):
     """
     Check that the buffer shapes match between stages was expected by performing an all_gather between
     all stages. Assumes that buffers have been initialized already such that get_fwd_recv_ops() and
@@ -311,7 +311,7 @@ def validate_stage_shapes(pipeline_stages: List[PipelineStage]):
             )
 
 
-class PipelineStageV2Impl(PipelineStage):
+class PipelineStageV2Impl(PipelineStageBase):
     def __init__(
         self,
         module: nn.Module,
@@ -477,7 +477,7 @@ class PipelineStageV2Impl(PipelineStage):
             for grad in self.inputs_grad
         ]
 
-    def backward_one_chunk(self) -> None:
+    def backward_one_chunk(self, **kwargs) -> None:
         logger.info(f"[{self.rank} BACKWARD {self.stage_id}]")
 
         if self.is_last_stage:
@@ -530,7 +530,7 @@ class PipelineSchedule(ABC):
 
 
 class PipelineScheduleGPipe(PipelineSchedule):
-    def __init__(self, stage: PipelineStage):
+    def __init__(self, stage: PipelineStageBase):
         self._stage = stage
 
     def step(self, microbatches):
@@ -562,7 +562,7 @@ class PipelineScheduleGPipe(PipelineSchedule):
 
 
 class PipelineScheduleLoopedBFS(PipelineSchedule):
-    def __init__(self, stages: List[PipelineStage]):
+    def __init__(self, stages: List[PipelineStageBase]):
         self._stages = stages
 
     def step(self, microbatches):
@@ -594,7 +594,9 @@ class PipelineScheduleLoopedBFS(PipelineSchedule):
 
 
 class PipelineScheduleLoopedDFS(PipelineSchedule):
-    def __init__(self, stages: List[PipelineStage], n_microbatch, pp_id, n_pp):
+    def __init__(
+        self, stages: List[PipelineStageBase], n_microbatch, pp_id, n_pp
+    ):
         assert (
             n_microbatch % n_pp == 0
         ), f"Looped DFS schedule requires microbatch_size ({n_microbatch}) to be a multiple of n_pp ({n_pp})"
