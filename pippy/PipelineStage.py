@@ -399,10 +399,11 @@ class PipelineStage(QualnameMapMixin):
 
     def _get_recv_ops(
         self,
-        recv_infos: List[RecvInfo],
+        recv_infos,
     ) -> List[dist.P2POp]:
         """
-        Returns a list of ops that correspond to the recv infos
+        Helper function shared by `get_fwd_recv_ops` and `get_bwd_recv_ops`.
+        Returns a list of ops that correspond to the recv infos.
         """
         ops: List[dist.P2POp] = []
         for info in recv_infos:
@@ -443,7 +444,9 @@ class PipelineStage(QualnameMapMixin):
         return self._get_recv_ops(recv_infos)
 
     def get_fwd_send_ops(self) -> List[dist.P2POp]:
-        # Get the send ops for the current stage
+        """
+        Get the activation send ops for current stage's forward.
+        """
         # Use "-1" to get the outputs created by the last chunk
         output = self.output_chunks[-1]
         # Unify output form to tuple for easy correspondance with
@@ -474,6 +477,9 @@ class PipelineStage(QualnameMapMixin):
         return ops
 
     def get_bwd_send_ops(self) -> List[dist.P2POp]:
+        """
+        Get the gradient send ops for current stage's backward.
+        """
         ops: List[dist.P2POp] = []
         if not self.pipe.has_loss_and_backwards:
             return []
@@ -498,9 +504,9 @@ class PipelineStage(QualnameMapMixin):
 
         return ops
 
-    def _get_tensor_from_recv_info(
+    def _map_tensor_from_recv_info(
         self,
-        recv_infos: List[RecvInfo],
+        recv_infos,
     ):
         def get_recv_tensor(info):
             if isinstance(info, RecvInfo):
@@ -515,25 +521,24 @@ class PipelineStage(QualnameMapMixin):
 
         return tensors
 
-    def _get_recv_activations(
+    def _retrieve_recv_activations(
         self,
     ):
         """
-        Get the activations received for the current stage
+        Retrieve the activations received for the current stage during forward.
         """
         recv_infos = self.args_recv_info[self.fwd_chunk_id]
-        activations = self._get_tensor_from_recv_info(recv_infos)
+        activations = self._map_tensor_from_recv_info(recv_infos)
         return activations
 
-    def _get_recv_grads(
+    def _retrieve_recv_grads(
         self,
-        bwd_chunk_id,
     ):
         """
-        Get the gradients received for the current stage
+        Retrieve the gradients received for the current stage during backward.
         """
-        recv_infos = self.grad_recv_info[bwd_chunk_id]
-        grads = self._get_tensor_from_recv_info(recv_infos)
+        recv_infos = self.grad_recv_info[self.bwd_chunk_id]
+        grads = self._map_tensor_from_recv_info(recv_infos)
         return grads
 
     def forward_maybe_with_nosync(self, *args, **kwargs):
@@ -578,7 +583,7 @@ class PipelineStage(QualnameMapMixin):
         else:
             # Receive activations for this chunk
             # Activations only come in args form
-            composite_args = self._get_recv_activations()
+            composite_args = self._retrieve_recv_activations()
             composite_kwargs = {}
 
         # Compute forward
@@ -620,12 +625,12 @@ class PipelineStage(QualnameMapMixin):
 
     def backward_one_chunk(
         self,
-        loss = None,
+        loss=None,
     ):
         if not self.pipe.has_loss_and_backwards:
             return None
 
-        grads = self._recv_grads(self.bwd_chunk_id)
+        grads = self._retrieve_recv_grads()
 
         # Pack args for `stage_backward``
         bwd_kwargs = dict(self.bwd_node.kwargs)
