@@ -374,30 +374,6 @@ class PipelineStage(QualnameMapMixin):
         logger.info(f"[{self.group_rank}] " f"Grad send info: {grad_send_info}")
         return grad_send_info
 
-    def _recv_tensor(self, info, recv_reqs):
-        logger.debug(
-            f"[{self.group_rank}] "
-            f"Receiving tensor '{info.input_name}' from Rank {info.source}: "
-            f"{info.buffer.size()}"
-        )
-        # Use async to parallelize recv of tensors
-        peer_rank = self.stage_index_to_group_rank[info.source]
-        work = dist.irecv(
-            info.buffer,
-            peer_rank
-            if self.group is None
-            else dist.get_global_rank(self.group, peer_rank),
-            group=self.group,
-        )
-        recv_reqs.append(work)
-        return info.buffer
-
-    def recv_tensor_fn(
-        self,
-        reqs,
-    ):
-        return lambda info: self._recv_tensor(info, reqs)
-
     def split_inputs(
         self,
         args: Tuple[Any, ...],
@@ -421,28 +397,50 @@ class PipelineStage(QualnameMapMixin):
             # Return a list of empty tuples/dicts with matching length as chunks
             return [()] * self.chunks, [{}] * self.chunks
 
+    def _get_recv_ops(
+        self,
+        recv_infos: List[RecvInfo],
+    ) -> List[dist.P2POp]:
+        """
+        Returns a list of ops that correspond to the recv infos
+        """
+        ops: List[dist.P2POp] = []
+        for info in recv_infos:
+            if not isinstance(info, RecvInfo):
+                continue
+
+            peer_rank = self.stage_index_to_group_rank[info.source]
+            peer_global_rank = (
+                peer_rank
+                if self.group is None
+                else dist.get_global_rank(self.group, peer_rank)
+            )  # TODO
+            ops.append(
+                dist.P2POp(
+                    dist.irecv, info.buffer, peer_global_rank, self.group
+                )
+            )
+
+        return ops
+
     def get_fwd_recv_ops(self) -> List[dist.P2POp]:
         """
         Returns a list of ops that are needed to receive the input arguments
         for this stage.
         """
-        ops = []
         recv_infos = self.args_recv_info[self.fwd_chunk_id]
-        for info in recv_infos:
-            if isinstance(info, RecvInfo):
-                peer_rank = self.stage_index_to_group_rank[info.source]
-                peer_global_rank = (
-                    peer_rank
-                    if self.group is None
-                    else dist.get_global_rank(self.group, peer_rank)
-                )  # TODO
-                ops.append(
-                    dist.P2POp(
-                        dist.irecv, info.buffer, peer_global_rank, self.group
-                    )
-                )
+        return self._get_recv_ops(recv_infos)
 
-        return ops
+    def get_bwd_recv_ops(self) -> List[dist.P2POp]:
+        """
+        Returns a list of ops that are needed to receive the gradients
+        for this stage.
+        """
+        if not self.pipe.has_loss_and_backwards:
+            return []
+
+        recv_infos = self.grad_recv_info[self.bwd_chunk_id]
+        return self._get_recv_ops(recv_infos)
 
     def get_fwd_send_ops(self) -> List[dist.P2POp]:
         # Get the send ops for the current stage
@@ -475,117 +473,68 @@ class PipelineStage(QualnameMapMixin):
 
         return ops
 
-    def get_bwd_recv_ops(self) -> List[dist.P2POp]:
-        ops: List[dist.P2POp] = []
-        if not self.pipe.has_loss_and_backwards:
-            return []
-
-        # TODO: implementation
-        return ops
-
     def get_bwd_send_ops(self) -> List[dist.P2POp]:
         ops: List[dist.P2POp] = []
         if not self.pipe.has_loss_and_backwards:
             return []
 
-        # TODO: implementation
-        return ops
-
-    def _get_recv_activations(
-        self,
-    ):
-        def get_recv_tensor(info):
-            if isinstance(info, RecvInfo):
-                # This is an activation we received
-                return info.buffer
-            else:
-                raise AssertionError(f"Expected RecvInfo but got {type(info)}")
-
-        composite_args = map_aggregate(
-            self.args_recv_info[self.fwd_chunk_id],
-            get_recv_tensor,
-        )
-
-        return composite_args
-
-    def _send_activations(
-        self,
-        output_tuple,
-    ) -> List[dist.Work]:
-        # Send requests of a chunk
-        send_reqs: List[dist.Work] = []
-
-        for idx, out in enumerate(output_tuple):
-            dst_stages = self.act_send_info[idx]
-            for dst in dst_stages:
-                if dst is None:
-                    continue
-                logger.debug(
-                    f"[{self.group_rank}] "
-                    f"Sending tensor to Rank {dst}: {out.size()}"
-                )
-                peer_rank = self.stage_index_to_group_rank[dst]
-                work = dist.isend(
-                    out,
-                    peer_rank
-                    if self.group is None
-                    else dist.get_global_rank(self.group, peer_rank),  # TODO
-                    group=self.group,
-                )
-                send_reqs.append(work)
-
-        return send_reqs
-
-    def _recv_grads(
-        self,
-        bwd_chunk_id,
-    ):
-        # Receive requests of a chunk
-        grad_recv_reqs: List[dist.Work] = []
-
-        recv_grad = self.recv_tensor_fn(grad_recv_reqs)
-
-        # Receive gradients
-        grads = map_aggregate(
-            self.grad_recv_info[bwd_chunk_id],
-            recv_grad,
-        )
-        # Wait for all recvs to finish
-        for work in grad_recv_reqs:
-            work.wait()
-
-        logger.debug(
-            f"[{self.group_rank}] "
-            f"Received output grads of chunk {bwd_chunk_id}: {map_debug_info(grads)}"
-        )
-        return grads
-
-    def _send_grads(
-        self,
-        grads_input,
-    ) -> List[dist.Work]:
-        # Send requests of a chunk
-        grad_send_reqs: List[dist.Work] = []
-
-        for grad, grad_recv_stage in zip(grads_input, self.grad_send_info):
+        for grad, grad_recv_stage in zip(self.grads_input, self.grad_send_info):
             if isinstance(grad, torch.Tensor) and grad_recv_stage is not None:
                 logger.debug(
                     f"[{self.group_rank}] "
                     f"Sending gradient to Rank {grad_recv_stage}: {grad.size()}"
                 )
                 peer_rank = self.stage_index_to_group_rank[grad_recv_stage]
-                work = dist.isend(
-                    grad,
+                peer_global_rank = (
                     peer_rank
                     if self.group is None
-                    else dist.get_global_rank(self.group, peer_rank),  # TODO
-                    group=self.group,
+                    else dist.get_global_rank(self.group, peer_rank)
+                )  # TODO
+                ops.append(
+                    dist.P2POp(dist.isend, grad, peer_global_rank, self.group)
                 )
-                grad_send_reqs.append(work)
             else:
                 assert grad is None and grad_recv_stage is None
 
-        return grad_send_reqs
+        return ops
+
+    def _get_tensor_from_recv_info(
+        self,
+        recv_infos: List[RecvInfo],
+    ):
+        def get_recv_tensor(info):
+            if isinstance(info, RecvInfo):
+                return info.buffer
+            else:
+                raise AssertionError(f"Expected RecvInfo but got {type(info)}")
+
+        tensors = map_aggregate(
+            self.args_recv_info[self.fwd_chunk_id],
+            get_recv_tensor,
+        )
+
+        return tensors
+
+    def _get_recv_activations(
+        self,
+    ):
+        """
+        Get the activations received for the current stage
+        """
+        recv_infos = self.args_recv_info[self.fwd_chunk_id]
+        activations = self._get_tensor_from_recv_info(recv_infos)
+        return activations
+
+    def _get_recv_grads(
+        self,
+        bwd_chunk_id,
+    ):
+        """
+        Get the gradients received for the current stage
+        """
+        recv_infos = self.grad_recv_info[bwd_chunk_id]
+        grads = self._get_tensor_from_recv_info(recv_infos)
+        return grads
 
     def forward_maybe_with_nosync(self, *args, **kwargs):
         # If submod is wrapped with DDP, we use the `no_sync` context manager to
@@ -667,9 +616,11 @@ class PipelineStage(QualnameMapMixin):
             flatten_input_tensors,  # input_values
         )
         self.fwd_chunk_id += 1
+        return output
 
     def backward_one_chunk(
         self,
+        loss = None,
     ):
         if not self.pipe.has_loss_and_backwards:
             return None
@@ -691,13 +642,12 @@ class PipelineStage(QualnameMapMixin):
             bwd_kwargs["output_grads"] = grads
 
         # `stage_backward` node does not have `args`, only `kwargs`
-        grads_input = self.backward_maybe_with_nosync(
+        # TODO: is there a better than putting `grads_input` under self?
+        self.grads_input = self.backward_maybe_with_nosync(
             bwd_kwargs,
             self.bwd_chunk_id == self.chunks - 1,
         )
 
-        grad_send_reqs = self._send_grads(grads_input)
-        self.all_grad_send_reqs += grad_send_reqs
         self.bwd_chunk_id += 1
 
     def clear_runtime_states(self):
