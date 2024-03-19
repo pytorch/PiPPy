@@ -9,7 +9,8 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy.IR import Pipe, SplitPoint, annotate_split_points
+from pippy import pipeline
+from pippy.IR import SplitPoint, annotate_split_points
 from pippy.PipelineStage import PipelineStage
 
 from transformers import PLBartForCausalLM, PLBartConfig
@@ -56,7 +57,7 @@ def run(args):
     add_split_points(plbart, args.world_size)
 
     # Create pipeline
-    plbart_pipe = Pipe.from_tracing(
+    plbart_pipe = pipeline(
         plbart,
         num_chunks=args.chunks,
         example_args=(input_ids, ),

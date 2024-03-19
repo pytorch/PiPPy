@@ -4,6 +4,7 @@ from pippy.IR import (
     LossWrapper,
     Pipe,
     pipe_split,
+    pipeline,
     PipeSequential,
     PipeSplitWrapper,
     SplitPoint,
@@ -25,4 +26,5 @@ __all__ = [
     "annotate_split_points",
     "split_into_equal_size",
     "split_on_size_threshold",
+    "pipeline",
 ]

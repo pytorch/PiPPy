@@ -36,9 +36,9 @@ class MyNetwork(torch.nn.Module):
 
 mn = MyNetwork(512, [512, 1024, 256])
 
-from pippy.IR import Pipe
+from pippy import pipeline
 
-pipe = Pipe.from_tracing(mn)
+pipe = pipeline(mn)
 print(pipe)
 print(pipe.split_gm.submod_0)
 
@@ -53,7 +53,7 @@ annotate_split_points(
     },
 )
 
-pipe = Pipe.from_tracing(mn)
+pipe = pipeline(mn)
 print(" pipe ".center(80, "*"))
 print(pipe)
 print(" submod0 ".center(80, "*"))
@@ -118,7 +118,7 @@ if local_rank == 0:
     #      that should mimic the structure of the output of LossWrapper
     #      and has a True value in the position where the loss value will
     #      be. Since LossWrapper returns just the loss, we just pass True
-    pipe = Pipe.from_tracing(loss_wrapper, output_loss_value_spec=True)
+    pipe = pipeline(loss_wrapper, output_loss_value_spec=True)
 
     # We now have two args: `x` and `target`, so specify batch dimension
     # for both.

@@ -10,7 +10,8 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy.IR import Pipe, SplitPoint, annotate_split_points
+from pippy import pipeline
+from pippy.IR import SplitPoint, annotate_split_points
 from pippy.PipelineStage import PipelineStage
 
 from transformers import T5ForConditionalGeneration, T5Config
@@ -67,7 +68,7 @@ def run(args):
     add_split_points(t5, args.world_size)
 
     # Create pipeline
-    t5_pipe = Pipe.from_tracing(
+    t5_pipe = pipeline(
         t5,
         num_chunks=args.chunks,
         example_args=(),

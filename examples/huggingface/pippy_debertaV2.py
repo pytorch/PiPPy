@@ -9,7 +9,8 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy.IR import Pipe, SplitPoint, annotate_split_points
+from pippy import pipeline
+from pippy.IR import SplitPoint, annotate_split_points
 from pippy.PipelineStage import PipelineStage
 
 from transformers import DebertaV2ForMaskedLM, DebertaConfig
@@ -49,7 +50,7 @@ def run(args):
     add_split_points(deberta, args.world_size)
 
     # Create pipeline
-    deberta_pipe = Pipe.from_tracing(
+    deberta_pipe = pipeline(
         deberta,
         num_chunks=args.chunks,
         example_args=(input_ids, ),

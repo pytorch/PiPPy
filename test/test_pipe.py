@@ -4,7 +4,7 @@ import unittest
 
 import torch
 
-from pippy.IR import Pipe, pipe_split
+from pippy.IR import pipe_split, pipeline
 
 
 d_hid = 512
@@ -78,7 +78,7 @@ def run_worker(args, model_class):
     x = torch.randn(batch_size, d_hid)
     y = torch.randn(batch_size, d_hid)
 
-    pipe = Pipe.from_tracing(
+    pipe = pipeline(
         mod,
         args.chunks,
         example_args=(x, y),

@@ -7,7 +7,7 @@ import pippy
 
 import torch
 import torch.distributed as dist
-from pippy.IR import Pipe, pipe_split
+from pippy.IR import pipe_split, pipeline
 from pippy.microbatch import sum_reducer, TensorChunkSpec
 from pippy.PipelineStage import PipelineStage
 
@@ -64,7 +64,7 @@ def run_worker(args):
         sum_reducer,  # loss
     )
 
-    pipe = Pipe.from_tracing(
+    pipe = pipeline(
         mod,
         args.chunks,
         example_args=(x, y),

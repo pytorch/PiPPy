@@ -109,6 +109,7 @@ This network is written as free-form Python code; it has not been modified for a
 Let us see our first usage of the `pippy.IR.Pipe` interface:
 
 ```python
+from pippy import pipeline
 from pippy.IR import annotate_split_points, Pipe, PipeSplitWrapper
 
 annotate_split_points(mn, {'layer0': PipeSplitWrapper.SplitPoint.END,
@@ -118,7 +119,7 @@ batch_size = 32
 example_input = torch.randn(batch_size, in_dim, device=device)
 chunks = 4
 
-pipe = Pipe.from_tracing(mn, chunks, example_args=(example_input,))
+pipe = pipeline(mn, chunks, example_args=(example_input,))
 print(pipe)
 
 """
@@ -144,7 +145,7 @@ def forward(self, arg0):
 """
 ```
 
-So what's going on here? First, `Pipe.from_tracing` turns our model into a directed acyclic graph (DAG) by tracing the model. Then, it groups together the operations and parameters into _pipeline stages_. Stages are represented as `submod_N` submodules, where `N` is a natural number.
+So what's going on here? First, `pipeline` turns our model into a directed acyclic graph (DAG) by tracing the model. Then, it groups together the operations and parameters into _pipeline stages_. Stages are represented as `submod_N` submodules, where `N` is a natural number.
 
 We used `annotate_split_points` to specify that the code should be split and the end of `layer0` and `layer1`. Our code has thus been split into _three_ pipeline stages. PiPPy also provides `SplitPoint.BEGINNING` if a user wants to split before certain annotation point.
 

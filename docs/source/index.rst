@@ -93,7 +93,7 @@ the trivial feed-forward nature of that sequential. For example:
        return _5
    """
 
-Similarly, we can use ``Pipe.from_tracing`` to use ``torch.fx`` tracing
+Similarly, we can use ``pipeline`` to use ``torch.fx`` tracing
 to convert an arbitrary ``nn.Module`` instance to this form. For
 example:
 
@@ -123,7 +123,7 @@ example:
    ec = ExampleCode()
    ec(torch.randn(50, 512))
 
-   ec_pipe = Pipe.from_tracing(ec, MultiUseParameterConfig.TRANSMIT)
+   ec_pipe = pipeline(ec, MultiUseParameterConfig.TRANSMIT)
    print(ec_pipe.split_gm)
    """
    GraphModule(
@@ -151,7 +151,7 @@ example:
 There are a few things to note about the above example:
 
 1. We use ``IR.pipe_split`` to explicitly demarcate within the code
-   where we want pipeline boundaries to be. ``from_tracing`` will
+   where we want pipeline boundaries to be. ``pipeline`` will
    collect all data dependencies across these calls to ``pipe_split``
    and emit corresponding data dependencies in the pipeline graph.
 
@@ -160,13 +160,13 @@ There are a few things to note about the above example:
       or end of execution of any Module in the module hierarchy
 
 2. Note the ``skip_connection`` value in the original program.
-   ``from_tracing`` will correctly detect the usage of this value in
+   ``pipeline`` will correctly detect the usage of this value in
    non-adjacent pipeline stages and emit a connection in the top-level
    graph to forward this dependency from stage 0 to 2.
 3. Notice that ``self.mm_param`` is used both in pipeline stage 0 and
    pipeline stage 1. Since we have specified
    ``MultiUseParameterConfig.TRANSMIT`` as the ``multi_use_param_spec``
-   argument to ``from_tracing``, the system will emit code that will
+   argument to ``pipeline``, the system will emit code that will
    keep ``mm_param`` resident on stage 0 and transmit that value for use
    within stage 1. ``multi_use_param_spec`` can also be specified as a
    dictionary mapping parameter qualified names to a
@@ -184,7 +184,7 @@ example with ``multi_use_param_spec=MultiUseParameterConfig.REPLICATE``:
 
 ::
 
-   ec_pipe_replicated = Pipe.from_tracing(ec, MultiUseParameterConfig.REPLICATE)
+   ec_pipe_replicated = pipeline(ec, MultiUseParameterConfig.REPLICATE)
    print(ec_pipe_replicated.replicated_params)
    """
    [{'submod_0': '__mm_param', 'submod_1': '__mm_param'},
@@ -259,7 +259,7 @@ The above ideas may be candidates for research investigation.
 Intermediate Representation: Loss and backward() Computation
 ------------------------------------------------------------
 
-``Pipe.from_sequential`` and ``Pipe.from_tracing`` also take a
+``Pipe.from_sequential`` and ``pipeline`` also take a
 ``loss_fn`` argument to specify the loss computation in the training
 scenario. ``loss_fn`` can be an ``nn.Module`` instance or a free
 function. The module/function should take two positional arguments: the
@@ -268,7 +268,7 @@ example of using this API and the IR it produces can be seen here:
 
 ::
 
-   ec_pipe_with_loss = Pipe.from_tracing(ec, loss_fn=mse_loss)
+   ec_pipe_with_loss = pipeline(ec, loss_fn=mse_loss)
    print(ec_pipe_with_loss.split_gm)
    """
    GraphModule(

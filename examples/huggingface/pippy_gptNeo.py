@@ -9,7 +9,8 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy.IR import Pipe, SplitPoint, annotate_split_points
+from pippy import pipeline
+from pippy.IR import SplitPoint, annotate_split_points
 from pippy.PipelineStage import PipelineStage
 
 from transformers import GPTNeoForCausalLM, GPTNeoConfig
@@ -48,7 +49,7 @@ def run(args):
     add_split_points(gptneo, args.world_size)
 
     # Create pipeline
-    gptneo_pipe = Pipe.from_tracing(
+    gptneo_pipe = pipeline(
         gptneo,
         num_chunks=args.chunks,
         example_args=(),
