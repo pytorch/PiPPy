@@ -48,7 +48,7 @@ class StageArgPlaceholder:
     pass
 
 
-class PipelineStage(torch.nn.Module, QualnameMapMixin):
+class PipelineStage(QualnameMapMixin):
     def __init__(
         self,
         pipe: Pipe,
@@ -724,35 +724,7 @@ class PipelineStage(torch.nn.Module, QualnameMapMixin):
             return None
 
     def forward(self, *args, **kwargs):
-        # Clean per iteration
-        self.clear_runtime_states()
-
-        # Split inputs into chunks
-        args_split, kwargs_split = self.split_inputs(args, kwargs)
-
-        # Forward pass of all chunks
-        for chunk in range(self.chunks):
-            self.forward_one_chunk(args_split[chunk], kwargs_split[chunk])
-            logger.debug(f"[{self.group_rank}] Forwarded chunk {chunk}")
-
-        # Backward starts here
-
-        for bwd_chunk_id in range(self.chunks):
-            self.backward_one_chunk()
-            logger.debug(f"[{self.group_rank}] Backwarded chunk {bwd_chunk_id}")
-
-        # Wait for all sends to finish
-        # TODO: okay to delay the sync till completion of all chunks?
-        for work in self.all_act_send_reqs:
-            work.wait()
-
-        # Wait for all sends to finish
-        # TODO: okay to delay the sync till completion of all chunks?
-        for work in self.all_grad_send_reqs:
-            work.wait()
-
-        # Last rank return merged results per original format
-        if self.is_last():
-            return self.merge_output_chunks()
-        else:
-            return None
+        raise NotImplementedError(
+            "forward() function of PipelineStage is deprecated; please create a "
+            "PipelineSchedule and call step(input) instead."
+        )
