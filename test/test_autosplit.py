@@ -9,6 +9,7 @@ import torch
 import torch.distributed as dist
 from pippy import split_into_equal_size
 from pippy.IR import Pipe
+from pippy.PipelineSchedule import PipelineScheduleGPipe
 from pippy.PipelineStage import PipelineStage
 
 
@@ -56,11 +57,10 @@ def run_worker(args):
     )
 
     # Check returned number of stages
-    nstages = len(list(pipe.split_gm.children()))
     assert (
-        nstages == args.world_size
-    ), f"Model is split into {nstages} stages instead of {args.world_size}"
-    print(f"Split test passed: got {nstages} stages")
+        pipe.num_stages == args.world_size
+    ), f"Model is split into {pipe.num_stages} stages instead of {args.world_size}"
+    print(f"Split test passed: got {pipe.num_stages} stages")
 
     stage = PipelineStage(
         pipe,
@@ -68,13 +68,14 @@ def run_worker(args):
         device=args.device,
     )
 
+    # Attach to a schedule
+    schedule = PipelineScheduleGPipe(stage, args.chunks)
+
     # Run
     if args.rank == 0:
-        stage(x)
-    elif args.rank == args.world_size - 1:
-        out = stage()
+        schedule.step(x)
     else:
-        stage()
+        out = schedule.step()
 
     dist.barrier()
     print(f"Rank {args.rank} completes")

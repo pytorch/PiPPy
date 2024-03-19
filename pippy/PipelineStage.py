@@ -441,12 +441,17 @@ class PipelineStage(torch.nn.Module, QualnameMapMixin):
                         dist.irecv, info.buffer, peer_global_rank, self.group
                     )
                 )
+
         return ops
 
     def get_fwd_send_ops(self) -> List[dist.P2POp]:
         # Get the send ops for the current stage
         # Use "-1" to get the outputs created by the last chunk
-        output_tuple = self.output_chunks[-1]
+        output = self.output_chunks[-1]
+        # Unify output form to tuple for easy correspondance with
+        # `act_send_info`
+        output_tuple = output if type(output) is tuple else (output,)
+
         ops: List[dist.P2POp] = []
 
         for idx, out in enumerate(output_tuple):
@@ -470,29 +475,36 @@ class PipelineStage(torch.nn.Module, QualnameMapMixin):
 
         return ops
 
-    def _recv_activations(
+    def get_bwd_recv_ops(self) -> List[dist.P2POp]:
+        ops: List[dist.P2POp] = []
+        if not self.pipe.has_loss_and_backwards:
+            return []
+
+        # TODO: implementation
+        return ops
+
+    def get_bwd_send_ops(self) -> List[dist.P2POp]:
+        ops: List[dist.P2POp] = []
+        if not self.pipe.has_loss_and_backwards:
+            return []
+
+        # TODO: implementation
+        return ops
+
+    def _get_recv_activations(
         self,
     ):
-        # Receive requests of a chunk
-        recv_reqs: List[dist.Work] = []
-
-        act_recv = self.recv_tensor_fn(recv_reqs)
-
-        def recv_args(info):
+        def get_recv_tensor(info):
             if isinstance(info, RecvInfo):
-                # This is an activation to receive
-                return act_recv(info)
+                # This is an activation we received
+                return info.buffer
             else:
                 raise AssertionError(f"Expected RecvInfo but got {type(info)}")
 
         composite_args = map_aggregate(
             self.args_recv_info[self.fwd_chunk_id],
-            recv_args,
+            get_recv_tensor,
         )
-
-        # Wait for all recvs to finish
-        for work in recv_reqs:
-            work.wait()
 
         return composite_args
 
@@ -617,7 +629,7 @@ class PipelineStage(torch.nn.Module, QualnameMapMixin):
         else:
             # Receive activations for this chunk
             # Activations only come in args form
-            composite_args = self._recv_activations()
+            composite_args = self._get_recv_activations()
             composite_kwargs = {}
 
         # Compute forward
@@ -638,16 +650,13 @@ class PipelineStage(torch.nn.Module, QualnameMapMixin):
             # HACK: this is a hacky workaround for the fact that export creates
             # output in list format
             output = tuple(output)
+
         logger.debug(map_debug_info(output))
         # Unify output form to tuple for easy correspondance with
         # `act_send_info`
         output_tuple = output if type(output) is tuple else (output,)
         # Prepare for final output merge or reduction
         self.output_chunks.append(output)
-
-        # Send activations
-        send_reqs = self._send_activations(output_tuple)
-        self.all_act_send_reqs += send_reqs
 
         # Save activations and inputs for backward
         flat_args = flatten_args(composite_args)
@@ -704,11 +713,15 @@ class PipelineStage(torch.nn.Module, QualnameMapMixin):
         # Caching chunk outputs for final output merge or reduction
         self.output_chunks.clear()
 
-    def merge_output_chunks(self):
-        return merge_chunks(
-            self.output_chunks,
-            self.pipe.output_chunk_spec,
-        )
+    def merge_outputs(self):
+        # Last rank return merged results per original format
+        if self.is_last():
+            return merge_chunks(
+                self.output_chunks,
+                self.pipe.output_chunk_spec,
+            )
+        else:
+            return None
 
     def forward(self, *args, **kwargs):
         # Clean per iteration
