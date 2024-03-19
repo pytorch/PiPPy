@@ -1,7 +1,13 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 
 # Minimum effort to run this example:
-# $ torchrun --nproc-per-node 4 pippy_t5.py
+# $ torchrun --nproc-per-node 2 pippy_t5.py
+
+# Note: this example currently supports two ranks only due to:
+# (1) the need of decoder_input_ids;
+# (2) the `embed_tokens` module is shared between encoder and decoder. In the
+# 2-rank case, we cut the model carefully so that `embed_tokens` is only used on
+# rank 0.
 
 
 import argparse
@@ -25,22 +31,16 @@ def add_split_points(t5, nranks):
     total_layers = t5.config.num_layers + t5.config.num_decoder_layers
     layers_per_rank = (total_layers + nranks - 1) // nranks
     print(f"Layers per rank = {layers_per_rank}")
-    nstages = 1
     # Split encoder
-    for i in range(1, t5.config.num_layers // layers_per_rank):
-        annotate_split_points(
-            t5, {f'encoder.block.{i * layers_per_rank}': SplitPoint.BEGINNING})
-        nstages += 1
-    # Split at the boundary of encoder and decoder
-    annotate_split_points(
-        t5, {f'decoder.embed_tokens': SplitPoint.BEGINNING})
-    nstages += 1
+    for i in range(1, t5.config.num_layers):
+        if i % layers_per_rank == 0:
+            annotate_split_points(
+                t5, {f'encoder.block.{i}': SplitPoint.BEGINNING})
     # Split decoder
-    for i in range(1, t5.config.num_decoder_layers // layers_per_rank):
-        annotate_split_points(
-            t5, {f'decoder.block.{i * layers_per_rank}': SplitPoint.BEGINNING})
-        nstages += 1
-    assert nstages == nranks, f"nstages = {nstages} nranks = {nranks}"
+    for i in range(0, t5.config.num_decoder_layers):
+        if i % layers_per_rank == 0:
+            annotate_split_points(
+                t5, {f'decoder.block.{i}': SplitPoint.BEGINNING})
 
 
 def run(args):
@@ -73,7 +73,7 @@ def run(args):
         example_args=(),
         example_kwargs=example_inputs,
     )
-    assert len(list(t5_pipe.split_gm.children())) == args.world_size
+    assert t5_pipe.num_stages == args.world_size, f"pipe stages: {t5_pipe.num_stages}"
     if args.rank == 0:
         for i, sm in enumerate(t5_pipe.split_gm.children()):
             print(f"Pipeline stage {i} {get_number_of_params(sm) // 10 ** 6}M params")
@@ -87,9 +87,7 @@ def run(args):
 
     # Run
     if args.rank == 0:
-        stage(example_inputs["input_ids"])
-    elif args.rank == 1:
-        stage(example_inputs["decoder_input_ids"])
+        stage(**example_inputs)
     elif args.rank == args.world_size - 1:
         out = stage()
     else:
