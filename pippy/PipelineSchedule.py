@@ -104,14 +104,12 @@ class PipelineStageBase(ABC):
         """
         raise NotImplementedError
 
-    @abstractmethod
     def clear_runtime_states(self) -> None:
         """
         Clear runtime states of the stage.
         """
         raise NotImplementedError
 
-    @abstractmethod
     def split_inputs(
         self,
         args: Tuple[Any, ...],
@@ -124,7 +122,6 @@ class PipelineStageBase(ABC):
         # TODO: lift an implementation here from PipelineStage or move it to PipelineSchedule
         raise NotImplementedError
 
-    @abstractmethod
     def merge_outputs(self):
         """
         Merges the outputs of the microbatches into a single output.
@@ -377,8 +374,6 @@ class PipelineStageV2Impl(PipelineStageBase):
         module: nn.Module,
         stage_id: int,
         num_stages: int,
-        rank: int,
-        world_size: int,
         device: torch.device,
         input_args: Optional[Union[torch.Tensor, List[torch.tensor]]] = None,
         output_args: Optional[Union[torch.Tensor, List[torch.tensor]]] = None,
@@ -412,8 +407,9 @@ class PipelineStageV2Impl(PipelineStageBase):
         self.inputs_grad: List[torch.tensor] = []
         self.outputs_grad: List[torch.tensor] = []
 
-        self.prev_stage = (rank - 1) % world_size
-        self.next_stage = (rank + 1) % world_size
+        # TODO: Calculating stage index from rank is not ideal, e.g. won't match in Interleaved 1F1B case.
+        self.prev_stage = (self.rank - 1) % self.world_size
+        self.next_stage = (self.rank + 1) % self.world_size
 
         self.requests: List[dist.P2POp] = []
         logger.debug(
