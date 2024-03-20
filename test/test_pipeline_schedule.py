@@ -107,6 +107,14 @@ class TestPipelineSchedule(MultiProcessTestCase):
         # starts world_size processes
         self._spawn_processes()
 
+    def init_distributed(self):
+        dist.init_process_group(
+            init_method=self.init_method,
+            backend="gloo",
+            rank=self.rank,
+            world_size=self.world_size,
+        )
+
     def _create_pipline_stage(
         self, model, inputs, device, stage_id=None, num_stages=None
     ):
@@ -114,8 +122,6 @@ class TestPipelineSchedule(MultiProcessTestCase):
             module=model,
             stage_id=self.rank if stage_id is None else stage_id,
             num_stages=self.world_size if num_stages is None else num_stages,
-            rank=self.rank,
-            world_size=self.world_size,
             input_args=inputs,
             device=device,
         )
@@ -138,6 +144,7 @@ class TestPipelineSchedule(MultiProcessTestCase):
     def test_pipeline_stage_init(self):
         # TODO: parameterize the device?
         device = "cpu"
+        self.init_distributed()
 
         model = MLP(dim=8, hidden_dim=4, out_dim=4)
         inputs = torch.rand((2, 8), device=device)
@@ -153,16 +160,14 @@ class TestPipelineSchedule(MultiProcessTestCase):
     def test_pipeline_stage_fwd(self):
         # TODO: parameterize the device?
         device = "cpu"
+        self.init_distributed()
 
         # single input model forward
         model = MLP(dim=8, hidden_dim=4, out_dim=4)
         input1 = torch.rand((2, 8), device=device)
         pipeline_stage = self._create_pipline_stage(model, input1, device)
         output = pipeline_stage.forward_one_chunk(input1)
-        if self.rank == self.world_size - 1:
-            self.assertIsInstance(output, torch.Tensor)
-        else:
-            self.assertEqual(output.shape, torch.Size([2, 4]))
+        self.assertEqual(output.shape, torch.Size([2, 4]))
 
         # multi-input model forward
         model = MultiInputArgMLP(dim1=8, dim2=4, out_dim=4)
@@ -182,21 +187,13 @@ class TestPipelineSchedule(MultiProcessTestCase):
         input1 = torch.rand((2, 8), device=device)
         pipeline_stage = self._create_pipline_stage(model, input1, device)
         output = pipeline_stage.forward_one_chunk(input1)
-        if self.rank == self.world_size - 1:
-            self.assertIsInstance(output, torch.Tensor)
-        else:
-            self.assertEqual(len(output), 2)
-            self.assertEqual(output[0].shape, torch.Size([2, 4]))
-            self.assertEqual(output[1].shape, torch.Size([4, 4]))
+        self.assertEqual(len(output), 2)
+        self.assertEqual(output[0].shape, torch.Size([2, 4]))
+        self.assertEqual(output[1].shape, torch.Size([4, 4]))
 
     def test_get_stage_shapes(self):
         device = "cpu"
-        dist.init_process_group(
-            init_method=self.init_method,
-            backend="gloo",
-            rank=self.rank,
-            world_size=self.world_size,
-        )
+        self.init_distributed()
 
         model_chunk = MLP(dim=8, hidden_dim=4, out_dim=8)
         microbatch = torch.rand((10, 8), device=device)
@@ -236,12 +233,7 @@ class TestPipelineSchedule(MultiProcessTestCase):
 
     def test_validate_stage_shapes(self):
         device = "cpu"
-        dist.init_process_group(
-            init_method=self.init_method,
-            backend="gloo",
-            rank=self.rank,
-            world_size=self.world_size,
-        )
+        self.init_distributed()
 
         # test single pipeline stage
         model_chunk = MLP(dim=8, hidden_dim=4, out_dim=8)
