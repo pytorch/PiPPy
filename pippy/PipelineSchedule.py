@@ -708,18 +708,16 @@ class PipelineScheduleGPipe(PipelineSchedule):
             # Copy internal losses to external container
             losses.extend(internal_losses)
 
-    def step(
-        self, *args, targets=None, losses: Optional[List] = None, **kwargs
-    ):
+    def step(self, *args, target=None, losses: Optional[List] = None, **kwargs):
         # Clean per iteration
         self._stage.clear_runtime_states()
 
         # Split inputs into microbatches
         args_split, kwargs_split = self._stage.split_inputs(args, kwargs)
 
-        # Split targets into microbatches
-        if targets is not None:
-            targets_split = torch.tensor_split(targets, self._n_microbatches)
+        # Split target into microbatches
+        if target is not None:
+            targets_split = torch.tensor_split(target, self._n_microbatches)
         else:
             targets_split = None
 
