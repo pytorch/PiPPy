@@ -50,7 +50,7 @@ def run_worker(args):
     mod.to(args.device)
 
     x = torch.randn(batch_size, d_hid, device=args.device)
-    targets = torch.randn(batch_size, d_hid, device=args.device)
+    target = torch.randn(batch_size, d_hid, device=args.device)
     loss_fn = torch.nn.MSELoss(reduction="sum")
 
     pipe = Pipe.from_tracing(
@@ -73,7 +73,7 @@ def run_worker(args):
         schedule.step(x)
     elif args.rank == args.world_size - 1:
         losses = []
-        out = schedule.step(targets=targets, losses=losses)
+        out = schedule.step(target=target, losses=losses)
     else:
         schedule.step()
 
@@ -83,7 +83,7 @@ def run_worker(args):
     # Last rank checks result
     if args.rank == args.world_size - 1:
         ref_out = mod(x)
-        ref_loss = loss_fn(x, targets)
+        ref_loss = loss_fn(x, target)
         pipe_loss = sum(losses)
         torch.testing.assert_close(out, ref_out, rtol=1e-2, atol=5e-3)
         # print(f"equivalence test passed pipe_loss={pipe_loss} ref_loss={ref_loss}")
