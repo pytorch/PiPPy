@@ -1,7 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import logging
 import operator
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -14,6 +14,7 @@ from pippy.backward import stage_backward
 from pippy.debug import map_debug_info
 from pippy.IR import Pipe
 from pippy.microbatch import merge_chunks, split_args_kwargs_into_chunks
+from pippy.PipelineSchedule import PipelineStageBase
 from pippy.utils import flatten_args, modify_graph_op_device, QualnameMapMixin
 
 
@@ -48,7 +49,11 @@ class StageArgPlaceholder:
     pass
 
 
-class PipelineStage(QualnameMapMixin):
+# An input can be either a received activation or a model input
+InputInfo = Union[RecvInfo, StageArgPlaceholder]
+
+
+class PipelineStage(PipelineStageBase, QualnameMapMixin):
     def __init__(
         self,
         pipe: Pipe,
@@ -56,17 +61,11 @@ class PipelineStage(QualnameMapMixin):
         device: torch.device,
         group: dist.ProcessGroup = None,
     ):
-        super().__init__()
+        PipelineStageBase.__init__(
+            self, stage_index, pipe.num_stages, device, group
+        )
         self.pipe = pipe
-        self.stage_index = stage_index
-        self.nstages = pipe.num_stages
         self.chunks = pipe.num_chunks
-        self.device = device
-        self.group = group
-        if dist.get_world_size(self.group) > self.nstages:
-            raise RuntimeError(
-                "Number of ranks is larger than number of stages, some ranks are unused"
-            )
 
         # `group_rank` is rank in process group `group`.
         self.group_rank = dist.get_rank(group)
@@ -78,10 +77,6 @@ class PipelineStage(QualnameMapMixin):
         self.fwd_chunk_id: int = 0
         # Current backward chunk id
         self.bwd_chunk_id: int = 0
-        # Activation send requests of all chunk
-        self.all_act_send_reqs: List[dist.Work] = []
-        # Grad send requests of all chunk
-        self.all_grad_send_reqs: List[dist.Work] = []
         # Caching chunk outputs for final output merge or reduction
         self.output_chunks: List[Any] = []
 
@@ -112,22 +107,6 @@ class PipelineStage(QualnameMapMixin):
         if not found_node:
             raise AssertionError(f"Cannot find {self.name} in graph")
 
-        # Find my backward node in graph
-        if self.pipe.has_loss_and_backwards:
-            found_bwd = False
-            seen_bwd = -1
-            for node in reversed(self.split_gm.graph.nodes):
-                if (node.op, node.target) == ("call_function", stage_backward):
-                    seen_bwd += 1
-                    if seen_bwd == self.stage_index:
-                        found_bwd = True
-                        self.bwd_node = node
-                        break
-            if not found_bwd:
-                raise AssertionError(
-                    f"Cannot find backward for {self.name} in graph"
-                )
-
         # Create submod to rank mapping
         self.submod_to_stage_index: Dict[str, int] = {}
         for i, (name, _) in enumerate(self.split_gm.named_children()):
@@ -137,11 +116,14 @@ class PipelineStage(QualnameMapMixin):
         # In interleaved case, `group_rank` is stage index % group size.
         self.stage_index_to_group_rank: Dict[int, int] = {}
         pg_world_size = dist.get_world_size(group)
-        for i in range(self.nstages):
+        for i in range(self.num_stages):
             # We only support wrapped-around interleaving
             peer_rank = i % pg_world_size
             self.stage_index_to_group_rank.setdefault(i, peer_rank)
 
+        # Setting `has_backward` to True here to create send/recv infra for both forward and backward
+        # TODO: this should ultramately be determined by PipelineSchedule
+        self.has_backward = True
         # Prepare send/recv infrastructure
         self._prepare_send_recv_infra()
         # Cast submodule to device
@@ -172,26 +154,20 @@ class PipelineStage(QualnameMapMixin):
         # `torch.ones`, `torch.zeros`, `torch.rand`, etc.
         modify_graph_op_device(self.submod, self.device)
 
-    def is_first(self):
-        return self.stage_index == 0
-
-    def is_last(self):
-        return self.stage_index == self.nstages - 1
-
     def _prepare_send_recv_infra(self):
         """
         Create send/recv infrastructures for activations (during forward) and
         gradients (during backward)
         """
         # chunk : Tuple of arg buffers
-        self.args_recv_info: Dict[int, Tuple] = {}
+        self.args_recv_info: Dict[int, Tuple[InputInfo]] = {}
         for chunk in range(self.chunks):
             self.args_recv_info[chunk] = self._create_act_recv_buffers()
 
         # Send info during forward for each activation
         self.act_send_info = self._create_act_send_info()
 
-        if self.pipe.has_loss_and_backwards:
+        if self.has_backward:
             # chunk : List of output grad buffers
             # `grad_recv_info` is a mirror of `act_send_info`
             self.grad_recv_info: Dict = {}
@@ -262,7 +238,7 @@ class PipelineStage(QualnameMapMixin):
             src_rank = self.get_stage_index_of_submod(input_node.name)
             buffer = _make_tensor_from_meta(example_value, self.device)
             # Enable gradient in training mode
-            if self.pipe.has_loss_and_backwards:
+            if self.has_backward:
                 buffer.requires_grad_(True)
             return RecvInfo(
                 input_node.name,
@@ -271,7 +247,7 @@ class PipelineStage(QualnameMapMixin):
             )
 
         # `args` is a Tuple, hence we will have:
-        # Tuple[RecvInfo]
+        # Tuple[InputInfo]
         args_recv_info = map_arg(self.node.args, create_recv_tensor)
 
         logger.info(
@@ -327,9 +303,9 @@ class PipelineStage(QualnameMapMixin):
     def _create_grad_recv_info(
         self,
         act_send_info: Dict,
-    ) -> Dict[int, RecvInfo]:
+    ) -> Tuple[RecvInfo, ...]:
         # Dict[output_index, RecvInfo]
-        grad_recv_info: Dict = {}
+        grad_recv_info: Dict[int, RecvInfo] = {}
         my_example_value = self.node.meta["example_value"]
 
         for out_idx, dst_list in act_send_info.items():
@@ -352,8 +328,12 @@ class PipelineStage(QualnameMapMixin):
                 _make_tensor_from_meta(example_value, self.device),
             )
 
-        logger.info(f"[{self.group_rank}] " f"Grad recv info: {grad_recv_info}")
-        return grad_recv_info
+        # Convert to tuple for convenience in get_ops and retrieve tensor
+        grad_recv_info_tuple = tuple(grad_recv_info.values())
+        logger.info(
+            f"[{self.group_rank}] " f"Grad recv info: {grad_recv_info_tuple}"
+        )
+        return grad_recv_info_tuple
 
     def _create_grad_send_info(
         self,
@@ -399,7 +379,7 @@ class PipelineStage(QualnameMapMixin):
 
     def _get_recv_ops(
         self,
-        recv_infos,
+        recv_infos: Tuple[InputInfo],
     ) -> List[dist.P2POp]:
         """
         Helper function shared by `get_fwd_recv_ops` and `get_bwd_recv_ops`.
@@ -437,7 +417,7 @@ class PipelineStage(QualnameMapMixin):
         Returns a list of ops that are needed to receive the gradients
         for this stage.
         """
-        if not self.pipe.has_loss_and_backwards:
+        if not self.has_backward:
             return []
 
         recv_infos = self.grad_recv_info[self.bwd_chunk_id]
@@ -481,7 +461,7 @@ class PipelineStage(QualnameMapMixin):
         Get the gradient send ops for current stage's backward.
         """
         ops: List[dist.P2POp] = []
-        if not self.pipe.has_loss_and_backwards:
+        if not self.has_backward or self.is_first:
             return []
 
         for grad, grad_recv_stage in zip(self.grads_input, self.grad_send_info):
@@ -506,7 +486,7 @@ class PipelineStage(QualnameMapMixin):
 
     def _map_tensor_from_recv_info(
         self,
-        recv_infos,
+        recv_infos: Tuple[InputInfo],
     ):
         def get_recv_tensor(info):
             if isinstance(info, RecvInfo):
@@ -515,7 +495,7 @@ class PipelineStage(QualnameMapMixin):
                 raise AssertionError(f"Expected RecvInfo but got {type(info)}")
 
         tensors = map_aggregate(
-            self.args_recv_info[self.fwd_chunk_id],
+            recv_infos,
             get_recv_tensor,
         )
 
@@ -576,7 +556,7 @@ class PipelineStage(QualnameMapMixin):
         args: Tuple[Any, ...],
         kwargs: Optional[Dict[str, Any]] = None,
     ):
-        if self.is_first():
+        if self.is_first:
             # First stage doesn't need to receive anything
             composite_args = args
             composite_kwargs = kwargs or {}
@@ -627,31 +607,40 @@ class PipelineStage(QualnameMapMixin):
         self,
         loss=None,
     ):
-        if not self.pipe.has_loss_and_backwards:
-            return None
-
-        grads = self._retrieve_recv_grads()
-
-        # Pack args for `stage_backward``
-        bwd_kwargs = dict(self.bwd_node.kwargs)
         (
-            bwd_kwargs["stage_output"],
-            bwd_kwargs["input_values"],
+            stage_output,
+            input_values,
         ) = self.fwd_cache.pop(self.bwd_chunk_id)
-        # Fill actual gradients received for outputs
-        # If nothing received, as in the case of last stage, then we
-        # would use the default `output_grads` prepared in the IR phase,
-        # i.e. from `bwd_node.kwargs`. For example, it may look like
-        # this if there are two outputs: ('None', 'None')
-        if len(grads) > 0:
-            bwd_kwargs["output_grads"] = grads
 
-        # `stage_backward` node does not have `args`, only `kwargs`
-        # TODO: is there a better than putting `grads_input` under self?
-        self.grads_input = self.backward_maybe_with_nosync(
-            bwd_kwargs,
-            self.bwd_chunk_id == self.chunks - 1,
-        )
+        # Compute backward
+        if self.is_last:
+            # Last stage computes gradients from loss and has no gradients from
+            # next stage
+            self.grads_input = torch.autograd.grad(
+                loss,
+                input_values,
+                allow_unused=True,  # TODO
+            )
+        else:
+            # Otherwise, receive gradients from next stage
+            grads_output = self._retrieve_recv_grads()
+
+            if self.is_first:
+                # If an input to the pipeline requires gradient,
+                # `torch.autograd.backward` will accumulate the gradient into the
+                # `.grad` field of such input
+                torch.autograd.backward(
+                    stage_output,
+                    grad_tensors=grads_output,
+                )
+            else:
+                # Use `torch.autograd.grad` to return the gradients
+                self.grads_input = torch.autograd.grad(
+                    stage_output,
+                    input_values,
+                    grads_output,
+                    allow_unused=True,  # TODO
+                )
 
         self.bwd_chunk_id += 1
 
@@ -661,16 +650,12 @@ class PipelineStage(QualnameMapMixin):
         self.bwd_chunk_id = 0
         # map microbatch ID to list of forward tensor args
         self.fwd_cache.clear()
-        # Activation send requests of all chunk
-        self.all_act_send_reqs.clear()
-        # Grad send requests of all chunk
-        self.all_grad_send_reqs.clear()
         # Caching chunk outputs for final output merge or reduction
         self.output_chunks.clear()
 
     def merge_outputs(self):
         # Last rank return merged results per original format
-        if self.is_last():
+        if self.is_last:
             return merge_chunks(
                 self.output_chunks,
                 self.pipe.output_chunk_spec,

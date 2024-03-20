@@ -53,3 +53,5 @@ jobs:
         run: torchrun --nproc-per-node 3 examples/basic/example.py
       - name: Run auto-split test
         run: torchrun --nproc-per-node 4 test/test_autosplit.py
+      - name: Run forward-backward test
+        run: torchrun --nproc-per-node 4 test/test_bwd.py
