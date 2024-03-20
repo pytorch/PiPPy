@@ -1,6 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 # Minimal effort to run this code:
-# $ torchrun --nproc-per-node 3 example.py
+# $ torchrun --nproc-per-node 3 example_train.py
 
 import os
 import torch
