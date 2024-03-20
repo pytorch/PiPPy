@@ -400,9 +400,11 @@ class PipelineStage(torch.nn.Module, QualnameMapMixin):
         peer_rank = self.stage_index_to_group_rank[info.source]
         work = dist.irecv(
             info.buffer,
-            peer_rank
-            if self.group is None
-            else dist.get_global_rank(self.group, peer_rank),
+            (
+                peer_rank
+                if self.group is None
+                else dist.get_global_rank(self.group, peer_rank)
+            ),
             group=self.group,
         )
         recv_reqs.append(work)
@@ -498,9 +500,11 @@ class PipelineStage(torch.nn.Module, QualnameMapMixin):
                 peer_rank = self.stage_index_to_group_rank[dst]
                 work = dist.isend(
                     out,
-                    peer_rank
-                    if self.group is None
-                    else dist.get_global_rank(self.group, peer_rank),  # TODO
+                    (
+                        peer_rank
+                        if self.group is None
+                        else dist.get_global_rank(self.group, peer_rank)
+                    ),  # TODO
                     group=self.group,
                 )
                 send_reqs.append(work)
@@ -547,9 +551,11 @@ class PipelineStage(torch.nn.Module, QualnameMapMixin):
                 peer_rank = self.stage_index_to_group_rank[grad_recv_stage]
                 work = dist.isend(
                     grad,
-                    peer_rank
-                    if self.group is None
-                    else dist.get_global_rank(self.group, peer_rank),  # TODO
+                    (
+                        peer_rank
+                        if self.group is None
+                        else dist.get_global_rank(self.group, peer_rank)
+                    ),  # TODO
                     group=self.group,
                 )
                 grad_send_reqs.append(work)

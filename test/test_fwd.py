@@ -7,7 +7,7 @@ import pippy
 
 import torch
 import torch.distributed as dist
-from pippy.IR import Pipe, pipe_split
+from pippy.IR import pipe_split, pipeline
 from pippy.PipelineStage import PipelineStage
 
 
@@ -51,7 +51,7 @@ def run_worker(args):
     x = torch.randn(batch_size, d_hid, device=args.device)
     y = torch.randn(batch_size, d_hid, device=args.device)
 
-    pipe = Pipe.from_tracing(
+    pipe = pipeline(
         mod,
         args.chunks,
         example_args=(x,),

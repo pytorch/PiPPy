@@ -9,7 +9,8 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy.IR import Pipe, SplitPoint, annotate_split_points
+from pippy import pipeline
+from pippy.IR import SplitPoint, annotate_split_points
 from pippy.PipelineStage import PipelineStage
 
 from transformers import PegasusForCausalLM, PegasusConfig
@@ -49,7 +50,7 @@ def run(args):
     add_split_points(pegasus, args.world_size)
 
     # Create pipeline
-    pegasus_pipe = Pipe.from_tracing(
+    pegasus_pipe = pipeline(
         pegasus,
         num_chunks=args.chunks,
         example_args=(input_ids, ),

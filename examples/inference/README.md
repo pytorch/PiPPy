@@ -86,7 +86,7 @@ concrete_args = {p.name: p.default for p in sig.parameters.values() if p.name no
 
 - Get the pipeline driver and model stages with `pippy.all_compile()`. See the section above.
 
-This under the hood, splits the model into a pipeline, `Pipe.from_tracing` uses `torch.fx` symbolic tracing to turn our model into a directed acyclic graph (DAG) representation. Then, it groups together the operations and parameters into _pipeline stages_. Stages are represented as `submod_N` submodules, where `N` is a natural number. Note: here we use HF FX_tracer for tracing.
+This under the hood, splits the model into a pipeline, `pipeline` uses `torch.fx` symbolic tracing to turn our model into a directed acyclic graph (DAG) representation. Then, it groups together the operations and parameters into _pipeline stages_. Stages are represented as `submod_N` submodules, where `N` is a natural number. Note: here we use HF FX_tracer for tracing.
 
 Loads to device directly using `defer_stage_init`, which basically let each rank trace the model and split the model and only materialize its own shard.
 

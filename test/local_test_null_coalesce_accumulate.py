@@ -9,8 +9,8 @@ import torch
 from pippy import run_pippy
 from pippy.IR import (
     _null_coalesce_accumulate,
-    Pipe,
     pipe_split,
+    pipeline,
     TrivialLossWrapper,
 )
 from pippy.PipelineDriver import (
@@ -54,7 +54,7 @@ def run_master(_, args):
     c.train()
     mse_loss = torch.nn.MSELoss()
     wrapper = TrivialLossWrapper(c, mse_loss)
-    accum_pipe = Pipe.from_tracing(wrapper)
+    accum_pipe = pipeline(wrapper)
     assert 4 == len(list(accum_pipe.split_gm.children()))
     assert any(
         n.target == _null_coalesce_accumulate

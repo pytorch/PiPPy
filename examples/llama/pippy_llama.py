@@ -2,7 +2,7 @@
 import os
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from pippy import Pipe, SplitPoint, annotate_split_points, PipelineStage
+from pippy import SplitPoint, annotate_split_points, PipelineStage
 
 # Grab the model
 llama = AutoModelForCausalLM.from_pretrained(
@@ -29,7 +29,7 @@ for i in range(1, world_size):
         {f"model.layers.{i * layers_per_rank}": SplitPoint.BEGINNING})
 
 # Create a pipeline representation from the model
-llama_pipe = Pipe.from_tracing(llama, world_size, example_args=(inputs["input_ids"],))
+llama_pipe = pipeline(llama, world_size, example_args=(inputs["input_ids"],))
 
 # Create pipeline stage for each rank
 torch.distributed.init_process_group(rank=rank, world_size=world_size)

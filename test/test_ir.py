@@ -11,8 +11,8 @@ from pippy.IR import (
     _null_coalesce_accumulate,
     annotate_split_points,
     MultiUseParameterConfig,
-    Pipe,
     pipe_split,
+    pipeline,
     PipeSequential,
     PipeSplitWrapper,
     TrivialLossWrapper,
@@ -72,7 +72,7 @@ class TestIR(unittest.TestCase):
 
     def test_sequential(self):
         pipe_seq = PipeSequential.from_sequential(self.seq)
-        pipe = Pipe.from_tracing(pipe_seq)
+        pipe = pipeline(pipe_seq)
         assert pipe.replicated_params == [
             {"submod_0": "0.weight", "submod_5": "5.weight"},
             {"submod_0": "0.bias", "submod_5": "5.bias"},
@@ -93,7 +93,7 @@ class TestIR(unittest.TestCase):
         self.assertDictEqual(expected_map, pipe.new_to_old_qualname_mapping)
 
     def test_tracing_transmit(self):
-        ec_pipe = Pipe.from_tracing(self.ec, MultiUseParameterConfig.TRANSMIT)
+        ec_pipe = pipeline(self.ec, MultiUseParameterConfig.TRANSMIT)
         x = torch.randn(5, 512)
         torch.testing.assert_close(self.ec(x), ec_pipe(x))
         assert ec_pipe.replicated_params == [
@@ -117,7 +117,7 @@ class TestIR(unittest.TestCase):
             self.assertEqual(expected_map[k], old_name)
 
     def test_tracing_replicate(self):
-        ec_pipe_replicated = Pipe.from_tracing(
+        ec_pipe_replicated = pipeline(
             self.ec, MultiUseParameterConfig.REPLICATE
         )
         x = torch.randn(5, 512)
@@ -151,7 +151,7 @@ class TestIR(unittest.TestCase):
                 return torch.relu(x)
 
         pm = PipeMod()
-        pm_pipe = Pipe.from_tracing(pm, MultiUseParameterConfig.TRANSMIT)
+        pm_pipe = pipeline(pm, MultiUseParameterConfig.TRANSMIT)
         x = torch.randn(5, 3)
         torch.testing.assert_close(pm_pipe(x), pm(x))
         assert pm_pipe.replicated_params == []
@@ -161,7 +161,7 @@ class TestIR(unittest.TestCase):
         mse_loss = torch.nn.MSELoss()
         pipe_seq = PipeSequential.from_sequential(self.seq)
         loss_wrapper = TrivialLossWrapper(pipe_seq, mse_loss)
-        pipe = Pipe.from_tracing(loss_wrapper)
+        pipe = pipeline(loss_wrapper)
         check_qualname_mapping(old=self.seq, new=pipe)
 
         test_optim = torch.optim.SGD(pipe.parameters(), lr=0.01, momentum=0.9)
@@ -196,7 +196,7 @@ class TestIR(unittest.TestCase):
     def test_loss_backward_tracing(self):
         mse_loss = torch.nn.MSELoss()
         wrapper = TrivialLossWrapper(self.ec, mse_loss)
-        ec_pipe_with_loss = Pipe.from_tracing(wrapper)
+        ec_pipe_with_loss = pipeline(wrapper)
         check_qualname_mapping(old=wrapper, new=ec_pipe_with_loss)
 
         test_optim = torch.optim.SGD(
@@ -247,7 +247,7 @@ class TestIR(unittest.TestCase):
         c.train()
         mse_loss = torch.nn.MSELoss()
         wrapper = TrivialLossWrapper(c, mse_loss)
-        accum_pipe = Pipe.from_tracing(wrapper)
+        accum_pipe = pipeline(wrapper)
         assert any(
             n.target == _null_coalesce_accumulate
             for n in accum_pipe.split_gm.graph.nodes
@@ -255,7 +255,7 @@ class TestIR(unittest.TestCase):
         accum_pipe(torch.randn(5, 50), torch.randn(5, 50))
 
     def test_invoke_pipeline_error(self):
-        ec_pipe = Pipe.from_tracing(self.ec, MultiUseParameterConfig.TRANSMIT)
+        ec_pipe = pipeline(self.ec, MultiUseParameterConfig.TRANSMIT)
         with self.assertRaisesRegex(
             RuntimeError,
             "To run pipeline locally, invoke the Pipe object directly",
@@ -267,7 +267,7 @@ class TestIR(unittest.TestCase):
             return torch.mean((output - target) ** 2)
 
         wrapper = TrivialLossWrapper(self.ec, mse_loss)
-        ec_pipe_with_loss = Pipe.from_tracing(wrapper)
+        ec_pipe_with_loss = pipeline(wrapper)
         check_qualname_mapping(old=wrapper, new=ec_pipe_with_loss)
 
         test_optim = torch.optim.SGD(
@@ -318,9 +318,7 @@ class TestIR(unittest.TestCase):
         ref_grads = {k: p.grad for k, p in elm.named_parameters()}
 
         output_loss_value_spec = (False, True)
-        pipe = Pipe.from_tracing(
-            elm, output_loss_value_spec=output_loss_value_spec
-        )
+        pipe = pipeline(elm, output_loss_value_spec=output_loss_value_spec)
 
         pipe_optim = torch.optim.SGD(pipe.parameters(), lr=0.001)
         pipe_optim.zero_grad()
@@ -341,7 +339,7 @@ class TestIR(unittest.TestCase):
 
         lb = LomgBoi()
 
-        pipe = Pipe.from_tracing(lb)
+        pipe = pipeline(lb)
         with tempfile.TemporaryDirectory() as d:
             with open(d + "tmp.pkl", "wb") as f:
                 pickle.dump(pipe.split_gm.submod_0, f)
@@ -372,7 +370,7 @@ class TestIR(unittest.TestCase):
                 return torch.relu(x)
 
         tc = TestCode()
-        tc_pipe = Pipe.from_tracing(tc)
+        tc_pipe = pipeline(tc)
         torch.testing.assert_close(
             tc_pipe(torch.ones(5, 5)), 2 * torch.ones(5, 5)
         )
@@ -397,7 +395,7 @@ class TestIR(unittest.TestCase):
                 return self.nest(x)
 
         tc = TestCode()
-        tc_pipe = Pipe.from_tracing(tc)
+        tc_pipe = pipeline(tc)
         torch.testing.assert_close(
             tc_pipe(torch.ones(5, 5)), 3 * torch.ones(5, 5)
         )
@@ -407,14 +405,14 @@ class TestIR(unittest.TestCase):
             ValueError,
             "multi_use_param_spec must be MultiUseParamSpec enum or dict",
         ):
-            Pipe.from_tracing(self.ec, multi_use_param_spec=3)
+            pipeline(self.ec, multi_use_param_spec=3)
 
     def test_multi_use_param_dict_error(self):
         with self.assertRaisesRegex(
             ValueError,
             "Unknown multi-use config value 3 specified for mm_param",
         ):
-            Pipe.from_tracing(self.ec, multi_use_param_spec={"mm_param": 3})
+            pipeline(self.ec, multi_use_param_spec={"mm_param": 3})
 
     def test_annotate_split_points_beginning(self):
         class Foo(torch.nn.Module):
@@ -440,7 +438,7 @@ class TestIR(unittest.TestCase):
 
         b = Base()
         annotate_split_points(b, {"b": PipeSplitWrapper.SplitPoint.BEGINNING})
-        pipe = Pipe.from_tracing(b)
+        pipe = pipeline(b)
         x = torch.randn(5, 5)
         torch.testing.assert_close(pipe(x), b(x))
         assert "submod_1" in dict(pipe.split_gm.named_modules())
@@ -448,7 +446,7 @@ class TestIR(unittest.TestCase):
     def test_from_tracing_preserves_buffer(self):
         ec = ExampleCode()
 
-        pipe = Pipe.from_tracing(ec, deep_copy_module=False)
+        pipe = pipeline(ec, deep_copy_module=False)
         assert "moved_buffer" in dict(pipe.split_gm.submod_1.named_buffers())
         # NB: identity comparison
         assert ec.buffer is pipe.split_gm.submod_1.moved_buffer
@@ -456,7 +454,7 @@ class TestIR(unittest.TestCase):
             ec.buffer, pipe.split_gm.submod_1.moved_buffer
         )
 
-        pipe = Pipe.from_tracing(ec, deep_copy_module=True)
+        pipe = pipeline(ec, deep_copy_module=True)
         assert "moved_buffer" in dict(pipe.split_gm.submod_1.named_buffers())
         # NB: identity comparison is not possible because pipe has a deepcopy of the original parameters
         assert ec.buffer is not pipe.split_gm.submod_1.moved_buffer
@@ -470,7 +468,7 @@ class TestIR(unittest.TestCase):
                 return torch.relu(x)
 
         m = MyModelWithKwarg()
-        pipe = Pipe.from_tracing(m)
+        pipe = pipeline(m)
 
         x = torch.randn(5, 3)
         ref_out = m(x)
@@ -514,7 +512,7 @@ class TestIR(unittest.TestCase):
 
         b = Base()
         annotate_split_points(b, {"f.submod": PipeSplitWrapper.SplitPoint.END})
-        pipe = Pipe.from_tracing(b)
+        pipe = pipeline(b)
         x = torch.randn(5, 5)
         torch.testing.assert_close(pipe(x), b(x))
         assert "submod_1" in dict(pipe.split_gm.named_modules())
@@ -539,7 +537,7 @@ class TestIR(unittest.TestCase):
                 return x + y
 
         module = ModuleWithArgsAndKWArgs()
-        pipe = Pipe.from_tracing(module)
+        pipe = pipeline(module)
         self.assertEqual(pipe(1), 3)
         self.assertEqual(pipe(1, y=3), 4)
         self.assertEqual(pipe(1, 4), 5)
@@ -561,7 +559,7 @@ class TestIR(unittest.TestCase):
                 return x + y
 
         module = ModuleWithOnlyKWArgs()
-        pipe = Pipe.from_tracing(module)
+        pipe = pipeline(module)
         self.assertEqual(pipe(), 3)
         self.assertEqual(pipe(2), 4)
         self.assertEqual(pipe(x=3), 5)
@@ -601,7 +599,7 @@ class TestIR(unittest.TestCase):
         input_nt = SpecialInputNamedTuple(torch.randn(5, 3), 42)
         ref_out = tm(x, input_nt)
 
-        pipe = Pipe.from_tracing(tm)
+        pipe = pipeline(tm)
         pipe_out = pipe(x, input_nt)
 
         torch.testing.assert_close(pipe_out["added"], ref_out["added"])
@@ -777,7 +775,7 @@ class TestIR(unittest.TestCase):
         )
 
     def test_remap_qualname(self):
-        ec_pipe = Pipe.from_tracing(self.ec, 1, self.example_inputs)
+        ec_pipe = pipeline(self.ec, 1, self.example_inputs)
 
         # Get the first field of all tuples, i.e. names
         old_named_params = zip(*list(self.ec.named_parameters()))

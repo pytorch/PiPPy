@@ -7,8 +7,7 @@ import pippy
 
 import torch
 import torch.distributed as dist
-from pippy import split_into_equal_size
-from pippy.IR import Pipe
+from pippy import pipeline, split_into_equal_size
 from pippy.PipelineStage import PipelineStage
 
 
@@ -48,7 +47,7 @@ def run_worker(args):
 
     split_policy = split_into_equal_size(args.world_size)
 
-    pipe = Pipe.from_tracing(
+    pipe = pipeline(
         mod,
         args.chunks,
         example_args=(x,),

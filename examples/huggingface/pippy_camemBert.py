@@ -9,7 +9,8 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy.IR import Pipe, SplitPoint, annotate_split_points
+from pippy import pipeline
+from pippy.IR import SplitPoint, annotate_split_points
 from pippy.PipelineStage import PipelineStage
 
 from transformers import CamembertForMaskedLM, CamembertConfig
@@ -48,7 +49,7 @@ def run(args):
     add_split_points(camembert, args.world_size)
 
     # Create pipeline
-    camembert_pipe = Pipe.from_tracing(
+    camembert_pipe = pipeline(
         camembert,
         num_chunks=args.chunks,
         example_args=(),
