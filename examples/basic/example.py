@@ -4,11 +4,15 @@
 
 import os
 import torch
-from pippy.IR import annotate_split_points, Pipe, PipeSplitWrapper
+from pippy.IR import annotate_split_points, Pipe, SplitPoint
 from pippy.PipelineSchedule import PipelineScheduleGPipe
 from pippy.PipelineStage import PipelineStage
 
+in_dim = 512
+layer_dims = [512, 1024, 256]
+out_dim = 10
 
+# Single layer definition
 class MyNetworkBlock(torch.nn.Module):
     def __init__(self, in_dim, out_dim):
         super().__init__()
@@ -20,22 +24,25 @@ class MyNetworkBlock(torch.nn.Module):
         return x
 
 
+# Full model definition
 class MyNetwork(torch.nn.Module):
-    def __init__(self, in_dim, layer_dims):
+    def __init__(self):
         super().__init__()
+        self.num_layers = len(layer_dims)
 
         prev_dim = in_dim
+        # Add layers one by one
         for i, dim in enumerate(layer_dims):
-            setattr(self, f"layer{i}", MyNetworkBlock(prev_dim, dim))
+            super().add_module(f"layer{i}", MyNetworkBlock(prev_dim, dim))
             prev_dim = dim
 
-        self.num_layers = len(layer_dims)
-        # 10 output classes
-        self.output_proj = torch.nn.Linear(layer_dims[-1], 10)
+        # Final output layer (with OUT_DIM projection classes)
+        self.output_proj = torch.nn.Linear(layer_dims[-1], out_dim)
 
     def forward(self, x):
         for i in range(self.num_layers):
-            x = getattr(self, f"layer{i}")(x)
+            layer = getattr(self, f"layer{i}")
+            x = layer(x)
 
         return self.output_proj(x)
 
@@ -59,17 +66,14 @@ if torch.cuda.is_available():
 else:
     device = torch.device("cpu")
 
-
 # Create the model
-in_dim = 512
-layer_dims = [512, 1024, 256]
-mn = MyNetwork(in_dim, layer_dims).to(device)
+mn = MyNetwork().to(device)
 
 annotate_split_points(
     mn,
     {
-        "layer0": PipeSplitWrapper.SplitPoint.END,
-        "layer1": PipeSplitWrapper.SplitPoint.END,
+        "layer0": SplitPoint.END,
+        "layer1": SplitPoint.END,
     },
 )
 
@@ -79,14 +83,15 @@ chunks = 4
 
 pipe = Pipe.from_tracing(mn, chunks, example_args=(example_input,))
 
-print(" pipe ".center(80, "*"))
-print(pipe)
-print(" submod0 ".center(80, "*"))
-print(pipe.split_gm.submod_0)
-print(" submod1 ".center(80, "*"))
-print(pipe.split_gm.submod_1)
-print(" submod2 ".center(80, "*"))
-print(pipe.split_gm.submod_2)
+if rank == 0:
+    print(" pipe ".center(80, "*"))
+    print(pipe)
+    print(" stage 0 ".center(80, "*"))
+    print(pipe.split_gm.submod_0)
+    print(" stage 1 ".center(80, "*"))
+    print(pipe.split_gm.submod_1)
+    print(" stage 2 ".center(80, "*"))
+    print(pipe.split_gm.submod_2)
 
 
 # Initialize distributed environment
