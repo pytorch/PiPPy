@@ -9,7 +9,8 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy.IR import Pipe, SplitPoint, annotate_split_points
+from pippy import pipeline
+from pippy.IR import SplitPoint, annotate_split_points
 from pippy.PipelineStage import PipelineStage
 
 from transformers import OPTForCausalLM, OPTConfig
@@ -48,7 +49,7 @@ def run(args):
     add_split_points(opt, args.world_size)
 
     # Create pipeline
-    opt_pipe = Pipe.from_tracing(
+    opt_pipe = pipeline(
         opt,
         num_chunks=args.chunks,
         example_args=(),

@@ -2,7 +2,7 @@
 import logging
 
 import pippy.fx
-from pippy.IR import annotate_split_points, Pipe, PipeSplitWrapper
+from pippy.IR import annotate_split_points, pipeline, PipeSplitWrapper
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
@@ -123,7 +123,7 @@ sp_spec = {
 }
 annotate_split_points(model, sp_spec)
 
-traced_pipe = Pipe.from_tracing(model, concrete_args={"targets": None})
+traced_pipe = pipeline(model, concrete_args={"targets": None})
 torch.testing.assert_close(traced_pipe(x)[0], model(x)[0])
 
 assert list(dict(traced_pipe.split_gm.named_children()).keys()) == [

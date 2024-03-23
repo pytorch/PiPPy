@@ -9,7 +9,8 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy.IR import Pipe, SplitPoint, annotate_split_points
+from pippy import pipeline
+from pippy.IR import SplitPoint, annotate_split_points
 from pippy.PipelineStage import PipelineStage
 
 from diffusers import UNet2DModel
@@ -40,7 +41,7 @@ def run(args):
     annotate_split_points(unet, {"mid_block": SplitPoint.END})
 
     # Create pipeline
-    unet_pipe = Pipe.from_tracing(
+    unet_pipe = pipeline(
         unet,
         num_chunks=args.chunks,
         example_args=(noise, timestep),

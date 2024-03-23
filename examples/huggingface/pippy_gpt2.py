@@ -9,7 +9,8 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy.IR import Pipe, SplitPoint, annotate_split_points
+from pippy import pipeline
+from pippy.IR import SplitPoint, annotate_split_points
 from pippy.PipelineStage import PipelineStage
 
 from transformers import GPT2ForSequenceClassification, GPT2Config
@@ -56,7 +57,7 @@ def run(args):
     if args.autosplit:
         # Automatic split
         from pippy import split_into_equal_size
-        gpt2_pipe = Pipe.from_tracing(
+        gpt2_pipe = pipeline(
             gpt2,
             num_chunks=args.chunks,
             example_args=(),
@@ -66,7 +67,7 @@ def run(args):
     else:
         # Manually annotate split points
         add_split_points(gpt2, args.world_size)
-        gpt2_pipe = Pipe.from_tracing(
+        gpt2_pipe = pipeline(
             gpt2,
             num_chunks=args.chunks,
             example_args=(),

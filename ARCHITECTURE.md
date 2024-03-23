@@ -46,7 +46,7 @@ def forward(self, input):
 """
 ```
 
-Similarly, we can use `Pipe.from_tracing` to use `torch.fx` tracing to convert an arbitrary `nn.Module` instance to this form. For example:
+Similarly, we can use `pipeline` to use `torch.fx` tracing to convert an arbitrary `nn.Module` instance to this form. For example:
 
 ```
 class ExampleCode(torch.nn.Module):
@@ -73,7 +73,7 @@ class ExampleCode(torch.nn.Module):
 ec = ExampleCode()
 ec(torch.randn(50, 512))
 
-ec_pipe = Pipe.from_tracing(ec, MultiUseParameterConfig.TRANSMIT)
+ec_pipe = pipeline(ec, MultiUseParameterConfig.TRANSMIT)
 print(ec_pipe.split_gm)
 """
 GraphModule(
@@ -110,7 +110,7 @@ There are a few things to note about the above example:
 Multi-use parameters can also be replicated. That is, each pipeline stage that uses a replicated parameter will have its own copy of the parameter and the system will record information about this replication such that the runtime can insert the proper synchronization operations upon update of these parameters. For example, let us rerun the above example with `multi_use_param_spec=MultiUseParameterConfig.REPLICATE`:
 
 ```
-ec_pipe_replicated = Pipe.from_tracing(ec, MultiUseParameterConfig.REPLICATE)
+ec_pipe_replicated = pipeline(ec, MultiUseParameterConfig.REPLICATE)
 print(ec_pipe_replicated.replicated_params)
 """
 [{'submod_0': '__mm_param', 'submod_1': '__mm_param'},
@@ -133,10 +133,10 @@ The above ideas may be candidates for research investigation.
 
 ## Intermediate Representation: Loss and backward() Computation
 
-`Pipe.from_sequential` and `Pipe.from_tracing` also take a `loss_fn` argument to specify the loss computation in the training scenario. `loss_fn` can be an `nn.Module` instance or a free function. The module/function should take two positional arguments: the output of the feedforward computation and the `target` values. An example of using this API and the IR it produces can be seen here:
+`Pipe.from_sequential` and `pipeline` also take a `loss_fn` argument to specify the loss computation in the training scenario. `loss_fn` can be an `nn.Module` instance or a free function. The module/function should take two positional arguments: the output of the feedforward computation and the `target` values. An example of using this API and the IR it produces can be seen here:
 
 ```
-ec_pipe_with_loss = Pipe.from_tracing(ec, loss_fn=mse_loss)
+ec_pipe_with_loss = pipeline(ec, loss_fn=mse_loss)
 print(ec_pipe_with_loss.split_gm)
 """
 GraphModule(
@@ -246,7 +246,7 @@ We'll need two components:
 
 We can examine two types of schedules to extract out the requirements for a general, programmable system for issuing and scheduling computation:
 
-* Synchronous Fill-Drain (aka GPipe[1]) 
+* Synchronous Fill-Drain (aka GPipe[1])
 
 ![GPipe Schedule](https://i.imgur.com/eyUc947.png)
 

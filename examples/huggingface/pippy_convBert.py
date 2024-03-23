@@ -9,7 +9,8 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy.IR import Pipe, SplitPoint, annotate_split_points
+from pippy import pipeline
+from pippy.IR import SplitPoint, annotate_split_points
 from pippy.PipelineStage import PipelineStage
 
 from transformers import ConvBertForMaskedLM, ConvBertConfig
@@ -54,7 +55,7 @@ def run(args):
     add_split_points(convbert, args.world_size)
 
     # Create pipeline
-    convbert_pipe = Pipe.from_tracing(
+    convbert_pipe = pipeline(
         convbert,
         num_chunks=args.chunks,
         example_args=(input_ids, ),

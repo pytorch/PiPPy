@@ -4,7 +4,7 @@
 
 import os
 import torch
-from pippy.IR import annotate_split_points, Pipe, SplitPoint
+from pippy.IR import annotate_split_points, SplitPoint
 from pippy.PipelineSchedule import PipelineScheduleGPipe
 from pippy.PipelineStage import PipelineStage
 
@@ -81,7 +81,8 @@ batch_size = 32
 example_input = torch.randn(batch_size, in_dim, device=device)
 chunks = 4
 
-pipe = Pipe.from_tracing(mn, chunks, example_args=(example_input,))
+from pippy import pipeline
+pipe = pipeline(mn, chunks, example_args=(example_input,))
 
 if rank == 0:
     print(" pipe ".center(80, "*"))

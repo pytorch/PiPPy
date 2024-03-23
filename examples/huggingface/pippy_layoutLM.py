@@ -9,7 +9,8 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy.IR import Pipe, SplitPoint, annotate_split_points
+from pippy import pipeline
+from pippy.IR import SplitPoint, annotate_split_points
 from pippy.PipelineStage import PipelineStage
 
 from transformers import LayoutLMForMaskedLM, LayoutLMConfig
@@ -56,7 +57,7 @@ def run(args):
     add_split_points(layoutlm, args.world_size)
 
     # Create pipeline
-    layoutlm_pipe = Pipe.from_tracing(
+    layoutlm_pipe = pipeline(
         layoutlm,
         num_chunks=args.chunks,
         example_args=(input_ids, ),

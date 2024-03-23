@@ -9,7 +9,8 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy.IR import Pipe, PipeSplitWrapper, annotate_split_points
+from pippy import pipeline
+from pippy.IR import PipeSplitWrapper, annotate_split_points
 from pippy.PipelineStage import PipelineStage
 
 from transformers import BertForMaskedLM, BertConfig
@@ -49,7 +50,7 @@ def run(args):
     add_split_points(bert, args.world_size)
 
     # Create pipeline
-    bert_pipe = Pipe.from_tracing(
+    bert_pipe = pipeline(
         bert,
         num_chunks=args.chunks,
         example_args=(example_input,),

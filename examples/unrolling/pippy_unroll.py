@@ -6,7 +6,8 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy.IR import annotate_split_points, Pipe, PipeSplitWrapper
+from pippy import pipeline
+from pippy.IR import annotate_split_points, PipeSplitWrapper, pipeline
 from pippy.PipelineStage import PipelineStage
 
 
@@ -63,7 +64,7 @@ batch_size = 32
 example_input = torch.randn(batch_size, d_hid, device=device)
 chunks = world_size
 
-pipe = Pipe.from_tracing(model, chunks, example_args=(example_input,))
+pipe = pipeline(model, chunks, example_args=(example_input,))
 
 if rank == 0:
     print(" pipe ".center(80, "*"))
