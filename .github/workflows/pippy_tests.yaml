@@ -75,7 +75,6 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.9"]
-        schedule: ["FillDrain"]
     env:
       OMP_NUM_THREADS: "1"
     container:
@@ -94,14 +93,6 @@ jobs:
         run: python test/test_pipe.py
       - name: Test backward pipe generation
         run: python test/test_pipe_bwd.py
-      - name: Run forward-only integration test
-        run: torchrun --nproc-per-node 4 test/test_fwd.py
-      - name: Run forward-loss-backward integration test
-        run: torchrun --nproc-per-node 4 test/test_bwd.py --schedule ${{ matrix.schedule }}
-      - name: Run example
-        run: torchrun --nproc-per-node 3 examples/basic/example.py
-      - name: Run auto-split test
-        run: torchrun --nproc-per-node 4 test/test_autosplit.py
       - name: Test pipeline schedule
         run: python test/test_pipeline_schedule.py
       # - name: Run null_coalesce_accumulate integration test

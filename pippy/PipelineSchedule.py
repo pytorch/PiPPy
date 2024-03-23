@@ -3,7 +3,7 @@
 import logging
 from abc import ABC, abstractmethod
 from collections import deque
-from typing import Any, Deque, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Deque, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
@@ -11,15 +11,54 @@ import torch.nn as nn
 from torch.profiler import record_function
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-# handler = logging.StreamHandler()
-# handler.setLevel(logging.INFO)
-# logger.addHandler(handler)
 
 
-class PipelineStage(ABC, nn.Module):
+class PipelineStageBase(ABC):
+    def __init__(
+        self,
+        stage_index: int,
+        num_stages: int,
+        device: torch.device,
+        group: dist.ProcessGroup = None,
+    ):
+        super().__init__()
+        self.stage_index = stage_index
+        self.num_stages = num_stages
+        self.device = device
+        self.group = group
+
+        # TODO: rename `rank` to `group_rank`
+        self.rank = dist.get_rank(self.group)
+
+        # TODO: rename `world_size`` to `group_size`
+        self.world_size = dist.get_world_size(self.group)
+        if self.world_size > self.num_stages:
+            raise RuntimeError(
+                f"Pipeline group size {self.world_size} cannot be larger than number of stages {self.num_stages}"
+            )
+
+        # Initialize has_backward to false; this will be set to true if loss
+        # function is passed to pipeline schedule
+        self.has_backward = False
+
+    @property
+    def has_backward(self) -> bool:
+        return self._has_backward
+
+    @has_backward.setter
+    def has_backward(self, has_backward: bool):
+        self._has_backward = has_backward
+
+    @property
+    def is_first(self):
+        return self.stage_index == 0
+
+    @property
+    def is_last(self):
+        return self.stage_index == self.num_stages - 1
+
     @abstractmethod
-    def forward(self, args: List[torch.tensor]) -> torch.tensor:
+    def forward_one_chunk(self, *args, **kwargs):
         """
         Perform forward pass on the module.
         This should only be called once per microbatch.
@@ -44,7 +83,7 @@ class PipelineStage(ABC, nn.Module):
         raise NotImplementedError
 
     @abstractmethod
-    def backward(self):
+    def backward_one_chunk(self, **kwargs):
         """
         Perform backward pass on the module.
         This should only be called once per microbatch.
@@ -65,11 +104,29 @@ class PipelineStage(ABC, nn.Module):
         """
         raise NotImplementedError
 
-    @abstractmethod
-    def compute_loss(self):
+    def clear_runtime_states(self) -> None:
         """
-        Compute loss from the outputs of the last stage
+        Clear runtime states of the stage.
         """
+        raise NotImplementedError
+
+    def split_inputs(
+        self,
+        args: Tuple[Any, ...],
+        kwargs: Optional[Dict[str, Any]] = None,
+    ):
+        """
+        Splits a full-batch input into chunks (i.e. microbatches) and returns
+        the chunks
+        """
+        # TODO: lift an implementation here from PipelineStage or move it to PipelineSchedule
+        raise NotImplementedError
+
+    def merge_outputs(self):
+        """
+        Merges the outputs of the microbatches into a single output.
+        """
+        # TODO: lift an implementation here from PipelineStage or move it to PipelineSchedule
         raise NotImplementedError
 
 
@@ -225,7 +282,7 @@ def get_stage_shapes(
     return stage_id_to_shapes
 
 
-def validate_stage_shapes(pipeline_stages: List[PipelineStage]):
+def validate_stage_shapes(pipeline_stages: List[PipelineStageBase]):
     """
     Check that the buffer shapes match between stages was expected by performing an all_gather between
     all stages. Assumes that buffers have been initialized already such that get_fwd_recv_ops() and
@@ -237,7 +294,7 @@ def validate_stage_shapes(pipeline_stages: List[PipelineStage]):
     # perform all gathers between all stages
     for virtual_id, stage in enumerate(pipeline_stages):
         world_size = stage.world_size
-        stage_id = stage.stage_id
+        stage_id = stage.stage_index
         rank = stage.rank
 
         # TODO: once we pass in pg to stage, check the pg rank is same as stage rank
@@ -311,25 +368,18 @@ def validate_stage_shapes(pipeline_stages: List[PipelineStage]):
             )
 
 
-class PipelineStageV2Impl(PipelineStage):
+class PipelineStageV2Impl(PipelineStageBase):
     def __init__(
         self,
         module: nn.Module,
         stage_id: int,
         num_stages: int,
-        rank: int,
-        world_size: int,
         device: torch.device,
         input_args: Optional[Union[torch.Tensor, List[torch.tensor]]] = None,
         output_args: Optional[Union[torch.Tensor, List[torch.tensor]]] = None,
     ):
-        super().__init__()
+        super().__init__(stage_id, num_stages, device)
         self.module = module.to(device)
-        self.stage_id = stage_id
-        self.num_stages = num_stages
-        self.rank = rank
-        self.world_size = world_size
-        self.device = device
         self.is_first_stage = stage_id == 0
         self.is_last_stage = stage_id == num_stages - 1
         # When we materialize the model partition on cuda, we call reset_parameters() if it is available
@@ -357,13 +407,14 @@ class PipelineStageV2Impl(PipelineStage):
         self.inputs_grad: List[torch.tensor] = []
         self.outputs_grad: List[torch.tensor] = []
 
-        self.prev_stage = (rank - 1) % world_size
-        self.next_stage = (rank + 1) % world_size
+        # TODO: Calculating stage index from rank is not ideal, e.g. won't match in Interleaved 1F1B case.
+        self.prev_stage = (self.rank - 1) % self.world_size
+        self.next_stage = (self.rank + 1) % self.world_size
 
         self.requests: List[dist.P2POp] = []
         logger.debug(
             f"""
-            finished pipeline stage init, {self.stage_id=}, {self.is_first_stage=},
+            finished pipeline stage init, {self.stage_index=}, {self.is_first_stage=},
             {self.is_last_stage=}, {self.num_stages=},
             {[inp.shape for inp in self.inputs]},
             {[output.shape for output in self.outputs]}
@@ -429,31 +480,38 @@ class PipelineStageV2Impl(PipelineStage):
             )
         return outputs
 
-    def forward(self, args: Union[torch.Tensor, List[torch.tensor]]) -> Any:
-        if self.is_first_stage:
-            # we always expect to unpack an iterable of inputs, so if its a single tensor, wrap it in a list
-            if isinstance(args, torch.Tensor):
-                args = [args]
-            self.inputs = args
+    def forward_one_chunk(
+        self, args: Optional[Union[torch.Tensor, Tuple[torch.tensor]]] = None
+    ) -> Any:
+        # Non-0 stage
+        if args is None:
+            args = self.inputs
+
+        # we always expect to unpack a tuple of inputs, so if its a single tensor, wrap it in a tuple
+        if isinstance(args, torch.Tensor):
+            args = (args,)
 
         logger.info(
-            f"[{self.rank} FORWARD {self.stage_id} {[inp.shape for inp in self.inputs]}"
+            f"[{self.rank} FORWARD {self.stage_index} {[inp.shape for inp in args]}"
         )
 
         # this is needed when we access the gradients for this in backward()
         # TODO: requires_grad should not be set, it should depend on input (https://github.com/pytorch/PiPPy/issues/945)
-        for tensor in self.inputs:
+        for tensor in args:
             tensor.requires_grad = True
             tensor.retain_grad()
 
         # perform forward pass on module
-        outputs = self.module(*self.inputs)
+        outputs = self.module(*args)
         self.outputs = self.check_and_format_outputs(outputs)
 
-        outputs_or_loss = self.compute_loss() if self.is_last_stage else outputs
+        # TODO: this is a hack to get the loss, we should be able to get the
+        # loss with the loss_fn in PipelineSchedule
+        # outputs_or_loss = self.compute_loss() if self.is_last_stage else outputs
+        outputs_or_loss = outputs
 
         # we store a ref to the input/output pair for this forward to be later used by the corresponding backward
-        self.inputs_outputs.append((self.inputs, outputs_or_loss))
+        self.inputs_outputs.append((args, outputs_or_loss))
 
         return outputs_or_loss
 
@@ -475,8 +533,8 @@ class PipelineStageV2Impl(PipelineStage):
             for grad in self.inputs_grad
         ]
 
-    def backward(self) -> None:
-        logger.info(f"[{self.rank} BACKWARD {self.stage_id}]")
+    def backward_one_chunk(self, **kwargs) -> None:
+        logger.info(f"[{self.rank} BACKWARD {self.stage_index}]")
 
         if self.is_last_stage:
             inputs, loss = self.inputs_outputs.popleft()
@@ -507,84 +565,210 @@ class PipelineStageV2Impl(PipelineStage):
 
         self.inputs_grad = gradients
 
-    def compute_loss(self):
-        if self.outputs is None:
-            raise RuntimeError("forward() must be called before compute_loss()")
-        # TODO: use a real loss function passed in
-        return self.outputs[0].mean()
-
 
 class PipelineSchedule(ABC):
+    def __init__(
+        self,
+        stage: PipelineStageBase,
+        n_microbatches: int,
+        loss_fn: Optional[Callable] = None,
+    ):
+        self._stage = stage
+        self._n_microbatches = n_microbatches
+        self._loss_fn = loss_fn
+        self._has_backward = self._loss_fn is not None
+        # Set the same has_backward flag for stage object
+        self._stage.has_backward = self._has_backward
+        self._should_compute_loss: bool = (
+            self._stage.is_last and self._loss_fn is not None
+        )
+        logger.debug(
+            f"[{self._stage.stage_index}] Should compute loss: {self._should_compute_loss}"
+        )
+
     @abstractmethod
-    def step(self, microbatches: List[torch.Tensor]) -> None:
+    def step_microbatches(
+        self,
+        arg_mbs: Optional[List] = None,
+        kwarg_mbs: Optional[List] = None,
+    ):
         """
-        Run one iteration of the pipeline schedule. Will go through all the microbatches
-        according to the schedule implementation.
+        Run one iteration of the pipeline schedule with list of microbatches.
+        Will go through all the microbatches according to the schedule
+        implementation.
 
         Args:
-            microbatches: list of microbatch tensors
+            microbatches: list of microbatch args.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def step(self, *args, **kwargs):
+        """
+        Run one iteration of the pipeline schedule with *whole-batch* input.
+        Will chunk the input into microbatches automatically, and go through the
+        microbatches according to the schedule implementation.
+
+        args: positional arguments to the model (as in non-pipeline case).
+
+        kwargs: keyword arguments to the model (as in non-pipeline case).
         """
         raise NotImplementedError
 
 
 class PipelineScheduleGPipe(PipelineSchedule):
-    def __init__(self, stage: PipelineStage):
-        self._stage = stage
+    def step_microbatches(
+        self,
+        arg_mbs: Optional[List] = None,
+        kwarg_mbs: Optional[List] = None,
+        target_mbs: Optional[List] = None,
+        losses: Optional[List] = None,
+    ):
+        # Pre-process inputs
+        if arg_mbs is not None:
+            assert len(arg_mbs) == self._n_microbatches
+        else:
+            arg_mbs = [()] * self._n_microbatches
 
-    def step(self, microbatches):
-        for i, mb in enumerate(microbatches):
+        if kwarg_mbs is not None:
+            assert len(kwarg_mbs) == self._n_microbatches
+        else:
+            kwarg_mbs = [{}] * self._n_microbatches
+
+        if self._should_compute_loss:
+            if target_mbs is None:
+                raise RuntimeError(
+                    "target_mbs must be passed in if loss_fn is not None"
+                )
+            if len(target_mbs) != self._n_microbatches:
+                raise RuntimeError(
+                    f"target_mbs length {len(target_mbs)} does not match number of microbatches {self._n_microbatches}"
+                )
+
+        # Internal loss container
+        internal_losses = []
+
+        # Run microbatches
+        for i in range(self._n_microbatches):
             with record_function(f"Forward {i}"):
                 ops = self._stage.get_fwd_recv_ops()
                 if ops:
                     dist.batch_isend_irecv(ops).pop().wait()
 
-                self._stage.forward(mb)
+                output = self._stage.forward_one_chunk(arg_mbs[i], kwarg_mbs[i])
 
                 ops = self._stage.get_fwd_send_ops()
                 if ops:
                     dist.batch_isend_irecv(ops)
 
-        for i, _ in enumerate(microbatches):
+            logger.debug(
+                f"[{self._stage.stage_index}] Forwarded microbatch {i}"
+            )
+
+            if self._should_compute_loss:
+                target = target_mbs[i]  # type: ignore[index]
+                if target.shape != output.shape:
+                    raise RuntimeError(
+                        f"target_mbs[{i}] shape {target.shape} does not match output shape {output.shape}"
+                    )
+                loss = self._loss_fn(output, target)  # type: ignore[misc]
+                internal_losses.append(loss)
+                logger.debug(
+                    f"[{self._stage.stage_index}] Loss of microbatch {i}: {loss}"
+                )
+
+        # No loss function, no need to run backward
+        if not self._has_backward:
+            return
+
+        for i in range(self._n_microbatches):
             with record_function(f"Backward {i}"):
                 ops = self._stage.get_bwd_recv_ops()
                 if ops:
                     dist.batch_isend_irecv(ops).pop().wait()
 
-                self._stage.backward()
+                loss = internal_losses[i] if len(internal_losses) > 0 else None
+                self._stage.backward_one_chunk(loss=loss)
 
                 ops = self._stage.get_bwd_send_ops()
                 if ops:
                     dist.batch_isend_irecv(ops)
 
-            logger.info(f"{self._stage.stage_id} backward mb {i} finished")
+            logger.debug(
+                f"[{self._stage.stage_index}] Backwarded microbatch {i}"
+            )
+
+        # Return losses if there is a container passed in
+        if losses is not None:
+            assert isinstance(
+                losses, list
+            ), f"losses must be a list but got a {type(losses)}"
+            # Clean external container first
+            losses.clear()
+            # Copy internal losses to external container
+            losses.extend(internal_losses)
+
+    def step(self, *args, target=None, losses: Optional[List] = None, **kwargs):
+        # Clean per iteration
+        self._stage.clear_runtime_states()
+
+        # Split inputs into microbatches
+        args_split, kwargs_split = self._stage.split_inputs(args, kwargs)
+
+        # Split target into microbatches
+        if target is not None:
+            targets_split = torch.tensor_split(target, self._n_microbatches)
+        else:
+            targets_split = None
+
+        # Run microbatches
+        self.step_microbatches(args_split, kwargs_split, targets_split, losses)
+
+        # Return merged results per original format
+        return self._stage.merge_outputs()
 
 
 class PipelineScheduleLoopedBFS(PipelineSchedule):
-    def __init__(self, stages: List[PipelineStage]):
+    def __init__(self, stages: List[PipelineStageBase]):
         self._stages = stages
 
-    def step(self, microbatches):
+    def step_microbatches(
+        self,
+        arg_mbs: Optional[List] = None,
+        kwarg_mbs: Optional[List] = None,
+    ):
+        # Pre-process inputs
+        if arg_mbs is not None:
+            assert len(arg_mbs) == self._n_microbatches
+        else:
+            arg_mbs = [()] * self._n_microbatches
+
+        if kwarg_mbs is not None:
+            assert len(kwarg_mbs) == self._n_microbatches
+        else:
+            kwarg_mbs = [{}] * self._n_microbatches
+
         for s, stage in enumerate(self._stages):
-            for i, mb in enumerate(microbatches):
+            for i in range(self._n_microbatches):
                 with record_function(f"Stage {s} Forward"):
                     ops = stage.get_fwd_recv_ops()
                     if ops:
                         dist.batch_isend_irecv(ops).pop().wait()
 
-                    stage.forward(mb)
+                    stage.forward_one_chunk(arg_mbs[i], kwarg_mbs[i])
 
                     ops = stage.get_fwd_send_ops()
                     if ops:
                         dist.batch_isend_irecv(ops)
 
         for stage in reversed(self._stages):
-            for i in range(len(microbatches)):
-                with record_function(f"Stage {stage.stage_id} Backward"):
+            for i in range(self._n_microbatches):
+                with record_function(f"Stage {stage.stage_index} Backward"):
                     ops = stage.get_bwd_recv_ops()
                     if ops:
                         dist.batch_isend_irecv(ops).pop().wait()
 
-                    stage.backward()
+                    stage.backward_one_chunk(chunk=i)
 
                     ops = stage.get_bwd_send_ops()
                     if ops:
@@ -592,7 +776,9 @@ class PipelineScheduleLoopedBFS(PipelineSchedule):
 
 
 class PipelineScheduleLoopedDFS(PipelineSchedule):
-    def __init__(self, stages: List[PipelineStage], n_microbatch, pp_id, n_pp):
+    def __init__(
+        self, stages: List[PipelineStageBase], n_microbatch, pp_id, n_pp
+    ):
         assert (
             n_microbatch % n_pp == 0
         ), f"Looped DFS schedule requires microbatch_size ({n_microbatch}) to be a multiple of n_pp ({n_pp})"
@@ -625,7 +811,11 @@ class PipelineScheduleLoopedDFS(PipelineSchedule):
             f"pp_id {pp_id} warmup_steps {self.warmup_steps} forward_steps {self.forward_steps} total_steps {self.total_steps}"
         )
 
-    def step(self, microbatches):
+    def step_microbatches(
+        self,
+        arg_mbs: Optional[List] = None,
+        kwarg_mbs: Optional[List] = None,
+    ):
         """
         # n_loop = n_stage / n_pp
         # run microbatches in sequences of NPp
@@ -675,6 +865,17 @@ class PipelineScheduleLoopedDFS(PipelineSchedule):
         logger.info(
             f"rank {self.pp_id} - stage_index {[stage_index(step) for step in range(self.total_steps)]}"
         )
+
+        # Pre-process inputs
+        if arg_mbs is not None:
+            assert len(arg_mbs) == self._n_microbatches
+        else:
+            arg_mbs = [()] * self._n_microbatches
+
+        if kwarg_mbs is not None:
+            assert len(kwarg_mbs) == self._n_microbatches
+        else:
+            kwarg_mbs = [{}] * self._n_microbatches
 
         forward_batched_op_handle: Optional[dist.Work] = None
         backward_batched_op_handle: Optional[dist.Work] = None
@@ -727,11 +928,15 @@ class PipelineScheduleLoopedDFS(PipelineSchedule):
                     forward_batched_op_handle.wait()
                     forward_batched_op_handle = None
 
-                with record_function(f"Stage {forward_stage.stage_id} Forward"):
+                with record_function(
+                    f"Stage {forward_stage.stage_index} Forward"
+                ):
                     logger.info(
-                        f"pp_id {self.pp_id} step {step} forward_stage {forward_stage.stage_id} mb_id {mb_id_fwd}"
+                        f"pp_id {self.pp_id} step {step} forward_stage {forward_stage.stage_index} mb_id {mb_id_fwd}"
                     )
-                    forward_stage.forward(microbatches[mb_id_fwd])
+                    forward_stage.forward_one_chunk(
+                        arg_mbs[mb_id_fwd], kwarg_mbs[mb_id_fwd]
+                    )
 
                 requests: List[dist.P2POp] = []
 
@@ -742,7 +947,7 @@ class PipelineScheduleLoopedDFS(PipelineSchedule):
                 # add recv for the NEXT stage, do not do this for last stage
                 if forward_stage_next is not None:
                     ops = forward_stage_next.get_fwd_recv_ops()
-                    if mb_id_fwd != len(microbatches) - 1:
+                    if mb_id_fwd != self._n_microbatches - 1:
                         requests.extend(ops)
 
                 if requests:
@@ -769,12 +974,12 @@ class PipelineScheduleLoopedDFS(PipelineSchedule):
                     backward_batched_op_handle = None
 
                 with record_function(
-                    f"Stage {backward_stage.stage_id} Backward"
+                    f"Stage {backward_stage.stage_index} Backward"
                 ):
                     logger.info(
-                        f"pp_id {self.pp_id} step {step}/{self.total_steps} backward_step {backward_step} backward_stage_id {backward_stage.stage_id} mb_id {mb_id_bwd}"
+                        f"pp_id {self.pp_id} step {step}/{self.total_steps} backward_step {backward_step} backward_stage_id {backward_stage.stage_index} mb_id {mb_id_bwd}"
                     )
-                    backward_stage.backward()
+                    backward_stage.backward_one_chunk(chunk=mb_id_bwd)
 
                 requests = []
 
@@ -785,7 +990,7 @@ class PipelineScheduleLoopedDFS(PipelineSchedule):
                 # add recv for the NEXT stage, do not do this for first stage
                 if backward_stage_next is not None:
                     ops = backward_stage_next.get_bwd_recv_ops()
-                    if mb_id_bwd != len(microbatches) - 1:
+                    if mb_id_bwd != self._n_microbatches - 1:
                         requests.extend(ops)
 
                 if requests:
