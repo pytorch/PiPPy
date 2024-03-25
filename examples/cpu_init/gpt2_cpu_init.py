@@ -1,7 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 
 # Minimum effort to run this example:
-# $ torchrun --nproc-per-node 4 bert_cpu_init.py
+# $ torchrun --nproc-per-node 4 gpt2_cpu_init.py
 
 import argparse
 import os
@@ -10,31 +10,32 @@ import torch
 import torch.distributed as dist
 
 from pippy import pipeline
-from pippy.IR import PipeSplitWrapper, annotate_split_points
+from pippy.IR import SplitPoint, annotate_split_points
+from pippy.PipelineSchedule import PipelineScheduleGPipe
 from pippy.PipelineStage import PipelineStage
 
-from transformers import BertForMaskedLM, BertConfig
+from transformers import GPT2ForSequenceClassification, GPT2Config
 
 
-def add_split_points(bert, nranks):
-    layers_per_rank = bert.config.num_hidden_layers // nranks
+def add_split_points(gpt2, nranks):
+    layers_per_rank = gpt2.config.num_hidden_layers // nranks
     for i in range(1, nranks):
         annotate_split_points(
-            bert, {f"bert.encoder.layer.{i * layers_per_rank}": PipeSplitWrapper.SplitPoint.BEGINNING})
+            gpt2, {f"transformer.h.{i * layers_per_rank}": SplitPoint.BEGINNING})
 
 
 def run(args):
     # Model configs
-    config = BertConfig()
+    config = GPT2Config()
 
     # Create model on CPU
-    model_class = BertForMaskedLM
-    model_name = "BertForMaskedLM"
-    bert = model_class(config)
-    bert.eval()
+    model_class = GPT2ForSequenceClassification
+    model_name = "GPT2ForSequenceClassification"
+    gpt2 = model_class(config)
+    gpt2.eval()
     if args.rank == 0:
-        print(bert.config)
-        print(bert)
+        print(gpt2.config)
+        print(gpt2)
 
     # Example input on CPU
     example_input = torch.randint(
@@ -47,23 +48,25 @@ def run(args):
     )
 
     # Annotate split points
-    add_split_points(bert, args.world_size)
+    add_split_points(gpt2, args.world_size)
 
     # Create pipeline
-    bert_pipe = pipeline(
-        bert,
+    gpt2_pipe = pipeline(
+        gpt2,
         num_chunks=args.chunks,
         example_args=(example_input,),
     )
-    nstages = len(list(bert_pipe.split_gm.children()))
-    assert nstages == args.world_size, f"nstages = {nstages} nranks = {args.world_size}"
+    assert gpt2_pipe.num_stages == args.world_size, f"nstages = {gpt2_pipe.num_stages} nranks = {args.world_size}"
 
     # Create schedule runtime
     stage = PipelineStage(
-        bert_pipe,
+        gpt2_pipe,
         args.rank,
         device=args.device,
     )
+
+    # Attach to a schedule
+    schedule = PipelineScheduleGPipe(stage, args.chunks)
 
     # Real input on GPU
     real_input = torch.randint(
@@ -77,11 +80,9 @@ def run(args):
 
     # Run
     if args.rank == 0:
-        stage(real_input)
-    elif args.rank == args.world_size - 1:
-        out = stage()
+        schedule.step(real_input)
     else:
-        stage()
+        out = schedule.step()
 
     print(f"Rank {args.rank} completes")
 
