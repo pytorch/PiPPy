@@ -59,6 +59,8 @@ jobs:
         run: torchrun --nproc-per-node 3 examples/basic/example.py
       - name: Run training example
         run: torchrun --nproc-per-node 3 examples/basic/example_train.py
+      - name: Install Transformers for real model tests
+        run: pip install transformers
       - name: Run GPT2
         run: torchrun --nproc-per-node 4 examples/huggingface/pippy_gpt2.py
       - name: Run T5
