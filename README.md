@@ -1,12 +1,12 @@
 # PiPPy: Pipeline Parallelism for PyTorch
 
-> [!NOTE]
-> PiPPy is currently in alpha state and under extensive development. While the 0.2.0 release is available on [PyPI](https://pypi.org/project/torchpippy/), the GitHub version may have updated or new APIs. For up-to-date examples that work with the GitHub version, please refer to programs run in our [CI](.github/workflows/gpu_tests.yaml).
-
 [**Why PiPPy?**](#why-pippy)
 | [**Install guide**](#install)
 | [**Examples**](#examples)
 | [**PiPPy Explained**](#pippy-explained)
+
+> [!NOTE]
+> PiPPy is currently in alpha state and under extensive development. While the 0.2.0 release is available on [PyPI](https://pypi.org/project/torchpippy/), the GitHub version may have updated or new APIs. For up-to-date examples that work with the GitHub version, please refer to programs run in our [CI](.github/workflows/gpu_tests.yaml).
 
 # Why PiPPy?
 
