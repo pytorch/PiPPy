@@ -1,4 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+# Run this test with:
+# torchrun --nproc-per-node 4 test/local_test_optim.py
+
 import argparse
 import os
 import unittest
@@ -7,60 +10,62 @@ import torch
 import torch.distributed as dist
 import torch.optim as optim
 
-from pippy.compile import compile_stage
-from pippy.IR import pipe_split, TrivialLossWrapper
+from pippy.IR import pipe_split, pipeline
+from pippy.PipelineSchedule import PipelineScheduleGPipe
+from pippy.PipelineStage import PipelineStage
 
 
 d_hid = 512
-chunk_size = 256
+batch_size = 256
 
 torch.manual_seed(0)
 
 
+# Basic example
 class ExampleCode(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        self.mm_param0 = torch.nn.Parameter(torch.randn(d_hid, d_hid))
-        self.mm_param1 = torch.nn.Parameter(torch.randn(d_hid, d_hid))
+        self.mm_param = torch.nn.Parameter(torch.randn(d_hid, d_hid))
         self.mm_param2 = torch.nn.Parameter(torch.randn(d_hid, d_hid))
-        self.lin0 = torch.nn.Linear(d_hid, d_hid)
-        self.lin1 = torch.nn.Linear(d_hid, d_hid)
+        self.lin = torch.nn.Linear(d_hid, d_hid)
 
     def forward(self, x):
-        x = torch.mm(x, self.mm_param0)
-        skip_connection = x
+        x = torch.mm(x, self.mm_param)
         x = torch.relu(x)
         pipe_split()
-        x = torch.mm(x, self.mm_param1)
-        x = self.lin0(x)
+        x = torch.mm(x, self.mm_param)
+        x = self.lin(x)
         pipe_split()
         x = torch.relu(x)
-        x = x + skip_connection
         x = torch.mm(x, self.mm_param2)
         pipe_split()
-        x = self.lin1(x)
-        x = torch.relu(x)
-        return x
+        x = self.lin(x)
+        logits = torch.relu(x)
+        return logits
 
 
 def run_worker(args):
-    ec = ExampleCode()
+    mod = ExampleCode()
+    mod.to(args.device)
+
+    x = torch.randn(batch_size, d_hid, device=args.device)
+    target = torch.randn(batch_size, d_hid, device=args.device)
     loss_fn = torch.nn.MSELoss(reduction="sum")
-    ec_with_loss = TrivialLossWrapper(ec, loss_fn)
-    ec_with_loss.to(args.device)
 
-    ec_x = torch.randn(args.chunks * chunk_size, d_hid, device=args.device)
-    target = torch.randn(args.chunks * chunk_size, d_hid, device=args.device)
-
-    stage = compile_stage(
-        ec_with_loss,
-        args.rank,
-        args.world_size,
+    pipe = pipeline(
+        mod,
         args.chunks,
-        args.device,
-        None,
-        [ec_x, target],
+        example_args=(x,),
     )
+
+    stage = PipelineStage(
+        pipe,
+        args.rank,
+        device=args.device,
+    )
+
+    # Attach to a schedule
+    schedule = PipelineScheduleGPipe(stage, args.chunks, loss_fn=loss_fn)
 
     # Create an optimizer for stage submodule's parameters
     optimizer = optim.SGD(stage.submod.parameters(), lr=1e-3, momentum=0.9)
@@ -71,11 +76,12 @@ def run_worker(args):
 
         # Run
         if args.rank == 0:
-            stage(ec_x)
+            schedule.step(x)
         elif args.rank == args.world_size - 1:
-            stage(target)
+            losses = []
+            out = schedule.step(target=target, losses=losses)
         else:
-            stage()
+            schedule.step()
 
         # Take an optimization step
         optimizer.step()
@@ -127,7 +133,7 @@ if __name__ == "__main__":
     main()
 
 
-class LocalTestOptimTest(unittest.TestCase):
+class TestOptimTest(unittest.TestCase):
     def test_optim(self):
         import random
 
