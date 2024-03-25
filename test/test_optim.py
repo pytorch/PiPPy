@@ -1,4 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+# Run this test with:
+# torchrun --nproc-per-node 4 test/local_test_optim.py
+
 import argparse
 import os
 import unittest
