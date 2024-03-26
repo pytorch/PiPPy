@@ -120,6 +120,8 @@ class PipelineScheduleGPipe(PipelineSchedule):
 
         # Internal loss container
         internal_losses = []
+        # Delay send waits
+        fwd_sends_to_wait: List[dist.Work] = []
 
         # Run microbatches
         for i in range(self._n_microbatches):
@@ -133,8 +135,7 @@ class PipelineScheduleGPipe(PipelineSchedule):
 
                 ops = self._stage.get_fwd_send_ops()
                 works = sorted_batch_isend_irecv(ops)
-                # TODO: check if we need to wait for works, i.e. check if there
-                # is risk of overwrite
+                fwd_sends_to_wait.extend(works.values())
 
             logger.debug(
                 f"[{self._stage.stage_index}] Forwarded microbatch {i}"
@@ -152,10 +153,19 @@ class PipelineScheduleGPipe(PipelineSchedule):
                     f"[{self._stage.stage_index}] Loss of microbatch {i}: {loss}"
                 )
 
+        # Wait for all forward sends to finish
+        # This should not have performance impact because by the time the first
+        # backward arrives all the forward sends should have been finished.
+        for work in fwd_sends_to_wait:
+            work.wait()
+
         # No loss function, no need to run backward
         if not self._has_backward:
             return
 
+        # Run backward
+        # Delay send waits
+        bwd_sends_to_wait: List[dist.Work] = []
         for i in range(self._n_microbatches):
             with record_function(f"Backward {i}"):
                 ops = self._stage.get_bwd_recv_ops()
@@ -168,8 +178,7 @@ class PipelineScheduleGPipe(PipelineSchedule):
 
                 ops = self._stage.get_bwd_send_ops()
                 works = sorted_batch_isend_irecv(ops)
-                # TODO: check if we need to wait for works, i.e. check if there
-                # is risk of overwrite
+                bwd_sends_to_wait.extend(works.values())
 
             logger.debug(
                 f"[{self._stage.stage_index}] Backwarded microbatch {i}"
@@ -184,6 +193,10 @@ class PipelineScheduleGPipe(PipelineSchedule):
             losses.clear()
             # Copy internal losses to external container
             losses.extend(internal_losses)
+
+        # Wait for all backward sends to finish
+        for work in bwd_sends_to_wait:
+            work.wait()
 
     def step(self, *args, target=None, losses: Optional[List] = None, **kwargs):
         # Clean per iteration
@@ -256,6 +269,10 @@ class PipelineSchedule1F1B(PipelineSchedule):
         """
         )
 
+        # Delay send waits
+        fwd_sends_to_wait: List[dist.Work] = []
+        bwd_sends_to_wait: List[dist.Work] = []
+
         for i in range(total_steps):
             if i < self._n_microbatches:
                 # forward
@@ -269,8 +286,8 @@ class PipelineSchedule1F1B(PipelineSchedule):
 
                     ops = self._stage.get_fwd_send_ops()
                     works = sorted_batch_isend_irecv(ops)
-                    # TODO: check if we need to wait for works, i.e. check if there
-                    # is risk of overwrite
+                    fwd_sends_to_wait.extend(works.values())
+
             if (
                 warmup_steps
                 <= i
@@ -287,8 +304,15 @@ class PipelineSchedule1F1B(PipelineSchedule):
 
                     ops = self._stage.get_bwd_send_ops()
                     works = sorted_batch_isend_irecv(ops)
-                    # TODO: check if we need to wait for works, i.e. check if there
-                    # is risk of overwrite
+                    bwd_sends_to_wait.extend(works.values())
+
+        # Wait for all forward sends to finish
+        for work in fwd_sends_to_wait:
+            work.wait()
+
+        # Wait for all backward sends to finish
+        for work in bwd_sends_to_wait:
+            work.wait()
 
     def step(self, *args, **kwargs):
         # TODO
