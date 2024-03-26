@@ -2,7 +2,8 @@
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Callable, List, Optional
+from collections import defaultdict
+from typing import Callable, Dict, List, Optional
 
 import torch
 import torch.distributed as dist
@@ -63,6 +64,31 @@ class PipelineSchedule(ABC):
         raise NotImplementedError
 
 
+def sorted_batch_isend_irecv(p2p_ops: List[dist.P2POp]) -> Dict[int, dist.Work]:
+    """
+    Sorts the list of P2P ops by the peer rank, and then calls
+    batch_isend_irecv. Return a dictionary of works by peer rank. This function
+    helps us avoid hangs in case of skip connections.
+    """
+    # Arrange p2p_ops by peer rank:
+    #   int is the peer rank;
+    #   List is the list of ops towards the peer
+    ops_by_peer: Dict[int, List[dist.P2POp]] = defaultdict(list)
+    work_by_peer: Dict[int, dist.Work] = {}
+    if len(p2p_ops) == 0:
+        return work_by_peer
+
+    # Classify the ops by peer rank
+    for op in p2p_ops:
+        ops_by_peer[op.peer].append(op)
+
+    # Call batch_isend_irecv per peer, in sorted order of the peers (to avoid hangs)
+    for peer, ops in sorted(ops_by_peer.items()):
+        work_by_peer[peer] = dist.batch_isend_irecv(ops).pop()
+
+    return work_by_peer
+
+
 class PipelineScheduleGPipe(PipelineSchedule):
     def step_microbatches(
         self,
@@ -99,14 +125,15 @@ class PipelineScheduleGPipe(PipelineSchedule):
         for i in range(self._n_microbatches):
             with record_function(f"Forward {i}"):
                 ops = self._stage.get_fwd_recv_ops()
-                if ops:
-                    dist.batch_isend_irecv(ops).pop().wait()
+                works = sorted_batch_isend_irecv(ops)
+                for work in works.values():
+                    work.wait()
 
                 output = self._stage.forward_one_chunk(arg_mbs[i], kwarg_mbs[i])
 
                 ops = self._stage.get_fwd_send_ops()
-                if ops:
-                    dist.batch_isend_irecv(ops)
+                works = sorted_batch_isend_irecv(ops)
+                # TODO: check if we need to wait for works, i.e. check if there is risk of overwrite
 
             logger.debug(
                 f"[{self._stage.stage_index}] Forwarded microbatch {i}"
@@ -131,15 +158,16 @@ class PipelineScheduleGPipe(PipelineSchedule):
         for i in range(self._n_microbatches):
             with record_function(f"Backward {i}"):
                 ops = self._stage.get_bwd_recv_ops()
-                if ops:
-                    dist.batch_isend_irecv(ops).pop().wait()
+                works = sorted_batch_isend_irecv(ops)
+                for work in works.values():
+                    work.wait()
 
                 loss = internal_losses[i] if len(internal_losses) > 0 else None
                 self._stage.backward_one_chunk(loss=loss)
 
                 ops = self._stage.get_bwd_send_ops()
-                if ops:
-                    dist.batch_isend_irecv(ops)
+                works = sorted_batch_isend_irecv(ops)
+                # TODO: check if we need to wait for works, i.e. check if there is risk of overwrite
 
             logger.debug(
                 f"[{self._stage.stage_index}] Backwarded microbatch {i}"
