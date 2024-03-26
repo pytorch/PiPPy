@@ -48,7 +48,7 @@ def create_metadata_tensor(
         tensors: A list of tensors, the tensors will converted into its shape dimensions and
                  these dimensions will be concatenated.
         device: The device where the metadata tensor will be created.
-    If the tensor is None, then this tensor will contain 0s.
+    If the tensor is None, then this tensor will contain PLACEHOLDER_VALs.
 
     """
     metadata_tensor = torch.full(
@@ -83,7 +83,7 @@ def extract_metadata_from_tensor(tensor: torch.Tensor) -> List[torch.Size]:
     """
     Extract the number of dimensions and the shape of each tensor from a metadata tensor.
     """
-    metadata = []
+    metadata: List[torch.Size] = []
     i = 0
     while i < len(tensor) and tensor[i] != PLACEHOLDER_VAL:
         num_dims = tensor[i].item()
@@ -94,7 +94,7 @@ def extract_metadata_from_tensor(tensor: torch.Tensor) -> List[torch.Size]:
 
 
 def get_stage_shapes(
-    models: List[nn.Module],
+    stage_modules: List[nn.Module],
     stage_ids: List[int],
     num_stages: int,
     rank: int,
@@ -110,7 +110,7 @@ def get_stage_shapes(
     Each rank must call get_stage_shapes or the program will hang.
 
     Args:
-        models: The chunks assigned to this rank. Rhe length should be 1 for any
+        stage_modules: The chunks assigned to this rank. Rhe length should be 1 for any
                 non-interleaved schedules and >1 for any interleaved schedules.
         stage_ids: The id of the stages assigned to this rank.
         num_stages: Total number of stages.
@@ -124,7 +124,7 @@ def get_stage_shapes(
     """
 
     stage_id_to_shapes: Dict[int, Dict[str, torch.Size]] = {}
-    for stage_id, model in zip(stage_ids, models):
+    for stage_id, model in zip(stage_ids, stage_modules):
         input_shape_metadata_tensor = create_metadata_tensor(device=device)
         # TODO: Assumes prev_stage == rank - 1 and next_stage == rank + 1
         prev_rank = (rank - 1) % world_size
@@ -162,7 +162,7 @@ def get_stage_shapes(
             )
             dist.send(output_shape_metadata_tensor, next_rank)
         stage_id_to_shapes[stage_id] = shapes
-    print(stage_id_to_shapes)
+    logger.info(stage_id_to_shapes)
     return stage_id_to_shapes
 
 
@@ -310,7 +310,6 @@ class ManualPipelineStage(PipelineStageBase):
         self.prev_stage = (self.rank - 1) % self.world_size
         self.next_stage = (self.rank + 1) % self.world_size
 
-        self.requests: List[dist.P2POp] = []
         logger.debug(
             f"""
             finished pipeline stage init, {self.stage_index=}, {self.is_first_stage=},
@@ -444,6 +443,7 @@ class ManualPipelineStage(PipelineStageBase):
         # TODO: HACK materialize_grads=True sets gradients to 0s on backward pass,
         # we need set all the gradients for the inputs that need it, but should not send 0s
         # due to extra communication
+        # TODO: torch.autograd.grad won't accumulate grad for model parameters.
         if self.is_last_stage:
             gradients = torch.autograd.grad(
                 outputs=loss,
