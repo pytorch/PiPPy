@@ -133,7 +133,8 @@ class PipelineScheduleGPipe(PipelineSchedule):
 
                 ops = self._stage.get_fwd_send_ops()
                 works = sorted_batch_isend_irecv(ops)
-                # TODO: check if we need to wait for works, i.e. check if there is risk of overwrite
+                # TODO: check if we need to wait for works, i.e. check if there
+                # is risk of overwrite
 
             logger.debug(
                 f"[{self._stage.stage_index}] Forwarded microbatch {i}"
@@ -167,7 +168,8 @@ class PipelineScheduleGPipe(PipelineSchedule):
 
                 ops = self._stage.get_bwd_send_ops()
                 works = sorted_batch_isend_irecv(ops)
-                # TODO: check if we need to wait for works, i.e. check if there is risk of overwrite
+                # TODO: check if we need to wait for works, i.e. check if there
+                # is risk of overwrite
 
             logger.debug(
                 f"[{self._stage.stage_index}] Backwarded microbatch {i}"
@@ -259,14 +261,16 @@ class PipelineSchedule1F1B(PipelineSchedule):
                 # forward
                 with record_function(f"Forward {i}"):
                     ops = self._stage.get_fwd_recv_ops()
-                    if ops:
-                        dist.batch_isend_irecv(ops).pop().wait()
+                    works = sorted_batch_isend_irecv(ops)
+                    for work in works.values():
+                        work.wait()
 
                     self._stage.forward_one_chunk(arg_mbs[i])
 
                     ops = self._stage.get_fwd_send_ops()
-                    if ops:
-                        dist.batch_isend_irecv(ops)
+                    works = sorted_batch_isend_irecv(ops)
+                    # TODO: check if we need to wait for works, i.e. check if there
+                    # is risk of overwrite
             if (
                 warmup_steps
                 <= i
@@ -275,14 +279,16 @@ class PipelineSchedule1F1B(PipelineSchedule):
                 # backward
                 with record_function(f"Backward {i}"):
                     ops = self._stage.get_bwd_recv_ops()
-                    if ops:
-                        dist.batch_isend_irecv(ops).pop().wait()
+                    works = sorted_batch_isend_irecv(ops)
+                    for work in works.values():
+                        work.wait()
 
                     self._stage.backward_one_chunk()
 
                     ops = self._stage.get_bwd_send_ops()
-                    if ops:
-                        dist.batch_isend_irecv(ops)
+                    works = sorted_batch_isend_irecv(ops)
+                    # TODO: check if we need to wait for works, i.e. check if there
+                    # is risk of overwrite
 
     def step(self, *args, **kwargs):
         # TODO
