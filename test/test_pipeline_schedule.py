@@ -210,7 +210,7 @@ class TestPipelineSchedule(MultiProcessTestCase):
         microbatch = torch.rand((10, 8), device=device)
         # test single model
         stages_shapes = get_stage_shapes(
-            models=[model_chunk],
+            stage_modules=[model_chunk],
             stage_ids=[self.rank],
             num_stages=self.world_size,
             rank=self.rank,
@@ -228,7 +228,7 @@ class TestPipelineSchedule(MultiProcessTestCase):
         model_chunk1 = MLP(dim=8, hidden_dim=4, out_dim=8)
         model_chunk2 = MLP(dim=8, hidden_dim=4, out_dim=8)
         stages_shapes = get_stage_shapes(
-            models=[model_chunk1, model_chunk2],
+            stage_modules=[model_chunk1, model_chunk2],
             stage_ids=[self.rank, self.rank + self.world_size],
             num_stages=self.world_size * 2,
             rank=self.rank,
