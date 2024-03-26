@@ -6,15 +6,19 @@ import unittest
 import torch
 import torch.distributed as dist
 import torch.nn as nn
-from pippy.PipelineSchedule import (
+
+from pippy.ManualPipelineStage import (
     create_metadata_tensor,
     extract_metadata_from_tensor,
     get_stage_shapes,
+    ManualPipelineStage,
+    validate_stage_shapes,
+)
+
+from pippy.PipelineSchedule import (
     logger as schedule_logger,
     PipelineSchedule1F1B,
     PipelineScheduleInterleaved1F1B,
-    PipelineStageV2Impl,
-    validate_stage_shapes,
 )
 
 # torch.testing._internal.common_distributed requies "expecttest"
@@ -125,7 +129,7 @@ class TestPipelineSchedule(MultiProcessTestCase):
     def _create_pipeline_stage(
         self, model, inputs, device, stage_id=None, num_stages=None
     ):
-        return PipelineStageV2Impl(
+        return ManualPipelineStage(
             module=model,
             stage_id=self.rank if stage_id is None else stage_id,
             num_stages=self.world_size if num_stages is None else num_stages,
