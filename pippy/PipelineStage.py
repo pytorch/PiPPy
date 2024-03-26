@@ -1,6 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import logging
 import operator
+from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
@@ -14,11 +15,126 @@ from pippy.backward import stage_backward
 from pippy.debug import map_debug_info
 from pippy.IR import Pipe
 from pippy.microbatch import merge_chunks, split_args_kwargs_into_chunks
-from pippy.PipelineSchedule import PipelineStageBase
 from pippy.utils import flatten_args, modify_graph_op_device, QualnameMapMixin
 
-
 logger = logging.getLogger(__name__)
+
+
+class PipelineStageBase(ABC):
+    def __init__(
+        self,
+        stage_index: int,
+        num_stages: int,
+        device: torch.device,
+        group: dist.ProcessGroup = None,
+    ):
+        super().__init__()
+        self.stage_index = stage_index
+        self.num_stages = num_stages
+        self.device = device
+        self.group = group
+
+        # TODO: rename `rank` to `group_rank`
+        self.rank = dist.get_rank(self.group)
+
+        # TODO: rename `world_size`` to `group_size`
+        self.world_size = dist.get_world_size(self.group)
+        if self.world_size > self.num_stages:
+            raise RuntimeError(
+                f"Pipeline group size {self.world_size} cannot be larger than number of stages {self.num_stages}"
+            )
+
+        # Initialize has_backward to false; this will be set to true if loss
+        # function is passed to pipeline schedule
+        self.has_backward = False
+
+    @property
+    def has_backward(self) -> bool:
+        return self._has_backward
+
+    @has_backward.setter
+    def has_backward(self, has_backward: bool):
+        self._has_backward = has_backward
+
+    @property
+    def is_first(self):
+        return self.stage_index == 0
+
+    @property
+    def is_last(self):
+        return self.stage_index == self.num_stages - 1
+
+    @abstractmethod
+    def forward_one_chunk(self, *args, **kwargs):
+        """
+        Perform forward pass on the module.
+        This should only be called once per microbatch.
+
+        Args:
+            microbatch: The input to the module
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_fwd_recv_ops(self) -> List[dist.P2POp]:
+        """
+        Get the list of P2P operations that need to be performed before calling forward()
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_fwd_send_ops(self) -> List[dist.P2POp]:
+        """
+        Get the list of P2P operations that need to be performed after calling forward()
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def backward_one_chunk(self, **kwargs):
+        """
+        Perform backward pass on the module.
+        This should only be called once per microbatch.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_bwd_recv_ops(self) -> List[dist.P2POp]:
+        """
+        Get the list of P2P operations that need to be performed before calling backward()
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_bwd_send_ops(self) -> List[dist.P2POp]:
+        """
+        Get the list of P2P operations that need to be performed after calling backward()
+        """
+        raise NotImplementedError
+
+    def clear_runtime_states(self) -> None:
+        """
+        Clear runtime states of the stage.
+        """
+        raise NotImplementedError
+
+    def split_inputs(
+        self,
+        args: Tuple[Any, ...],
+        kwargs: Optional[Dict[str, Any]] = None,
+    ):
+        """
+        Splits a full-batch input into chunks (i.e. microbatches) and returns
+        the chunks
+        """
+        # TODO: lift an implementation here from PipelineStage or move it to PipelineSchedule
+        raise NotImplementedError
+
+    def merge_outputs(self):
+        """
+        Merges the outputs of the microbatches into a single output.
+        """
+        # TODO: lift an implementation here from PipelineStage or move it to PipelineSchedule
+        raise NotImplementedError
 
 
 def _make_tensor_from_meta(
