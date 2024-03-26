@@ -55,6 +55,8 @@ jobs:
         run: torchrun --nproc-per-node 4 test/test_bwd.py
       - name: Run optimizer test
         run: torchrun --nproc-per-node 4 test/test_optim.py
+      - name: Test skip connection support
+        run: torchrun --nproc-per-node 4 test/test_skip_conn.py
       - name: Run example
         run: torchrun --nproc-per-node 3 examples/basic/example.py
       - name: Run training example
