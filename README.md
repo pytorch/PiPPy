@@ -16,8 +16,9 @@ One of the most important techniques for advancing the state of the art in deep 
 
 The PiPPy project consists of a compiler and runtime stack for automated parallelism and scaling of PyTorch models. Currently, PiPPy focuses on _pipeline parallelism_, a technique in which the code of the model is partitioned and multiple _micro-batches_ execute different parts of the model code concurrently. To learn more about pipeline parallelism, see [this article](https://www.deepspeed.ai/tutorials/pipeline/).
 
-![GPipe Schedule](https://i.imgur.com/eyUc947.png)
-(Diagram from Huang, 2018)
+![pipeline_diagram_web](https://github.com/pytorch/PiPPy/assets/6676466/c93e2fe7-1cd4-49a2-9fd8-231ec9905e0c)
+
+Figure: Pipeline parallel. "F", "B" and "U" denote forward, backward and weight update, respectively. Different colors represent different micro-batches.
 
 PiPPy provides the following features that make pipeline parallelism easier:
 
