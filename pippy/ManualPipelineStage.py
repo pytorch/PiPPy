@@ -274,10 +274,11 @@ class ManualPipelineStage(PipelineStageBase):
         stage_id: int,
         num_stages: int,
         device: torch.device,
+        group: dist.ProcessGroup = None,
         input_args: Optional[Union[torch.Tensor, List[torch.tensor]]] = None,
         output_args: Optional[Union[torch.Tensor, List[torch.tensor]]] = None,
     ):
-        super().__init__(stage_id, num_stages, device)
+        super().__init__(stage_id, num_stages, device, group)
         self.module = module.to(device)
         self.is_first_stage = stage_id == 0
         self.is_last_stage = stage_id == num_stages - 1
@@ -298,17 +299,21 @@ class ManualPipelineStage(PipelineStageBase):
             self.outputs = create_buffers(output_args, device)
 
         # this is used in backward
-        self.inputs_outputs: Deque[
-            Tuple[List[torch.tensor], List[torch.tensor]]
-        ] = deque()
+        self.inputs_outputs: Deque[Tuple[Tuple[Any, ...], Any]] = deque()
 
         # these are the buffers used in backwards send/recv, they are allocated later
         self.inputs_grad: List[torch.tensor] = []
         self.outputs_grad: List[torch.tensor] = []
 
-        # TODO: Calculating stage index from rank is not ideal, e.g. won't match in Interleaved 1F1B case.
-        self.prev_stage = (self.rank - 1) % self.world_size
-        self.next_stage = (self.rank + 1) % self.world_size
+        def stage_global_rank(peer_rank):
+            return (
+                peer_rank
+                if self.group is None
+                else dist.get_global_rank(self.group, peer_rank)
+            )
+
+        self.prev_stage = stage_global_rank((self.rank - 1) % self.world_size)
+        self.next_stage = stage_global_rank((self.rank + 1) % self.world_size)
 
         logger.debug(
             f"""
@@ -331,15 +336,23 @@ class ManualPipelineStage(PipelineStageBase):
         send_tensor = torch.ones(1, device="cuda")
         # forward
         if not self.is_first_stage:
-            ops.append(dist.P2POp(dist.irecv, recv_tensor, self.prev_stage))
+            ops.append(
+                dist.P2POp(dist.irecv, recv_tensor, self.prev_stage, self.group)
+            )
         if not self.is_last_stage:
-            ops.append(dist.P2POp(dist.isend, send_tensor, self.next_stage))
+            ops.append(
+                dist.P2POp(dist.isend, send_tensor, self.next_stage, self.group)
+            )
 
         # backward
         if not self.is_first_stage:
-            ops.append(dist.P2POp(dist.isend, send_tensor, self.prev_stage))
+            ops.append(
+                dist.P2POp(dist.isend, send_tensor, self.prev_stage, self.group)
+            )
         if not self.is_last_stage:
-            ops.append(dist.P2POp(dist.irecv, recv_tensor, self.next_stage))
+            ops.append(
+                dist.P2POp(dist.irecv, recv_tensor, self.next_stage, self.group)
+            )
 
         return True
 
@@ -347,7 +360,8 @@ class ManualPipelineStage(PipelineStageBase):
         if self.is_first_stage:
             return []
         return [
-            dist.P2POp(dist.irecv, inp, self.prev_stage) for inp in self.inputs
+            dist.P2POp(dist.irecv, inp, self.prev_stage, self.group)
+            for inp in self.inputs
         ]
 
     def get_fwd_send_ops(self) -> List[dist.P2POp]:
@@ -357,7 +371,8 @@ class ManualPipelineStage(PipelineStageBase):
         if self.is_last_stage:
             return []
         return [
-            dist.P2POp(dist.isend, out, self.next_stage) for out in self.outputs
+            dist.P2POp(dist.isend, out, self.next_stage, self.group)
+            for out in self.outputs
         ]
         raise AssertionError("invalid fwd_outputs type, cannot send")
 
@@ -379,7 +394,9 @@ class ManualPipelineStage(PipelineStageBase):
         return outputs
 
     def forward_one_chunk(
-        self, args: Optional[Union[torch.Tensor, Tuple[torch.tensor]]] = None
+        self,
+        args: Tuple[Any, ...],
+        kwargs: Optional[Dict[str, Any]] = None,
     ) -> Any:
         # Non-0 stage
         if args is None:
@@ -419,7 +436,7 @@ class ManualPipelineStage(PipelineStageBase):
         # grads should be same shape as the output from forward()
         self.outputs_grad = [torch.empty_like(out) for out in self.outputs]
         return [
-            dist.P2POp(dist.irecv, grad, self.next_stage)
+            dist.P2POp(dist.irecv, grad, self.next_stage, self.group)
             for grad in self.outputs_grad
         ]
 
@@ -427,7 +444,7 @@ class ManualPipelineStage(PipelineStageBase):
         if self.is_first_stage:
             return []
         return [
-            dist.P2POp(dist.isend, grad, self.prev_stage)
+            dist.P2POp(dist.isend, grad, self.prev_stage, self.group)
             for grad in self.inputs_grad
         ]
 
