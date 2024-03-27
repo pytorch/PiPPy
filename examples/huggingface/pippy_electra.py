@@ -11,6 +11,7 @@ import torch.distributed as dist
 
 from pippy import pipeline
 from pippy.IR import SplitPoint, annotate_split_points
+from pippy.PipelineSchedule import PipelineScheduleGPipe
 from pippy.PipelineStage import PipelineStage
 
 from transformers import ElectraForCausalLM, ElectraConfig
@@ -55,8 +56,8 @@ def run(args):
         num_chunks=args.chunks,
         example_args=(input_ids, ),
     )
-    nstages = len(list(electra_pipe.split_gm.children()))
-    assert nstages == args.world_size, f"nstages = {nstages} nranks = {args.world_size}"
+
+    assert electra_pipe.num_stages == args.world_size, f"nstages = {electra_pipe.num_stages} nranks = {args.world_size}"
     if args.rank == 0:
         for i, sm in enumerate(electra_pipe.split_gm.children()):
             print(f"Pipeline stage {i} {get_number_of_params(sm) // 10 ** 6}M params")
@@ -68,13 +69,14 @@ def run(args):
         device=args.device,
     )
 
+    # Attach to a schedule
+    schedule = PipelineScheduleGPipe(stage, args.chunks)
+
     # Run
     if args.rank == 0:
-        stage(input_ids)
-    elif args.rank == args.world_size - 1:
-        out = stage()
+        schedule.step(input_ids)
     else:
-        stage()
+        out = schedule.step()
 
     print(f"Rank {args.rank} completes")
 
