@@ -44,7 +44,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install numpy
-          pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cu121 --pre
+          pip install --pre -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/torch/
       - name: Install pippy
         run: python setup.py install
       - name: Run forward-only integration test
