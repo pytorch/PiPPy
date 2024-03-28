@@ -9,7 +9,8 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy.IR import Pipe, SplitPoint, annotate_split_points
+from pippy import pipeline
+from pippy.IR import SplitPoint, annotate_split_points
 from pippy.PipelineStage import PipelineStage
 
 from transformers import ElectraForCausalLM, ElectraConfig
@@ -49,7 +50,7 @@ def run(args):
     add_split_points(electra, args.world_size)
 
     # Create pipeline
-    electra_pipe = Pipe.from_tracing(
+    electra_pipe = pipeline(
         electra,
         num_chunks=args.chunks,
         example_args=(input_ids, ),

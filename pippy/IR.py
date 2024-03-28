@@ -1352,3 +1352,57 @@ class PipeFakeTensorProp(Interpreter):
         node.meta["example_value"] = res
         node.meta["val"] = res
         return res
+
+
+def pipeline(
+    mod: torch.nn.Module,
+    num_chunks: int,
+    example_args: Tuple[Any, ...],
+    example_kwargs: Optional[Dict[str, Any]] = None,
+    split_policy: Optional[Callable[[fx.GraphModule], fx.GraphModule]] = None,
+    args_chunk_spec: Optional[Tuple[Any, ...]] = None,
+    kwargs_chunk_spec: Optional[Dict[str, Any]] = None,
+    output_chunk_spec=None,
+    constraints: Optional[List[Constraint]] = None,
+) -> Pipe:
+    """
+    pipeline creates a new Pipe by tracing the provided module.
+
+    See Pipe for more details.
+
+    Arguments
+    ---------
+    mod:
+        The module to be traced.
+    num_chunks:
+        The number of chunks to split the module into.
+    example_args:
+        The example arguments to be used for tracing.
+    example_kwargs:
+        The example keyword arguments to be used for tracing.
+    split_policy:
+        The policy to use for splitting the module.
+    args_chunk_spec:
+        Args for each chunk.
+    kwargs_chunk_spec:
+        Kwargs for each chunk.
+    output_chunk_spec:
+        Outputs for each chunk.
+    constraints:
+        Constraints to be used for tracing.
+
+    Returns
+    -------
+    The traced Pipe.
+    """
+    return Pipe.from_tracing(
+        mod=mod,
+        num_chunks=num_chunks,
+        example_args=example_args,
+        example_kwargs=example_kwargs,
+        split_policy=split_policy,
+        args_chunk_spec=args_chunk_spec,
+        kwargs_chunk_spec=kwargs_chunk_spec,
+        output_chunk_spec=output_chunk_spec,
+        constraints=constraints,
+    )

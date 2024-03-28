@@ -9,7 +9,9 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy.IR import Pipe, SplitPoint, annotate_split_points
+from pippy import pipeline
+from pippy.IR import SplitPoint, annotate_split_points
+from pippy.PipelineSchedule import PipelineScheduleGPipe
 from pippy.PipelineStage import PipelineStage
 
 from transformers import GPT2ForSequenceClassification, GPT2Config
@@ -56,7 +58,7 @@ def run(args):
     if args.autosplit:
         # Automatic split
         from pippy import split_into_equal_size
-        gpt2_pipe = Pipe.from_tracing(
+        gpt2_pipe = pipeline(
             gpt2,
             num_chunks=args.chunks,
             example_args=(),
@@ -66,14 +68,14 @@ def run(args):
     else:
         # Manually annotate split points
         add_split_points(gpt2, args.world_size)
-        gpt2_pipe = Pipe.from_tracing(
+        gpt2_pipe = pipeline(
             gpt2,
             num_chunks=args.chunks,
             example_args=(),
             example_kwargs=example_inputs,
         )
 
-    assert len(list(gpt2_pipe.split_gm.children())) == args.world_size
+    assert gpt2_pipe.num_stages == args.world_size
     if args.rank == 0:
         for i, sm in enumerate(gpt2_pipe.split_gm.children()):
             print(f"Pipeline stage {i} {get_number_of_params(sm) // 10 ** 6}M params")
@@ -85,13 +87,14 @@ def run(args):
         device=args.device,
     )
 
+    # Attach to a schedule
+    schedule = PipelineScheduleGPipe(stage, args.chunks)
+
     # Run
     if args.rank == 0:
-        stage(**example_inputs)
-    elif args.rank == args.world_size - 1:
-        out = stage()
+        schedule.step(**example_inputs)
     else:
-        stage()
+        out = schedule.step()
 
     print(f"Rank {args.rank} completes")
 

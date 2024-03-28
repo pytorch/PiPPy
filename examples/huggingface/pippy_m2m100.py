@@ -9,7 +9,8 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy.IR import Pipe, SplitPoint, annotate_split_points
+from pippy import pipeline
+from pippy.IR import SplitPoint, annotate_split_points
 from pippy.PipelineStage import PipelineStage
 
 from transformers import M2M100ForConditionalGeneration, M2M100Config
@@ -51,7 +52,7 @@ def run(args):
     add_split_points(m2m100, args.world_size)
 
     # Create pipeline
-    m2m100_pipe = Pipe.from_tracing(
+    m2m100_pipe = pipeline(
         m2m100,
         num_chunks=args.chunks,
         example_args=(),

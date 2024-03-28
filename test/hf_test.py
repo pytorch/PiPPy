@@ -12,7 +12,7 @@ import transformers.utils.fx as fx
 from pippy.IR import (
     annotate_split_points,
     MultiUseParameterConfig,
-    Pipe,
+    pipeline,
     PipeSplitWrapper,
     stage_backward,
 )
@@ -660,7 +660,7 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
                 if replicate
                 else MultiUseParameterConfig.TRANSMIT
             )
-            model_pipe = Pipe.from_tracing(
+            model_pipe = pipeline(
                 model,
                 multi_use_param_config,
                 tracer=hf_tracer,
@@ -1018,7 +1018,7 @@ for _model_cls_name in fx._SUPPORTED_MODELS:
             output_loss_value_spec = get_output_loss_value_spec_for_model(
                 model_cls
             )
-            model_pipe = Pipe.from_tracing(
+            model_pipe = pipeline(
                 model,
                 multi_use_param_config,
                 tracer=hf_tracer,

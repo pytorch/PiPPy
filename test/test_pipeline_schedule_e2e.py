@@ -27,9 +27,10 @@ import torch
 import torch.multiprocessing as mp
 import torch.nn as nn
 from pippy.PipelineSchedule import (
+    PipelineSchedule1F1B,
     PipelineScheduleGPipe,
+    PipelineScheduleInterleaved1F1B,
     PipelineScheduleLoopedBFS,
-    PipelineScheduleLoopedDFS,
     PipelineStageV2Impl,
 )
 from torch.distributed._tensor.device_mesh import init_device_mesh
@@ -37,8 +38,6 @@ from torch.profiler import record_function
 
 
 logger = logging.getLogger(__name__)
-
-_null_context = nullcontext()
 
 
 # profiling context manager
@@ -96,10 +95,10 @@ class MLP(nn.Module):
         return c
 
 
-def setup(local_rank, init_process_group=False):
+def setup(local_rank, log_level, init_process_group=False):
     # If this is a child process (i.e., its PID is not the same as the PID of the process that started this script)
     if os.getppid() != os.getpid():
-        set_up_logging(local_rank)
+        set_up_logging(local_rank, log_level)
 
     # initialize the process group (not needed if using device_mesh)
     if init_process_group:
@@ -137,7 +136,9 @@ def main(**kwargs):
 
     init_process_group = bool(device_mesh is not None)
 
-    setup(local_rank, init_process_group=init_process_group)
+    setup(
+        local_rank, kwargs["log_level"], init_process_group=init_process_group
+    )
 
     logger.info(
         f"====== World Rank {rank}, Local Rank {local_rank}, World Size {world_size}, Device {device} main ======"
@@ -145,17 +146,19 @@ def main(**kwargs):
 
     rank_print(f"kwargs are {kwargs}")
 
-    input_dim = 400
-    hidden_dim = 800
-    output_dim = 400
+    input_dim = 900
+    hidden_dim = 8000
+    output_dim = 900
+
+    model = torch.nn.Sequential(
+        *[MLP(input_dim, hidden_dim, output_dim) for _ in range(8)]
+    )
 
     module_list = torch.nn.ModuleList(
-        modules=[
-            MLP(input_dim, hidden_dim, output_dim) for i in range(world_size)
-        ]
+        modules=[model for i in range(world_size)]
     )
     microbatch_size = 8
-    global_batch_size = 64
+    global_batch_size = 128
     assert global_batch_size % microbatch_size == 0
     n_microbatches = int(global_batch_size / microbatch_size)
     n_pp = world_size
@@ -194,21 +197,20 @@ def main(**kwargs):
         unused = torch.ones((1, 1), device="cuda")
         microbatches.append(torch.randn_like(x_cuda_empty))
 
+    # barrier before
+
     _run_profiler = kwargs["profiler"]
     _trace_dir = kwargs["trace_dir"]
     for schedule in kwargs["schedules"]:
         logger.info(f"====== Rank {rank} running schedule {schedule} ======")
         if schedule == "gpipe":
             pipeline = PipelineScheduleGPipe(stage_model)
+        elif schedule == "1f1b":
+            pipeline = PipelineSchedule1F1B(stage_model)
         elif schedule == "looped_bfs":
             pipeline = PipelineScheduleLoopedBFS(stage_model_looped)
-        elif schedule == "looped_dfs":
-            pipeline = PipelineScheduleLoopedDFS(
-                stage_model_looped,
-                n_microbatch=n_microbatches,
-                pp_id=rank,
-                n_pp=n_pp,
-            )
+        elif schedule == "interleaved_1f1b":
+            pipeline = PipelineScheduleInterleaved1F1B(stage_model_looped)
 
         if _run_profiler:
             logger.info(f"====== Rank {rank} profile ======")
@@ -232,11 +234,12 @@ def main_wrapper(rank, local_rank, world_size, kwargs):
     main(rank=rank, local_rank=local_rank, world_size=world_size, **kwargs)
 
 
-def set_up_logging(rank, log_level=logging.INFO):
+def set_up_logging(rank, log_level):
     """Set up logging"""
-    logger.setLevel(log_level)
-    handler = logging.StreamHandler()
-    handler.setLevel(log_level)
+    numeric_level = getattr(logging, log_level.upper(), None)
+    if not isinstance(numeric_level, int):
+        raise ValueError("Invalid log level: %s" % log_level)
+    logging.basicConfig(level=numeric_level)
 
     # TODO: seeing double logging due to global logging setup in
     # - fx/passes/utils/matcher_utils.py
@@ -258,15 +261,18 @@ if __name__ == "__main__":
     master_port = os.environ.get("MASTER_PORT", None)
 
     parser = argparse.ArgumentParser(description="Pipeline Stages Runner")
-    parser.add_argument("--profiler", type=bool, default=False)
-    parser.add_argument("--trace_dir", type=str, default="./pipeline_traces")
+    parser.add_argument(
+        "-l", "--log_level", help="Set the logging level.", default="DEBUG"
+    )
+    parser.add_argument("--profiler", type=bool, default=True)
+    parser.add_argument("--trace_dir", type=str, default="./traces")
     parser.add_argument(
         "--schedules",
         type=str,
         nargs="+",
-        choices=["gpipe", "looped_bfs", "looped_dfs"],
+        choices=["gpipe", "1f1b", "looped_bfs", "interleaved_1f1b"],
         # default=["gpipe"],
-        default=["gpipe", "looped_bfs", "looped_dfs"],
+        default=["interleaved_1f1b"],
     )
     parser.add_argument("--device", type=str, default="cuda")
     args = parser.parse_args()

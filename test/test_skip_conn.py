@@ -8,6 +8,7 @@ import pippy
 import torch
 import torch.distributed as dist
 from pippy.IR import pipe_split, pipeline
+from pippy.PipelineSchedule import PipelineScheduleGPipe
 from pippy.PipelineStage import PipelineStage
 
 
@@ -23,57 +24,62 @@ class ExampleCode(torch.nn.Module):
     def __init__(self):
         super().__init__()
         self.mm_param = torch.nn.Parameter(torch.randn(d_hid, d_hid))
+        self.mm_param2 = torch.nn.Parameter(torch.randn(d_hid, d_hid))
         self.lin = torch.nn.Linear(d_hid, d_hid)
 
-    def forward(self, x):
-        # Test change of tensor creation device after tracing
-        a = torch.ones(batch_size, d_hid, device=x.device)
-        x = x + a
+    def forward(self, x, y=torch.zeros(batch_size, d_hid)):
         x = torch.mm(x, self.mm_param)
+        x = x + y
         x = torch.relu(x)
+        skip_conn = x
         pipe_split()
+        x = torch.mm(x, self.mm_param)
+        x = self.lin(x)
+        pipe_split()
+        x = torch.relu(x)
+        x = torch.mm(x, self.mm_param2)
+        pipe_split()
+        x = x + skip_conn
         x = self.lin(x)
         x = torch.relu(x)
         return x
 
 
 def run_worker(args):
-    # Create module and trace model in CPU
     mod = ExampleCode()
+    mod.to(args.device)
 
-    xe = torch.randn(batch_size, d_hid)
+    x = torch.randn(batch_size, d_hid, device=args.device)
+    y = torch.randn(batch_size, d_hid, device=args.device)
 
     pipe = pipeline(
         mod,
         args.chunks,
-        example_args=(xe,),
+        example_args=(x,),
+        example_kwargs={"y": y},
     )
 
-    # Create pipeline stages and move stage to GPU
     stage = PipelineStage(
         pipe,
         args.rank,
         device=args.device,
     )
 
-    # Create real input on real device
-    x = torch.randn(batch_size, d_hid, device=args.device)
+    # Attach to a schedule
+    schedule = PipelineScheduleGPipe(stage, args.chunks)
 
     # Run
     if args.rank == 0:
-        stage(x)
-    elif args.rank == args.world_size - 1:
-        out = stage()
+        schedule.step(x, y=y)
     else:
-        stage()
+        out = schedule.step()
 
     dist.barrier()
     print(f"Rank {args.rank} completes")
 
     # Last rank checks result
     if args.rank == args.world_size - 1:
-        mod.to(args.device)
-        ref_out = mod(x)
+        ref_out = mod(x, y=y)
         torch.testing.assert_close(out, ref_out)
         print(
             f"equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}"
@@ -83,7 +89,7 @@ def run_worker(args):
 def main(args=None):
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--world_size", type=int, default=int(os.getenv("WORLD_SIZE", 2))
+        "--world_size", type=int, default=int(os.getenv("WORLD_SIZE", 4))
     )
     parser.add_argument("--rank", type=int, default=int(os.getenv("RANK", -1)))
     parser.add_argument(
@@ -123,8 +129,8 @@ if __name__ == "__main__":
     main()
 
 
-class TestFwd(unittest.TestCase):
-    def test_fwd(self):
+class TestSkipConn(unittest.TestCase):
+    def test_skip_conn(self):
         import random
 
         port = random.randint(29500, 30000)

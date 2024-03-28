@@ -3,7 +3,7 @@ import argparse
 import unittest
 
 import torch
-from pippy.IR import Pipe, pipe_split
+from pippy.IR import pipe_split, pipeline
 
 from pippy.microbatch import sum_reducer, TensorChunkSpec
 
@@ -89,7 +89,7 @@ def run_worker(args, model_class):
         sum_reducer,  # loss
     )
 
-    pipe = Pipe.from_tracing(
+    pipe = pipeline(
         mod,
         args.chunks,
         example_args=(x, y),
