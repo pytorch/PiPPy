@@ -401,7 +401,7 @@ class PipelineScheduleLoopedBFS(PipelineSchedule):
                     if ops:
                         dist.batch_isend_irecv(ops).pop().wait()
 
-                    stage.backward_one_chunk(chunk=i)
+                    stage.backward_one_chunk()
 
                     ops = stage.get_bwd_send_ops()
                     if ops:

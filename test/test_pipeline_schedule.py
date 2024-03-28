@@ -127,7 +127,13 @@ class TestPipelineSchedule(MultiProcessTestCase):
         )
 
     def _create_pipeline_stage(
-        self, model, inputs, device, stage_id=None, num_stages=None
+        self,
+        model,
+        inputs,
+        device,
+        num_microbatches=None,
+        stage_id=None,
+        num_stages=None,
     ):
         return ManualPipelineStage(
             module=model,
@@ -135,10 +141,11 @@ class TestPipelineSchedule(MultiProcessTestCase):
             num_stages=self.world_size if num_stages is None else num_stages,
             input_args=inputs,
             device=device,
+            num_microbatches=num_microbatches,
         )
 
     def _create_virtual_pipeline_stages(
-        self, model, inputs, device, virtual_size
+        self, model, inputs, device, virtual_size, num_microbatches=None
     ):
         virtual_stages = []
         for i in range(virtual_size):
@@ -146,6 +153,7 @@ class TestPipelineSchedule(MultiProcessTestCase):
                 model,
                 inputs,
                 device,
+                num_microbatches,
                 self.rank + (i * self.world_size),
                 self.world_size * virtual_size,
             )
@@ -177,7 +185,7 @@ class TestPipelineSchedule(MultiProcessTestCase):
         model = MLP(dim=8, hidden_dim=4, out_dim=4)
         input1 = torch.rand((2, 8), device=device)
         pipeline_stage = self._create_pipeline_stage(model, input1, device)
-        output = pipeline_stage.forward_one_chunk(input1)
+        output = pipeline_stage.forward_one_chunk([input1])
         self.assertEqual(output.shape, torch.Size([2, 4]))
 
         # multi-input model forward
@@ -197,7 +205,7 @@ class TestPipelineSchedule(MultiProcessTestCase):
         model = MultiOutputArgMLP(dim=8, out_dim=4)
         input1 = torch.rand((2, 8), device=device)
         pipeline_stage = self._create_pipeline_stage(model, input1, device)
-        output = pipeline_stage.forward_one_chunk(input1)
+        output = pipeline_stage.forward_one_chunk([input1])
         self.assertEqual(len(output), 2)
         self.assertEqual(output[0].shape, torch.Size([2, 4]))
         self.assertEqual(output[1].shape, torch.Size([4, 4]))
@@ -284,14 +292,14 @@ class TestPipelineSchedule(MultiProcessTestCase):
         # test single pipeline stage
         model = MLP(dim=8, hidden_dim=4, out_dim=8)
         microbatch = torch.rand((4, 8), device=device)
-        stage = self._create_pipeline_stage(model, microbatch, device)
+        stage = self._create_pipeline_stage(model, microbatch, device, 8)
         num_microbatches = 8
         microbatches = [
-            torch.randn_like(microbatch) for _ in range(num_microbatches)
+            [torch.randn_like(microbatch)] for _ in range(num_microbatches)
         ]
 
-        schedule = PipelineSchedule1F1B(stage)
-        schedule.step(microbatches)
+        schedule = PipelineSchedule1F1B(stage, num_microbatches)
+        schedule.step_microbatches(microbatches)
         dist.barrier()
 
     @skip_if_lt_x_gpu(4)
