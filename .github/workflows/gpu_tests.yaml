@@ -42,7 +42,7 @@ jobs:
       - name: Activate conda env
         run: conda activate test
       - name: Install dependencies
-        run:
+        run: |
           pip install numpy
           pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cu121 --pre
       - name: Install pippy
