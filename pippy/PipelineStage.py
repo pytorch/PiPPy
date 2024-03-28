@@ -138,11 +138,11 @@ class PipelineStageBase(ABC):
 
 
 def _make_tensor_from_meta(
-    example_value: FakeTensor,
+    example: FakeTensor,
     device: torch.device,
 ) -> torch.Tensor:
     return torch.empty(
-        example_value.size(), dtype=example_value.dtype, device=device
+        example.size(), dtype=example.dtype, layout=example.layout, device=device
     )
 
 
