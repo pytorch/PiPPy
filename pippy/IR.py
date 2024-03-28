@@ -11,7 +11,6 @@ import torch
 import torch.fx as fx
 from packaging import version
 from torch.export import Constraint, ExportedProgram
-from torch.fx.interpreter import Interpreter
 from torch.fx.passes.split_module import split_module
 
 from pippy.backward import _null_coalesce_accumulate, stage_backward
@@ -701,6 +700,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
             traced = split_policy(traced)
 
         if PIPPY_VERBOSITY == "DEBUG":
+            logger.debug("Traced original model:")
             traced.print_readable()
 
         # Deduplicate `get_attr` nodes that refer to the same parameter . Downstream code for moving
@@ -1083,10 +1083,10 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         # This qualname mapping is different from the mapping before and after splitting.
         tracer_qualname_map = Pipe._get_param_buffer_mapping(mod, traced)
 
-        logger.info("Full pipe model:\n" f"{split}")
+        logger.debug("Full pipe model:\n" f"{split}")
         if PIPPY_VERBOSITY == "DEBUG":
-            for submod in split.children():
-                submod.print_readable()
+            logger.debug("Full pipe graph:")
+            split.print_readable()
 
         return Pipe(
             split,
@@ -1170,14 +1170,6 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         pipe.args_chunk_spec = args_chunk_spec
         pipe.kwargs_chunk_spec = kwargs_chunk_spec
         pipe.output_chunk_spec = output_chunk_spec
-
-        # Shape propagation to get shapes of all tensors
-        PipeFakeTensorProp(pipe.split_gm).run()
-        for node in pipe.split_gm.graph.nodes:
-            logger.debug(
-                f"{node.name}, "
-                f"{node.meta['example_value'] if 'example_value' in node.meta else 'None'}",
-            )
 
         # Users want the first pipeline stage to accept kwargs if the original
         # program does. This is controlled by the `_codegen` field of the graph,
@@ -1319,39 +1311,6 @@ def annotate_split_points(mod: torch.nn.Module, spec: Dict[str, SplitPoint]):
             mod_to_wrap.forward = MethodType(_split_after_forward, mod_to_wrap)
         else:
             raise ValueError("Unknown split point type.")
-
-
-class PipeFakeTensorProp(Interpreter):
-    def __init__(
-        self, module: fx.GraphModule, garbage_collect_values: bool = True
-    ):
-        super().__init__(module, garbage_collect_values)
-        self.stop_prop = False
-
-    def run(self):
-        # Prepare input from node.meta, which will be filled during tracing if
-        # input is a tensor.  For non-tensor inputs, e.g. constants, its value
-        # would have been burned into the program, so we use an arbitrary value
-        # here (None).
-        inp = tuple(
-            node.meta["val"] if "val" in node.meta else None
-            for node in self.module.graph.nodes
-            if node.op == "placeholder"
-        )
-        super().run(*inp)
-
-    def run_node(self, node):
-        # Do not propagate through the stage backward call because it won't work
-        if (node.op, node.target) == ("call_function", stage_backward):
-            self.stop_prop = True
-
-        if self.stop_prop:
-            return None
-
-        res = super().run_node(node)
-        node.meta["example_value"] = res
-        node.meta["val"] = res
-        return res
 
 
 def pipeline(
