@@ -11,9 +11,10 @@ check_untyped_defs = true
 follow_imports = "silent"
 warn_unused_ignores = false
 exclude = [
-  '^pippy/fx',
-  '^test/.*fx',
-  '^test/hf',
-  '^examples/hf',
   '^docs',
+]
+
+[tool.ufmt]
+excludes = [
+  "pippy/unflatten.py",
 ]

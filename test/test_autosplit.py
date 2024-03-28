@@ -23,19 +23,21 @@ torch.manual_seed(0)
 class ExampleCode(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        self.mm_param = torch.nn.Parameter(torch.randn(d_hid, d_hid))
+        self.mm_param0 = torch.nn.Parameter(torch.randn(d_hid, d_hid))
+        self.mm_param1 = torch.nn.Parameter(torch.randn(d_hid, d_hid))
         self.mm_param2 = torch.nn.Parameter(torch.randn(d_hid, d_hid))
-        self.lin = torch.nn.Linear(d_hid, d_hid)
+        self.lin1 = torch.nn.Linear(d_hid, d_hid)
+        self.lin2 = torch.nn.Linear(d_hid, d_hid)
         self.register_buffer("buffer", torch.randn(batch_size + 100, d_hid))
 
     def forward(self, x):
-        x = torch.mm(x, self.mm_param)
+        x = torch.mm(x, self.mm_param0)
         x = torch.relu(x)
-        x = torch.mm(x, self.mm_param) + self.buffer[: x.shape[0]]
-        x = self.lin(x)
+        x = torch.mm(x, self.mm_param1) + self.buffer[: x.shape[0]]
+        x = self.lin1(x)
         x = torch.relu(x)
         x = torch.mm(x, self.mm_param2)
-        x = self.lin(x)
+        x = self.lin2(x)
         x = torch.relu(x)
         return x
 
