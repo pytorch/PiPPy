@@ -11,6 +11,7 @@ import torch.distributed as dist
 
 from pippy import pipeline
 from pippy.IR import SplitPoint, annotate_split_points
+from pippy.PipelineSchedule import PipelineScheduleGPipe
 from pippy.PipelineStage import PipelineStage
 
 from transformers import M2M100ForConditionalGeneration, M2M100Config
@@ -19,13 +20,13 @@ from hf_utils import generate_inputs_for_model, get_number_of_params
 
 
 def add_split_points(m2m100, nranks):
-    # First rank takes encoder
+    # First rank takes encoder and shared embedding
+    # Second rank takes decoder layers
     annotate_split_points(
-        m2m100, {"model.encoder": SplitPoint.END})
-    # Second rank takes decoder
-    annotate_split_points(
-        m2m100, {"model.decoder": SplitPoint.END})
+        m2m100, {"model.decoder.layers.0": SplitPoint.BEGINNING})
     # Last rank takes LM head
+    annotate_split_points(
+        m2m100, {"lm_head": SplitPoint.BEGINNING})
 
 
 def run(args):
@@ -58,8 +59,8 @@ def run(args):
         example_args=(),
         example_kwargs=example_inputs,
     )
-    nstages = len(list(m2m100_pipe.split_gm.children()))
-    assert nstages == args.world_size, f"nstages = {nstages} nranks = {args.world_size}"
+
+    assert m2m100_pipe.num_stages == args.world_size, f"nstages = {m2m100_pipe.num_stages} nranks = {args.world_size}"
     if args.rank == 0:
         for i, sm in enumerate(m2m100_pipe.split_gm.children()):
             print(f"Pipeline stage {i} {get_number_of_params(sm) // 10 ** 6}M params")
@@ -71,15 +72,14 @@ def run(args):
         device=args.device,
     )
 
+    # Attach to a schedule
+    schedule = PipelineScheduleGPipe(stage, args.chunks)
+
     # Run
     if args.rank == 0:
-        stage(example_inputs["input_ids"])
-    elif args.rank == 1:
-        out = stage(example_inputs["decoder_input_ids"])
-    elif args.rank == args.world_size - 1:
-        out = stage()
+        schedule.step(**example_inputs)
     else:
-        stage()
+        out = schedule.step()
 
     print(f"Rank {args.rank} completes")
 
