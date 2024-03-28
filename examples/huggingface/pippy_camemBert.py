@@ -11,6 +11,7 @@ import torch.distributed as dist
 
 from pippy import pipeline
 from pippy.IR import SplitPoint, annotate_split_points
+from pippy.PipelineSchedule import PipelineScheduleGPipe
 from pippy.PipelineStage import PipelineStage
 
 from transformers import CamembertForMaskedLM, CamembertConfig
@@ -68,13 +69,14 @@ def run(args):
         device=args.device,
     )
 
+    # Attach to a schedule
+    schedule = PipelineScheduleGPipe(stage, args.chunks)
+
     # Run
     if args.rank == 0:
-        stage(**example_inputs)
-    elif args.rank == args.world_size - 1:
-        out = stage()
+        schedule.step(**example_inputs)
     else:
-        stage()
+        out = schedule.step()
 
     print(f"Rank {args.rank} completes")
 

@@ -67,3 +67,5 @@ jobs:
         run: torchrun --nproc-per-node 4 examples/huggingface/pippy_gpt2.py
       - name: Run T5
         run: torchrun --nproc-per-node 2 examples/huggingface/pippy_t5.py
+      - name: Run BERT
+        run: torchrun --nproc-per-node 4 examples/huggingface/pippy_bert.py
