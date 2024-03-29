@@ -22,6 +22,7 @@ class PipelineSchedule(ABC):
         loss_fn: Optional[Callable] = None,
     ):
         self._stage = stage
+        self._num_stages = stage.num_stages
         self._n_microbatches = n_microbatches
         self._loss_fn = loss_fn
         self._has_backward = self._loss_fn is not None
@@ -63,6 +64,50 @@ class PipelineSchedule(ABC):
         """
         raise NotImplementedError
 
+    def _check_inputs(
+        self,
+        arg_mbs: Optional[List] = None,
+        kwarg_mbs: Optional[List] = None,
+        target_mbs: Optional[List] = None,
+        losses: Optional[List] = None,
+    ):
+        """
+        Pre-process/check inputs
+        """
+        if arg_mbs is not None:
+            assert len(arg_mbs) == self._n_microbatches
+        else:
+            arg_mbs = [()] * self._n_microbatches
+
+        if kwarg_mbs is not None:
+            assert len(kwarg_mbs) == self._n_microbatches
+        else:
+            kwarg_mbs = [{}] * self._n_microbatches
+
+        if self._should_compute_loss:
+            if target_mbs is None:
+                raise RuntimeError(
+                    "target_mbs must be passed in if loss_fn is not None"
+                )
+            if len(target_mbs) != self._n_microbatches:
+                raise RuntimeError(
+                    f"target_mbs length {len(target_mbs)} does not match number of microbatches {self._n_microbatches}"
+                )
+
+        if losses is not None:
+            assert isinstance(
+                losses, list
+            ), f"losses must be a list but got a {type(losses)}"
+
+        return arg_mbs, kwarg_mbs
+
+    def _compute_loss(self, output, target):
+        if target.shape != output.shape:
+            raise RuntimeError(
+                f"target shape {target.shape} does not match output shape {output.shape}"
+            )
+        return self._loss_fn(output, target)  # type: ignore[misc]
+
 
 def sorted_batch_isend_irecv(p2p_ops: List[dist.P2POp]) -> Dict[int, dist.Work]:
     """
@@ -97,26 +142,9 @@ class PipelineScheduleGPipe(PipelineSchedule):
         target_mbs: Optional[List] = None,
         losses: Optional[List] = None,
     ):
-        # Pre-process inputs
-        if arg_mbs is not None:
-            assert len(arg_mbs) == self._n_microbatches
-        else:
-            arg_mbs = [()] * self._n_microbatches
-
-        if kwarg_mbs is not None:
-            assert len(kwarg_mbs) == self._n_microbatches
-        else:
-            kwarg_mbs = [{}] * self._n_microbatches
-
-        if self._should_compute_loss:
-            if target_mbs is None:
-                raise RuntimeError(
-                    "target_mbs must be passed in if loss_fn is not None"
-                )
-            if len(target_mbs) != self._n_microbatches:
-                raise RuntimeError(
-                    f"target_mbs length {len(target_mbs)} does not match number of microbatches {self._n_microbatches}"
-                )
+        arg_mbs, kwarg_mbs = self._check_inputs(
+            arg_mbs, kwarg_mbs, target_mbs, losses
+        )
 
         # Internal loss container
         internal_losses = []
@@ -131,7 +159,7 @@ class PipelineScheduleGPipe(PipelineSchedule):
                 for work in works.values():
                     work.wait()
 
-                output = self._stage.forward_one_chunk(arg_mbs[i], kwarg_mbs[i])
+                output = self._stage.forward_one_chunk(arg_mbs[i], kwarg_mbs[i])  # type: ignore[index]
 
                 ops = self._stage.get_fwd_send_ops()
                 works = sorted_batch_isend_irecv(ops)
@@ -143,11 +171,7 @@ class PipelineScheduleGPipe(PipelineSchedule):
 
             if self._should_compute_loss:
                 target = target_mbs[i]  # type: ignore[index]
-                if target.shape != output.shape:
-                    raise RuntimeError(
-                        f"target_mbs[{i}] shape {target.shape} does not match output shape {output.shape}"
-                    )
-                loss = self._loss_fn(output, target)  # type: ignore[misc]
+                loss = self._compute_loss(output, target)
                 internal_losses.append(loss)
                 logger.debug(
                     f"[{self._stage.stage_index}] Loss of microbatch {i}: {loss}"
@@ -186,9 +210,6 @@ class PipelineScheduleGPipe(PipelineSchedule):
 
         # Return losses if there is a container passed in
         if losses is not None:
-            assert isinstance(
-                losses, list
-            ), f"losses must be a list but got a {type(losses)}"
             # Clean external container first
             losses.clear()
             # Copy internal losses to external container
@@ -219,23 +240,19 @@ class PipelineScheduleGPipe(PipelineSchedule):
 
 
 class PipelineSchedule1F1B(PipelineSchedule):
-    def __init__(self, stage: PipelineStageBase):
-        self._stage = stage
-        self.stage_index = stage.stage_index
-        self.rank = stage.rank
-        self.pp_group_size = stage.world_size
-
     def step_microbatches(
         self,
         arg_mbs: Optional[List] = None,
         kwarg_mbs: Optional[List] = None,
+        target_mbs: Optional[List] = None,
+        losses: Optional[List] = None,
     ):
-        if arg_mbs is not None:
-            # TODO: fix this so it is preset
-            self._n_microbatches = len(arg_mbs)
-            assert len(arg_mbs) == self._n_microbatches
-        else:
-            arg_mbs = [()] * self._n_microbatches
+        arg_mbs, kwarg_mbs = self._check_inputs(
+            arg_mbs, kwarg_mbs, target_mbs, losses
+        )
+
+        # Internal loss container
+        internal_losses = []
 
         # forward for num_microbatches + backward for num_microbatches
         total_ops = self._n_microbatches * 2
@@ -248,7 +265,7 @@ class PipelineSchedule1F1B(PipelineSchedule):
         # fwd only
         warmup_steps = min(
             self._n_microbatches,
-            2 * (self.pp_group_size - self.stage_index - 1),
+            2 * (self._num_stages - self._stage.stage_index - 1),
         )
 
         # fwd + bwd
@@ -260,13 +277,11 @@ class PipelineSchedule1F1B(PipelineSchedule):
         total_steps = warmup_steps + main_1f1b_steps + cooldown_steps
 
         logger.debug(
-            f"""
-            Rank {self.rank}:
-            Warmup steps: {warmup_steps}
-            Main 1F1B steps: {main_1f1b_steps}
-            Cooldown steps: {cooldown_steps}
-            Total steps: {total_steps}
-        """
+            f"Stage {self._stage.stage_index}: "
+            f"Warmup steps: {warmup_steps}, "
+            f"Main 1F1B steps: {main_1f1b_steps}, "
+            f"Cooldown steps: {cooldown_steps}, "
+            f"Total steps: {total_steps}"
         )
 
         # Delay send waits
@@ -282,17 +297,21 @@ class PipelineSchedule1F1B(PipelineSchedule):
                     for work in works.values():
                         work.wait()
 
-                    self._stage.forward_one_chunk(arg_mbs[i])
+                    output = self._stage.forward_one_chunk(arg_mbs[i], kwarg_mbs[i])  # type: ignore[index]
 
                     ops = self._stage.get_fwd_send_ops()
                     works = sorted_batch_isend_irecv(ops)
                     fwd_sends_to_wait.extend(works.values())
 
-            if (
-                warmup_steps
-                <= i
-                < warmup_steps + main_1f1b_steps + cooldown_steps
-            ):
+                if self._should_compute_loss:
+                    target = target_mbs[i]  # type: ignore[index]
+                    loss = self._compute_loss(output, target)
+                    internal_losses.append(loss)
+                    logger.debug(
+                        f"[{self._stage.stage_index}] Loss of microbatch {i}: {loss}"
+                    )
+
+            if i >= warmup_steps and self._has_backward:
                 # backward
                 with record_function(f"Backward {i}"):
                     ops = self._stage.get_bwd_recv_ops()
@@ -300,7 +319,10 @@ class PipelineSchedule1F1B(PipelineSchedule):
                     for work in works.values():
                         work.wait()
 
-                    self._stage.backward_one_chunk()
+                    loss = (
+                        internal_losses[i] if len(internal_losses) > 0 else None
+                    )
+                    self._stage.backward_one_chunk(loss=loss)
 
                     ops = self._stage.get_bwd_send_ops()
                     works = sorted_batch_isend_irecv(ops)
@@ -314,9 +336,31 @@ class PipelineSchedule1F1B(PipelineSchedule):
         for work in bwd_sends_to_wait:
             work.wait()
 
-    def step(self, *args, **kwargs):
-        # TODO
-        pass
+        # Return losses if there is a container passed in
+        if losses is not None:
+            # Clean external container first
+            losses.clear()
+            # Copy internal losses to external container
+            losses.extend(internal_losses)
+
+    def step(self, *args, target=None, losses: Optional[List] = None, **kwargs):
+        # Clean per iteration
+        self._stage.clear_runtime_states()
+
+        # Split inputs into microbatches
+        args_split, kwargs_split = self._stage.split_inputs(args, kwargs)
+
+        # Split target into microbatches
+        if target is not None:
+            targets_split = torch.tensor_split(target, self._n_microbatches)
+        else:
+            targets_split = None
+
+        # Run microbatches
+        self.step_microbatches(args_split, kwargs_split, targets_split, losses)
+
+        # Return merged results per original format
+        return self._stage.merge_outputs()
 
 
 class PipelineScheduleLoopedBFS(PipelineSchedule):
