@@ -764,7 +764,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
             if isinstance(submodule, fx.GraphModule):
                 new_submod = _outline_submodules(submodule.graph)
                 # Replace old submod
-                setattr(split, name, new_submod)
+                split.register_module(name, new_submod)
 
         # lift single-use parameter fetches into the modules that use them
         # TODO: backport this into split_module
