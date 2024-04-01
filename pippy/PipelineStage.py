@@ -142,7 +142,10 @@ def _make_tensor_from_meta(
     device: torch.device,
 ) -> torch.Tensor:
     return torch.empty(
-        example.size(), dtype=example.dtype, layout=example.layout, device=device
+        example.size(),
+        dtype=example.dtype,
+        layout=example.layout,
+        device=device,
     )
 
 

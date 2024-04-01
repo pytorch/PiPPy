@@ -65,6 +65,8 @@ jobs:
         run: pip install transformers
       - name: Run GPT2
         run: torchrun --nproc-per-node 4 examples/huggingface/pippy_gpt2.py
+      - name: Test CPU init + GPU run
+        run: torchrun --nproc-per-node 4 examples/cpu_init/gpt2_cpu_init.py
       - name: Run T5
         run: torchrun --nproc-per-node 2 examples/huggingface/pippy_t5.py
       - name: Run BERT
