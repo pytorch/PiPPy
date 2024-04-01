@@ -2,7 +2,8 @@
 import os
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from pippy import SplitPoint, annotate_split_points, PipelineStage
+from pippy import SplitPoint, annotate_split_points, pipeline, PipelineStage
+from pippy.PipelineSchedule import PipelineScheduleGPipe
 
 # Grab the model
 llama = AutoModelForCausalLM.from_pretrained(
@@ -35,12 +36,16 @@ llama_pipe = pipeline(llama, world_size, example_args=(inputs["input_ids"],))
 torch.distributed.init_process_group(rank=rank, world_size=world_size)
 stage = PipelineStage(llama_pipe, rank, device=device)
 
+# Attach to a schedule
+schedule = PipelineScheduleGPipe(stage, world_size)
+
 # Run
 if rank == 0:
     args = inputs["input_ids"]
 else:
     args = None
-output = stage(args)
+
+output = schedule.step(args)
 
 # Decode
 if output is not None:
