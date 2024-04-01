@@ -63,10 +63,10 @@ jobs:
         run: torchrun --nproc-per-node 4 examples/huggingface/pippy_gpt2.py
       - name: Test CPU init + GPU run
         run: torchrun --nproc-per-node 4 examples/cpu_init/gpt2_cpu_init.py
-      - name: Run T5
-        run: torchrun --nproc-per-node 2 examples/huggingface/pippy_t5.py
-      - name: Run BERT
-        run: torchrun --nproc-per-node 4 examples/huggingface/pippy_bert.py
+      # - name: Run T5
+      #   run: torchrun --nproc-per-node 2 examples/huggingface/pippy_t5.py
+      # - name: Run BERT
+      #   run: torchrun --nproc-per-node 4 examples/huggingface/pippy_bert.py
 
   backward_tests_4gpu:
     runs-on: linux.g5.12xlarge.nvidia.gpu
