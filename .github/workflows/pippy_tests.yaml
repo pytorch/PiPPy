@@ -1,4 +1,4 @@
-name: PiPPy tests
+name: CPU tests
 
 on:
   push:
@@ -70,7 +70,7 @@ jobs:
   #       run: |
   #         pytest --shard-id=${{ matrix.shard }} --num-shards=8 -k 'HFModelsForwardBackwardTest' -sv --cov=pippy test/hf_test.py
 
-  integration_test_cpu:
+  Unit_tests:
     runs-on: linux.4xlarge
     strategy:
       matrix:
