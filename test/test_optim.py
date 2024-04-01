@@ -11,9 +11,14 @@ import torch.distributed as dist
 import torch.optim as optim
 
 from pippy.IR import pipe_split, pipeline
-from pippy.PipelineSchedule import PipelineScheduleGPipe
+from pippy.PipelineSchedule import PipelineSchedule1F1B, PipelineScheduleGPipe
 from pippy.PipelineStage import PipelineStage
 
+
+schedule_map = {
+    "gpipe": PipelineScheduleGPipe,
+    "1f1b": PipelineSchedule1F1B,
+}
 
 d_hid = 512
 batch_size = 256
@@ -67,7 +72,9 @@ def run_worker(args):
     )
 
     # Attach to a schedule
-    schedule = PipelineScheduleGPipe(stage, args.chunks, loss_fn=loss_fn)
+    ScheduleClass = schedule_map[args.schedule]
+    print(f"Using {ScheduleClass.__name__}")
+    schedule = ScheduleClass(stage, args.chunks, loss_fn=loss_fn)
 
     # Create an optimizer for stage submodule's parameters
     optimizer = optim.SGD(stage.submod.parameters(), lr=1e-3, momentum=0.9)
@@ -111,6 +118,12 @@ def main(args=None):
         "--chunks",
         type=int,
         default=4,
+    )
+    parser.add_argument(
+        "--schedule",
+        type=str,
+        default="gpipe",
+        choices=schedule_map.keys(),
     )
     args = parser.parse_args(args)
 

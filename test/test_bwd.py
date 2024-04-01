@@ -7,14 +7,14 @@ import torch
 import torch.distributed as dist
 
 from pippy.IR import pipe_split, pipeline
-from pippy.PipelineSchedule import PipelineScheduleGPipe
+from pippy.PipelineSchedule import PipelineSchedule1F1B, PipelineScheduleGPipe
 from pippy.PipelineStage import PipelineStage
 
 
-schedules = [
-    "FillDrain",
-    "1F1B",
-]
+schedule_map = {
+    "gpipe": PipelineScheduleGPipe,
+    "1f1b": PipelineSchedule1F1B,
+}
 
 d_hid = 512
 batch_size = 256
@@ -68,7 +68,9 @@ def run_worker(args):
     )
 
     # Attach to a schedule
-    schedule = PipelineScheduleGPipe(stage, args.chunks, loss_fn=loss_fn)
+    ScheduleClass = schedule_map[args.schedule]
+    print(f"Using {ScheduleClass.__name__}")
+    schedule = ScheduleClass(stage, args.chunks, loss_fn=loss_fn)
 
     # Run
     if args.rank == 0:
@@ -114,8 +116,8 @@ def main(args=None):
     parser.add_argument(
         "--schedule",
         type=str,
-        default="FillDrain",
-        choices=schedules,
+        default="gpipe",
+        choices=schedule_map.keys(),
     )
     args = parser.parse_args(args)
 
