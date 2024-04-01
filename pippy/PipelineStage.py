@@ -8,7 +8,7 @@ import torch
 import torch.distributed as dist
 import torch.fx as fx
 from torch._subclasses.fake_tensor import FakeTensor
-from torch.fx.node import map_aggregate, map_arg
+from torch.fx.node import map_aggregate
 from torch.nn.parallel import DistributedDataParallel
 
 from pippy.backward import stage_backward
@@ -138,11 +138,14 @@ class PipelineStageBase(ABC):
 
 
 def _make_tensor_from_meta(
-    example_value: FakeTensor,
+    example: FakeTensor,
     device: torch.device,
 ) -> torch.Tensor:
     return torch.empty(
-        example_value.size(), dtype=example_value.dtype, device=device
+        example.size(),
+        dtype=example.dtype,
+        layout=example.layout,
+        device=device,
     )
 
 
@@ -161,12 +164,12 @@ class RecvInfo:
         return f"RecvInfo(input={self.input_name}, source={self.source}, shape={self.buffer.size()})"
 
 
-class StageArgPlaceholder:
+class RootArgPlaceholder:
     pass
 
 
 # An input can be either a received activation or a model input
-InputInfo = Union[RecvInfo, StageArgPlaceholder]
+InputInfo = Union[RecvInfo, RootArgPlaceholder]
 
 
 class PipelineStage(PipelineStageBase, QualnameMapMixin):
@@ -202,8 +205,7 @@ class PipelineStage(PipelineStageBase, QualnameMapMixin):
         self.name, self.submod = named_children[stage_index]
         logger.info(
             f"[{self.group_rank}] "
-            f"Creating PipelineStage:\n"
-            f"{self.submod}"
+            f"Creating PipelineStage {stage_index} for {self.name}"
         )
 
         # Enable `remap_qualname` method
@@ -263,7 +265,6 @@ class PipelineStage(PipelineStageBase, QualnameMapMixin):
         if has_meta_param:
             logger.debug(f"[{self.group_rank}] Found meta parameters!")
         else:
-            logger.debug(f"[{self.group_rank}] No meta parameters found!")
             self.submod.to(self.device)
 
     def _move_ops_to_device(self):
@@ -302,62 +303,59 @@ class PipelineStage(PipelineStageBase, QualnameMapMixin):
     def _create_act_recv_buffers(
         self,
     ):
-        def create_recv_tensor(
-            input_node,
-            output_idx: Optional[int] = None,
-        ):
+        def create_recv_tensor(placeholder, arg_node):
             """
-            Create a tensor for receiving the `output_idx`-th value from
-            `input_node`
+            Create a receive buffer for a placeholder.
             """
-            if input_node.op == "placeholder":
-                # Do not create buffer for placeholder
-                return StageArgPlaceholder()
+            if arg_node.op == "placeholder":
+                # This is a root level placeholder, thus an input argument to the entire model.
+                # We are likely at stage 0, hence no need to create a receive buffer.
+                return RootArgPlaceholder()
 
-            # In case the input is a `getitem` node, we recursively find the
-            # real source e.g. getitem1 = submod0[1]
-            # Here `submod0` is args[0], 1 is args[1]
-            if input_node.target is operator.getitem:
-                if "example_value" in input_node.meta:
-                    real_input_node = input_node.args[0]
-                    out_idx = input_node.args[1]
-                    return create_recv_tensor(real_input_node, out_idx)
-                else:
-                    raise NotImplementedError(
-                        f"getitem gets a non-Tensor value, this is not yet supported. "
-                        f"Node: {input_node.format_node()}"
-                    )
+            # Figure out the source stage of this input
+            while arg_node.target is operator.getitem:
+                # If the input is a getitem, we need to go deeper
+                arg_node = arg_node.args[0]
 
-            if output_idx is not None:
-                # If a node has multiple output values, "example_value" is a list
-                # of tensor meta
-                example_value = input_node.meta["example_value"][output_idx]
-            else:
-                example_value = input_node.meta["example_value"]
+            assert (
+                arg_node.op == "call_module"
+            ), f"Expecting call_module, got {arg_node.op}"
+            src_stage = self.get_stage_index_of_submod(arg_node.name)
 
+            # Create a receive buffer for this placeholder
+            example_value = placeholder.meta["val"]
             logger.info(
                 f"[{self.group_rank}] "
-                f"Creating recv buffer for input '{input_node.name}' "
-                f"value index {output_idx}: {example_value.size()}"
+                f"Creating recv buffer for input '{placeholder.name}' "
+                f": {example_value.shape}, {example_value.dtype}"
             )
-
-            src_rank = self.get_stage_index_of_submod(input_node.name)
             buffer = _make_tensor_from_meta(example_value, self.device)
+
             return RecvInfo(
-                input_node.name,
-                src_rank,
+                arg_node.name,
+                src_stage,
                 buffer,
             )
 
-        # `args` is a Tuple, hence we will have:
-        # Tuple[InputInfo]
-        args_recv_info = map_arg(self.node.args, create_recv_tensor)
+        args_recv_info: List[InputInfo] = []
+        # Filter out placeholder nodes from `self.submod` (a GraphModule)
+        placeholders = filter(
+            lambda node: node.op == "placeholder", self.submod.graph.nodes
+        )
+        # `placeholders` are nodes internal to submod.
+        # `self.node.args` are dependency nodes in the outer graph.
+        # The two are 1:1.
+        for placeholder, arg_node in zip(placeholders, self.node.args):
+            # Create a receive buffer for this placeholder
+            recv_info = create_recv_tensor(placeholder, arg_node)
+            args_recv_info.append(recv_info)
 
         logger.info(
             f"[{self.group_rank}] "
             f"Activation recv / args info: {args_recv_info}"
         )
-        return args_recv_info
+        # `args` is a Tuple, hence we will return a Tuple[InputInfo]
+        return tuple(args_recv_info)
 
     def find_dst_rank(
         self,
@@ -409,21 +407,30 @@ class PipelineStage(PipelineStageBase, QualnameMapMixin):
     ) -> Tuple[RecvInfo, ...]:
         # Dict[output_index, RecvInfo]
         grad_recv_info: Dict[int, RecvInfo] = {}
-        my_example_value = self.node.meta["example_value"]
+        output_nodes = [
+            node for node in self.submod.graph.nodes if node.op == "output"
+        ]
+        assert len(output_nodes) == 1
+        output_node = output_nodes[0]
+        # The output node may take multiple args, meaning the submod having multiple output values.
+        output_vals = output_node.args
 
         for out_idx, dst_list in act_send_info.items():
             if not dst_list:
                 # No actual receiver for activation so no grad coming back
                 continue
 
-            # TODO: clean way
-            if len(act_send_info) > 1:
-                example_value = my_example_value[out_idx]
-            else:
-                example_value = my_example_value
+            output = output_vals[out_idx]
+            example_value = output.meta["val"]
+            logger.debug(
+                f"[{self.group_rank}] Creating grad recv buffer for output {output.name} "
+                f": {example_value.shape}, {example_value.dtype}"
+            )
 
             # TODO: otherwise needs grad accumulation
-            assert len(dst_list) == 1
+            assert (
+                len(dst_list) == 1
+            ), "Backward of skip connections not supported yet"
             grad_src = dst_list[0]
             grad_recv_info[out_idx] = RecvInfo(
                 f"{grad_src}",

@@ -5,7 +5,7 @@ from typing import Callable, Dict, List, Tuple
 import torch
 import torch.fx as fx
 
-from pippy.IR import pipe_split
+from pippy.IR import aten_pipe_split_alias
 
 
 logger = logging.getLogger(__name__)
@@ -131,7 +131,7 @@ def _split_on_size_threshold_with_max_stages(
         if nstages == max_stages:
             break
         with gm.graph.inserting_before(node):
-            gm.graph.call_function(pipe_split, (), {})
+            gm.graph.call_function(aten_pipe_split_alias, (), {})
         nstages += 1
 
     # Since we transformed the graph, we need to recompile the module

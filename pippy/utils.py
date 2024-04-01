@@ -5,6 +5,7 @@ from typing import Dict
 import torch
 import torch.distributed as dist
 from torch import fx
+from torch.export.unflatten import InterpreterModule
 
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,18 @@ def modify_graph_op_device(
                 )
                 node.update_kwarg("device", new_device)
                 modified = True
+        elif node.op == "call_module":
+            # Recursively modify "device" in submodules
+            submod = gm.get_submodule(node.target)
+            if isinstance(submod, torch.fx.GraphModule):
+                modify_graph_op_device(submod, new_device)
+            elif isinstance(submod, InterpreterModule):
+                # If unflattening has been performed, we need to access its graph module by `.graph_module`
+                modify_graph_op_device(submod.graph_module, new_device)
+            else:
+                logger.warning(
+                    f"Skipping device modification for submodule {node.target} because it is a {type(submod)}"
+                )
 
     if modified:
         gm.recompile()
