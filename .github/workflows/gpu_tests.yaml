@@ -66,7 +66,6 @@ jobs:
       - name: Run BERT
         run: torchrun --nproc-per-node 4 examples/huggingface/pippy_bert.py
 
-jobs:
   backward_tests_4gpu:
     runs-on: linux.g5.12xlarge.nvidia.gpu
     strategy:
