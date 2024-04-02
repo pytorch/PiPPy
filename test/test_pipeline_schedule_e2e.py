@@ -26,13 +26,14 @@ from contextlib import contextmanager, nullcontext
 import torch
 import torch.multiprocessing as mp
 import torch.nn as nn
+from pippy.ManualPipelineStage import ManualPipelineStage
 from pippy.PipelineSchedule import (
     PipelineSchedule1F1B,
     PipelineScheduleGPipe,
     PipelineScheduleInterleaved1F1B,
     PipelineScheduleLoopedBFS,
-    PipelineStageV2Impl,
 )
+
 from torch.distributed._tensor.device_mesh import init_device_mesh
 from torch.profiler import record_function
 
@@ -167,24 +168,20 @@ def main(**kwargs):
     unused = torch.ones((1, 1), device="meta")
     input_args = x
 
-    stage_model = PipelineStageV2Impl(
+    stage_model = ManualPipelineStage(
         module_list[rank],
         stage_id=rank,
         num_stages=world_size,
-        rank=rank,
-        world_size=world_size,
         device=device,
         input_args=input_args,
     )
     stage_model.init_p2p_neighbors()
 
     stage_model_looped = [
-        PipelineStageV2Impl(
+        ManualPipelineStage(
             module_list[rank],
             stage_id=(world_size * i) + rank,
             num_stages=world_size * world_size,
-            rank=rank,
-            world_size=world_size,
             device=device,
             input_args=input_args,
         )
@@ -204,9 +201,9 @@ def main(**kwargs):
     for schedule in kwargs["schedules"]:
         logger.info(f"====== Rank {rank} running schedule {schedule} ======")
         if schedule == "gpipe":
-            pipeline = PipelineScheduleGPipe(stage_model)
+            pipeline = PipelineScheduleGPipe(stage_model, n_microbatches)
         elif schedule == "1f1b":
-            pipeline = PipelineSchedule1F1B(stage_model)
+            pipeline = PipelineSchedule1F1B(stage_model, n_microbatches)
         elif schedule == "looped_bfs":
             pipeline = PipelineScheduleLoopedBFS(stage_model_looped)
         elif schedule == "interleaved_1f1b":
