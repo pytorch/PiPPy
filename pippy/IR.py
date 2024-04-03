@@ -2,6 +2,7 @@
 import copy
 import logging
 import operator
+from dataclasses import dataclass
 from enum import Enum
 from inspect import Parameter, signature, Signature
 from types import MethodType
@@ -531,7 +532,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         self.split_gm: fx.GraphModule = split_gm
         self.executor: DetachExecutor = DetachExecutor(self.split_gm)
         self.num_stages: int = num_stages
-        self.has_loss_and_backwards = has_loss_and_backward
+        self.has_loss_and_backward = has_loss_and_backward
         self.loss_spec = loss_spec
 
         for node in split_gm.graph.nodes:
@@ -1206,6 +1207,27 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
 
     def __repr__(self):
         return self.split_gm.__repr__()
+
+    @dataclass
+    class PipeInfo:
+        graph: fx.Graph
+        num_stages: int
+        num_chunks: int
+        has_loss_and_backward: bool
+        args_chunk_spec: Optional[Tuple[Any, ...]] = None
+        kwargs_chunk_spec: Optional[Dict[str, Any]] = None
+        output_chunk_spec: Any = None  # TODO (kwen2501): type it better
+
+    def info(self) -> PipeInfo:
+        return self.PipeInfo(
+            graph=self.split_gm.graph,
+            num_stages=self.num_stages,
+            num_chunks=self.num_chunks,
+            has_loss_and_backward=self.has_loss_and_backward,
+            args_chunk_spec=self.args_chunk_spec,
+            kwargs_chunk_spec=self.kwargs_chunk_spec,
+            output_chunk_spec=self.output_chunk_spec,
+        )
 
     # TODO: this util comes from pytorch/pytorch#115462, delete it from PiPPy
     # when PyTorch 2.3 comes with support, or when PiPPy migrates from

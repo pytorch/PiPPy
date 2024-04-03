@@ -29,6 +29,11 @@ class PipelineStageBase(ABC):
         group: dist.ProcessGroup = None,
     ):
         super().__init__()
+        if stage_index >= num_stages:
+            raise ValueError(
+                f"Stage index {stage_index} is out of range of {num_stages}"
+            )
+
         self.stage_index = stage_index
         self.num_stages = num_stages
         self.device = device
@@ -172,19 +177,21 @@ class RootArgPlaceholder:
 InputInfo = Union[RecvInfo, RootArgPlaceholder]
 
 
-class PipelineStage(PipelineStageBase):
+class _PipelineStage(PipelineStageBase):
     def __init__(
         self,
-        pipe: Pipe,
+        stage_module: torch.nn.Module,
         stage_index: int,
+        pipe_info: Pipe.PipeInfo,
         device: torch.device,
         group: dist.ProcessGroup = None,
     ):
         PipelineStageBase.__init__(
-            self, stage_index, pipe.num_stages, device, group
+            self, stage_index, pipe_info.num_stages, device, group
         )
-        self.pipe = pipe
-        self.chunks = pipe.num_chunks
+        self.submod = stage_module
+        self.pipe_info = pipe_info
+        self.chunks = pipe_info.num_chunks
 
         # `group_rank` is rank in process group `group`.
         self.group_rank = dist.get_rank(group)
@@ -199,29 +206,27 @@ class PipelineStage(PipelineStageBase):
         # Caching chunk outputs for final output merge or reduction
         self.output_chunks: List[Any] = []
 
-        # Find my submodule
-        self.split_gm = self.pipe.split_gm
-        named_children = list(self.split_gm.named_children())
-        self.name, self.submod = named_children[stage_index]
+        # Find stage nodes in graph
+        submod_nodes = [
+            node for node in pipe_info.graph.nodes if node.op == "call_module"
+        ]
+        if len(submod_nodes) != self.num_stages:
+            raise AssertionError(
+                f"Number of submodules in pipe graph {len(submod_nodes)} does not match number of stages {self.num_stages}"
+            )
+
+        # Find my stage node in graph
+        self.node = submod_nodes[self.stage_index]
+        self.name = self.node.name
         logger.info(
             f"[{self.group_rank}] "
             f"Creating PipelineStage {stage_index} for {self.name}"
         )
 
-        # Find my forward node in graph
-        found_node = False
-        for node in self.split_gm.graph.nodes:
-            if node.name == self.name:
-                self.node = node
-                found_node = True
-                break
-        if not found_node:
-            raise AssertionError(f"Cannot find {self.name} in graph")
-
-        # Create submod to rank mapping
+        # Create mapping from stage name to stage index
         self.submod_to_stage_index: Dict[str, int] = {}
-        for i, (name, _) in enumerate(self.split_gm.named_children()):
-            self.submod_to_stage_index.setdefault(name, i)
+        for i, node in enumerate(submod_nodes):
+            self.submod_to_stage_index.setdefault(node.name, i)
 
         # Create stage id to group rank mapping
         # In interleaved case, `group_rank` is stage index % group size.
@@ -471,8 +476,8 @@ class PipelineStage(PipelineStageBase):
                 args,
                 kwargs,
                 self.chunks,
-                self.pipe.args_chunk_spec,
-                self.pipe.kwargs_chunk_spec,
+                self.pipe_info.args_chunk_spec,
+                self.pipe_info.kwargs_chunk_spec,
             )
             return args_split, kwargs_split
         else:
@@ -791,7 +796,7 @@ class PipelineStage(PipelineStageBase):
         if self.is_last:
             return merge_chunks(
                 self.output_chunks,
-                self.pipe.output_chunk_spec,
+                self.pipe_info.output_chunk_spec,
             )
         else:
             return None
@@ -801,3 +806,19 @@ class PipelineStage(PipelineStageBase):
             "forward() function of PipelineStage is deprecated; please create a "
             "PipelineSchedule and call step(input) instead."
         )
+
+
+# Backward compatibility support for creation out of Pipe
+class PipelineStage(_PipelineStage):
+    def __init__(
+        self,
+        pipe: Pipe,
+        stage_index: int,
+        device: torch.device,
+        group: dist.ProcessGroup = None,
+    ):
+        # Find my stage module
+        stage_module = pipe.get_stage_module(stage_index)
+        # Get my pipe info
+        pipe_info = pipe.info()
+        super().__init__(stage_module, stage_index, pipe_info, device, group)
