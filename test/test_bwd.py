@@ -29,15 +29,18 @@ class ExampleCode(torch.nn.Module):
         self.mm_param0 = torch.nn.Parameter(torch.randn(d_hid, d_hid))
         self.mm_param1 = torch.nn.Parameter(torch.randn(d_hid, d_hid))
         self.mm_param2 = torch.nn.Parameter(torch.randn(d_hid, d_hid))
+        self.register_buffer("cval", torch.randn((d_hid,), requires_grad=False))
         self.lin1 = torch.nn.Linear(d_hid, d_hid)
         self.lin2 = torch.nn.Linear(d_hid, d_hid)
 
     def forward(self, x):
         x = torch.mm(x, self.mm_param0)
         x = torch.relu(x)
+        a_constant = self.cval.clone()
         pipe_split()
         x = torch.mm(x, self.mm_param1)
-        skip = x
+        # try passing a value that doesn't require_grad across skip boundaries
+        skip = x + a_constant
         x = self.lin1(x)
         pipe_split()
         # force a skip-connection to test multiple outputs/grads between stages
