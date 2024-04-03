@@ -15,7 +15,7 @@ from pippy.backward import stage_backward
 from pippy.debug import map_debug_info
 from pippy.IR import Pipe
 from pippy.microbatch import merge_chunks, split_args_kwargs_into_chunks
-from pippy.utils import flatten_args, modify_graph_op_device, QualnameMapMixin
+from pippy.utils import flatten_args, modify_graph_op_device
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +172,7 @@ class RootArgPlaceholder:
 InputInfo = Union[RecvInfo, RootArgPlaceholder]
 
 
-class PipelineStage(PipelineStageBase, QualnameMapMixin):
+class PipelineStage(PipelineStageBase):
     def __init__(
         self,
         pipe: Pipe,
@@ -206,13 +206,6 @@ class PipelineStage(PipelineStageBase, QualnameMapMixin):
         logger.info(
             f"[{self.group_rank}] "
             f"Creating PipelineStage {stage_index} for {self.name}"
-        )
-
-        # Enable `remap_qualname` method
-        QualnameMapMixin.__init__(
-            self,
-            pipe.submod_qualname_mappings[self.name],
-            pipe.tracer_qualname_map,
         )
 
         # Find my forward node in graph

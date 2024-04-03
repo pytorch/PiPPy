@@ -86,13 +86,11 @@ def run_worker(args):
         )
 
     # Test qualname mapping
-    sd = stage.submod.state_dict()
-    print(f"Rank {args.rank} state dict keys: {sd.keys()}")
-    remapped_keys = [stage.remap_qualname(k) for k in sd.keys()]
-    print(f"Rank {args.rank} remapped keys: {remapped_keys}")
-    # Confirm remapped keys are consistent with original model
+    submod_keys = stage.submod.state_dict().keys()
+    print(f"Rank {args.rank} state dict keys: {submod_keys}")
+    # Confirm keys are consistent with original model
     old_keys = mod.state_dict().keys()
-    assert all(rk in old_keys for rk in remapped_keys)
+    assert all(k in old_keys for k in submod_keys)
     print(f"Qualname test passed")
 
 

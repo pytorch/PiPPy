@@ -94,14 +94,19 @@ def run_worker(args, model_class):
     print(f"equivalence test passed {torch.sum(out)} ref {torch.sum(ref_out)}")
 
     # Check qualname
+    # state_dict.keys include both parameters and persistent buffers
     old_names = set(mod.state_dict().keys())
-    new_names = set(pipe.state_dict().keys())
-    for new_name in new_names:
-        old_name = pipe.remap_qualname(new_name)
-        assert (
-            old_name in old_names
-        ), f"Remapped parameter {old_name} not found in {old_names}"
-        print(f"{new_name} -> {old_name}")
+    new_names = set()
+    for idx in range(pipe.num_stages):
+        stage_mod = pipe.get_stage_module(idx)
+        new_names.update(stage_mod.state_dict().keys())
+
+    assert (
+        old_names == new_names
+    ), f"""
+    old names {old_names}
+    new names {new_names}
+    """
     print("Qualname check passed")
 
 
