@@ -413,11 +413,7 @@ class PipelineStage(PipelineStageBase, QualnameMapMixin):
         assert len(output_nodes) == 1
         output_node = output_nodes[0]
         # The output node may take multiple args, meaning the submod having multiple output values.
-        output_vals = output_node.args
-
-        # output vals is sometimes packaged in a wrapper tuple that must be shed
-        if isinstance(output_vals[0], tuple):
-            output_vals = output_vals[0]
+        output_vals = flatten_args(output_node.args)
 
         for out_idx, dst_list in act_send_info.items():
             if not dst_list:
