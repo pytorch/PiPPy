@@ -37,9 +37,11 @@ class ExampleCode(torch.nn.Module):
         x = torch.relu(x)
         pipe_split()
         x = torch.mm(x, self.mm_param1)
+        skip = x
         x = self.lin1(x)
         pipe_split()
-        x = torch.relu(x)
+        # force a skip-connection to test multiple outputs/grads between stages
+        x = torch.relu(x) + skip
         x = torch.mm(x, self.mm_param2)
         pipe_split()
         x = self.lin2(x)
