@@ -36,15 +36,13 @@ class ExampleCode(torch.nn.Module):
     def forward(self, x):
         x = torch.mm(x, self.mm_param0)
         x = torch.relu(x)
-        a_constant = self.cval.clone()
         pipe_split()
         x = torch.mm(x, self.mm_param1)
         # try passing a value that doesn't require_grad across skip boundaries
-        skip = x + a_constant
+        a_constant = self.cval.clone()
         x = self.lin1(x)
         pipe_split()
-        # force a skip-connection to test multiple outputs/grads between stages
-        x = torch.relu(x) + skip
+        x = torch.relu(x) + a_constant
         x = torch.mm(x, self.mm_param2)
         pipe_split()
         x = self.lin2(x)
