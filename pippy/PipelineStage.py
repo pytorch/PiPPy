@@ -450,6 +450,9 @@ class _PipelineStage(PipelineStageBase):
         grad_send_info: List[Optional[int]] = []
 
         def map_recv_to_send(a):
+            # Note: we send gradients back to previous stage as long as in
+            # forward it is a received input, regardless of whether it requires
+            # grad. It is up to the previous stage to disgard this gradient.
             if isinstance(a, RecvInfo):
                 grad_send_info.append(a.source)
                 return a.source
@@ -663,9 +666,13 @@ class _PipelineStage(PipelineStageBase):
             out_val = self.submod(*args, **kwargs)
         return out_val
 
-    def backward_maybe_with_nosync(self, bwd_kwargs: Dict, is_last_chunk: bool):
+    def backward_maybe_with_nosync(self, bwd_kwargs: Dict, bwd_chunk_id: int):
+        # Add `stage_info` for debug purpose in `stage_backward`
+        bwd_kwargs["stage_info"] = f"{self.stage_index}"
+
         if isinstance(self.submod, DistributedDataParallel):
-            if is_last_chunk:
+            if bwd_chunk_id == self.chunks - 1:
+                # Last chunk, prepare for gradient reduction
                 # HACK: reaching into DDP implementation details here. Is there a better way?
                 self.submod.reducer.prepare_for_backward(  # type: ignore[union-attr, operator]
                     list(
@@ -674,13 +681,14 @@ class _PipelineStage(PipelineStageBase):
                         )
                     )
                 )
-                grads_input, _ = stage_backward(**bwd_kwargs)
+                grads_input = stage_backward(**bwd_kwargs)
             else:
                 with self.submod.no_sync():  # type: ignore[operator]
-                    grads_input, _ = stage_backward(**bwd_kwargs)
+                    grads_input = stage_backward(**bwd_kwargs)
         else:
             # Non-DDP submodule, regular backward
-            grads_input, _ = stage_backward(**bwd_kwargs)
+            grads_input = stage_backward(**bwd_kwargs)
+
         return grads_input
 
     def forward_one_chunk(
@@ -751,43 +759,26 @@ class _PipelineStage(PipelineStageBase):
         if self.is_last:
             # Last stage computes gradients from loss and has no gradients from
             # next stage
-            self.grads_input = torch.autograd.grad(
-                loss,
-                input_values,
-                allow_unused=True,  # TODO
-            )
+            bwd_kwargs = {
+                "stage_output": loss,
+                "output_grads": None,
+                "input_values": input_values,
+            }
         else:
             # Otherwise, receive gradients from next stage
             grads_output = self._retrieve_recv_grads()
+            # If an input to the pipeline requires gradient,
+            # `torch.autograd.backward` will accumulate the gradient into the
+            # `.grad` field of such input
+            bwd_kwargs = {
+                "stage_output": stage_output,
+                "output_grads": grads_output,
+                "input_values": input_values,
+            }
 
-            # Filter out any stage outputs where requires_grad=False
-            # calling .backward/.grad with such outputs is invalid
-            # TODO(whc) - we dont even need to send these grad_output values back from next stage,
-            # but its a bigger change to avoid that
-            stage_output_rg = []
-            grads_output_rg = []
-            for so, go in zip(stage_output, grads_output):
-                if so.grad_fn:
-                    stage_output_rg.append(so)
-                    grads_output_rg.append(go)
-
-            if self.is_first:
-                # If an input to the pipeline requires gradient,
-                # `torch.autograd.backward` will accumulate the gradient into the
-                # `.grad` field of such input
-                torch.autograd.backward(
-                    stage_output_rg,
-                    grad_tensors=grads_output_rg,
-                )
-            else:
-                # Use `torch.autograd.grad` to return the gradients
-                self.grads_input = torch.autograd.grad(
-                    stage_output_rg,
-                    input_values,
-                    grads_output_rg,
-                    allow_unused=True,  # TODO
-                )
-
+        self.grads_input = self.backward_maybe_with_nosync(
+            bwd_kwargs, self.bwd_chunk_id
+        )
         logger.debug(
             f"[{self.group_rank}] Backwarded chunk {self.bwd_chunk_id}"
         )
