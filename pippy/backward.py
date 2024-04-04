@@ -1,5 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from typing import List
+from typing import List, Optional
 
 import torch
 
@@ -10,8 +10,7 @@ def stage_backward(
     stage_output,
     output_grads,
     input_values,
-    stage_info: str,
-    outputs_with_grads_idxs: List[int],
+    outputs_with_grads_idxs: Optional[List[int]] = None,  # deprecated, not used
 ):
     """
     Given the input value(s) and the corresponding gradient for the output
@@ -19,15 +18,12 @@ def stage_backward(
     in the autograd trace) as well as return a list of the gradients for the
     input values
     """
+    if outputs_with_grads_idxs is not None:
+        # Deprecated, not used in runtime calls, only exists in compiler
+        stage_output = [stage_output[i] for i in outputs_with_grads_idxs]
+        output_grads = [output_grads[i] for i in outputs_with_grads_idxs]
 
     try:
-        stage_output_with_grads = [
-            stage_output[i] for i in outputs_with_grads_idxs
-        ]
-        output_grads_with_grads = [
-            output_grads[i] for i in outputs_with_grads_idxs
-        ]
-
         # stage_output may be a composite datatype like dict. Extract all individual
         # tensor values here
         stage_output_tensors = []
@@ -62,14 +58,13 @@ def stage_backward(
                 # Output is a non-tensor type; just ignore it
                 pass
 
-        extract_tensors_with_grads(
-            stage_output_with_grads, output_grads_with_grads
-        )
+        extract_tensors_with_grads(stage_output, output_grads)
 
         torch.autograd.backward(
             stage_output_tensors, grad_tensors=output_grad_tensors  # type: ignore[arg-type]
         )
 
+        # Extract gradients wrt the input values
         grad_inputs = []
         for val in input_values:
             if isinstance(val, torch.Tensor):
@@ -77,7 +72,9 @@ def stage_backward(
             else:
                 grad_inputs.append(None)
 
-        # TODO: use `torch.autograd.grad`
+        # Alternative impl: `torch.autograd.grad`.
+        # Note that `torch.autograd.grad` will not accumulate gradients into the
+        # model's parameters.
         """
         inputs_with_grad = []
         for val in input_values:
@@ -91,19 +88,14 @@ def stage_backward(
 
     except Exception as e:
         exc_msg = f"""
-        Failed to run backward stage {stage_info}
+        Failed to run stage backward:
         Stage output: {map_debug_info(stage_output)}
         Output gradient: {map_debug_info(output_grads)}
         Input: {map_debug_info(input_values)}
         """
         raise RuntimeError(exc_msg) from e
 
-    barrier_token = None
-    return grad_inputs, barrier_token
-
-
-def sync_barrier(loss, barrier_tokens, last_grads):
-    return loss, last_grads
+    return grad_inputs
 
 
 # TODO: handling requires_grad=False dynamically. Can we analyze this during initial
