@@ -667,9 +667,6 @@ class _PipelineStage(PipelineStageBase):
         return out_val
 
     def backward_maybe_with_nosync(self, bwd_kwargs: Dict, bwd_chunk_id: int):
-        # Add `stage_info` for debug purpose in `stage_backward`
-        bwd_kwargs["stage_info"] = f"{self.stage_index}"
-
         if isinstance(self.submod, DistributedDataParallel):
             if bwd_chunk_id == self.chunks - 1:
                 # Last chunk, prepare for gradient reduction

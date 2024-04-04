@@ -10,7 +10,6 @@ def stage_backward(
     stage_output,
     output_grads,
     input_values,
-    stage_info: Optional[str] = None,  # debug purpose
     outputs_with_grads_idxs: Optional[List[int]] = None,  # deprecated, not used
 ):
     """
@@ -19,9 +18,13 @@ def stage_backward(
     in the autograd trace) as well as return a list of the gradients for the
     input values
     """
+    if outputs_with_grads_idxs is not None:
+        # Deprecated, not used in runtime calls, only exists in compiler
+        stage_output = [stage_output[i] for i in outputs_with_grads_idxs]
+        output_grads = [output_grads[i] for i in outputs_with_grads_idxs]
 
     try:
-        # stage_outputs may be a composite datatype like dict. Extract all individual
+        # stage_output may be a composite datatype like dict. Extract all individual
         # tensor values here
         stage_output_tensors = []
         output_grad_tensors = []
@@ -85,7 +88,7 @@ def stage_backward(
 
     except Exception as e:
         exc_msg = f"""
-        Failed to run backward on stage {stage_info}
+        Failed to run stage backward:
         Stage output: {map_debug_info(stage_output)}
         Output gradient: {map_debug_info(output_grads)}
         Input: {map_debug_info(input_values)}

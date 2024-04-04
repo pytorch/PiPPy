@@ -189,9 +189,6 @@ def _insert_stage_symbolic_backward(
         val_to_grad[forward_node] = grad_value
 
     with g.inserting_before(output_node):
-        # TODO: remove barrier_tokens
-        barrier_tokens = []
-
         for node in reversed(g.nodes):
             if node not in live_nodes:
                 continue
@@ -235,17 +232,10 @@ def _insert_stage_symbolic_backward(
                 )
                 # Insert backward stage debug info
                 kwargs_copy = dict(grad_call.kwargs)
-                kwargs_copy[
-                    "stage_info"
-                ] = f"{grad_call} for stage {node.format_node()}"
                 grad_call.kwargs = kwargs_copy
 
                 grad_call_proxy = fx.Proxy(grad_call)
-                grads, barrier_token = (
-                    grad_call_proxy[0].node,
-                    grad_call_proxy[1].node,
-                )
-                barrier_tokens.append(barrier_token)
+                grads = grad_call_proxy.node
 
                 input_nodes = list(node.all_input_nodes)
                 grads_proxy = fx.Proxy(grads)
