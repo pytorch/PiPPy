@@ -102,10 +102,6 @@ class PipelineSchedule(ABC):
         return arg_mbs, kwarg_mbs
 
     def _compute_loss(self, output, target):
-        if target.shape != output.shape:
-            raise RuntimeError(
-                f"target shape {target.shape} does not match output shape {output.shape}"
-            )
         return self._loss_fn(output, target)  # type: ignore[misc]
 
 
