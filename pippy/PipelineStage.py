@@ -411,7 +411,7 @@ class _PipelineStage(PipelineStageBase):
         assert len(output_nodes) == 1
         output_node = output_nodes[0]
         # The output node may take multiple args, meaning the submod having multiple output values.
-        output_vals = output_node.args
+        output_vals = flatten_args(output_node.args)
 
         for out_idx, dst_list in act_send_info.items():
             if not dst_list:
@@ -760,20 +760,31 @@ class _PipelineStage(PipelineStageBase):
             # Otherwise, receive gradients from next stage
             grads_output = self._retrieve_recv_grads()
 
+            # Filter out any stage outputs where requires_grad=False
+            # calling .backward/.grad with such outputs is invalid
+            # TODO(whc) - we dont even need to send these grad_output values back from next stage,
+            # but its a bigger change to avoid that
+            stage_output_rg = []
+            grads_output_rg = []
+            for so, go in zip(stage_output, grads_output):
+                if so.grad_fn:
+                    stage_output_rg.append(so)
+                    grads_output_rg.append(go)
+
             if self.is_first:
                 # If an input to the pipeline requires gradient,
                 # `torch.autograd.backward` will accumulate the gradient into the
                 # `.grad` field of such input
                 torch.autograd.backward(
-                    stage_output,
-                    grad_tensors=grads_output,
+                    stage_output_rg,
+                    grad_tensors=grads_output_rg,
                 )
             else:
                 # Use `torch.autograd.grad` to return the gradients
                 self.grads_input = torch.autograd.grad(
-                    stage_output,
+                    stage_output_rg,
                     input_values,
-                    grads_output,
+                    grads_output_rg,
                     allow_unused=True,  # TODO
                 )
 

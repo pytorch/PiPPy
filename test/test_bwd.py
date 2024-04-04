@@ -29,6 +29,7 @@ class ExampleCode(torch.nn.Module):
         self.mm_param0 = torch.nn.Parameter(torch.randn(d_hid, d_hid))
         self.mm_param1 = torch.nn.Parameter(torch.randn(d_hid, d_hid))
         self.mm_param2 = torch.nn.Parameter(torch.randn(d_hid, d_hid))
+        self.register_buffer("cval", torch.randn((d_hid,), requires_grad=False))
         self.lin1 = torch.nn.Linear(d_hid, d_hid)
         self.lin2 = torch.nn.Linear(d_hid, d_hid)
 
@@ -37,9 +38,11 @@ class ExampleCode(torch.nn.Module):
         x = torch.relu(x)
         pipe_split()
         x = torch.mm(x, self.mm_param1)
+        # try passing a value that doesn't require_grad across skip boundaries
+        a_constant = self.cval.clone()
         x = self.lin1(x)
         pipe_split()
-        x = torch.relu(x)
+        x = torch.relu(x) + a_constant
         x = torch.mm(x, self.mm_param2)
         pipe_split()
         x = self.lin2(x)
