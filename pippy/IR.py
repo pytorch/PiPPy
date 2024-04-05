@@ -1387,10 +1387,12 @@ class ArgsChunkSpec:
         )
 
     def __enter__(self):
+        # Inject into the Pipe class
         Pipe.args_chunk_spec = self.args_chunk_spec
         return self.args_chunk_spec
 
     def __exit__(self, exc_type, exc_val, traceback):
+        # Remove from the Pipe class
         Pipe.args_chunk_spec = None
 
 
@@ -1406,8 +1408,10 @@ class KwargsChunkSpec:
         )
 
     def __enter__(self):
+        # Inject into the Pipe class
         Pipe.kwargs_chunk_spec = self.kwargs_chunk_spec
         return self.kwargs_chunk_spec
 
     def __exit__(self, exc_type, exc_val, traceback):
+        # Remove from the Pipe class
         Pipe.kwargs_chunk_spec = None
