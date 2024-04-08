@@ -4,7 +4,6 @@
 import torch
 import torch.distributed as dist
 
-import pippy
 from pippy import annotate_split_points, pipeline, PipelineStage, SplitPoint
 from pippy.PipelineSchedule import PipelineScheduleGPipe
 
