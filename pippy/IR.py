@@ -1073,9 +1073,6 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         tracer_qualname_map = Pipe._get_param_buffer_mapping(mod, traced)
 
         logger.debug("Full pipe model:\n" f"{split}")
-        if PIPPY_VERBOSITY == "DEBUG":
-            logger.debug("Full pipe graph:")
-            split.print_readable()
 
         return Pipe(
             split,
@@ -1085,6 +1082,9 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
             generated_loss_spec,
             tracer_qualname_map,
         )
+
+    def print_readable(self):
+        self.split_gm.print_readable()
 
     @staticmethod
     def _trace_with_export(
