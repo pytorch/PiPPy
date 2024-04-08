@@ -1084,6 +1084,10 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         )
 
     def print_readable(self):
+        """
+        Print the pipe in a human-readable format.
+        This will print both the root pipe and each stage module.
+        """
         self.split_gm.print_readable()
 
     @staticmethod
