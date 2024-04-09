@@ -100,8 +100,6 @@ jobs:
         run: python test/test_transformer.py
       - name: Test pipeline schedule
         run: python test/test_pipeline_schedule.py
-      - name: Test args chunking spec
-        run: python test/test_chunkspec.py
       # - name: Run null_coalesce_accumulate integration test
       #   run: python test/local_test_null_coalesce_accumulate.py --replicate ${{ matrix.replicate }} --schedule ${{ matrix.schedule }}
       # - name: Run PP + DDP test

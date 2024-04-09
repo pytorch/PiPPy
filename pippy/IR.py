@@ -11,13 +11,12 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import torch
 import torch.fx as fx
 from packaging import version
-from torch.export import ExportedProgram
-from torch.fx.node import map_aggregate
+from torch.export import Constraint, ExportedProgram
 from torch.fx.passes.split_module import split_module
 
 from pippy.backward import _null_coalesce_accumulate, stage_backward
 from pippy.debug import PIPPY_VERBOSITY
-from pippy.microbatch import split_args_kwargs_into_chunks, TensorChunkSpec
+from pippy.microbatch import LossReducer, split_args_kwargs_into_chunks
 from pippy.unflatten import (
     _assign_attr,
     _AttrKind,
@@ -397,11 +396,11 @@ class DetachExecutor(fx.Interpreter):
             return type(a) != torch.Size
         """
 
-        args = map_aggregate(
+        args = fx.node.map_aggregate(
             args,
             detach_tensors,  # dont_traverse_size
         )
-        kwargs = map_aggregate(
+        kwargs = fx.node.map_aggregate(
             kwargs,
             detach_tensors,  # dont_traverse_size
         )
@@ -459,8 +458,8 @@ class _LinearNodeList:
                 return arg
 
         for node in self.serialize_node_list:
-            node_args = map_aggregate(node.args, ref_to_node)
-            node_kwargs = map_aggregate(node.kwargs, ref_to_node)
+            node_args = fx.node.map_aggregate(node.args, ref_to_node)
+            node_kwargs = fx.node.map_aggregate(node.kwargs, ref_to_node)
             deser_node = graph.create_node(
                 op=node.op,
                 target=node.target,
@@ -506,29 +505,6 @@ def _direct_serialization_reduce(self):
 
 
 class Pipe(QualnameMapMixin, torch.nn.Module):
-    # Class variables
-    """
-    args_chunk_spec:
-        Chunking specification for positional inputs. (default: `None`)
-    kwargs_chunk_spec:
-        Chunking specification for keyword inputs. (default: `None`)
-    """
-    # args_chunk_spec and kwargs_chunk_spec are used to specify how to chunk
-    # inputs. They are used to create microbatched examples before tracing.
-    # See context managers `ArgsChunkSpec` and `KwargsChunkSpec`.
-    # TODO: Do we need to support `Replicate`? It's unclear, dropping for now.
-    args_chunk_spec: Optional[Tuple[TensorChunkSpec, ...]] = None
-    kwargs_chunk_spec: Optional[Dict[str, TensorChunkSpec]] = None
-
-    @dataclass
-    class PipeInfo:
-        graph: fx.Graph
-        num_stages: int
-        num_chunks: int
-        has_loss_and_backward: bool
-        args_chunk_spec: Optional[Tuple[Any, ...]] = None
-        kwargs_chunk_spec: Optional[Dict[str, Any]] = None
-
     def __init__(
         self,
         split_gm: fx.GraphModule,
@@ -548,7 +524,6 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         self.num_stages: int = num_stages
         self.has_loss_and_backward = has_loss_and_backward
         self.loss_spec = loss_spec
-        self.pipe_info: Optional[Pipe.PipeInfo] = None
 
         for node in split_gm.graph.nodes:
             assert (
@@ -1118,6 +1093,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         mod: torch.nn.Module,
         example_args: Tuple[Any, ...],
         example_kwargs: Optional[Dict[str, Any]] = None,
+        constraints: Optional[List[Constraint]] = None,
     ) -> ExportedProgram:
         logger.info("Tracing model ...")
         ep = torch.export.export(
@@ -1136,6 +1112,10 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         split_policy: Optional[
             Callable[[fx.GraphModule], fx.GraphModule]
         ] = None,
+        args_chunk_spec: Optional[Tuple[Any, ...]] = None,
+        kwargs_chunk_spec: Optional[Dict[str, Any]] = None,
+        output_chunk_spec=None,
+        constraints: Optional[List[Constraint]] = None,
     ):
         # If a param will be used in multiple pipeline stages, we default the strategy to REPLICATE'ing the param across
         # stages instead of TRANSMIT'ting it
@@ -1143,13 +1123,10 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
 
         # Figure out which output is loss from output_chunk_spec
         output_loss_value_spec: Any = None
-        # Deprecated
-        """
         if output_chunk_spec is not None:
-            output_loss_value_spec = map_aggregate(
+            output_loss_value_spec = fx.node.map_aggregate(
                 output_chunk_spec, lambda v: isinstance(v, LossReducer)
             )
-        """
 
         # Get split example inputs
         if example_kwargs is None:
@@ -1160,8 +1137,8 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
             example_args,
             example_kwargs,
             num_chunks,
-            Pipe.args_chunk_spec,
-            Pipe.kwargs_chunk_spec,
+            args_chunk_spec,
+            kwargs_chunk_spec,  # TODO: merge into args_chunk_spec
         )
 
         # Trace with export
@@ -1169,6 +1146,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
             mod,
             example_args=args_split[0],
             example_kwargs=kwargs_split[0],
+            constraints=constraints,
         )
 
         pipe = Pipe._from_traced(
@@ -1178,6 +1156,11 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
             output_loss_value_spec=output_loss_value_spec,
             split_policy=split_policy,
         )
+
+        pipe.num_chunks = num_chunks
+        pipe.args_chunk_spec = args_chunk_spec
+        pipe.kwargs_chunk_spec = kwargs_chunk_spec
+        pipe.output_chunk_spec = output_chunk_spec
 
         # Users want the first pipeline stage to accept kwargs if the original
         # program does. This is controlled by the `_codegen` field of the graph,
@@ -1207,15 +1190,6 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
             )
             submod0.recompile()
 
-        # Create pipe info
-        pipe.pipe_info = Pipe.PipeInfo(
-            graph=pipe.split_gm.graph,
-            num_stages=pipe.num_stages,
-            num_chunks=num_chunks,
-            has_loss_and_backward=pipe.has_loss_and_backward,
-            args_chunk_spec=Pipe.args_chunk_spec,
-            kwargs_chunk_spec=Pipe.kwargs_chunk_spec,
-        )
         return pipe
 
     def __str__(self):
@@ -1224,12 +1198,26 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
     def __repr__(self):
         return self.split_gm.__repr__()
 
+    @dataclass
+    class PipeInfo:
+        graph: fx.Graph
+        num_stages: int
+        num_chunks: int
+        has_loss_and_backward: bool
+        args_chunk_spec: Optional[Tuple[Any, ...]] = None
+        kwargs_chunk_spec: Optional[Dict[str, Any]] = None
+        output_chunk_spec: Any = None  # TODO (kwen2501): type it better
+
     def info(self) -> PipeInfo:
-        if self.pipe_info is None:
-            raise RuntimeError(
-                "Pipe info is not available. Please use the `pipeline` method to create the `Pipe` object."
-            )
-        return self.pipe_info
+        return self.PipeInfo(
+            graph=self.split_gm.graph,
+            num_stages=self.num_stages,
+            num_chunks=self.num_chunks,
+            has_loss_and_backward=self.has_loss_and_backward,
+            args_chunk_spec=self.args_chunk_spec,
+            kwargs_chunk_spec=self.kwargs_chunk_spec,
+            output_chunk_spec=self.output_chunk_spec,
+        )
 
     # TODO: this util comes from pytorch/pytorch#115462, delete it from PiPPy
     # when PyTorch 2.3 comes with support, or when PiPPy migrates from
@@ -1338,94 +1326,54 @@ def annotate_split_points(mod: torch.nn.Module, spec: Dict[str, SplitPoint]):
 
 
 def pipeline(
-    module: torch.nn.Module,
+    mod: torch.nn.Module,
     num_chunks: int,
     example_args: Tuple[Any, ...],
     example_kwargs: Optional[Dict[str, Any]] = None,
     split_policy: Optional[Callable[[fx.GraphModule], fx.GraphModule]] = None,
+    args_chunk_spec: Optional[Tuple[Any, ...]] = None,
+    kwargs_chunk_spec: Optional[Dict[str, Any]] = None,
+    output_chunk_spec=None,
+    constraints: Optional[List[Constraint]] = None,
 ) -> Pipe:
     """
-    Creates a pipeline representation for the provided module.
+    pipeline creates a new Pipe by tracing the provided module.
 
-    See `Pipe` for more details.
+    See Pipe for more details.
 
     Arguments
     ---------
-    module:
-        The module to be transformed into a `Pipe`.
+    mod:
+        The module to be traced.
     num_chunks:
-        The number of microbatches to be run with this pipeline.
+        The number of chunks to split the module into.
     example_args:
-        Example positional inputs to be used with this pipeline.
+        The example arguments to be used for tracing.
     example_kwargs:
-        Example keyword inputs to be used with this pipeline. (default: `None`)
+        The example keyword arguments to be used for tracing.
     split_policy:
-        The policy to use for splitting the module. (default: `None`)
+        The policy to use for splitting the module.
+    args_chunk_spec:
+        Args for each chunk.
+    kwargs_chunk_spec:
+        Kwargs for each chunk.
+    output_chunk_spec:
+        Outputs for each chunk.
+    constraints:
+        Constraints to be used for tracing.
 
     Returns
     -------
-    A pipeline representation of class `Pipe`.
+    The traced Pipe.
     """
     return Pipe.from_tracing(
-        mod=module,
+        mod=mod,
         num_chunks=num_chunks,
         example_args=example_args,
         example_kwargs=example_kwargs,
         split_policy=split_policy,
+        args_chunk_spec=args_chunk_spec,
+        kwargs_chunk_spec=kwargs_chunk_spec,
+        output_chunk_spec=output_chunk_spec,
+        constraints=constraints,
     )
-
-
-# Context manager for setting `args_chunk_spec` during creation of Pipe
-class ArgsChunkSpec:
-    """
-    Example:
-    # The numbers here are tensor chunking dimensions for each positional argument (3 of them)
-    with ArgsChunkSpec((0, 0, 1)):
-        pipe = pipeline(model, num_chunks, example_args)
-    """
-
-    def __init__(
-        self,
-        chunk_dims: Tuple[int, ...],
-    ):
-        self.args_chunk_spec = map_aggregate(
-            chunk_dims,
-            lambda dim: TensorChunkSpec(dim),
-        )
-
-    def __enter__(self):
-        # Inject into the Pipe class
-        Pipe.args_chunk_spec = self.args_chunk_spec
-        return self.args_chunk_spec
-
-    def __exit__(self, exc_type, exc_val, traceback):
-        # Remove from the Pipe class
-        Pipe.args_chunk_spec = None
-
-
-# Context manager for setting `kwargs_chunk_spec` during creation of Pipe
-class KwargsChunkSpec:
-    """
-    Example:
-    # Chunk dimension 0 for the "id" argument, 1 for the "mask" argument
-    with KwargsChunkSpec({"id": 0, "mask": 1}):
-        pipe = pipeline(model, num_chunks, (), example_kwargs)
-    """
-
-    def __init__(
-        self,
-        chunk_dims: Dict[str, int],
-    ):
-        self.kwargs_chunk_spec = map_aggregate(
-            chunk_dims,
-            lambda dim: TensorChunkSpec(dim),
-        )
-
-    def __enter__(self):
-        # Inject into the Pipe class
-        Pipe.kwargs_chunk_spec = self.kwargs_chunk_spec
-        return self.kwargs_chunk_spec
-
-    def __exit__(self, exc_type, exc_val, traceback):
-        # Remove from the Pipe class
-        Pipe.kwargs_chunk_spec = None
