@@ -1377,6 +1377,13 @@ def pipeline(
 
 # Context manager for setting `args_chunk_spec` during creation of Pipe
 class ArgsChunkSpec:
+    """
+    Example:
+    # The numbers here are tensor chunking dimensions for each positional argument (3 of them)
+    with ArgsChunkSpec((0, 0, 1)):
+        pipe = pipeline(model, num_chunks, example_args)
+    """
+
     def __init__(
         self,
         chunk_dims: Tuple[int, ...],
@@ -1398,6 +1405,13 @@ class ArgsChunkSpec:
 
 # Context manager for setting `kwargs_chunk_spec` during creation of Pipe
 class KwargsChunkSpec:
+    """
+    Example:
+    # Chunk dimension 0 for the "id" argument, 1 for the "mask" argument
+    with KwargsChunkSpec({"id": 0, "mask": 1}):
+        pipe = pipeline(model, num_chunks, (), example_kwargs)
+    """
+
     def __init__(
         self,
         chunk_dims: Dict[str, int],
