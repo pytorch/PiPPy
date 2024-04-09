@@ -1069,7 +1069,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         has_loss_and_backward = False
         generated_loss_spec = output_loss_value_spec
 
-        if mod.training or output_loss_value_spec is not None:
+        if output_loss_value_spec is not None:
             loss_node, output_node, generated_loss_spec = _find_loss_output(
                 mod, split.graph, output_loss_value_spec
             )
@@ -1081,17 +1081,15 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
                 )
                 split.recompile()
                 has_loss_and_backward = True
-                logger.info(
+                logger.debug(
                     "Pipeline is in training mode, backward pass generated"
                 )
             else:
-                logger.info(
-                    "Did not find any loss value from model output, your pipeline will be in inference mode. "
-                    "If you want your pipeline to be in training mode, please specify a loss value via "
-                    "`output_loss_value_spec`."
+                raise RuntimeError(
+                    f"Did not find any loss value according to {output_loss_value_spec=}"
                 )
         else:
-            logger.info(
+            logger.debug(
                 "Pipeline is in inference mode, backward pass not generated"
             )
 
@@ -1100,9 +1098,6 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         tracer_qualname_map = Pipe._get_param_buffer_mapping(mod, traced)
 
         logger.debug("Full pipe model:\n" f"{split}")
-        if PIPPY_VERBOSITY == "DEBUG":
-            logger.debug("Full pipe graph:")
-            split.print_readable()
 
         return Pipe(
             split,
@@ -1112,6 +1107,13 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
             generated_loss_spec,
             tracer_qualname_map,
         )
+
+    def print_readable(self):
+        """
+        Print the pipe in a human-readable format.
+        This will print both the root pipe and each stage module.
+        """
+        self.split_gm.print_readable()
 
     @staticmethod
     def _trace_with_export(

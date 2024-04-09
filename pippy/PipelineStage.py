@@ -23,10 +23,12 @@ logger = logging.getLogger(__name__)
 class PipelineStageBase(ABC):
     def __init__(
         self,
+        submodule: torch.nn.Module,
         stage_index: int,
         num_stages: int,
         device: torch.device,
-        group: dist.ProcessGroup = None,
+        num_microbatches: int,
+        group: Optional[dist.ProcessGroup] = None,
     ):
         super().__init__()
         if stage_index >= num_stages:
@@ -34,20 +36,30 @@ class PipelineStageBase(ABC):
                 f"Stage index {stage_index} is out of range of {num_stages}"
             )
 
+        self.submod = submodule
         self.stage_index = stage_index
         self.num_stages = num_stages
         self.device = device
+        self.chunks = num_microbatches
         self.group = group
 
-        # TODO: rename `rank` to `group_rank`
-        self.rank = dist.get_rank(self.group)
-
-        # TODO: rename `world_size`` to `group_size`
-        self.world_size = dist.get_world_size(self.group)
-        if self.world_size > self.num_stages:
+        # `group_rank` is rank in process group `group`.
+        self.group_rank = dist.get_rank(self.group)
+        self.group_size = dist.get_world_size(self.group)
+        if self.group_size > self.num_stages:
             raise RuntimeError(
-                f"Pipeline group size {self.world_size} cannot be larger than number of stages {self.num_stages}"
+                f"Pipeline group size {self.group_size} cannot be larger than number of stages {self.num_stages}"
             )
+
+        # Run time states
+        # map microbatch ID to list of forward tensor args
+        self.fwd_cache: Dict[int, Tuple[Any, List[torch.Tensor]]] = {}
+        # Current forward chunk id
+        self.fwd_chunk_id: int = 0
+        # Current backward chunk id
+        self.bwd_chunk_id: int = 0
+        # Caching chunk outputs for final output merge or reduction
+        self.output_chunks: List[Any] = []
 
         # Initialize has_backward to false; this will be set to true if loss
         # function is passed to pipeline schedule
@@ -70,17 +82,6 @@ class PipelineStageBase(ABC):
         return self.stage_index == self.num_stages - 1
 
     @abstractmethod
-    def forward_one_chunk(self, *args, **kwargs):
-        """
-        Perform forward pass on the module.
-        This should only be called once per microbatch.
-
-        Args:
-            microbatch: The input to the module
-        """
-        raise NotImplementedError
-
-    @abstractmethod
     def get_fwd_recv_ops(self) -> List[dist.P2POp]:
         """
         Get the list of P2P operations that need to be performed before calling forward()
@@ -91,14 +92,6 @@ class PipelineStageBase(ABC):
     def get_fwd_send_ops(self) -> List[dist.P2POp]:
         """
         Get the list of P2P operations that need to be performed after calling forward()
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    def backward_one_chunk(self, **kwargs):
-        """
-        Perform backward pass on the module.
-        This should only be called once per microbatch.
         """
         raise NotImplementedError
 
@@ -120,7 +113,13 @@ class PipelineStageBase(ABC):
         """
         Clear runtime states of the stage.
         """
-        raise NotImplementedError
+        # Reset pointers
+        self.fwd_chunk_id = 0
+        self.bwd_chunk_id = 0
+        # map microbatch ID to list of forward tensor args
+        self.fwd_cache.clear()
+        # Caching chunk outputs for final output merge or reduction
+        self.output_chunks.clear()
 
     def split_inputs(
         self,
@@ -140,6 +139,151 @@ class PipelineStageBase(ABC):
         """
         # TODO: lift an implementation here from PipelineStage or move it to PipelineSchedule
         raise NotImplementedError
+
+    def _retrieve_recv_activations(
+        self,
+    ):
+        """
+        Retrieve the activations received for the current stage during forward.
+        """
+        raise NotImplementedError
+
+    def _retrieve_recv_grads(
+        self,
+    ):
+        """
+        Retrieve the gradients received for the current stage during backward.
+        """
+        raise NotImplementedError
+
+    def forward_maybe_with_nosync(self, *args, **kwargs):
+        # If submod is wrapped with DDP, we use the `no_sync` context manager to
+        # avoid gradient all-reduce per microbatch
+        if isinstance(self.submod, DistributedDataParallel):
+            with self.submod.no_sync():  # type: ignore[operator]
+                out_val = self.submod(*args, **kwargs)
+        else:
+            out_val = self.submod(*args, **kwargs)
+        return out_val
+
+    def backward_maybe_with_nosync(self, bwd_kwargs: Dict, bwd_chunk_id: int):
+        if isinstance(self.submod, DistributedDataParallel):
+            if bwd_chunk_id == self.chunks - 1:
+                # Last chunk, prepare for gradient reduction
+                # HACK: reaching into DDP implementation details here. Is there a better way?
+                self.submod.reducer.prepare_for_backward(  # type: ignore[union-attr, operator]
+                    list(
+                        torch.nn.parallel.distributed._find_tensors(  # type: ignore[attr-defined]
+                            bwd_kwargs["stage_output"]
+                        )
+                    )
+                )
+                grads_input = stage_backward(**bwd_kwargs)
+            else:
+                with self.submod.no_sync():  # type: ignore[operator]
+                    grads_input = stage_backward(**bwd_kwargs)
+        else:
+            # Non-DDP submodule, regular backward
+            grads_input = stage_backward(**bwd_kwargs)
+
+        return grads_input
+
+    def forward_one_chunk(
+        self,
+        args: Tuple[Any, ...],
+        kwargs: Optional[Dict[str, Any]] = None,
+    ):
+        if self.is_first:
+            # First stage doesn't need to receive anything
+            composite_args = args
+            composite_kwargs = kwargs or {}
+        else:
+            # Receive activations for this chunk
+            # Activations only come in args form
+            composite_args = self._retrieve_recv_activations()
+            composite_kwargs = {}
+
+        # Compute forward
+        try:
+            output = self.forward_maybe_with_nosync(
+                *composite_args, **composite_kwargs
+            )
+
+        except Exception as e:
+            exc_msg = f"""s
+            Rank {self.group_rank} failed to run forward stage
+            args: {map_debug_info(composite_args)}
+            kwargs: {map_debug_info(composite_kwargs)}
+            """
+            raise RuntimeError(exc_msg) from e
+
+        if type(output) is list:
+            # HACK: this is a hacky workaround for the fact that export creates
+            # output in list format
+            output = tuple(output)
+
+        # Unify output form to tuple for easy correspondance with
+        # `act_send_info`
+        output_tuple = output if type(output) is tuple else (output,)
+        # Prepare for final output merge or reduction
+        self.output_chunks.append(output)
+
+        # Save activations and inputs for backward
+        flat_args = flatten_args(composite_args)
+        flat_kwargs = flatten_args(composite_kwargs)
+        flatten_input_tensors = flat_args + flat_kwargs
+        self.fwd_cache[self.fwd_chunk_id] = (
+            output_tuple,  # stage_output
+            flatten_input_tensors,  # input_values
+        )
+
+        logger.debug(
+            f"[{self.group_rank}] Forwarded chunk {self.fwd_chunk_id}, outputs: {map_debug_info(output)}"
+        )
+        self.fwd_chunk_id += 1
+        return output
+
+    def backward_one_chunk(
+        self,
+        loss=None,
+    ):
+        """
+        Perform backward pass on the module.
+        This should only be called once per microbatch.
+        """
+        (
+            stage_output,
+            input_values,
+        ) = self.fwd_cache.pop(self.bwd_chunk_id)
+
+        # Compute backward
+        if self.is_last:
+            # Last stage computes gradients from loss and has no gradients from
+            # next stage
+            bwd_kwargs = {
+                "stage_output": loss,
+                "output_grads": None,
+                "input_values": input_values,
+            }
+        else:
+            # Otherwise, receive gradients from next stage
+            grads_output = self._retrieve_recv_grads()
+            # If an input to the pipeline requires gradient,
+            # `torch.autograd.backward` will accumulate the gradient into the
+            # `.grad` field of such input
+            bwd_kwargs = {
+                "stage_output": stage_output,
+                "output_grads": grads_output,
+                "input_values": input_values,
+            }
+
+        self.grads_input = self.backward_maybe_with_nosync(
+            bwd_kwargs, self.bwd_chunk_id
+        )
+        logger.debug(
+            f"[{self.group_rank}] Backwarded chunk {self.bwd_chunk_id}"
+        )
+        self.bwd_chunk_id += 1
 
 
 def _make_tensor_from_meta(
@@ -184,27 +328,18 @@ class _PipelineStage(PipelineStageBase):
         stage_index: int,
         pipe_info: Pipe.PipeInfo,
         device: torch.device,
-        group: dist.ProcessGroup = None,
+        group: Optional[dist.ProcessGroup] = None,
     ):
         PipelineStageBase.__init__(
-            self, stage_index, pipe_info.num_stages, device, group
+            self,
+            stage_module,
+            stage_index,
+            pipe_info.num_stages,
+            device,
+            pipe_info.num_chunks,
+            group,
         )
-        self.submod = stage_module
         self.pipe_info = pipe_info
-        self.chunks = pipe_info.num_chunks
-
-        # `group_rank` is rank in process group `group`.
-        self.group_rank = dist.get_rank(group)
-
-        # Run time states
-        # map microbatch ID to list of forward tensor args
-        self.fwd_cache: Dict[int, Tuple[Any, List[torch.Tensor]]] = {}
-        # Current forward chunk id
-        self.fwd_chunk_id: int = 0
-        # Current backward chunk id
-        self.bwd_chunk_id: int = 0
-        # Caching chunk outputs for final output merge or reduction
-        self.output_chunks: List[Any] = []
 
         # Find stage nodes in graph
         submod_nodes = [
@@ -655,140 +790,6 @@ class _PipelineStage(PipelineStageBase):
         recv_infos = self.grad_recv_info[self.bwd_chunk_id]
         grads = self._map_tensor_from_recv_info(recv_infos)
         return grads
-
-    def forward_maybe_with_nosync(self, *args, **kwargs):
-        # If submod is wrapped with DDP, we use the `no_sync` context manager to
-        # avoid gradient all-reduce per microbatch
-        if isinstance(self.submod, DistributedDataParallel):
-            with self.submod.no_sync():  # type: ignore[operator]
-                out_val = self.submod(*args, **kwargs)
-        else:
-            out_val = self.submod(*args, **kwargs)
-        return out_val
-
-    def backward_maybe_with_nosync(self, bwd_kwargs: Dict, bwd_chunk_id: int):
-        if isinstance(self.submod, DistributedDataParallel):
-            if bwd_chunk_id == self.chunks - 1:
-                # Last chunk, prepare for gradient reduction
-                # HACK: reaching into DDP implementation details here. Is there a better way?
-                self.submod.reducer.prepare_for_backward(  # type: ignore[union-attr, operator]
-                    list(
-                        torch.nn.parallel.distributed._find_tensors(  # type: ignore[attr-defined]
-                            bwd_kwargs["stage_output"]
-                        )
-                    )
-                )
-                grads_input = stage_backward(**bwd_kwargs)
-            else:
-                with self.submod.no_sync():  # type: ignore[operator]
-                    grads_input = stage_backward(**bwd_kwargs)
-        else:
-            # Non-DDP submodule, regular backward
-            grads_input = stage_backward(**bwd_kwargs)
-
-        return grads_input
-
-    def forward_one_chunk(
-        self,
-        args: Tuple[Any, ...],
-        kwargs: Optional[Dict[str, Any]] = None,
-    ):
-        if self.is_first:
-            # First stage doesn't need to receive anything
-            composite_args = args
-            composite_kwargs = kwargs or {}
-        else:
-            # Receive activations for this chunk
-            # Activations only come in args form
-            composite_args = self._retrieve_recv_activations()
-            composite_kwargs = {}
-
-        # Compute forward
-        try:
-            output = self.forward_maybe_with_nosync(
-                *composite_args, **composite_kwargs
-            )
-
-        except Exception as e:
-            exc_msg = f"""
-            Rank {self.group_rank} failed to run forward stage: {self.name}
-            args: {map_debug_info(composite_args)}
-            kwargs: {map_debug_info(composite_kwargs)}
-            """
-            raise RuntimeError(exc_msg) from e
-
-        if type(output) is list:
-            # HACK: this is a hacky workaround for the fact that export creates
-            # output in list format
-            output = tuple(output)
-
-        # Unify output form to tuple for easy correspondance with
-        # `act_send_info`
-        output_tuple = output if type(output) is tuple else (output,)
-        # Prepare for final output merge or reduction
-        self.output_chunks.append(output)
-
-        # Save activations and inputs for backward
-        flat_args = flatten_args(composite_args)
-        flat_kwargs = flatten_args(composite_kwargs)
-        flatten_input_tensors = flat_args + flat_kwargs
-        self.fwd_cache[self.fwd_chunk_id] = (
-            output_tuple,  # stage_output
-            flatten_input_tensors,  # input_values
-        )
-
-        logger.debug(
-            f"[{self.group_rank}] Forwarded chunk {self.fwd_chunk_id}, outputs: {map_debug_info(output)}"
-        )
-        self.fwd_chunk_id += 1
-        return output
-
-    def backward_one_chunk(
-        self,
-        loss=None,
-    ):
-        (
-            stage_output,
-            input_values,
-        ) = self.fwd_cache.pop(self.bwd_chunk_id)
-
-        # Compute backward
-        if self.is_last:
-            # Last stage computes gradients from loss and has no gradients from
-            # next stage
-            bwd_kwargs = {
-                "stage_output": loss,
-                "output_grads": None,
-                "input_values": input_values,
-            }
-        else:
-            # Otherwise, receive gradients from next stage
-            grads_output = self._retrieve_recv_grads()
-            # If an input to the pipeline requires gradient,
-            # `torch.autograd.backward` will accumulate the gradient into the
-            # `.grad` field of such input
-            bwd_kwargs = {
-                "stage_output": stage_output,
-                "output_grads": grads_output,
-                "input_values": input_values,
-            }
-
-        self.grads_input = self.backward_maybe_with_nosync(
-            bwd_kwargs, self.bwd_chunk_id
-        )
-        logger.debug(
-            f"[{self.group_rank}] Backwarded chunk {self.bwd_chunk_id}"
-        )
-        self.bwd_chunk_id += 1
-
-    def clear_runtime_states(self):
-        # Reset pointers
-        self.fwd_chunk_id = 0
-        self.bwd_chunk_id = 0
-        # map microbatch ID to list of forward tensor args
-        self.fwd_cache.clear()
-        # Caching chunk outputs for final output merge or reduction
-        self.output_chunks.clear()
 
     # TODO (kwen2501): move `merge_outputs` to scheduler; scheduler
     # can take an output_merge_spec.

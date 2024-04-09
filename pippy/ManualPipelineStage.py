@@ -8,6 +8,12 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 
+from pippy.microbatch import (
+    merge_chunks,
+    split_args_kwargs_into_chunks,
+    TensorChunkSpec,
+)
+
 from pippy.PipelineStage import PipelineStageBase
 
 logger = logging.getLogger(__name__)
@@ -166,107 +172,6 @@ def get_stage_shapes(
     return stage_id_to_shapes
 
 
-def validate_stage_shapes(pipeline_stages: List[PipelineStageBase]):
-    """
-    Check that the buffer shapes match between stages was expected by performing an all_gather between
-    all stages. Assumes that buffers have been initialized already such that get_fwd_recv_ops() and
-    get_fwd_send_ops() return valid lists of p2p ops.
-    """
-    if len(pipeline_stages) == 0:
-        raise ValueError("No pipeline stages provided.")
-
-    virtual_pipeline_size = len(pipeline_stages)
-    all_inputs = []
-    all_outputs = []
-    world_size = pipeline_stages[0].world_size
-    num_stages = pipeline_stages[0].num_stages
-
-    # perform all gathers between all stages
-    for virtual_id, stage in enumerate(pipeline_stages):
-        world_size = stage.world_size
-        stage_id = stage.stage_index
-        rank = stage.rank
-        # check that world_size and num_stages are consistent across all stages
-        if stage.world_size != world_size:
-            raise ValueError(
-                f"Stage id {stage_id} has world size ({stage.world_size}) which does not match world size ({world_size}) of other stages."
-            )
-        if stage.num_stages != num_stages:
-            raise ValueError(
-                f"Stage id {stage_id} has num stages ({stage.num_stages}) which does not match num stages ({num_stages}) of other stages."
-            )
-
-        # TODO: once we pass in pg to stage, check the pg rank is same as stage rank
-        if rank != (pg_rank := dist.get_rank()):
-            raise ValueError(
-                f"Rank {rank} is not equal to process group rank {pg_rank}"
-            )
-
-        if (num_stages := stage.num_stages) % world_size != 0:
-            raise ValueError(
-                f"Number of stages ({num_stages}) must be a multiple of the world_size ({world_size})"
-            )
-
-        # all gather each ranks inputs
-        tensor_list = [
-            create_metadata_tensor(device=stage.device)
-            for _ in range(stage.world_size)
-        ]
-        expected_inputs = [op.tensor for op in stage.get_fwd_recv_ops()]
-        stage_input = create_metadata_tensor(
-            expected_inputs, device=stage.device
-        )
-        dist.all_gather(tensor_list, stage_input)
-        stage_input_shapes = [
-            extract_metadata_from_tensor(tensor) for tensor in tensor_list
-        ]
-
-        # all gather each ranks outputs
-        tensor_list = [
-            create_metadata_tensor(device=stage.device)
-            for _ in range(stage.world_size)
-        ]
-        expected_outputs = [op.tensor for op in stage.get_fwd_send_ops()]
-        stage_output = create_metadata_tensor(
-            expected_outputs, device=stage.device
-        )
-        dist.all_gather(tensor_list, stage_output)
-        stage_output_shapes = [
-            extract_metadata_from_tensor(tensor) for tensor in tensor_list
-        ]
-
-        logger.debug(
-            f"""
-            Rank: {pg_rank}
-            Stage id: {stage_id}
-            Stage num stages: {stage.num_stages}
-            Stage rank: {rank}
-            Stage world size: {world_size}
-            Stage {virtual_id * world_size}-{(virtual_id + 1) * world_size - 1} input shapes: {stage_input_shapes}
-            Stage {virtual_id * world_size}-{(virtual_id + 1) * world_size - 1} output shapes: {stage_output_shapes}
-        """
-        )
-
-        all_inputs.extend(stage_input_shapes)
-        all_outputs.extend(stage_output_shapes)
-
-    # log only rank 0's view, they will all be equivalent
-    if pg_rank == 0:
-        logger.info(
-            f"""
-            all stage inputs: {all_inputs}
-            all stage outputs: {all_outputs}
-        """
-        )
-
-    # Check if the output for stage 0 matches the input at stage 1, and so forth
-    for i in range(virtual_pipeline_size * world_size - 1):
-        if (out := all_outputs[i]) != (inp := all_inputs[i + 1]):
-            raise ValueError(
-                f"Stage_id {stage_id} output shape {out} at does not match stage_id {i + 1} input shape {inp}."
-            )
-
-
 class ManualPipelineStage(PipelineStageBase):
     def __init__(
         self,
@@ -274,11 +179,14 @@ class ManualPipelineStage(PipelineStageBase):
         stage_id: int,
         num_stages: int,
         device: torch.device,
+        num_microbatches: int,
         group: dist.ProcessGroup = None,
         input_args: Optional[Union[torch.Tensor, List[torch.tensor]]] = None,
         output_args: Optional[Union[torch.Tensor, List[torch.tensor]]] = None,
     ):
-        super().__init__(stage_id, num_stages, device, group)
+        super().__init__(
+            module, stage_id, num_stages, device, num_microbatches, group
+        )
         self.module = module.to(device)
         self.is_first_stage = stage_id == 0
         self.is_last_stage = stage_id == num_stages - 1
@@ -302,7 +210,6 @@ class ManualPipelineStage(PipelineStageBase):
         self.inputs_outputs: Deque[Tuple[Tuple[Any, ...], Any]] = deque()
 
         # these are the buffers used in backwards send/recv, they are allocated later
-        self.inputs_grad: List[torch.tensor] = []
         self.outputs_grad: List[torch.tensor] = []
 
         def stage_global_rank(peer_rank):
@@ -312,8 +219,12 @@ class ManualPipelineStage(PipelineStageBase):
                 else dist.get_global_rank(self.group, peer_rank)
             )
 
-        self.prev_stage = stage_global_rank((self.rank - 1) % self.world_size)
-        self.next_stage = stage_global_rank((self.rank + 1) % self.world_size)
+        self.prev_stage = stage_global_rank(
+            (self.group_rank - 1) % self.group_size
+        )
+        self.next_stage = stage_global_rank(
+            (self.group_rank + 1) % self.group_size
+        )
 
         logger.debug(
             f"""
@@ -323,6 +234,61 @@ class ManualPipelineStage(PipelineStageBase):
             output: {[output.shape for output in self.outputs]}
             """
         )
+
+    def _retrieve_recv_activations(
+        self,
+    ):
+        """
+        Retrieve the activations received for the current stage during forward.
+        """
+        # TODO: grad always gets set but later
+        # we can selectively choose which inputs require grads
+        for inp in self.inputs:
+            inp.requires_grad_(True)
+        return self.inputs
+
+    def _retrieve_recv_grads(
+        self,
+    ):
+        """
+        Retrieve the gradients received for the current stage during backward.
+        """
+        # TODO fix so we dont create a tensor
+        self.outputs_grad = [torch.empty_like(x) for x in self.outputs]
+        return self.outputs_grad
+
+    def split_inputs(
+        self,
+        args: Tuple[Any, ...],
+        kwargs: Optional[Dict[str, Any]] = None,
+    ):
+        """
+        Splits a full-batch input into chunks (i.e. microbatches) and returns
+        the chunks
+        """
+        if args or kwargs:
+            # TODO: cannot split on another dimension other than 0
+            args_split, kwargs_split = split_args_kwargs_into_chunks(
+                args,
+                kwargs,
+                self.chunks,
+            )
+            return args_split, kwargs_split
+        else:
+            # Empty inputs (e.g. when called on middle stages)
+            # Return a list of empty tuples/dicts with matching length as chunks
+            return [()] * self.chunks, [{}] * self.chunks
+
+    def merge_outputs(self):
+        # TODO: manual stage only supports splitting on dimension 0
+        # Last rank return merged results per original format
+        if self.is_last:
+            return merge_chunks(
+                self.output_chunks,
+                TensorChunkSpec(0),
+            )
+        else:
+            return None
 
     def init_p2p_neighbors(self):
         """
@@ -365,14 +331,14 @@ class ManualPipelineStage(PipelineStageBase):
         ]
 
     def get_fwd_send_ops(self) -> List[dist.P2POp]:
-        assert (
-            len(self.outputs) != 0
-        ), "forward() must be called before get_fwd_send_ops"
+        output_tuples, flatten_input_tensors = self.fwd_cache[
+            self.fwd_chunk_id - 1
+        ]
         if self.is_last_stage:
             return []
         return [
             dist.P2POp(dist.isend, out, self.next_stage, self.group)
-            for out in self.outputs
+            for out in output_tuples
         ]
         raise AssertionError("invalid fwd_outputs type, cannot send")
 
@@ -393,48 +359,9 @@ class ManualPipelineStage(PipelineStageBase):
             )
         return outputs
 
-    def forward_one_chunk(
-        self,
-        args: Tuple[Any, ...],
-        kwargs: Optional[Dict[str, Any]] = None,
-    ) -> Any:
-        # Non-0 stage
-        if args is None:
-            args = self.inputs
-
-        # we always expect to unpack a tuple of inputs, so if its a single tensor, wrap it in a tuple
-        if isinstance(args, torch.Tensor):
-            args = (args,)
-
-        logger.info(
-            f"[{self.rank} FORWARD {self.stage_index} {[inp.shape for inp in args]}"
-        )
-
-        # this is needed when we access the gradients for this in backward()
-        # TODO: requires_grad should not be set, it should depend on input (https://github.com/pytorch/PiPPy/issues/945)
-        for tensor in args:
-            tensor.requires_grad = True
-            tensor.retain_grad()
-
-        # perform forward pass on module
-        outputs = self.module(*args)
-        self.outputs = self.check_and_format_outputs(outputs)
-
-        # TODO: this is a hack to get the loss, we should be able to get the
-        # loss with the loss_fn in PipelineSchedule
-        # outputs_or_loss = self.compute_loss() if self.is_last_stage else outputs
-        outputs_or_loss = outputs
-
-        # we store a ref to the input/output pair for this forward to be later used by the corresponding backward
-        self.inputs_outputs.append((args, outputs_or_loss))
-
-        return outputs_or_loss
-
     def get_bwd_recv_ops(self) -> List[dist.P2POp]:
         if self.is_last_stage:
             return []
-        # grads should be same shape as the output from forward()
-        self.outputs_grad = [torch.empty_like(out) for out in self.outputs]
         return [
             dist.P2POp(dist.irecv, grad, self.next_stage, self.group)
             for grad in self.outputs_grad
@@ -444,39 +371,106 @@ class ManualPipelineStage(PipelineStageBase):
         if self.is_first_stage:
             return []
         return [
-            dist.P2POp(dist.isend, grad, self.prev_stage, self.group)
-            for grad in self.inputs_grad
+            dist.P2POp(dist.isend, inp.grad, self.prev_stage, self.group)
+            for inp in self.inputs
         ]
 
-    def backward_one_chunk(self, **kwargs) -> None:
-        logger.info(f"[{self.rank} BACKWARD {self.stage_index}]")
 
-        if self.is_last_stage:
-            inputs, loss = self.inputs_outputs.popleft()
-        else:
-            inputs, outputs = self.inputs_outputs.popleft()
+def validate_stage_shapes(pipeline_stages: List[ManualPipelineStage]):
+    """
+    Check that the buffer shapes match between stages was expected by performing an all_gather between
+    all stages.
+    """
+    if len(pipeline_stages) == 0:
+        raise ValueError("No pipeline stages provided.")
 
-        # Compute gradients
-        # TODO: HACK materialize_grads=True sets gradients to 0s on backward pass,
-        # we need set all the gradients for the inputs that need it, but should not send 0s
-        # due to extra communication
-        # TODO: torch.autograd.grad won't accumulate grad for model parameters.
-        if self.is_last_stage:
-            gradients = torch.autograd.grad(
-                outputs=loss,
-                inputs=inputs,
-                retain_graph=True,
-                allow_unused=True,
-                materialize_grads=True,
+    virtual_pipeline_size = len(pipeline_stages)
+    all_inputs = []
+    all_outputs = []
+    world_size = pipeline_stages[0].group_size
+    num_stages = pipeline_stages[0].num_stages
+
+    # perform all gathers between all stages
+    for virtual_id, stage in enumerate(pipeline_stages):
+        world_size = stage.group_size
+        stage_id = stage.stage_index
+        rank = stage.group_rank
+        # check that world_size and num_stages are consistent across all stages
+        if stage.group_size != world_size:
+            raise ValueError(
+                f"Stage id {stage_id} has world size ({stage.group_size}) which does not match world size ({world_size}) of other stages."
             )
-        else:
-            gradients = torch.autograd.grad(
-                outputs=outputs,
-                inputs=inputs,
-                grad_outputs=self.outputs_grad,
-                retain_graph=True,
-                allow_unused=True,
-                materialize_grads=True,
+        if stage.num_stages != num_stages:
+            raise ValueError(
+                f"Stage id {stage_id} has num stages ({stage.num_stages}) which does not match num stages ({num_stages}) of other stages."
             )
 
-        self.inputs_grad = gradients
+        # TODO: once we pass in pg to stage, check the pg rank is same as stage rank
+        if rank != (pg_rank := dist.get_rank()):
+            raise ValueError(
+                f"Rank {rank} is not equal to process group rank {pg_rank}"
+            )
+
+        if (num_stages := stage.num_stages) % world_size != 0:
+            raise ValueError(
+                f"Number of stages ({num_stages}) must be a multiple of the world_size ({world_size})"
+            )
+
+        # all gather each ranks inputs
+        tensor_list = [
+            create_metadata_tensor(device=stage.device)
+            for _ in range(stage.group_size)
+        ]
+        expected_inputs = stage.inputs
+        stage_input = create_metadata_tensor(
+            expected_inputs, device=stage.device
+        )
+        dist.all_gather(tensor_list, stage_input)
+        stage_input_shapes = [
+            extract_metadata_from_tensor(tensor) for tensor in tensor_list
+        ]
+
+        # all gather each ranks outputs
+        tensor_list = [
+            create_metadata_tensor(device=stage.device)
+            for _ in range(stage.group_size)
+        ]
+        expected_outputs = stage.outputs
+        stage_output = create_metadata_tensor(
+            expected_outputs, device=stage.device
+        )
+        dist.all_gather(tensor_list, stage_output)
+        stage_output_shapes = [
+            extract_metadata_from_tensor(tensor) for tensor in tensor_list
+        ]
+
+        logger.debug(
+            f"""
+            Rank: {pg_rank}
+            Stage id: {stage_id}
+            Stage num stages: {stage.num_stages}
+            Stage rank: {rank}
+            Stage world size: {world_size}
+            Stage {virtual_id * world_size}-{(virtual_id + 1) * world_size - 1} input shapes: {stage_input_shapes}
+            Stage {virtual_id * world_size}-{(virtual_id + 1) * world_size - 1} output shapes: {stage_output_shapes}
+        """
+        )
+
+        all_inputs.extend(stage_input_shapes)
+        all_outputs.extend(stage_output_shapes)
+
+    # log only rank 0's view, they will all be equivalent
+    if pg_rank == 0:
+        logger.info(
+            f"""
+            all stage inputs: {all_inputs}
+            all stage outputs: {all_outputs}
+        """
+        )
+
+    # Check if the output for stage 0 matches the input at stage 1, and so forth
+    for i in range(virtual_pipeline_size * world_size - 1):
+        if (out := all_outputs[i]) != (inp := all_inputs[i + 1]):
+            raise ValueError(
+                f"Stage_id {stage_id} output shape {out} at does not match stage_id {i + 1} input shape {inp}."
+            )
