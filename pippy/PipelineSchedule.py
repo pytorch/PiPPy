@@ -422,8 +422,8 @@ class PipelineScheduleInterleaved1F1B(PipelineSchedule):
         self.stages = stages
         self.n_local_stages = len(stages)
         stage = stages[0]
-        self.pp_group_size = stage.world_size
-        self.rank = stage.rank
+        self.pp_group_size = stage.group_size
+        self.rank = stage.group_rank
         self.total_stages = self.n_local_stages * self.pp_group_size
         self.local_idx_to_global_stage_id = [
             stage.stage_index for stage in self.stages

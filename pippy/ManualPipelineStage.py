@@ -219,8 +219,12 @@ class ManualPipelineStage(PipelineStageBase):
                 else dist.get_global_rank(self.group, peer_rank)
             )
 
-        self.prev_stage = stage_global_rank((self.rank - 1) % self.world_size)
-        self.next_stage = stage_global_rank((self.rank + 1) % self.world_size)
+        self.prev_stage = stage_global_rank(
+            (self.group_rank - 1) % self.group_size
+        )
+        self.next_stage = stage_global_rank(
+            (self.group_rank + 1) % self.group_size
+        )
 
         logger.debug(
             f"""
@@ -383,18 +387,18 @@ def validate_stage_shapes(pipeline_stages: List[ManualPipelineStage]):
     virtual_pipeline_size = len(pipeline_stages)
     all_inputs = []
     all_outputs = []
-    world_size = pipeline_stages[0].world_size
+    world_size = pipeline_stages[0].group_size
     num_stages = pipeline_stages[0].num_stages
 
     # perform all gathers between all stages
     for virtual_id, stage in enumerate(pipeline_stages):
-        world_size = stage.world_size
+        world_size = stage.group_size
         stage_id = stage.stage_index
-        rank = stage.rank
+        rank = stage.group_rank
         # check that world_size and num_stages are consistent across all stages
-        if stage.world_size != world_size:
+        if stage.group_size != world_size:
             raise ValueError(
-                f"Stage id {stage_id} has world size ({stage.world_size}) which does not match world size ({world_size}) of other stages."
+                f"Stage id {stage_id} has world size ({stage.group_size}) which does not match world size ({world_size}) of other stages."
             )
         if stage.num_stages != num_stages:
             raise ValueError(
@@ -415,7 +419,7 @@ def validate_stage_shapes(pipeline_stages: List[ManualPipelineStage]):
         # all gather each ranks inputs
         tensor_list = [
             create_metadata_tensor(device=stage.device)
-            for _ in range(stage.world_size)
+            for _ in range(stage.group_size)
         ]
         expected_inputs = stage.inputs
         stage_input = create_metadata_tensor(
@@ -429,7 +433,7 @@ def validate_stage_shapes(pipeline_stages: List[ManualPipelineStage]):
         # all gather each ranks outputs
         tensor_list = [
             create_metadata_tensor(device=stage.device)
-            for _ in range(stage.world_size)
+            for _ in range(stage.group_size)
         ]
         expected_outputs = stage.outputs
         stage_output = create_metadata_tensor(
