@@ -44,7 +44,12 @@ class PipelineStageBase(ABC):
         self.group = group
 
         # `group_rank` is rank in process group `group`.
-        self.group_rank = dist.get_rank(group)
+        self.group_rank = dist.get_rank(self.group)
+        self.group_size = dist.get_world_size(self.group)
+        if self.group_size > self.num_stages:
+            raise RuntimeError(
+                f"Pipeline group size {self.group_size} cannot be larger than number of stages {self.num_stages}"
+            )
 
         # Run time states
         # map microbatch ID to list of forward tensor args
@@ -55,16 +60,6 @@ class PipelineStageBase(ABC):
         self.bwd_chunk_id: int = 0
         # Caching chunk outputs for final output merge or reduction
         self.output_chunks: List[Any] = []
-
-        # TODO: rename `rank` to `group_rank`
-        self.rank = dist.get_rank(self.group)
-
-        # TODO: rename `world_size`` to `group_size`
-        self.world_size = dist.get_world_size(self.group)
-        if self.world_size > self.num_stages:
-            raise RuntimeError(
-                f"Pipeline group size {self.world_size} cannot be larger than number of stages {self.num_stages}"
-            )
 
         # Initialize has_backward to false; this will be set to true if loss
         # function is passed to pipeline schedule
