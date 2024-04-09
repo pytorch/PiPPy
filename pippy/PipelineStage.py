@@ -790,12 +790,14 @@ class _PipelineStage(PipelineStageBase):
         # Caching chunk outputs for final output merge or reduction
         self.output_chunks.clear()
 
+    # TODO (kwen2501): move `merge_outputs` to scheduler; scheduler
+    # can take an output_merge_spec.
     def merge_outputs(self):
         # Last rank return merged results per original format
         if self.is_last:
             return merge_chunks(
                 self.output_chunks,
-                self.pipe_info.output_chunk_spec,
+                None,  # Defaults to merging by dimension 0 (batch dim)
             )
         else:
             return None
