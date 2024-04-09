@@ -130,7 +130,7 @@ def sorted_batch_isend_irecv(p2p_ops: List[dist.P2POp]) -> Dict[int, dist.Work]:
     return work_by_peer
 
 
-class PipelineScheduleGPipe(PipelineSchedule):
+class ScheduleGPipe(PipelineSchedule):
     def step_microbatches(
         self,
         arg_mbs: Optional[List] = None,
@@ -235,7 +235,7 @@ class PipelineScheduleGPipe(PipelineSchedule):
         return self._stage.merge_outputs()
 
 
-class PipelineSchedule1F1B(PipelineSchedule):
+class Schedule1F1B(PipelineSchedule):
     def step_microbatches(
         self,
         arg_mbs: Optional[List] = None,
@@ -359,7 +359,7 @@ class PipelineSchedule1F1B(PipelineSchedule):
         return self._stage.merge_outputs()
 
 
-class PipelineScheduleLoopedBFS(PipelineSchedule):
+class ScheduleLoopedBFS(PipelineSchedule):
     def __init__(self, stages: List[PipelineStageBase]):
         self._stages = stages
 
@@ -412,7 +412,7 @@ class PipelineScheduleLoopedBFS(PipelineSchedule):
         pass
 
 
-class PipelineScheduleInterleaved1F1B(PipelineSchedule):
+class ScheduleInterleaved1F1B(PipelineSchedule):
     def __init__(self, stages: List[PipelineStageBase]):
         if len(stages) <= 1:
             raise ValueError(

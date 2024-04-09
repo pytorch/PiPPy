@@ -16,7 +16,7 @@ import torch
 import torch.distributed as dist
 
 from pippy import annotate_split_points, pipeline, PipelineStage, SplitPoint
-from pippy.PipelineSchedule import PipelineScheduleGPipe
+from pippy.PipelineSchedule import ScheduleGPipe
 
 
 d_hid = 16
@@ -93,7 +93,7 @@ expert = PipelineStage(pippy_model, rank, device=device)
 
 # Attach to a schedule
 # Use a microbatch of 1, i.e. no pipelining
-schedule = PipelineScheduleGPipe(expert, 1)
+schedule = ScheduleGPipe(expert, 1)
 if rank == 0:
     x = x.to(device)
     schedule.step(x)

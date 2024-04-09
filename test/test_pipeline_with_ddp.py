@@ -5,7 +5,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 from pippy.ManualPipelineStage import ManualPipelineStage
-from pippy.PipelineSchedule import PipelineScheduleGPipe
+from pippy.PipelineSchedule import ScheduleGPipe
 from torch.distributed.device_mesh import init_device_mesh
 
 # torch.testing._internal.common_distributed requies "expecttest"
@@ -162,7 +162,7 @@ class TestPipelineDDP(MultiProcessTestCase):
             num_microbatches,
         )
 
-        pipeline_schedule = PipelineScheduleGPipe(
+        pipeline_schedule = ScheduleGPipe(
             pipeline_stage,
             n_microbatches=num_microbatches,
         )

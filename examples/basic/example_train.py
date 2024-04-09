@@ -5,7 +5,7 @@
 import os
 import torch
 from pippy.IR import annotate_split_points, SplitPoint
-from pippy.PipelineSchedule import PipelineScheduleGPipe
+from pippy.PipelineSchedule import ScheduleGPipe
 from pippy.PipelineStage import PipelineStage
 
 in_dim = 512
@@ -108,7 +108,7 @@ stage = PipelineStage(pipe, rank, device)
 loss_fn=torch.nn.MSELoss(reduction="sum")
 
 # Attach to a schedule
-schedule = PipelineScheduleGPipe(stage, chunks, loss_fn=loss_fn)
+schedule = ScheduleGPipe(stage, chunks, loss_fn=loss_fn)
 
 # Input data
 x = torch.randn(batch_size, in_dim, device=device)

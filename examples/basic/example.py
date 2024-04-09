@@ -6,7 +6,7 @@ import os
 import torch
 from pippy import pipeline
 from pippy.IR import annotate_split_points, SplitPoint
-from pippy.PipelineSchedule import PipelineScheduleGPipe
+from pippy.PipelineSchedule import ScheduleGPipe
 from pippy.PipelineStage import PipelineStage
 
 in_dim = 512
@@ -105,7 +105,7 @@ dist.init_process_group(rank=rank, world_size=world_size)
 stage = PipelineStage(pipe, rank, device)
 
 # Attach to a schedule
-schedule = PipelineScheduleGPipe(stage, chunks)
+schedule = ScheduleGPipe(stage, chunks)
 
 # Input data
 x = torch.randn(batch_size, in_dim, device=device)
