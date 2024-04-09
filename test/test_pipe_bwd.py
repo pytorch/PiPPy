@@ -5,8 +5,6 @@ import unittest
 import torch
 from pippy.IR import pipe_split, pipeline
 
-from pippy.microbatch import sum_reducer, TensorChunkSpec
-
 
 d_hid = 512
 batch_size = 256
@@ -84,16 +82,10 @@ def run_worker(args, model_class):
     x = torch.randn(batch_size, d_hid)
     y = torch.randn(batch_size, d_hid)
 
-    output_chunk_spec = (
-        TensorChunkSpec(0),  # logits
-        sum_reducer,  # loss
-    )
-
     pipe = pipeline(
         mod,
         args.chunks,
         example_args=(x, y),
-        output_chunk_spec=output_chunk_spec,
     )
 
     ref_out = mod(x, y)
