@@ -10,7 +10,7 @@ from pippy import pipeline
 from pippy.IR import annotate_split_points, SplitPoint
 
 from pippy.ManualPipelineStage import ManualPipelineStage
-from pippy.PipelineSchedule import PipelineScheduleGPipe
+from pippy.PipelineSchedule import ScheduleGPipe
 from pippy.PipelineStage import PipelineStage
 
 # torch.testing._internal.common_distributed requires "expecttest"
@@ -130,7 +130,7 @@ class TestPipelineStage(MultiProcessTestCase):
         loss_fn = torch.nn.MSELoss(reduction="sum")
 
         # Attach to a schedule
-        schedule = PipelineScheduleGPipe(stage, chunks, loss_fn=loss_fn)
+        schedule = ScheduleGPipe(stage, chunks, loss_fn=loss_fn)
 
         # Input data
         x = torch.randn(batch_size, in_dim, device=device)

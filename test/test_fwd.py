@@ -8,7 +8,7 @@ import pippy
 import torch
 import torch.distributed as dist
 from pippy.IR import pipe_split, pipeline
-from pippy.PipelineSchedule import PipelineScheduleGPipe
+from pippy.PipelineSchedule import ScheduleGPipe
 from pippy.PipelineStage import PipelineStage
 
 
@@ -66,7 +66,7 @@ def run_worker(args):
     )
 
     # Attach to a schedule
-    schedule = PipelineScheduleGPipe(stage, args.chunks)
+    schedule = ScheduleGPipe(stage, args.chunks)
 
     # Run
     if args.rank == 0:

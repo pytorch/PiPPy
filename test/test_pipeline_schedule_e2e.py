@@ -28,10 +28,10 @@ import torch.multiprocessing as mp
 import torch.nn as nn
 from pippy.ManualPipelineStage import ManualPipelineStage
 from pippy.PipelineSchedule import (
-    PipelineSchedule1F1B,
-    PipelineScheduleGPipe,
-    PipelineScheduleInterleaved1F1B,
-    PipelineScheduleLoopedBFS,
+    Schedule1F1B,
+    ScheduleGPipe,
+    ScheduleInterleaved1F1B,
+    ScheduleLoopedBFS,
 )
 
 from torch.distributed._tensor.device_mesh import init_device_mesh
@@ -201,13 +201,13 @@ def main(**kwargs):
     for schedule in kwargs["schedules"]:
         logger.info(f"====== Rank {rank} running schedule {schedule} ======")
         if schedule == "gpipe":
-            pipeline = PipelineScheduleGPipe(stage_model, n_microbatches)
+            pipeline = ScheduleGPipe(stage_model, n_microbatches)
         elif schedule == "1f1b":
-            pipeline = PipelineSchedule1F1B(stage_model, n_microbatches)
+            pipeline = Schedule1F1B(stage_model, n_microbatches)
         elif schedule == "looped_bfs":
-            pipeline = PipelineScheduleLoopedBFS(stage_model_looped)
+            pipeline = ScheduleLoopedBFS(stage_model_looped)
         elif schedule == "interleaved_1f1b":
-            pipeline = PipelineScheduleInterleaved1F1B(stage_model_looped)
+            pipeline = ScheduleInterleaved1F1B(stage_model_looped)
 
         if _run_profiler:
             logger.info(f"====== Rank {rank} profile ======")

@@ -18,7 +18,7 @@ import torch.distributed as dist
 
 from pippy import pipeline
 from pippy.IR import SplitPoint, annotate_split_points
-from pippy.PipelineSchedule import PipelineScheduleGPipe
+from pippy.PipelineSchedule import ScheduleGPipe
 from pippy.PipelineStage import PipelineStage
 
 from transformers import T5ForConditionalGeneration, T5Config
@@ -88,7 +88,7 @@ def run(args):
     )
 
     # Attach to a schedule
-    schedule = PipelineScheduleGPipe(stage, args.chunks)
+    schedule = ScheduleGPipe(stage, args.chunks)
 
     # Run
     if args.rank == 0:

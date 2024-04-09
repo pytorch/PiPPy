@@ -7,13 +7,13 @@ import torch
 import torch.distributed as dist
 
 from pippy.IR import pipe_split, pipeline
-from pippy.PipelineSchedule import PipelineSchedule1F1B, PipelineScheduleGPipe
+from pippy.PipelineSchedule import Schedule1F1B, ScheduleGPipe
 from pippy.PipelineStage import PipelineStage
 
 
 schedule_map = {
-    "gpipe": PipelineScheduleGPipe,
-    "1f1b": PipelineSchedule1F1B,
+    "gpipe": ScheduleGPipe,
+    "1f1b": Schedule1F1B,
 }
 
 d_hid = 512

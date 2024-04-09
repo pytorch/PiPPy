@@ -17,8 +17,8 @@ from pippy.ManualPipelineStage import (
 
 from pippy.PipelineSchedule import (
     logger as schedule_logger,
-    PipelineSchedule1F1B,
-    PipelineScheduleInterleaved1F1B,
+    Schedule1F1B,
+    ScheduleInterleaved1F1B,
 )
 
 # torch.testing._internal.common_distributed requies "expecttest"
@@ -298,7 +298,7 @@ class TestPipelineSchedule(MultiProcessTestCase):
             [torch.randn_like(microbatch)] for _ in range(num_microbatches)
         ]
 
-        schedule = PipelineSchedule1F1B(stage, num_microbatches)
+        schedule = Schedule1F1B(stage, num_microbatches)
         schedule.step_microbatches(microbatches)
         dist.barrier()
 
@@ -324,7 +324,7 @@ class TestPipelineSchedule(MultiProcessTestCase):
             torch.randn_like(microbatch) for _ in range(num_microbatches)
         ]
 
-        schedule = PipelineScheduleInterleaved1F1B(stages)
+        schedule = ScheduleInterleaved1F1B(stages)
         schedule.step(microbatches)
 
         # num local pipeline stages == world_size
@@ -336,7 +336,7 @@ class TestPipelineSchedule(MultiProcessTestCase):
             torch.randn_like(microbatch) for _ in range(num_microbatches)
         ]
 
-        schedule = PipelineScheduleInterleaved1F1B(stages)
+        schedule = ScheduleInterleaved1F1B(stages)
         schedule.step(microbatches)
 
         # differing microbatch size
@@ -363,12 +363,12 @@ class TestPipelineSchedule(MultiProcessTestCase):
             stages = self._create_virtual_pipeline_stages(
                 model, microbatch, device, 1
             )
-            PipelineScheduleInterleaved1F1B(stages)
+            ScheduleInterleaved1F1B(stages)
 
         stages = self._create_virtual_pipeline_stages(
             model, microbatch, device, 4
         )
-        schedule = PipelineScheduleInterleaved1F1B(stages)
+        schedule = ScheduleInterleaved1F1B(stages)
 
         # invalid microbatch values
         with self.assertRaises(ValueError):
