@@ -1,5 +1,16 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
+
+# Minimum effort to run this example:
 # torchrun --nproc-per-node 5 dist_moe.py
+# You need use 5 ranks because there are 3 experts, one pre-processor and one gatherer.
+
+"""
+                pre-proc
+            /       |       \
+    expert 0    expert 1   expert 2
+            \       |       /
+                gatherer
+"""
 
 import torch
 import torch.distributed as dist
@@ -16,13 +27,13 @@ torch.manual_seed(0)
 
 # Each expert is a MLP
 class ExpertLayer(torch.nn.Module):
-    def __init__(self, d_hid):
+    def __init__(self, d_hid) -> None:
         super(ExpertLayer, self).__init__()
         self.net1 = torch.nn.Linear(d_hid, d_hid)
         self.relu = torch.nn.ReLU()
         self.net2 = torch.nn.Linear(d_hid, d_hid)
 
-    def forward(self, x):
+    def forward(self, x) -> torch.Tensor:
         x = self.net1(x)
         x = self.relu(x)
         x = self.net2(x)
