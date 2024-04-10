@@ -9,8 +9,8 @@ import torch
 import torch.distributed as dist
 from torch.profiler import record_function
 
+from pippy.IR import Pipe
 from pippy.microbatch import merge_chunks, split_args_kwargs_into_chunks
-
 from pippy.PipelineStage import PipelineStageBase
 
 logger = logging.getLogger(__name__)
@@ -81,15 +81,8 @@ class PipelineSchedule(ABC):
         else:
             kwarg_mbs = [{}] * self._n_microbatches
 
-        if self._should_compute_loss:
-            if target_mbs is None:
-                raise RuntimeError(
-                    "target_mbs must be passed in if loss_fn is not None"
-                )
-            if len(target_mbs) != self._n_microbatches:
-                raise RuntimeError(
-                    f"target_mbs length {len(target_mbs)} does not match number of microbatches {self._n_microbatches}"
-                )
+        if target_mbs is not None:
+            assert len(target_mbs) == self._n_microbatches
 
         if losses is not None:
             assert isinstance(
