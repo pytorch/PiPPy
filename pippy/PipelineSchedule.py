@@ -3,11 +3,13 @@
 import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.distributed as dist
 from torch.profiler import record_function
+
+from pippy.microbatch import merge_chunks, split_args_kwargs_into_chunks
 
 from pippy.PipelineStage import PipelineStageBase
 
@@ -20,6 +22,7 @@ class PipelineSchedule(ABC):
         stage: PipelineStageBase,
         n_microbatches: int,
         loss_fn: Optional[Callable] = None,
+        output_merge_spec: Optional[Union[Dict[str, Any], Tuple[Any]]] = None,
     ):
         self._stage = stage
         self._num_stages = stage.num_stages
@@ -34,6 +37,10 @@ class PipelineSchedule(ABC):
         logger.debug(
             f"[{self._stage.stage_index}] Should compute loss: {self._should_compute_loss}"
         )
+        self._pipe_info = (
+            self._stage.pipe_info if hasattr(self._stage, "pipe_info") else None  # type: ignore[attr-defined]
+        )
+        self._output_merge_spec = output_merge_spec
 
     @abstractmethod
     def step_microbatches(
@@ -103,6 +110,48 @@ class PipelineSchedule(ABC):
 
     def _compute_loss(self, output, target):
         return self._loss_fn(output, target)  # type: ignore[misc]
+
+    def _split_inputs(
+        self,
+        args: Tuple[Any, ...],
+        kwargs: Optional[Dict[str, Any]] = None,
+    ):
+        """
+        Splits a full-batch input into chunks (i.e. microbatches) and returns
+        the chunks
+        """
+        if self._pipe_info is not None:
+            # Use spec from `pipe_info`
+            args_chunk_spec = self._pipe_info.args_chunk_spec
+            kwargs_chunk_spec = self._pipe_info.kwargs_chunk_spec
+        else:
+            # Use default spec from `microbatch.py` (i.e. chunk dim 0 for each arg/kwarg)
+            args_chunk_spec = None
+            kwargs_chunk_spec = None
+
+        if args or kwargs:
+            args_split, kwargs_split = split_args_kwargs_into_chunks(
+                args,
+                kwargs,
+                self._n_microbatches,
+                args_chunk_spec,
+                kwargs_chunk_spec,
+            )
+            return args_split, kwargs_split
+        else:
+            # Empty inputs (e.g. when called on middle stages)
+            # Return a list of empty tuples/dicts with matching length as chunks
+            return [()] * self._n_microbatches, [{}] * self._n_microbatches
+
+    def _merge_outputs(self, output_chunks: List[Any]) -> Any:
+        """
+        Merge output chunks back to a batch state.
+        If output_merge_spec is None, the utility will merge output chunks by dimension 0 (batch dim).
+        """
+        return merge_chunks(
+            output_chunks,
+            self._output_merge_spec,
+        )
 
 
 def sorted_batch_isend_irecv(p2p_ops: List[dist.P2POp]) -> Dict[int, dist.Work]:
@@ -220,7 +269,7 @@ class ScheduleGPipe(PipelineSchedule):
         self._stage.clear_runtime_states()
 
         # Split inputs into microbatches
-        args_split, kwargs_split = self._stage.split_inputs(args, kwargs)
+        args_split, kwargs_split = self._split_inputs(args, kwargs)
 
         # Split target into microbatches
         if target is not None:
@@ -232,7 +281,10 @@ class ScheduleGPipe(PipelineSchedule):
         self.step_microbatches(args_split, kwargs_split, targets_split, losses)
 
         # Return merged results per original format
-        return self._stage.merge_outputs()
+        if self._stage.is_last:
+            return self._merge_outputs(self._stage.output_chunks)
+        else:
+            return None
 
 
 class Schedule1F1B(PipelineSchedule):
@@ -344,7 +396,7 @@ class Schedule1F1B(PipelineSchedule):
         self._stage.clear_runtime_states()
 
         # Split inputs into microbatches
-        args_split, kwargs_split = self._stage.split_inputs(args, kwargs)
+        args_split, kwargs_split = self._split_inputs(args, kwargs)
 
         # Split target into microbatches
         if target is not None:
@@ -356,7 +408,10 @@ class Schedule1F1B(PipelineSchedule):
         self.step_microbatches(args_split, kwargs_split, targets_split, losses)
 
         # Return merged results per original format
-        return self._stage.merge_outputs()
+        if self._stage.is_last:
+            return self._merge_outputs(self._stage.output_chunks)
+        else:
+            return None
 
 
 class ScheduleLoopedBFS(PipelineSchedule):

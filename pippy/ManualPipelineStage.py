@@ -8,12 +8,6 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 
-from pippy.microbatch import (
-    merge_chunks,
-    split_args_kwargs_into_chunks,
-    TensorChunkSpec,
-)
-
 from pippy.PipelineStage import PipelineStageBase
 
 logger = logging.getLogger(__name__)
@@ -256,39 +250,6 @@ class ManualPipelineStage(PipelineStageBase):
         # TODO fix so we dont create a tensor
         self.outputs_grad = [torch.empty_like(x) for x in self.outputs]
         return self.outputs_grad
-
-    def split_inputs(
-        self,
-        args: Tuple[Any, ...],
-        kwargs: Optional[Dict[str, Any]] = None,
-    ):
-        """
-        Splits a full-batch input into chunks (i.e. microbatches) and returns
-        the chunks
-        """
-        if args or kwargs:
-            # TODO: cannot split on another dimension other than 0
-            args_split, kwargs_split = split_args_kwargs_into_chunks(
-                args,
-                kwargs,
-                self.chunks,
-            )
-            return args_split, kwargs_split
-        else:
-            # Empty inputs (e.g. when called on middle stages)
-            # Return a list of empty tuples/dicts with matching length as chunks
-            return [()] * self.chunks, [{}] * self.chunks
-
-    def merge_outputs(self):
-        # TODO: manual stage only supports splitting on dimension 0
-        # Last rank return merged results per original format
-        if self.is_last:
-            return merge_chunks(
-                self.output_chunks,
-                TensorChunkSpec(0),
-            )
-        else:
-            return None
 
     def init_p2p_neighbors(self):
         """
