@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import torch
 import torch.distributed as dist
 from torch.profiler import record_function
+from torch.distributed._composable.fsdp.fully_shard import FSDP
 
 from pippy.microbatch import merge_chunks, split_args_kwargs_into_chunks
 
@@ -41,6 +42,21 @@ class PipelineSchedule(ABC):
             self._stage.pipe_info if hasattr(self._stage, "pipe_info") else None  # type: ignore[attr-defined]
         )
         self._output_merge_spec = output_merge_spec
+
+    def _configure_data_parallel_mode(self, last_backward: bool):
+        """
+        Whether using PP with FSDP or DDP, there are some runtime differences between the last backward step and the
+        other steps.  Namely, we need to accumulate gradients on previous steps and reduce them on the last step, but
+        there are additional state-variables and performance considerations depending on the data parallelism used.
+
+        This helper should adapt any pipeline parallel schedule to work with common/supported data parallel libraries.
+        """
+        module = self._stage.submod
+        if isinstance(module, FSDP):
+            module.set_is_last_backward(last_backward)
+            module.set_requires_gradient_sync(last_backward)
+        else:
+            raise NotImplementedError("Only FSDP is supported now, please add support for your data parallel library")
 
     @abstractmethod
     def step_microbatches(
@@ -236,6 +252,10 @@ class ScheduleGPipe(PipelineSchedule):
         # Delay send waits
         bwd_sends_to_wait: List[dist.Work] = []
         for i in range(self._n_microbatches):
+
+            # set library-specific data-parallel config flags to ensure gradient accumulation across microbatches
+            self._configure_data_parallel_mode(i == self._n_microbatches - 1)
+
             with record_function(f"Backward {i}"):
                 ops = self._stage.get_bwd_recv_ops()
                 works = sorted_batch_isend_irecv(ops)
