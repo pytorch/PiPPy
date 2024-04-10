@@ -9,8 +9,8 @@ import torch
 import torch.distributed as dist
 from torch.profiler import record_function
 
+from pippy.IR import Pipe
 from pippy.microbatch import merge_chunks, split_args_kwargs_into_chunks
-
 from pippy.PipelineStage import PipelineStageBase
 
 logger = logging.getLogger(__name__)
@@ -19,28 +19,18 @@ logger = logging.getLogger(__name__)
 class PipelineSchedule(ABC):
     def __init__(
         self,
-        stage: PipelineStageBase,
         n_microbatches: int,
         loss_fn: Optional[Callable] = None,
         output_merge_spec: Optional[Union[Dict[str, Any], Tuple[Any]]] = None,
     ):
-        self._stage = stage
-        self._num_stages = stage.num_stages
+        # From arguments
         self._n_microbatches = n_microbatches
         self._loss_fn = loss_fn
-        self._has_backward = self._loss_fn is not None
-        # Set the same has_backward flag for stage object
-        self._stage.has_backward = self._has_backward
-        self._should_compute_loss: bool = (
-            self._stage.is_last and self._loss_fn is not None
-        )
-        logger.debug(
-            f"[{self._stage.stage_index}] Should compute loss: {self._should_compute_loss}"
-        )
-        self._pipe_info = (
-            self._stage.pipe_info if hasattr(self._stage, "pipe_info") else None  # type: ignore[attr-defined]
-        )
         self._output_merge_spec = output_merge_spec
+        # Derived
+        self._has_backward = self._loss_fn is not None
+        # To be filled by subclasses
+        self._pipe_info: Optional[Pipe.PipeInfo] = None
 
     @abstractmethod
     def step_microbatches(
@@ -91,15 +81,8 @@ class PipelineSchedule(ABC):
         else:
             kwarg_mbs = [{}] * self._n_microbatches
 
-        if self._should_compute_loss:
-            if target_mbs is None:
-                raise RuntimeError(
-                    "target_mbs must be passed in if loss_fn is not None"
-                )
-            if len(target_mbs) != self._n_microbatches:
-                raise RuntimeError(
-                    f"target_mbs length {len(target_mbs)} does not match number of microbatches {self._n_microbatches}"
-                )
+        if target_mbs is not None:
+            assert len(target_mbs) == self._n_microbatches
 
         if losses is not None:
             assert isinstance(
@@ -179,7 +162,37 @@ def sorted_batch_isend_irecv(p2p_ops: List[dist.P2POp]) -> Dict[int, dist.Work]:
     return work_by_peer
 
 
-class ScheduleGPipe(PipelineSchedule):
+class PipelineScheduleSingle(PipelineSchedule):
+    def __init__(
+        self,
+        stage: PipelineStageBase,
+        n_microbatches: int,
+        loss_fn: Optional[Callable] = None,
+        output_merge_spec: Optional[Union[Dict[str, Any], Tuple[Any]]] = None,
+    ):
+        # Init parent
+        super().__init__(
+            n_microbatches=n_microbatches,
+            loss_fn=loss_fn,
+            output_merge_spec=output_merge_spec,
+        )
+        self._pipe_info = (
+            stage.pipe_info if hasattr(stage, "pipe_info") else None  # type: ignore[attr-defined]
+        )
+        # Self attributes
+        self._stage = stage
+        self._num_stages = stage.num_stages
+        # Set the same has_backward flag for stage object
+        self._stage.has_backward = self._has_backward
+        self._should_compute_loss: bool = (
+            self._stage.is_last and self._loss_fn is not None
+        )
+        logger.debug(
+            f"[{self._stage.stage_index}] Should compute loss: {self._should_compute_loss}"
+        )
+
+
+class ScheduleGPipe(PipelineScheduleSingle):
     def step_microbatches(
         self,
         arg_mbs: Optional[List] = None,
@@ -287,7 +300,7 @@ class ScheduleGPipe(PipelineSchedule):
             return None
 
 
-class Schedule1F1B(PipelineSchedule):
+class Schedule1F1B(PipelineScheduleSingle):
     def step_microbatches(
         self,
         arg_mbs: Optional[List] = None,
