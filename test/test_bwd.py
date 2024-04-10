@@ -90,10 +90,13 @@ def run_worker(args):
     # Last rank checks result
     if args.rank == args.world_size - 1:
         ref_out = mod(x)
-        ref_loss = loss_fn(x, target)
+        ref_loss = loss_fn(ref_out, target)
         pipe_loss = sum(losses)
         torch.testing.assert_close(out, ref_out, rtol=1e-2, atol=5e-3)
-        # print(f"equivalence test passed pipe_loss={pipe_loss} ref_loss={ref_loss}")
+        torch.testing.assert_close(pipe_loss, ref_loss)
+        print(
+            f"equivalence test passed pipe_loss={pipe_loss} ref_loss={ref_loss}"
+        )
 
 
 def main(args=None):
