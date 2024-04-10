@@ -1,0 +1,6 @@
+@Misc{pippy2022,
+  author =       {James Reed, Pavel Belevich, Ke Wen},
+  title =        {PiPPy: Pipeline Parallelism for PyTorch},
+  howpublished = {\url{https://github.com/pytorch/PiPPy}},
+  year =         {2022}
+}
