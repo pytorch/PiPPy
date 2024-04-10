@@ -14,7 +14,6 @@ from torch.nn.parallel import DistributedDataParallel
 from pippy.backward import stage_backward
 from pippy.debug import map_debug_info
 from pippy.IR import Pipe
-from pippy.microbatch import merge_chunks, split_args_kwargs_into_chunks
 from pippy.utils import flatten_args, modify_graph_op_device
 
 logger = logging.getLogger(__name__)
@@ -120,25 +119,6 @@ class PipelineStageBase(ABC):
         self.fwd_cache.clear()
         # Caching chunk outputs for final output merge or reduction
         self.output_chunks.clear()
-
-    def split_inputs(
-        self,
-        args: Tuple[Any, ...],
-        kwargs: Optional[Dict[str, Any]] = None,
-    ):
-        """
-        Splits a full-batch input into chunks (i.e. microbatches) and returns
-        the chunks
-        """
-        # TODO: lift an implementation here from PipelineStage or move it to PipelineSchedule
-        raise NotImplementedError
-
-    def merge_outputs(self):
-        """
-        Merges the outputs of the microbatches into a single output.
-        """
-        # TODO: lift an implementation here from PipelineStage or move it to PipelineSchedule
-        raise NotImplementedError
 
     def _retrieve_recv_activations(
         self,
@@ -600,29 +580,6 @@ class _PipelineStage(PipelineStageBase):
         logger.info(f"[{self.group_rank}] " f"Grad send info: {grad_send_info}")
         return grad_send_info
 
-    def split_inputs(
-        self,
-        args: Tuple[Any, ...],
-        kwargs: Optional[Dict[str, Any]] = None,
-    ):
-        """
-        Splits a full-batch input into chunks (i.e. microbatches) and returns
-        the chunks
-        """
-        if args or kwargs:
-            args_split, kwargs_split = split_args_kwargs_into_chunks(
-                args,
-                kwargs,
-                self.chunks,
-                self.pipe_info.args_chunk_spec,
-                self.pipe_info.kwargs_chunk_spec,
-            )
-            return args_split, kwargs_split
-        else:
-            # Empty inputs (e.g. when called on middle stages)
-            # Return a list of empty tuples/dicts with matching length as chunks
-            return [()] * self.chunks, [{}] * self.chunks
-
     def _get_recv_ops(
         self,
         recv_infos: Tuple[InputInfo],
@@ -790,18 +747,6 @@ class _PipelineStage(PipelineStageBase):
         recv_infos = self.grad_recv_info[self.bwd_chunk_id]
         grads = self._map_tensor_from_recv_info(recv_infos)
         return grads
-
-    # TODO (kwen2501): move `merge_outputs` to scheduler; scheduler
-    # can take an output_merge_spec.
-    def merge_outputs(self):
-        # Last rank return merged results per original format
-        if self.is_last:
-            return merge_chunks(
-                self.output_chunks,
-                None,  # Defaults to merging by dimension 0 (batch dim)
-            )
-        else:
-            return None
 
     def forward(self, *args, **kwargs):
         raise NotImplementedError(
