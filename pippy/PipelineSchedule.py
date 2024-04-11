@@ -414,10 +414,66 @@ class Schedule1F1B(PipelineScheduleSingle):
             losses.extend(internal_losses)
 
 
-class ScheduleLoopedBFS(PipelineSchedule):
-    def __init__(self, stages: List[PipelineStageBase]):
-        self._stages = stages
+class PipelineScheduleMulti(PipelineSchedule):
+    """
+    Base class for multi-stage schedules.
+    Implements the `step` method.
+    Derived classes should implement `step_microbatches`.
+    """
 
+    def __init__(
+        self,
+        stages: List[PipelineStageBase],
+        n_microbatches: int,
+        loss_fn: Optional[Callable] = None,
+        output_merge_spec: Optional[Union[Dict[str, Any], Tuple[Any]]] = None,
+    ):
+        if len(stages) <= 1:
+            raise ValueError(
+                f"Multi-stage schedule expects at least two stages but got {len(stages)}"
+            )
+        # Init parent
+        super().__init__(
+            n_microbatches=n_microbatches,
+            loss_fn=loss_fn,
+            output_merge_spec=output_merge_spec,
+        )
+        self._pipe_info = (
+            stages[0].pipe_info if hasattr(stages[0], "pipe_info") else None  # type: ignore[attr-defined]
+        )
+        # Self attributes
+        self._stages = stages
+        self._num_stages = stages[0].num_stages
+        # Set the same has_backward flag for stage object
+        for stage in self._stages:
+            stage.has_backward = self._has_backward
+
+    def step(self, *args, target=None, losses: Optional[List] = None, **kwargs):
+        # Clean per iteration
+        for stage in self._stages:
+            stage.clear_runtime_states()
+
+        # Split inputs into microbatches
+        args_split, kwargs_split = self._split_inputs(args, kwargs)
+
+        # Split target into microbatches
+        if target is not None:
+            targets_split = torch.tensor_split(target, self._n_microbatches)
+        else:
+            targets_split = None
+
+        # Run microbatches
+        self.step_microbatches(args_split, kwargs_split, targets_split, losses)
+
+        # Return merged results per original format
+        for stage in self._stages:
+            if stage.is_last:
+                return self._merge_outputs(stage.output_chunks)
+        # Does not contain the last stage
+        return None
+
+
+class ScheduleLoopedBFS(PipelineScheduleMulti):
     def step_microbatches(
         self,
         arg_mbs: Optional[List] = None,
@@ -464,27 +520,24 @@ class ScheduleLoopedBFS(PipelineSchedule):
                     if ops:
                         dist.batch_isend_irecv(ops)
 
-    def step(self, *args, **kwargs):
-        # TODO
-        pass
 
-
-class ScheduleInterleaved1F1B(PipelineSchedule):
-    def __init__(self, stages: List[PipelineStageBase]):
-        if len(stages) <= 1:
-            raise ValueError(
-                "Looped DFS schedule requires at least two stages to be used."
-            )
-
-        self.stages = stages
+class ScheduleInterleaved1F1B(PipelineScheduleMulti):
+    def __init__(
+        self,
+        stages: List[PipelineStageBase],
+        n_microbatches: int,
+        loss_fn: Optional[Callable] = None,
+        output_merge_spec: Optional[Union[Dict[str, Any], Tuple[Any]]] = None,
+    ):
+        super().__init__(
+            stages=stages,
+            n_microbatches=n_microbatches,
+            loss_fn=loss_fn,
+            output_merge_spec=output_merge_spec,
+        )
         self.n_local_stages = len(stages)
-        stage = stages[0]
-        self.pp_group_size = stage.group_size
-        self.rank = stage.group_rank
-        self.total_stages = self.n_local_stages * self.pp_group_size
-        self.local_idx_to_global_stage_id = [
-            stage.stage_index for stage in self.stages
-        ]
+        self.pp_group_size = stages[0].group_size
+        self.rank = stages[0].group_rank
 
     def step_microbatches(
         self,
@@ -576,7 +629,7 @@ class ScheduleInterleaved1F1B(PipelineSchedule):
         for step in range(self.total_steps):
             # warmup, forward only
             if step < warmup_steps:
-                fwd_stage = self.stages[forward_stage_local_index(step)]
+                fwd_stage = self._stages[forward_stage_local_index(step)]
                 mb_index = microbatch_index(step)
                 logger.debug(
                     f"{self.rank}: {step=}, {fwd_stage.stage_index=}, {mb_index=}"
@@ -594,8 +647,8 @@ class ScheduleInterleaved1F1B(PipelineSchedule):
                         dist.batch_isend_irecv(ops)
             # 1f1b
             elif warmup_steps <= step < warmup_steps + fwd_bwd_steps:
-                fwd_stage = self.stages[forward_stage_local_index(step)]
-                bwd_stage = self.stages[backward_stage_local_index(step)]
+                fwd_stage = self._stages[forward_stage_local_index(step)]
+                bwd_stage = self._stages[backward_stage_local_index(step)]
                 logger.debug(
                     f"{self.rank}: {step=}, {fwd_stage.stage_index=}, {bwd_stage.stage_index=}, {mb_index=}"
                 )
@@ -615,7 +668,7 @@ class ScheduleInterleaved1F1B(PipelineSchedule):
                         dist.batch_isend_irecv(ops)
             # cooldown
             else:
-                bwd_stage = self.stages[backward_stage_local_index(step)]
+                bwd_stage = self._stages[backward_stage_local_index(step)]
                 logger.debug(
                     f"{self.rank}: {step=}, {bwd_stage.stage_index=}, {mb_index=}"
                 )
@@ -631,7 +684,3 @@ class ScheduleInterleaved1F1B(PipelineSchedule):
 
                     if ops:
                         dist.batch_isend_irecv(ops)
-
-    def step(self, *args, **kwargs):
-        # TODO
-        pass
