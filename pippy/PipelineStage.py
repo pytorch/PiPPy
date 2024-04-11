@@ -191,7 +191,7 @@ class PipelineStageBase(ABC):
 
         except Exception as e:
             exc_msg = f"""s
-            Rank {self.group_rank} failed to run forward stage
+            Stage {self.stage_index} failed to run forward:
             args: {map_debug_info(composite_args)}
             kwargs: {map_debug_info(composite_kwargs)}
             """
@@ -218,7 +218,7 @@ class PipelineStageBase(ABC):
         )
 
         logger.debug(
-            f"[{self.group_rank}] Forwarded chunk {self.fwd_chunk_id}, outputs: {map_debug_info(output)}"
+            f"[{self.stage_index}] Forwarded chunk {self.fwd_chunk_id}, outputs: {map_debug_info(output)}"
         )
         self.fwd_chunk_id += 1
         return output
@@ -261,7 +261,7 @@ class PipelineStageBase(ABC):
             bwd_kwargs, self.bwd_chunk_id
         )
         logger.debug(
-            f"[{self.group_rank}] Backwarded chunk {self.bwd_chunk_id}"
+            f"[{self.stage_index}] Backwarded chunk {self.bwd_chunk_id}"
         )
         self.bwd_chunk_id += 1
 
@@ -376,7 +376,7 @@ class _PipelineStage(PipelineStageBase):
             for p in self.submod.parameters()
         )
         if has_meta_param:
-            logger.debug(f"[{self.group_rank}] Found meta parameters!")
+            logger.debug(f"[{self.stage_index}] Found meta parameters!")
         else:
             self.submod.to(self.device)
 
@@ -438,7 +438,7 @@ class _PipelineStage(PipelineStageBase):
             # Create a receive buffer for this placeholder
             example_value = placeholder.meta["val"]
             logger.info(
-                f"[{self.group_rank}] "
+                f"[{self.stage_index}] "
                 f"Creating recv buffer for input '{placeholder.name}' "
                 f": {example_value.shape}, {example_value.dtype}"
             )
@@ -464,7 +464,7 @@ class _PipelineStage(PipelineStageBase):
             args_recv_info.append(recv_info)
 
         logger.info(
-            f"[{self.group_rank}] "
+            f"[{self.stage_index}] "
             f"Activation recv / args info: {args_recv_info}"
         )
         # `args` is a Tuple, hence we will return a Tuple[InputInfo]
@@ -511,7 +511,7 @@ class _PipelineStage(PipelineStageBase):
                 if dst_rank is not None:
                     dsts.append(dst_rank)
 
-        logger.info(f"[{self.group_rank}] " f"Send info: {act_send_info}")
+        logger.info(f"[{self.stage_index}] " f"Send info: {act_send_info}")
         return act_send_info
 
     def _create_grad_recv_info(
@@ -536,7 +536,7 @@ class _PipelineStage(PipelineStageBase):
             output = output_vals[out_idx]
             example_value = output.meta["val"]
             logger.debug(
-                f"[{self.group_rank}] Creating grad recv buffer for output {output.name} "
+                f"[{self.stage_index}] Creating grad recv buffer for output {output.name} "
                 f": {example_value.shape}, {example_value.dtype}"
             )
 
@@ -554,7 +554,7 @@ class _PipelineStage(PipelineStageBase):
         # Convert to tuple for convenience in get_ops and retrieve tensor
         grad_recv_info_tuple = tuple(grad_recv_info.values())
         logger.info(
-            f"[{self.group_rank}] " f"Grad recv info: {grad_recv_info_tuple}"
+            f"[{self.stage_index}] " f"Grad recv info: {grad_recv_info_tuple}"
         )
         return grad_recv_info_tuple
 
@@ -577,7 +577,9 @@ class _PipelineStage(PipelineStageBase):
 
         map_aggregate(args_recv_info, map_recv_to_send)
 
-        logger.info(f"[{self.group_rank}] " f"Grad send info: {grad_send_info}")
+        logger.info(
+            f"[{self.stage_index}] " f"Grad send info: {grad_send_info}"
+        )
         return grad_send_info
 
     def _get_recv_ops(
@@ -658,8 +660,8 @@ class _PipelineStage(PipelineStageBase):
                 if dst is None:
                     continue
                 logger.debug(
-                    f"[{self.group_rank}] "
-                    f"Sending tensor to Rank {dst}: {out.size()}"
+                    f"[{self.stage_index}] "
+                    f"Sending tensor to Stage {dst}: {out.size()}"
                 )
                 peer_rank = self.stage_index_to_group_rank[dst]
                 peer_global_rank = (
@@ -694,8 +696,8 @@ class _PipelineStage(PipelineStageBase):
         for grad, grad_recv_stage in zip(self.grads_input, self.grad_send_info):
             if isinstance(grad, torch.Tensor) and grad_recv_stage is not None:
                 logger.debug(
-                    f"[{self.group_rank}] "
-                    f"Sending gradient to Rank {grad_recv_stage}: {grad.size()}"
+                    f"[{self.stage_index}] "
+                    f"Sending gradient to Stage {grad_recv_stage}: {grad.size()}"
                 )
                 peer_rank = self.stage_index_to_group_rank[grad_recv_stage]
                 peer_global_rank = (
