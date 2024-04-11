@@ -663,15 +663,15 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
                 with record_function(f"1F1B {step}"):
                     ops = fwd_stage.get_fwd_recv_ops()
                     ops.extend(bwd_stage.get_bwd_recv_ops())
-
                     if ops:
                         dist.batch_isend_irecv(ops).pop().wait()
 
                     fwd_stage.forward_one_chunk(arg_mbs[mb_index])  # type: ignore[index]
-                    bwd_stage.backward_one_chunk()
-
                     ops = fwd_stage.get_fwd_send_ops()
+
+                    bwd_stage.backward_one_chunk()
                     ops.extend(bwd_stage.get_bwd_send_ops())
+
                     if ops:
                         dist.batch_isend_irecv(ops)
             # cooldown
