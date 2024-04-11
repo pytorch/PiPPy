@@ -1,6 +1,5 @@
 # (c) Meta Platforms, Inc. and affiliates. Confidential and proprietary.
 
-import logging
 import unittest
 
 import torch
@@ -15,11 +14,7 @@ from pippy.ManualPipelineStage import (
     validate_stage_shapes,
 )
 
-from pippy.PipelineSchedule import (
-    logger as schedule_logger,
-    Schedule1F1B,
-    ScheduleInterleaved1F1B,
-)
+from pippy.PipelineSchedule import Schedule1F1B, ScheduleInterleaved1F1B
 
 # torch.testing._internal.common_distributed requies "expecttest"
 from torch.testing._internal.common_distributed import (
@@ -304,7 +299,6 @@ class TestPipelineSchedule(MultiProcessTestCase):
 
     @skip_if_lt_x_gpu(4)
     def test_interleaved_1f1b(self):
-        schedule_logger.setLevel(logging.DEBUG)
         device = torch.device(f"cuda:{self.rank}")
         dist.init_process_group(
             init_method=self.init_method,
@@ -321,11 +315,14 @@ class TestPipelineSchedule(MultiProcessTestCase):
         )
         num_microbatches = 8
         microbatches = [
-            torch.randn_like(microbatch) for _ in range(num_microbatches)
+            (torch.randn_like(microbatch),) for _ in range(num_microbatches)
         ]
 
-        schedule = ScheduleInterleaved1F1B(stages)
-        schedule.step(microbatches)
+        schedule = ScheduleInterleaved1F1B(
+            stages,
+            num_microbatches,
+        )
+        schedule.step_microbatches(microbatches)
 
         # num local pipeline stages == world_size
         stages = self._create_virtual_pipeline_stages(
@@ -336,15 +333,18 @@ class TestPipelineSchedule(MultiProcessTestCase):
             torch.randn_like(microbatch) for _ in range(num_microbatches)
         ]
 
-        schedule = ScheduleInterleaved1F1B(stages)
-        schedule.step(microbatches)
+        schedule = ScheduleInterleaved1F1B(
+            stages,
+            num_microbatches,
+        )
+        schedule.step_microbatches(microbatches)
 
         # differing microbatch size
         num_microbatches = 64
         microbatches = [
             torch.randn_like(microbatch) for _ in range(num_microbatches)
         ]
-        schedule.step(microbatches)
+        schedule.step_microbatches(microbatches)
 
     def test_interleaved_1f1b_negative(self):
         device = torch.device("cpu")
@@ -357,18 +357,25 @@ class TestPipelineSchedule(MultiProcessTestCase):
 
         model = MLP(dim=8, hidden_dim=4, out_dim=8)
         microbatch = torch.rand((4, 8))
+        num_microbatches = 4
 
         # requires at least two stages
         with self.assertRaises(ValueError):
             stages = self._create_virtual_pipeline_stages(
                 model, microbatch, device, 1
             )
-            ScheduleInterleaved1F1B(stages)
+            schedule = ScheduleInterleaved1F1B(
+                stages,
+                num_microbatches,
+            )
 
         stages = self._create_virtual_pipeline_stages(
             model, microbatch, device, 4
         )
-        schedule = ScheduleInterleaved1F1B(stages)
+        schedule = ScheduleInterleaved1F1B(
+            stages,
+            num_microbatches,
+        )
 
         # invalid microbatch values
         with self.assertRaises(ValueError):

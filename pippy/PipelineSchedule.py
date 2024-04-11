@@ -74,18 +74,27 @@ class PipelineSchedule(ABC):
         """
         Pre-process/check inputs
         """
+
+        def check_type_and_len(mbs, name: str):
+            if not isinstance(mbs, list):
+                raise TypeError(f"{name} must be a list but got a {type(mbs)}")
+            if len(mbs) != self._n_microbatches:
+                raise ValueError(
+                    f"Expecting {self._n_microbatches} {name} but got {len(mbs)}"
+                )
+
         if arg_mbs is not None:
-            assert len(arg_mbs) == self._n_microbatches
+            check_type_and_len(arg_mbs, "arg_mbs")
         else:
             arg_mbs = [()] * self._n_microbatches
 
         if kwarg_mbs is not None:
-            assert len(kwarg_mbs) == self._n_microbatches
+            check_type_and_len(kwarg_mbs, "kwarg_mbs")
         else:
             kwarg_mbs = [{}] * self._n_microbatches
 
         if target_mbs is not None:
-            assert len(target_mbs) == self._n_microbatches
+            check_type_and_len(target_mbs, "target_mbs")
 
         if losses is not None:
             assert isinstance(
@@ -529,14 +538,22 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
         loss_fn: Optional[Callable] = None,
         output_merge_spec: Optional[Union[Dict[str, Any], Tuple[Any]]] = None,
     ):
+        self.pp_group_size = stages[0].group_size
+        # TODO: is this limitation a must?
+        if n_microbatches % self.pp_group_size != 0:
+            raise ValueError(
+                f"Interleaved 1F1B schedule requires the number of microbatches ({self._n_microbatches}) \
+                to be a multiple of the number of pipeline ranks ({self.pp_group_size})."
+            )
+
         super().__init__(
             stages=stages,
             n_microbatches=n_microbatches,
             loss_fn=loss_fn,
             output_merge_spec=output_merge_spec,
         )
+
         self.n_local_stages = len(stages)
-        self.pp_group_size = stages[0].group_size
         self.rank = stages[0].group_rank
 
     def step_microbatches(
@@ -564,18 +581,9 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
         Rank 0: 0F 0F 0F 0F 2F 2F 2F 2F
         Rank 1:    1F 1F 1F 1F 3F3B 3F 3F 3F
         """
-        if arg_mbs is not None:
-            # TODO: fix this so it is preset
-            self._n_microbatches = len(arg_mbs)
-            assert len(arg_mbs) == self._n_microbatches
-        else:
-            arg_mbs = [()] * self._n_microbatches
-
-        if self._n_microbatches % self.pp_group_size != 0:
-            raise ValueError(
-                f"Looped DFS schedule requires the number of microbatches ({self._n_microbatches}) \
-                to be a multiple of the number of pipelined ranks ({self.pp_group_size})."
-            )
+        arg_mbs, kwarg_mbs = self._check_inputs(
+            arg_mbs, kwarg_mbs, target_mbs, losses
+        )
 
         # warmup steps for latest pp stage is trivial to compute
         # increment warmup_steps by 2 for each hop away
@@ -640,7 +648,7 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
                     if ops:
                         dist.batch_isend_irecv(ops).pop().wait()
 
-                    fwd_stage.forward(arg_mbs[mb_index])
+                    fwd_stage.forward_one_chunk(arg_mbs[mb_index])  # type: ignore[index]
 
                     ops = fwd_stage.get_fwd_send_ops()
                     if ops:
@@ -659,7 +667,7 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
                     if ops:
                         dist.batch_isend_irecv(ops).pop().wait()
 
-                    fwd_stage.forward_one_chunk(arg_mbs[mb_index])
+                    fwd_stage.forward_one_chunk(arg_mbs[mb_index])  # type: ignore[index]
                     bwd_stage.backward_one_chunk()
 
                     ops = fwd_stage.get_fwd_send_ops()
