@@ -332,9 +332,6 @@ class Schedule1F1B(PipelineScheduleSingle):
             arg_mbs, kwarg_mbs, target_mbs, losses
         )
 
-        # Internal loss container
-        internal_losses = []
-
         # forward for num_microbatches + backward for num_microbatches
         total_ops = self._n_microbatches * 2
 
@@ -348,15 +345,11 @@ class Schedule1F1B(PipelineScheduleSingle):
             self._n_microbatches,
             2 * (self._num_stages - self._stage.stage_index - 1),
         )
-
         # fwd + bwd
         main_1f1b_steps = self._n_microbatches - warmup_steps
-
         # bwd only
         cooldown_steps = total_ops - (warmup_steps + (2 * main_1f1b_steps))
-
         total_steps = warmup_steps + main_1f1b_steps + cooldown_steps
-
         logger.debug(
             f"Stage {self._stage.stage_index}: "
             f"Warmup steps: {warmup_steps}, "
@@ -365,9 +358,15 @@ class Schedule1F1B(PipelineScheduleSingle):
             f"Total steps: {total_steps}"
         )
 
+        # Internal loss container
+        internal_losses = []
+
         # Delay send waits
         fwd_sends_to_wait: List[dist.Work] = []
         bwd_sends_to_wait: List[dist.Work] = []
+
+        # bwd chunk counter
+        bwd_mb_index = 0
 
         for i in range(total_steps):
             if i < self._n_microbatches:
@@ -394,20 +393,23 @@ class Schedule1F1B(PipelineScheduleSingle):
 
             if i >= warmup_steps and self._has_backward:
                 # backward
-                with record_function(f"Backward {i}"):
+                with record_function(f"Backward {bwd_mb_index}"):
                     ops = self._stage.get_bwd_recv_ops()
                     works = sorted_batch_isend_irecv(ops)
                     for work in works.values():
                         work.wait()
 
                     loss = (
-                        internal_losses[i] if len(internal_losses) > 0 else None
+                        internal_losses[bwd_mb_index]
+                        if len(internal_losses) > 0
+                        else None
                     )
                     self._stage.backward_one_chunk(loss=loss)
 
                     ops = self._stage.get_bwd_send_ops()
                     works = sorted_batch_isend_irecv(ops)
                     bwd_sends_to_wait.extend(works.values())
+                    bwd_mb_index += 1
 
         # Wait for all forward sends to finish
         for work in fwd_sends_to_wait:
