@@ -402,7 +402,9 @@ class Schedule1F1B(PipelineScheduleSingle):
                         work.wait()
 
                     loss = (
-                        internal_losses[bwd_mb_index] if len(internal_losses) > 0 else None
+                        internal_losses[bwd_mb_index]
+                        if len(internal_losses) > 0
+                        else None
                     )
                     self._stage.backward_one_chunk(loss=loss)
 
