@@ -641,6 +641,7 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
         # Internal loss container
         internal_losses = []
 
+        # TODO: share across schedules
         def maybe_compute_loss(fwd_stage, output, mb_index):
             if fwd_stage.is_last and self._loss_fn is not None:
                 loss = self._compute_loss(output, target_mbs[mb_index])  # type: ignore[index]
