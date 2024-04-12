@@ -1,6 +1,7 @@
 # (c) Meta Platforms, Inc. and affiliates. Confidential and proprietary.
 import unittest
 
+import copy
 import torch
 import torch.distributed as dist
 import torch.nn as nn
@@ -10,8 +11,8 @@ from torch.distributed._composable.fsdp.fully_shard import (
     fully_shard,
     MixedPrecisionPolicy,
 )
+from torch.distributed._tensor import DTensor
 from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
-
 # torch.testing._internal.common_distributed requies "expecttest"
 from torch.testing._internal.common_distributed import MultiProcessTestCase
 from torch.testing._internal.common_utils import FILE_SCHEMA
@@ -154,6 +155,7 @@ class TestPipelineComposability(MultiProcessTestCase):
             [nn.Linear(10, 10) for _ in range(pp_group_size * layers_per_model)]
         )
 
+
         # divide the model (8 layers) by the number of ranks (2)
         partial_model = nn.Sequential(
             *full_model[
@@ -206,9 +208,15 @@ class TestPipelineComposability(MultiProcessTestCase):
 
         # 8 layers
         layers_per_model = 4
+        dim = 10
         full_model = nn.ModuleList(
-            [nn.Linear(10, 10) for _ in range(pp_group_size * layers_per_model)]
+            [
+                nn.Linear(dim, dim)
+                for _ in range(pp_group_size * layers_per_model)
+            ]
         )
+        ref_model = nn.Sequential(*copy.deepcopy(full_model))
+        ref_model.to(device)
 
         # divide the model (8 layers) by the number of ranks (2)
         partial_model = nn.Sequential(
@@ -229,28 +237,28 @@ class TestPipelineComposability(MultiProcessTestCase):
             reduce_dtype=torch.float32,
         )
         fsdp_config = {"mesh": dp_mesh, "mp_policy": mp_policy}
-        for layer in partial_model.children():
-            # As an optimization, do not reshard after forward for the last
-            # transformer block since FSDP would prefetch it immediately
-            # reshard_after_forward = layer_id < len(model.layers) - 1
-            # TODO(whc) need to fix correctly handle layer-ids on pp-split module
-            fully_shard(
-                layer,
-                **fsdp_config,
-                reshard_after_forward=True,
-            )
-        fsdp_model = fully_shard(partial_model, **fsdp_config)
+        # for layer in partial_model.children():
+        #     fully_shard(
+        #         layer,
+        #         **fsdp_config,
+        #         reshard_after_forward=False,
+        #     )
+        # fsdp_model = fully_shard(partial_model, **fsdp_config)
         fsdp_model = partial_model
+
         # apply PP
-        input1 = torch.rand((1, 10), device=device)
         num_microbatches = 8
+        input = torch.rand((num_microbatches, dim), device=device)
+        input_mb = [
+            [input[i].reshape((1, dim))] for i in range(num_microbatches)
+        ]
         pipeline_stage = self._create_manual_pipeline_stage(
             fsdp_model,
             pp_group.rank(),
             pp_group.size(),
             device,
             pp_group,
-            input1,
+            input_mb[0],
             num_microbatches,
         )
 
@@ -260,11 +268,21 @@ class TestPipelineComposability(MultiProcessTestCase):
             # dummy loss needed just to force backwards to run in schedule step
             loss_fn=lambda y, t: y.sum(),
         )
-        microbatches = [(input1.clone(),) for _ in range(8)]
         pipeline_schedule.step_microbatches(
-            arg_mbs=microbatches, target_mbs=microbatches
+            arg_mbs=input_mb, target_mbs=input_mb
         )
         print(f"{self.rank} finished pipeline step")
+
+        ref_model(input).sum().backward()
+        ref_parameters = dict(ref_model.named_parameters())
+        for name, p in fsdp_model.named_parameters():
+            print(f"validating param {name}")
+            ref_p = ref_parameters[name]
+            # self.assertTrue(isinstance(p.grad, DTensor))
+            # self.assertEqual(ref_p.grad, p.grad.full_tensor())
+            self.assertEqual(ref_p.grad, p.grad)
+
+
 
 
 if __name__ == "__main__":
