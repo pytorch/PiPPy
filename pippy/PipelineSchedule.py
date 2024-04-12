@@ -332,9 +332,6 @@ class Schedule1F1B(PipelineScheduleSingle):
             arg_mbs, kwarg_mbs, target_mbs, losses
         )
 
-        # Internal loss container
-        internal_losses = []
-
         # forward for num_microbatches + backward for num_microbatches
         total_ops = self._n_microbatches * 2
 
@@ -348,15 +345,11 @@ class Schedule1F1B(PipelineScheduleSingle):
             self._n_microbatches,
             2 * (self._num_stages - self._stage.stage_index - 1),
         )
-
         # fwd + bwd
         main_1f1b_steps = self._n_microbatches - warmup_steps
-
         # bwd only
         cooldown_steps = total_ops - (warmup_steps + (2 * main_1f1b_steps))
-
         total_steps = warmup_steps + main_1f1b_steps + cooldown_steps
-
         logger.debug(
             f"Stage {self._stage.stage_index}: "
             f"Warmup steps: {warmup_steps}, "
@@ -364,6 +357,9 @@ class Schedule1F1B(PipelineScheduleSingle):
             f"Cooldown steps: {cooldown_steps}, "
             f"Total steps: {total_steps}"
         )
+
+        # Internal loss container
+        internal_losses = []
 
         # Delay send waits
         fwd_sends_to_wait: List[dist.Work] = []
@@ -644,6 +640,7 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
         # Internal loss container
         internal_losses = []
 
+        # TODO: share across schedules
         def maybe_compute_loss(fwd_stage, output, mb_index):
             if fwd_stage.is_last and self._loss_fn is not None:
                 loss = self._compute_loss(output, target_mbs[mb_index])  # type: ignore[index]
