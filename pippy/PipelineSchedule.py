@@ -365,6 +365,9 @@ class Schedule1F1B(PipelineScheduleSingle):
         fwd_sends_to_wait: List[dist.Work] = []
         bwd_sends_to_wait: List[dist.Work] = []
 
+        # bwd chunk counter
+        bwd_mb_index = 0
+
         for i in range(total_steps):
             if i < self._n_microbatches:
                 # forward
@@ -390,7 +393,6 @@ class Schedule1F1B(PipelineScheduleSingle):
 
             if i >= warmup_steps and self._has_backward:
                 # backward
-                bwd_mb_index = i - warmup_steps
                 with record_function(f"Backward {bwd_mb_index}"):
                     ops = self._stage.get_bwd_recv_ops()
                     works = sorted_batch_isend_irecv(ops)
@@ -407,6 +409,7 @@ class Schedule1F1B(PipelineScheduleSingle):
                     ops = self._stage.get_bwd_send_ops()
                     works = sorted_batch_isend_irecv(ops)
                     bwd_sends_to_wait.extend(works.values())
+                    bwd_mb_index += 1
 
         # Wait for all forward sends to finish
         for work in fwd_sends_to_wait:
