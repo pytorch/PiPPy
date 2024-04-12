@@ -564,8 +564,8 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
         self,
         arg_mbs: Optional[List] = None,
         kwarg_mbs: Optional[List] = None,
-        target_mbs: Optional[List] = None,  # TODO
-        losses: Optional[List] = None,  # TODO
+        target_mbs: Optional[List] = None,
+        losses: Optional[List] = None,
     ):
         """
         # n_loop = n_stage / n_pp
@@ -638,6 +638,16 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
                 % self.n_local_stages
             )
 
+        # Internal loss container
+        internal_losses = []
+
+        # TODO: share across schedules
+        def maybe_compute_loss(fwd_stage, output, mb_index):
+            if fwd_stage.is_last and self._loss_fn is not None:
+                loss = self._compute_loss(output, target_mbs[mb_index])  # type: ignore[index]
+                internal_losses.append(loss)
+                logger.debug(f"Loss of microbatch {mb_index}: {loss}")
+
         for step in range(self.total_steps):
             # warmup, forward only
             if step < warmup_steps:
@@ -652,11 +662,13 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
                     if ops:
                         dist.batch_isend_irecv(ops).pop().wait()
 
-                    fwd_stage.forward_one_chunk(arg_mbs[mb_index])  # type: ignore[index]
+                    output = fwd_stage.forward_one_chunk(arg_mbs[mb_index], kwarg_mbs[mb_index])  # type: ignore[index]
 
                     ops = fwd_stage.get_fwd_send_ops()
                     if ops:
                         dist.batch_isend_irecv(ops)
+
+                    maybe_compute_loss(fwd_stage, output, mb_index)
             # 1f1b
             elif warmup_steps <= step < warmup_steps + fwd_bwd_steps:
                 fwd_stage = self._stages[forward_stage_local_index(step)]
@@ -670,9 +682,13 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
                     if ops:
                         dist.batch_isend_irecv(ops).pop().wait()
 
-                    fwd_stage.forward_one_chunk(arg_mbs[mb_index])  # type: ignore[index]
+                    output = fwd_stage.forward_one_chunk(arg_mbs[mb_index], kwarg_mbs[mb_index])  # type: ignore[index]
                     ops = fwd_stage.get_fwd_send_ops()
 
+                    maybe_compute_loss(fwd_stage, output, mb_index)
+
+                    # TODO 1: give loss to backward.
+                    # TODO 2: for us to know which loss to use, we need to know the backward mb index.
                     bwd_stage.backward_one_chunk()
                     ops.extend(bwd_stage.get_bwd_send_ops())
 
@@ -690,9 +706,20 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
                     if ops:
                         dist.batch_isend_irecv(ops).pop().wait()
 
+                    # TODO 1: give loss to backward.
+                    # TODO 2: for us to know which loss to use, we need to know the backward mb index.
                     bwd_stage.backward_one_chunk()
 
                     ops = bwd_stage.get_bwd_send_ops()
 
                     if ops:
                         dist.batch_isend_irecv(ops)
+
+        # TODO: wait all P2P ops
+
+        # Return losses if there is a container passed in
+        if losses is not None:
+            # Clean external container first
+            losses.clear()
+            # Copy internal losses to external container
+            losses.extend(internal_losses)
