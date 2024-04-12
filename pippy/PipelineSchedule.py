@@ -55,8 +55,10 @@ class PipelineSchedule(ABC):
         if isinstance(module, FSDP):
             module.set_is_last_backward(last_backward)
             module.set_requires_gradient_sync(last_backward)
-        else:
-            raise NotImplementedError("Only FSDP is supported now, please add support for your data parallel library")
+        # TODO(whc) can we do some kind of safety check? this approach does not work since it fails for models that
+        # are pure PP without any DP wrapper
+        # else:
+            # raise NotImplementedError("Only FSDP is supported now, please add support for your data parallel library")
 
     @abstractmethod
     def step_microbatches(

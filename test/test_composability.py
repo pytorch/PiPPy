@@ -63,10 +63,10 @@ class DDPAROnce(torch.nn.Module):
         return self.module.forward(*args, **kwargs)
 
 
-# python -m unittest test_composability.TestPipelineDDP.<test>
+# python -m unittest test_composability.TestPipelineComposability.<test>
 #               or
 # pytest test_composability.py -vsk <test>
-class TestPipelineDDP(MultiProcessTestCase):
+class TestPipelineComposability(MultiProcessTestCase):
     @property
     def world_size(self) -> int:
         # covers first_stage, middle_stage, last_stage cases
@@ -219,7 +219,7 @@ class TestPipelineDDP(MultiProcessTestCase):
             reduce_dtype=torch.float32,
         )
         fsdp_config = {"mesh": dp_mesh, "mp_policy": mp_policy}
-        for layer_name, layer in partial_model.named_children():
+        for layer in partial_model.children():
 
             # As an optimization, do not reshard after forward for the last
             # transformer block since FSDP would prefetch it immediately
@@ -230,9 +230,8 @@ class TestPipelineDDP(MultiProcessTestCase):
                 **fsdp_config,
                 reshard_after_forward=True,
             )
-            setattr(partial_model, layer_name, layer)
         fsdp_model = fully_shard(partial_model, **fsdp_config)
-
+        fsdp_model = partial_model
         # apply PP
         input1 = torch.rand((1, 10), device=device)
         num_microbatches = 8
@@ -250,9 +249,9 @@ class TestPipelineDDP(MultiProcessTestCase):
             pipeline_stage,
             n_microbatches=num_microbatches,
             # dummy loss needed just to force backwards to run in schedule step
-            loss_fn=lambda y, t: y.sum(dim=1),
+            loss_fn=lambda y, t: y.sum(),
         )
-        microbatches = [input1.clone() for _ in range(8)]
+        microbatches = [(input1.clone(), ) for _ in range(8)]
         pipeline_schedule.step_microbatches(arg_mbs=microbatches, target_mbs=microbatches)
         print(f"{self.rank} finished pipeline step")
 
