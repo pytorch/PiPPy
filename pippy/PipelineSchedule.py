@@ -394,14 +394,15 @@ class Schedule1F1B(PipelineScheduleSingle):
 
             if i >= warmup_steps and self._has_backward:
                 # backward
-                with record_function(f"Backward {i}"):
+                bwd_mb_index = i - warmup_steps
+                with record_function(f"Backward {bwd_mb_index}"):
                     ops = self._stage.get_bwd_recv_ops()
                     works = sorted_batch_isend_irecv(ops)
                     for work in works.values():
                         work.wait()
 
                     loss = (
-                        internal_losses[i] if len(internal_losses) > 0 else None
+                        internal_losses[bwd_mb_index] if len(internal_losses) > 0 else None
                     )
                     self._stage.backward_one_chunk(loss=loss)
 
