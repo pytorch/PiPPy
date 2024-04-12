@@ -180,7 +180,6 @@ class PipelineScheduleSingle(PipelineSchedule):
     Implements the `step` method.
     Derived classes should implement `step_microbatches`.
     """
-
     def __init__(
         self,
         stage: PipelineStageBase,
