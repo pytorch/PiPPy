@@ -644,6 +644,9 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
         # Internal loss container
         internal_losses = []
 
+        # Delay send waits
+        sends_to_wait: List[dist.Work] = []
+
         def maybe_compute_loss(fwd_stage, output, mb_index):
             if fwd_stage.is_last and self._loss_fn is not None:
                 loss = self._compute_loss(output, target_mbs[mb_index])  # type: ignore[index]
@@ -661,14 +664,15 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
 
                 with record_function(f"Forward {step}"):
                     ops = fwd_stage.get_fwd_recv_ops()
-                    if ops:
-                        dist.batch_isend_irecv(ops).pop().wait()
+                    works = sorted_batch_isend_irecv(ops)
+                    for work in works.values():
+                        work.wait()
 
                     output = fwd_stage.forward_one_chunk(arg_mbs[mb_index], kwarg_mbs[mb_index])  # type: ignore[index]
 
                     ops = fwd_stage.get_fwd_send_ops()
-                    if ops:
-                        dist.batch_isend_irecv(ops)
+                    works = sorted_batch_isend_irecv(ops)
+                    sends_to_wait.extend(works.values())
 
                     maybe_compute_loss(fwd_stage, output, mb_index)
             # 1f1b
@@ -681,8 +685,9 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
                 with record_function(f"1F1B {step}"):
                     ops = fwd_stage.get_fwd_recv_ops()
                     ops.extend(bwd_stage.get_bwd_recv_ops())
-                    if ops:
-                        dist.batch_isend_irecv(ops).pop().wait()
+                    works = sorted_batch_isend_irecv(ops)
+                    for work in works.values():
+                        work.wait()
 
                     output = fwd_stage.forward_one_chunk(arg_mbs[mb_index], kwarg_mbs[mb_index])  # type: ignore[index]
                     ops = fwd_stage.get_fwd_send_ops()
@@ -694,8 +699,8 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
                     bwd_stage.backward_one_chunk()
                     ops.extend(bwd_stage.get_bwd_send_ops())
 
-                    if ops:
-                        dist.batch_isend_irecv(ops)
+                    works = sorted_batch_isend_irecv(ops)
+                    sends_to_wait.extend(works.values())
             # cooldown
             else:
                 bwd_stage = self._stages[backward_stage_local_index(step)]
@@ -704,20 +709,21 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
                 )
                 with record_function(f"Cooldown (backward) {step}"):
                     ops = bwd_stage.get_bwd_recv_ops()
-
-                    if ops:
-                        dist.batch_isend_irecv(ops).pop().wait()
+                    works = sorted_batch_isend_irecv(ops)
+                    for work in works.values():
+                        work.wait()
 
                     # TODO 1: give loss to backward.
                     # TODO 2: for us to know which loss to use, we need to know the backward mb index.
                     bwd_stage.backward_one_chunk()
 
                     ops = bwd_stage.get_bwd_send_ops()
+                    works = sorted_batch_isend_irecv(ops)
+                    sends_to_wait.extend(works.values())
 
-                    if ops:
-                        dist.batch_isend_irecv(ops)
-
-        # TODO: wait all P2P ops
+        # Make sure all sends are finished
+        for work in sends_to_wait:
+            work.wait()
 
         # Return losses if there is a container passed in
         if losses is not None:
