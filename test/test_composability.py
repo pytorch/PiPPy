@@ -6,12 +6,16 @@ import torch.distributed as dist
 import torch.nn as nn
 from pippy.ManualPipelineStage import ManualPipelineStage
 from pippy.PipelineSchedule import ScheduleGPipe
-from torch.distributed._composable.fsdp.fully_shard import fully_shard, MixedPrecisionPolicy
-from torch.distributed.device_mesh import init_device_mesh, DeviceMesh
+from torch.distributed._composable.fsdp.fully_shard import (
+    fully_shard,
+    MixedPrecisionPolicy,
+)
+from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 
 # torch.testing._internal.common_distributed requies "expecttest"
 from torch.testing._internal.common_distributed import MultiProcessTestCase
 from torch.testing._internal.common_utils import FILE_SCHEMA
+
 
 class DDPAROnce(torch.nn.Module):
     def __init__(
@@ -116,7 +120,9 @@ class TestPipelineComposability(MultiProcessTestCase):
         #   line 69, in _get_device_from_mesh
         #              return torch.device(mesh.device_type, device_handle.current_device())
         #   AttributeError: 'NoneType' object has no attribute 'current_device'
-        device_mesh = init_device_mesh("cuda", mesh_shape=mesh_shape, mesh_dim_names=mesh_dim_names)
+        device_mesh = init_device_mesh(
+            "cuda", mesh_shape=mesh_shape, mesh_dim_names=mesh_dim_names
+        )
         return device_mesh, device
 
     def test_manual_pipeline_with_manual_allreduce(self):
@@ -125,7 +131,9 @@ class TestPipelineComposability(MultiProcessTestCase):
         # DP0    0       2
         #        v       v
         # DP1    1       3
-        device_mesh, device = self._init_device_mesh(mesh_shape=(2, 2), mesh_dim_names=("dp", "pp"))
+        device_mesh, device = self._init_device_mesh(
+            mesh_shape=(2, 2), mesh_dim_names=("dp", "pp")
+        )
 
         # dp: rows
         # pp: columns
@@ -185,7 +193,9 @@ class TestPipelineComposability(MultiProcessTestCase):
         print(f"{self.rank} finished all_reduce")
 
     def test_manual_pipeline_with_fsdp(self):
-        device_mesh, device = self._init_device_mesh(mesh_shape=(2, 2), mesh_dim_names=("dp", "pp"))
+        device_mesh, device = self._init_device_mesh(
+            mesh_shape=(2, 2), mesh_dim_names=("dp", "pp")
+        )
         pp_group = device_mesh["pp"].get_group()
         dp_mesh = device_mesh["dp"]
         assert type(pp_group) == dist.ProcessGroup
@@ -220,7 +230,6 @@ class TestPipelineComposability(MultiProcessTestCase):
         )
         fsdp_config = {"mesh": dp_mesh, "mp_policy": mp_policy}
         for layer in partial_model.children():
-
             # As an optimization, do not reshard after forward for the last
             # transformer block since FSDP would prefetch it immediately
             # reshard_after_forward = layer_id < len(model.layers) - 1
@@ -251,10 +260,11 @@ class TestPipelineComposability(MultiProcessTestCase):
             # dummy loss needed just to force backwards to run in schedule step
             loss_fn=lambda y, t: y.sum(),
         )
-        microbatches = [(input1.clone(), ) for _ in range(8)]
-        pipeline_schedule.step_microbatches(arg_mbs=microbatches, target_mbs=microbatches)
+        microbatches = [(input1.clone(),) for _ in range(8)]
+        pipeline_schedule.step_microbatches(
+            arg_mbs=microbatches, target_mbs=microbatches
+        )
         print(f"{self.rank} finished pipeline step")
-
 
 
 if __name__ == "__main__":

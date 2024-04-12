@@ -43,7 +43,7 @@ jobs:
         run: conda activate test
       - name: Install dependencies
         run: |
-          pip install numpy
+          pip install numpy expecttest
           pip install --pre -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cu121/torch_nightly.html
       - name: Install pippy
         run: python setup.py install
