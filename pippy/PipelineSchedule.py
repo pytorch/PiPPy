@@ -37,6 +37,8 @@ class PipelineSchedule(ABC):
         self,
         arg_mbs: Optional[List] = None,
         kwarg_mbs: Optional[List] = None,
+        target_mbs: Optional[List] = None,
+        losses: Optional[List] = None,
     ):
         """
         Run one iteration of the pipeline schedule with list of microbatches.
@@ -49,15 +51,16 @@ class PipelineSchedule(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def step(self, *args, **kwargs):
+    def step(self, *args, target=None, losses: Optional[List] = None, **kwargs):
         """
         Run one iteration of the pipeline schedule with *whole-batch* input.
         Will chunk the input into microbatches automatically, and go through the
         microbatches according to the schedule implementation.
 
         args: positional arguments to the model (as in non-pipeline case).
-
         kwargs: keyword arguments to the model (as in non-pipeline case).
+        target: target for the loss function.
+        losses: a list to store the losses for each microbatch.
         """
         raise NotImplementedError
 
@@ -163,6 +166,11 @@ def sorted_batch_isend_irecv(p2p_ops: List[dist.P2POp]) -> Dict[int, dist.Work]:
 
 
 class PipelineScheduleSingle(PipelineSchedule):
+    """
+    Base class for single-stage schedules.
+    Implements the `step` method.
+    Derived classes should implement `step_microbatches`.
+    """
     def __init__(
         self,
         stage: PipelineStageBase,
@@ -190,6 +198,28 @@ class PipelineScheduleSingle(PipelineSchedule):
         logger.debug(
             f"[{self._stage.stage_index}] Should compute loss: {self._should_compute_loss}"
         )
+
+    def step(self, *args, target=None, losses: Optional[List] = None, **kwargs):
+        # Clean per iteration
+        self._stage.clear_runtime_states()
+
+        # Split inputs into microbatches
+        args_split, kwargs_split = self._split_inputs(args, kwargs)
+
+        # Split target into microbatches
+        if target is not None:
+            targets_split = torch.tensor_split(target, self._n_microbatches)
+        else:
+            targets_split = None
+
+        # Run microbatches
+        self.step_microbatches(args_split, kwargs_split, targets_split, losses)
+
+        # Return merged results per original format
+        if self._stage.is_last:
+            return self._merge_outputs(self._stage.output_chunks)
+        else:
+            return None
 
 
 class ScheduleGPipe(PipelineScheduleSingle):
@@ -276,28 +306,6 @@ class ScheduleGPipe(PipelineScheduleSingle):
         # Wait for all backward sends to finish
         for work in bwd_sends_to_wait:
             work.wait()
-
-    def step(self, *args, target=None, losses: Optional[List] = None, **kwargs):
-        # Clean per iteration
-        self._stage.clear_runtime_states()
-
-        # Split inputs into microbatches
-        args_split, kwargs_split = self._split_inputs(args, kwargs)
-
-        # Split target into microbatches
-        if target is not None:
-            targets_split = torch.tensor_split(target, self._n_microbatches)
-        else:
-            targets_split = None
-
-        # Run microbatches
-        self.step_microbatches(args_split, kwargs_split, targets_split, losses)
-
-        # Return merged results per original format
-        if self._stage.is_last:
-            return self._merge_outputs(self._stage.output_chunks)
-        else:
-            return None
 
 
 class Schedule1F1B(PipelineScheduleSingle):
@@ -404,28 +412,6 @@ class Schedule1F1B(PipelineScheduleSingle):
             # Copy internal losses to external container
             losses.extend(internal_losses)
 
-    def step(self, *args, target=None, losses: Optional[List] = None, **kwargs):
-        # Clean per iteration
-        self._stage.clear_runtime_states()
-
-        # Split inputs into microbatches
-        args_split, kwargs_split = self._split_inputs(args, kwargs)
-
-        # Split target into microbatches
-        if target is not None:
-            targets_split = torch.tensor_split(target, self._n_microbatches)
-        else:
-            targets_split = None
-
-        # Run microbatches
-        self.step_microbatches(args_split, kwargs_split, targets_split, losses)
-
-        # Return merged results per original format
-        if self._stage.is_last:
-            return self._merge_outputs(self._stage.output_chunks)
-        else:
-            return None
-
 
 class ScheduleLoopedBFS(PipelineSchedule):
     def __init__(self, stages: List[PipelineStageBase]):
@@ -435,6 +421,8 @@ class ScheduleLoopedBFS(PipelineSchedule):
         self,
         arg_mbs: Optional[List] = None,
         kwarg_mbs: Optional[List] = None,
+        target_mbs: Optional[List] = None,  # TODO
+        losses: Optional[List] = None,  # TODO
     ):
         # Pre-process inputs
         if arg_mbs is not None:
@@ -501,6 +489,8 @@ class ScheduleInterleaved1F1B(PipelineSchedule):
         self,
         arg_mbs: Optional[List] = None,
         kwarg_mbs: Optional[List] = None,
+        target_mbs: Optional[List] = None,  # TODO
+        losses: Optional[List] = None,  # TODO
     ):
         """
         # n_loop = n_stage / n_pp
