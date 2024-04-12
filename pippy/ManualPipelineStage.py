@@ -301,7 +301,6 @@ class ManualPipelineStage(PipelineStageBase):
             dist.P2POp(dist.isend, out, self.next_stage, self.group)
             for out in output_tuples
         ]
-        raise AssertionError("invalid fwd_outputs type, cannot send")
 
     def check_and_format_outputs(self, outputs: Any) -> List[torch.tensor]:
         # validate the output of the module is a type supported
