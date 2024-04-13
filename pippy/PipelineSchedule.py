@@ -583,7 +583,6 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
 
         total_steps = warmup_steps + (num_stages * num_microbatch)
 
-
         Rank 0: 0F 0F 0F 0F 2F 2F 2F 2F
         Rank 1:    1F 1F 1F 1F 3F3B 3F 3F 3F
         """
