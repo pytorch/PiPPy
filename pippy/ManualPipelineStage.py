@@ -237,11 +237,11 @@ class ManualPipelineStage(PipelineStageBase):
                         )
                         for inp in self.inputs
                     ]
-                )
+                )  # type: ignore
             else:
                 self.args_recv_info[chunk_id] = tuple(
                     [RootArgPlaceholder() for _ in self.inputs]
-                )
+                )  # type: ignore
 
         # Send info during forward for each activation
         # only need the rank that is being sent to
