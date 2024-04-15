@@ -461,7 +461,6 @@ class PipelineScheduleMulti(PipelineSchedule):
         for stage in self._stages:
             stage.has_backward = self._has_backward
 
-        # TODO
         self._should_compute_loss = (
             lambda stage: stage.is_last and self._loss_fn is not None
         )
