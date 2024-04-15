@@ -461,6 +461,11 @@ class PipelineScheduleMulti(PipelineSchedule):
         for stage in self._stages:
             stage.has_backward = self._has_backward
 
+        # TODO
+        self._should_compute_loss = (
+            lambda stage: stage.is_last and self._loss_fn is not None
+        )
+
     def step(self, *args, target=None, losses: Optional[List] = None, **kwargs):
         # Clean per iteration
         for stage in self._stages:
@@ -509,14 +514,25 @@ class ScheduleLoopedBFS(PipelineScheduleMulti):
         else:
             kwarg_mbs = [{}] * self._n_microbatches
 
-        for s, stage in enumerate(self._stages):
+        # Internal loss container
+        internal_losses = []
+
+        for stage in self._stages:
             for i in range(self._n_microbatches):
-                with record_function(f"Stage {s} Forward"):
+                with record_function(f"Stage {stage.stage_index} Forward"):
                     ops = stage.get_fwd_recv_ops()
                     if ops:
                         dist.batch_isend_irecv(ops).pop().wait()
 
-                    stage.forward_one_chunk(arg_mbs[i], kwarg_mbs[i])
+                    output = stage.forward_one_chunk(arg_mbs[i], kwarg_mbs[i])
+
+                    if self._should_compute_loss(stage):
+                        target = target_mbs[i]  # type: ignore[index]
+                        loss = self._compute_loss(output, target)
+                        internal_losses.append(loss)
+                        logger.debug(
+                            f"[{stage.stage_index}] Loss of microbatch {i}: {loss}"
+                        )
 
                     ops = stage.get_fwd_send_ops()
                     if ops:
@@ -529,11 +545,21 @@ class ScheduleLoopedBFS(PipelineScheduleMulti):
                     if ops:
                         dist.batch_isend_irecv(ops).pop().wait()
 
-                    stage.backward_one_chunk()
+                    loss = (
+                        internal_losses[i] if len(internal_losses) > 0 else None
+                    )
+                    stage.backward_one_chunk(loss=loss)
 
                     ops = stage.get_bwd_send_ops()
                     if ops:
                         dist.batch_isend_irecv(ops)
+
+        # Return losses if there is a container passed in
+        if losses is not None:
+            # Clean external container first
+            losses.clear()
+            # Copy internal losses to external container
+            losses.extend(internal_losses)
 
 
 class ScheduleInterleaved1F1B(PipelineScheduleMulti):
