@@ -236,6 +236,11 @@ class ScheduleGPipe(PipelineSchedule):
         # Delay send waits
         bwd_sends_to_wait: List[dist.Work] = []
         for i in range(self._n_microbatches):
+            # set library-specific data-parallel config flags to ensure gradient accumulation across microbatches
+            self._stage._configure_data_parallel_mode(
+                i == self._n_microbatches - 1
+            )
+
             with record_function(f"Backward {i}"):
                 ops = self._stage.get_bwd_recv_ops()
                 works = sorted_batch_isend_irecv(ops)

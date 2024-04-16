@@ -1,13 +1,18 @@
 # (c) Meta Platforms, Inc. and affiliates. Confidential and proprietary.
 import unittest
 
+import copy
 import torch
 import torch.distributed as dist
 import torch.nn as nn
 from pippy.ManualPipelineStage import ManualPipelineStage
 from pippy.PipelineSchedule import ScheduleGPipe
-from torch.distributed.device_mesh import init_device_mesh
-
+from torch.distributed._composable.fsdp.fully_shard import (
+    fully_shard,
+    MixedPrecisionPolicy,
+)
+from torch.distributed._tensor import DTensor
+from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 # torch.testing._internal.common_distributed requies "expecttest"
 from torch.testing._internal.common_distributed import MultiProcessTestCase
 from torch.testing._internal.common_utils import FILE_SCHEMA
@@ -63,10 +68,10 @@ class DDPAROnce(torch.nn.Module):
         return self.module.forward(*args, **kwargs)
 
 
-# python -m unittest test_pipeline_with_ddp.TestPipelineDDP.<test>
+# python -m unittest test_composability.TestPipelineComposability.<test>
 #               or
-# pytest test_pipeline_with_ddp.py -vsk <test>
-class TestPipelineDDP(MultiProcessTestCase):
+# pytest test_composability.py -vsk <test>
+class TestPipelineComposability(MultiProcessTestCase):
     @property
     def world_size(self) -> int:
         # covers first_stage, middle_stage, last_stage cases
@@ -101,22 +106,36 @@ class TestPipelineDDP(MultiProcessTestCase):
             input_args=inputs,
         )
 
-    def test_manual_pipeline_with_manual_allreduce(self):
+    def _init_device_mesh(self, mesh_shape, mesh_dim_names):
         device = f"cuda:{self.rank}"
+        torch.cuda.set_device(device)
         dist.init_process_group(
             init_method=self.init_method,
             backend="nccl",
             rank=self.rank,
             world_size=self.world_size,
         )
+
+        # TODO(whc) there is a bug in our helpers (DeviceMesh: _get_device_handle) where passing `cuda:1` fails
+        #   File "/data/users/whc/pytorch/torch/distributed/_composable/fsdp/_fsdp_init.py",
+        #   line 69, in _get_device_from_mesh
+        #              return torch.device(mesh.device_type, device_handle.current_device())
+        #   AttributeError: 'NoneType' object has no attribute 'current_device'
+        device_mesh = init_device_mesh(
+            "cuda", mesh_shape=mesh_shape, mesh_dim_names=mesh_dim_names
+        )
+        return device_mesh, device
+
+    def test_manual_pipeline_with_manual_allreduce(self):
         # 2 pipeline stages, 2 ddp groups
         #       PP0     PP1
         # DP0    0       2
         #        v       v
         # DP1    1       3
-        device_mesh = init_device_mesh(
-            device, mesh_shape=(2, 2), mesh_dim_names=("dp", "pp")
+        device_mesh, device = self._init_device_mesh(
+            mesh_shape=(2, 2), mesh_dim_names=("dp", "pp")
         )
+
         # dp: rows
         # pp: columns
         print(
@@ -135,6 +154,7 @@ class TestPipelineDDP(MultiProcessTestCase):
         full_model = nn.ModuleList(
             [nn.Linear(10, 10) for _ in range(pp_group_size * layers_per_model)]
         )
+
 
         # divide the model (8 layers) by the number of ranks (2)
         partial_model = nn.Sequential(
@@ -173,6 +193,96 @@ class TestPipelineDDP(MultiProcessTestCase):
         # all reduce
         ddp_pp_model.all_reduce(num_microbatches)
         print(f"{self.rank} finished all_reduce")
+
+    def test_manual_pipeline_with_fsdp(self):
+        device_mesh, device = self._init_device_mesh(
+            mesh_shape=(2, 2), mesh_dim_names=("dp", "pp")
+        )
+        pp_group = device_mesh["pp"].get_group()
+        dp_mesh = device_mesh["dp"]
+        assert type(pp_group) == dist.ProcessGroup
+        assert type(dp_mesh) == DeviceMesh
+
+        # create "entire model"
+        pp_group_size = pp_group.size()
+
+        # 8 layers
+        layers_per_model = 4
+        dim = 10
+        full_model = nn.ModuleList(
+            [
+                nn.Linear(dim, dim)
+                for _ in range(pp_group_size * layers_per_model)
+            ]
+        )
+        ref_model = nn.Sequential(*copy.deepcopy(full_model))
+        ref_model.to(device)
+
+        # divide the model (8 layers) by the number of ranks (2)
+        partial_model = nn.Sequential(
+            *full_model[
+                pp_group.rank()
+                * layers_per_model : (pp_group.rank() + 1)
+                * layers_per_model
+            ]
+        )
+        partial_model.to(device)
+
+        # apply FSDP
+        mp_policy = MixedPrecisionPolicy(
+            # TODO(whc) need to fix PP + FSDP-mixed-precision
+            # tracer for PP assumes f32 and is caught off guard when runtime FSDP interacts using bf16 inputs
+            # param_dtype=torch.bfloat16, reduce_dtype=torch.float32
+            param_dtype=torch.float32,
+            reduce_dtype=torch.float32,
+        )
+        fsdp_config = {"mesh": dp_mesh, "mp_policy": mp_policy}
+        # for layer in partial_model.children():
+        #     fully_shard(
+        #         layer,
+        #         **fsdp_config,
+        #         reshard_after_forward=False,
+        #     )
+        # fsdp_model = fully_shard(partial_model, **fsdp_config)
+        fsdp_model = partial_model
+
+        # apply PP
+        num_microbatches = 8
+        input = torch.rand((num_microbatches, dim), device=device)
+        input_mb = [
+            [input[i].reshape((1, dim))] for i in range(num_microbatches)
+        ]
+        pipeline_stage = self._create_manual_pipeline_stage(
+            fsdp_model,
+            pp_group.rank(),
+            pp_group.size(),
+            device,
+            pp_group,
+            input_mb[0],
+            num_microbatches,
+        )
+
+        pipeline_schedule = ScheduleGPipe(
+            pipeline_stage,
+            n_microbatches=num_microbatches,
+            # dummy loss needed just to force backwards to run in schedule step
+            loss_fn=lambda y, t: y.sum(),
+        )
+        pipeline_schedule.step_microbatches(
+            arg_mbs=input_mb, target_mbs=input_mb
+        )
+        print(f"{self.rank} finished pipeline step")
+
+        ref_model(input).sum().backward()
+        ref_parameters = dict(ref_model.named_parameters())
+        for name, p in fsdp_model.named_parameters():
+            print(f"validating param {name}")
+            ref_p = ref_parameters[name]
+            # self.assertTrue(isinstance(p.grad, DTensor))
+            # self.assertEqual(ref_p.grad, p.grad.full_tensor())
+            self.assertEqual(ref_p.grad, p.grad)
+
+
 
 
 if __name__ == "__main__":
