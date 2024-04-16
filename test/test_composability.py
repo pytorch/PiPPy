@@ -237,14 +237,14 @@ class TestPipelineComposability(MultiProcessTestCase):
             reduce_dtype=torch.float32,
         )
         fsdp_config = {"mesh": dp_mesh, "mp_policy": mp_policy}
-        # for layer in partial_model.children():
-        #     fully_shard(
-        #         layer,
-        #         **fsdp_config,
-        #         reshard_after_forward=False,
-        #     )
-        # fsdp_model = fully_shard(partial_model, **fsdp_config)
-        fsdp_model = partial_model
+        for layer in partial_model.children():
+            fully_shard(
+                layer,
+                **fsdp_config,
+                reshard_after_forward=False,
+            )
+        fsdp_model = fully_shard(partial_model, **fsdp_config)
+        # fsdp_model = partial_model
 
         # apply PP
         num_microbatches = 8
@@ -266,24 +266,118 @@ class TestPipelineComposability(MultiProcessTestCase):
             pipeline_stage,
             n_microbatches=num_microbatches,
             # dummy loss needed just to force backwards to run in schedule step
-            loss_fn=lambda y, t: y.sum(),
+            loss_fn=lambda y, t: y.sum()/1000000.,
         )
         pipeline_schedule.step_microbatches(
             arg_mbs=input_mb, target_mbs=input_mb
         )
+
+        fqn_map = {
+            "0" : "4",
+            "1" : "5",
+            "2" : "6",
+            "3" : "7",
+        }
+
+        import time
+        time.sleep(3)
         print(f"{self.rank} finished pipeline step")
-
-        ref_model(input).sum().backward()
+        (ref_model(input).sum()/1000000.).backward()
         ref_parameters = dict(ref_model.named_parameters())
-        for name, p in fsdp_model.named_parameters():
-            print(f"validating param {name}")
+        for name, p in partial_model.named_parameters():
+            parts = name.split(".")
+            if pp_group.rank() == 1:
+                print(f"remap from {parts[0]} to {fqn_map[parts[0]]}")
+                parts[0] = fqn_map[parts[0]]
+            name = ".".join(parts)
+
+            print(f"rank {self.rank} pp {pp_group.rank()}: validating param {name}")
             ref_p = ref_parameters[name]
-            # self.assertTrue(isinstance(p.grad, DTensor))
-            # self.assertEqual(ref_p.grad, p.grad.full_tensor())
+            self.assertTrue(isinstance(p.grad, DTensor))
+            self.assertEqual(ref_p.grad, p.grad.full_tensor())
+            print(f"rank {self.rank} pp {pp_group.rank()}: validating param {name} - OK")
+
+    def test_manual_pipeline_foo(self):
+        device_mesh, device = self._init_device_mesh(
+            mesh_shape=(2, 2), mesh_dim_names=("dp", "pp")
+        )
+        pp_group = device_mesh["pp"].get_group()
+        dp_mesh = device_mesh["dp"]
+        assert type(pp_group) == dist.ProcessGroup
+        assert type(dp_mesh) == DeviceMesh
+
+        # create "entire model"
+        pp_group_size = pp_group.size()
+
+        # 8 layers
+        layers_per_model = 4
+        dim = 10
+        full_model = nn.ModuleList(
+            [
+                nn.Linear(dim, dim)
+                for _ in range(pp_group_size * layers_per_model)
+            ]
+        )
+        ref_model = nn.Sequential(*copy.deepcopy(full_model))
+        ref_model.to(device)
+
+        # divide the model (8 layers) by the number of ranks (2)
+        partial_model = nn.Sequential(
+            *full_model[
+                pp_group.rank()
+                * layers_per_model : (pp_group.rank() + 1)
+                * layers_per_model
+            ]
+        )
+        partial_model.to(device)
+
+        # apply PP
+        num_microbatches = 8
+        input = torch.rand((num_microbatches, dim), device=device)
+        input_mb = [
+            [input[i].reshape((1, dim))] for i in range(num_microbatches)
+        ]
+        pipeline_stage = self._create_manual_pipeline_stage(
+            partial_model,
+            pp_group.rank(),
+            pp_group.size(),
+            device,
+            pp_group,
+            input_mb[0],
+            num_microbatches,
+        )
+
+        pipeline_schedule = ScheduleGPipe(
+            pipeline_stage,
+            n_microbatches=num_microbatches,
+            # dummy loss needed just to force backwards to run in schedule step
+            loss_fn=lambda y, t: y.sum()/1000000.,
+        )
+        pipeline_schedule.step_microbatches(
+            arg_mbs=input_mb, target_mbs=input_mb
+        )
+
+        fqn_map = {
+            "0" : "4",
+            "1" : "5",
+            "2" : "6",
+            "3" : "7",
+        }
+
+        print(f"{self.rank} finished pipeline step")
+        (ref_model(input*100).sum()/1000000.).backward()
+        ref_parameters = dict(ref_model.named_parameters())
+        for name, p in partial_model.named_parameters():
+            parts = name.split(".")
+            if pp_group.rank() == 1:
+                print(f"remap from {parts[0]} to {fqn_map[parts[0]]}")
+                parts[0] = fqn_map[parts[0]]
+            name = ".".join(parts)
+
+            print(f"rank {self.rank} pp {pp_group.rank()}: validating param {name}")
+            ref_p = ref_parameters[name]
             self.assertEqual(ref_p.grad, p.grad)
-
-
-
+            print(f"rank {self.rank} pp {pp_group.rank()}: validating param {name} - OK")
 
 if __name__ == "__main__":
     unittest.main()
