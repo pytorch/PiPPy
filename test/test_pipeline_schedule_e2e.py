@@ -300,8 +300,7 @@ if __name__ == "__main__":
         type=str,
         nargs="+",
         choices=["gpipe", "1f1b", "looped_bfs", "interleaved_1f1b"],
-        default=["1f1b"],
-        # default=["looped_bfs"],
+        default=["looped_bfs"],
     )
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--stage_type", type=str, default="manual")
