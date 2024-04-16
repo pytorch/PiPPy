@@ -19,6 +19,41 @@ from pippy.utils import flatten_args, modify_graph_op_device
 logger = logging.getLogger(__name__)
 
 
+class RootArgPlaceholder:
+    pass
+
+
+class RecvInfo:
+    def __init__(
+        self,
+        input_name: str,
+        source: int,
+        buffer: torch.Tensor,
+    ):
+        self.input_name = input_name
+        self.source = source
+        self.buffer = buffer
+
+    def __repr__(self):
+        return f"RecvInfo(input={self.input_name}, source={self.source}, shape={self.buffer.size()})"
+
+
+# An input can be either a received activation or a model input
+InputInfo = Union[RecvInfo, RootArgPlaceholder]
+
+
+def _make_tensor_from_meta(
+    example: FakeTensor,
+    device: torch.device,
+) -> torch.Tensor:
+    return torch.empty(
+        example.size(),
+        dtype=example.dtype,
+        layout=example.layout,
+        device=device,
+    )
+
+
 class PipelineStageBase(ABC):
     def __init__(
         self,
@@ -60,9 +95,27 @@ class PipelineStageBase(ABC):
         # Caching chunk outputs for final output merge or reduction
         self.output_chunks: List[Any] = []
 
+        # Create stage id to group rank mapping
+        # In interleaved case, `group_rank` is stage index % group size.
+        self.stage_index_to_group_rank: Dict[int, int] = {}
+        pg_world_size = dist.get_world_size(group)
+        for i in range(self.num_stages):
+            # We only support wrapped-around interleaving
+            peer_rank = i % pg_world_size
+            self.stage_index_to_group_rank.setdefault(i, peer_rank)
+
         # Initialize has_backward to false; this will be set to true if loss
         # function is passed to pipeline schedule
         self.has_backward = False
+
+        # Forward infra
+        self.args_recv_info: Dict[int, Tuple[InputInfo]] = {}
+        self.set_requires_grad: Dict[int, bool] = {}
+        self.act_send_info: Dict[int, List] = {}
+
+        # Backward infra will created lazily
+        self.grad_recv_info: Dict = {}
+        self.grad_send_info: Optional[List] = None
 
     @property
     def has_backward(self) -> bool:
@@ -80,33 +133,166 @@ class PipelineStageBase(ABC):
     def is_last(self):
         return self.stage_index == self.num_stages - 1
 
+    def _create_grad_send_info(
+        self,
+        args_recv_info: Tuple,
+    ) -> List[Optional[int]]:
+        grad_send_info: List[Optional[int]] = []
+
+        def map_recv_to_send(a):
+            # Note: we send gradients back to previous stage as long as in
+            # forward it is a received input, regardless of whether it requires
+            # grad. It is up to the previous stage to disgard this gradient.
+            if isinstance(a, RecvInfo):
+                grad_send_info.append(a.source)
+                return a.source
+            else:
+                grad_send_info.append(None)
+                return None
+
+        map_aggregate(args_recv_info, map_recv_to_send)
+
+        return grad_send_info
+
     @abstractmethod
+    def _create_grad_recv_info(
+        self,
+        act_send_info: Dict,
+    ) -> Tuple[RecvInfo, ...]:
+        raise NotImplementedError
+
+    def _get_recv_ops(
+        self,
+        recv_infos: Tuple[InputInfo],
+    ) -> List[dist.P2POp]:
+        """
+        Helper function shared by `get_fwd_recv_ops` and `get_bwd_recv_ops`.
+        Returns a list of ops that correspond to the recv infos.
+        """
+        ops: List[dist.P2POp] = []
+        for info in recv_infos:
+            if not isinstance(info, RecvInfo):
+                continue
+
+            peer_rank = self.stage_index_to_group_rank[info.source]
+            peer_global_rank = (
+                peer_rank
+                if self.group is None
+                else dist.get_global_rank(self.group, peer_rank)
+            )  # TODO
+            ops.append(
+                dist.P2POp(
+                    dist.irecv, info.buffer, peer_global_rank, self.group
+                )
+            )
+
+        return ops
+
     def get_fwd_recv_ops(self) -> List[dist.P2POp]:
         """
-        Get the list of P2P operations that need to be performed before calling forward()
+        Returns a list of ops that are needed to receive the input arguments
+        for this stage.
         """
-        raise NotImplementedError
+        recv_infos: Tuple[InputInfo] = self.args_recv_info[self.fwd_chunk_id]
 
-    @abstractmethod
-    def get_fwd_send_ops(self) -> List[dist.P2POp]:
-        """
-        Get the list of P2P operations that need to be performed after calling forward()
-        """
-        raise NotImplementedError
+        # In case there is backward pass, set requires_grad for receive buffers
+        # before first forward
+        if self.has_backward and not self.set_requires_grad[self.fwd_chunk_id]:
+            for a in recv_infos:
+                if isinstance(a, RecvInfo):
+                    a.buffer.requires_grad_(True)
 
-    @abstractmethod
+        return self._get_recv_ops(recv_infos)
+
     def get_bwd_recv_ops(self) -> List[dist.P2POp]:
         """
-        Get the list of P2P operations that need to be performed before calling backward()
+        Returns a list of ops that are needed to receive the gradients
+        for this stage.
         """
-        raise NotImplementedError
+        if not self.has_backward or self.is_last:
+            return []
 
-    @abstractmethod
+        # Create bwd recv infra lazily
+        recv_infos = self.grad_recv_info.setdefault(
+            self.bwd_chunk_id,
+            # `grad_recv_info` is a mirror of `act_send_info`
+            self._create_grad_recv_info(self.act_send_info),
+        )
+
+        return self._get_recv_ops(recv_infos)
+
+    def get_fwd_send_ops(self) -> List[dist.P2POp]:
+        """
+        Get the activation send ops for current stage's forward.
+        """
+        # Use "-1" to get the outputs created by the last chunk
+        output = self.output_chunks[-1]
+        # Unify output form to tuple for easy correspondance with
+        # `act_send_info`
+        output_tuple = output if type(output) is tuple else (output,)
+
+        ops: List[dist.P2POp] = []
+
+        for idx, out in enumerate(output_tuple):
+            dst_stages = self.act_send_info[idx]
+            for dst in dst_stages:
+                if dst is None:
+                    continue
+                logger.debug(
+                    f"[{self.group_rank}] "
+                    f"Sending tensor to Rank {dst}: {out.size()}"
+                )
+                peer_rank = self.stage_index_to_group_rank[dst]
+                peer_global_rank = (
+                    peer_rank
+                    if self.group is None
+                    else dist.get_global_rank(self.group, peer_rank)
+                )  # TODO
+                ops.append(
+                    dist.P2POp(dist.isend, out, peer_global_rank, self.group)
+                )
+
+        return ops
+
     def get_bwd_send_ops(self) -> List[dist.P2POp]:
         """
-        Get the list of P2P operations that need to be performed after calling backward()
+        Get the gradient send ops for current stage's backward.
         """
-        raise NotImplementedError
+        if not self.has_backward or self.is_first:
+            return []
+
+        # Create bwd send infra lazily
+        if self.grad_send_info is None:
+            # Send info for input grads during backward:
+            # List of destinations corresponding to input grads
+            # Can be None if an input has no grad
+            # `grad_send_info` is a mirror of `args_recv_info`
+            self.grad_send_info = self._create_grad_send_info(
+                self.args_recv_info[0]
+            )
+
+        ops: List[dist.P2POp] = []
+        for grad, grad_recv_stage in zip(self.grads_input, self.grad_send_info):
+            if isinstance(grad, torch.Tensor) and grad_recv_stage is not None:
+                logger.debug(
+                    f"[{self.group_rank}] "
+                    f"Sending gradient to Rank {grad_recv_stage}: {grad.size()}"
+                )
+                peer_rank = self.stage_index_to_group_rank[grad_recv_stage]
+                peer_global_rank = (
+                    peer_rank
+                    if self.group is None
+                    else dist.get_global_rank(self.group, peer_rank)
+                )  # TODO
+                ops.append(
+                    dist.P2POp(dist.isend, grad, peer_global_rank, self.group)
+                )
+            else:
+                if not (grad is None and grad_recv_stage is None):
+                    raise RuntimeError(
+                        f"[{self.stage_index}] for chunk {self.bwd_chunk_id - 1} has gradients {grad} and is expecting to send gradients to stage {grad_recv_stage}"
+                    )
+        return ops
 
     def clear_runtime_states(self) -> None:
         """
@@ -120,13 +306,32 @@ class PipelineStageBase(ABC):
         # Caching chunk outputs for final output merge or reduction
         self.output_chunks.clear()
 
+    def _map_tensor_from_recv_info(
+        self,
+        recv_infos: Tuple[InputInfo],
+    ):
+        def get_recv_tensor(info):
+            if isinstance(info, RecvInfo):
+                return info.buffer
+            else:
+                raise AssertionError(f"Expected RecvInfo but got {type(info)}")
+
+        tensors = map_aggregate(
+            recv_infos,
+            get_recv_tensor,
+        )
+
+        return tensors
+
     def _retrieve_recv_activations(
         self,
     ):
         """
         Retrieve the activations received for the current stage during forward.
         """
-        raise NotImplementedError
+        recv_infos = self.args_recv_info[self.fwd_chunk_id]
+        activations = self._map_tensor_from_recv_info(recv_infos)
+        return activations
 
     def _retrieve_recv_grads(
         self,
@@ -134,7 +339,9 @@ class PipelineStageBase(ABC):
         """
         Retrieve the gradients received for the current stage during backward.
         """
-        raise NotImplementedError
+        recv_infos = self.grad_recv_info[self.bwd_chunk_id]
+        grads = self._map_tensor_from_recv_info(recv_infos)
+        return grads
 
     def forward_maybe_with_nosync(self, *args, **kwargs):
         # If submod is wrapped with DDP, we use the `no_sync` context manager to
@@ -263,42 +470,8 @@ class PipelineStageBase(ABC):
         logger.debug(
             f"[{self.group_rank}] Backwarded chunk {self.bwd_chunk_id}"
         )
+
         self.bwd_chunk_id += 1
-
-
-def _make_tensor_from_meta(
-    example: FakeTensor,
-    device: torch.device,
-) -> torch.Tensor:
-    return torch.empty(
-        example.size(),
-        dtype=example.dtype,
-        layout=example.layout,
-        device=device,
-    )
-
-
-class RecvInfo:
-    def __init__(
-        self,
-        input_name: str,
-        source: int,
-        buffer: torch.Tensor,
-    ):
-        self.input_name = input_name
-        self.source = source
-        self.buffer = buffer
-
-    def __repr__(self):
-        return f"RecvInfo(input={self.input_name}, source={self.source}, shape={self.buffer.size()})"
-
-
-class RootArgPlaceholder:
-    pass
-
-
-# An input can be either a received activation or a model input
-InputInfo = Union[RecvInfo, RootArgPlaceholder]
 
 
 class _PipelineStage(PipelineStageBase):
@@ -343,23 +516,8 @@ class _PipelineStage(PipelineStageBase):
         for i, node in enumerate(submod_nodes):
             self.submod_to_stage_index.setdefault(node.name, i)
 
-        # Create stage id to group rank mapping
-        # In interleaved case, `group_rank` is stage index % group size.
-        self.stage_index_to_group_rank: Dict[int, int] = {}
-        pg_world_size = dist.get_world_size(group)
-        for i in range(self.num_stages):
-            # We only support wrapped-around interleaving
-            peer_rank = i % pg_world_size
-            self.stage_index_to_group_rank.setdefault(i, peer_rank)
-
-        # `has_backward` will be set by PipelineSchedule
-        self.has_backward = False
-
         # Prepare forward send/recv infrastructure
         self._prepare_forward_infra()
-        # Backward infra will created lazily
-        self.grad_recv_info: Dict = {}
-        self.grad_send_info: Optional[List] = None
 
         # Cast submodule to device
         self._move_submod_to_device()
@@ -392,11 +550,8 @@ class _PipelineStage(PipelineStageBase):
         """
         Create send/recv infrastructures for activations (during forward)
         """
-        # chunk : Tuple of arg buffers
-        self.args_recv_info: Dict[int, Tuple[InputInfo]] = {}
         # Flag per chunk to keep track of whether we have set `requires_grad`
         # for receive buffers. Format: {chunk : Boolean}
-        self.set_requires_grad: Dict[int, bool] = {}
         for chunk in range(self.chunks):
             self.args_recv_info[chunk] = self._create_act_recv_buffers()
             self.set_requires_grad[chunk] = False
@@ -557,196 +712,6 @@ class _PipelineStage(PipelineStageBase):
             f"[{self.group_rank}] " f"Grad recv info: {grad_recv_info_tuple}"
         )
         return grad_recv_info_tuple
-
-    def _create_grad_send_info(
-        self,
-        args_recv_info: Tuple,
-    ) -> List[Optional[int]]:
-        grad_send_info: List[Optional[int]] = []
-
-        def map_recv_to_send(a):
-            # Note: we send gradients back to previous stage as long as in
-            # forward it is a received input, regardless of whether it requires
-            # grad. It is up to the previous stage to disgard this gradient.
-            if isinstance(a, RecvInfo):
-                grad_send_info.append(a.source)
-                return a.source
-            else:
-                grad_send_info.append(None)
-                return None
-
-        map_aggregate(args_recv_info, map_recv_to_send)
-
-        logger.info(f"[{self.group_rank}] " f"Grad send info: {grad_send_info}")
-        return grad_send_info
-
-    def _get_recv_ops(
-        self,
-        recv_infos: Tuple[InputInfo],
-    ) -> List[dist.P2POp]:
-        """
-        Helper function shared by `get_fwd_recv_ops` and `get_bwd_recv_ops`.
-        Returns a list of ops that correspond to the recv infos.
-        """
-        ops: List[dist.P2POp] = []
-        for info in recv_infos:
-            if not isinstance(info, RecvInfo):
-                continue
-
-            peer_rank = self.stage_index_to_group_rank[info.source]
-            peer_global_rank = (
-                peer_rank
-                if self.group is None
-                else dist.get_global_rank(self.group, peer_rank)
-            )  # TODO
-            ops.append(
-                dist.P2POp(
-                    dist.irecv, info.buffer, peer_global_rank, self.group
-                )
-            )
-
-        return ops
-
-    def get_fwd_recv_ops(self) -> List[dist.P2POp]:
-        """
-        Returns a list of ops that are needed to receive the input arguments
-        for this stage.
-        """
-        recv_infos: Tuple[InputInfo] = self.args_recv_info[self.fwd_chunk_id]
-
-        # In case there is backward pass, set requires_grad for receive buffers
-        # before first forward
-        if self.has_backward and not self.set_requires_grad[self.fwd_chunk_id]:
-            for a in recv_infos:
-                if isinstance(a, RecvInfo):
-                    a.buffer.requires_grad_(True)
-
-        return self._get_recv_ops(recv_infos)
-
-    def get_bwd_recv_ops(self) -> List[dist.P2POp]:
-        """
-        Returns a list of ops that are needed to receive the gradients
-        for this stage.
-        """
-        if not self.has_backward or self.is_last:
-            return []
-
-        # Create bwd recv infra lazily
-        recv_infos = self.grad_recv_info.setdefault(
-            self.bwd_chunk_id,
-            # `grad_recv_info` is a mirror of `act_send_info`
-            self._create_grad_recv_info(self.act_send_info),
-        )
-
-        return self._get_recv_ops(recv_infos)
-
-    def get_fwd_send_ops(self) -> List[dist.P2POp]:
-        """
-        Get the activation send ops for current stage's forward.
-        """
-        # Use "-1" to get the outputs created by the last chunk
-        output = self.output_chunks[-1]
-        # Unify output form to tuple for easy correspondance with
-        # `act_send_info`
-        output_tuple = output if type(output) is tuple else (output,)
-
-        ops: List[dist.P2POp] = []
-
-        for idx, out in enumerate(output_tuple):
-            dst_stages = self.act_send_info[idx]
-            for dst in dst_stages:
-                if dst is None:
-                    continue
-                logger.debug(
-                    f"[{self.group_rank}] "
-                    f"Sending tensor to Rank {dst}: {out.size()}"
-                )
-                peer_rank = self.stage_index_to_group_rank[dst]
-                peer_global_rank = (
-                    peer_rank
-                    if self.group is None
-                    else dist.get_global_rank(self.group, peer_rank)
-                )  # TODO
-                ops.append(
-                    dist.P2POp(dist.isend, out, peer_global_rank, self.group)
-                )
-
-        return ops
-
-    def get_bwd_send_ops(self) -> List[dist.P2POp]:
-        """
-        Get the gradient send ops for current stage's backward.
-        """
-        if not self.has_backward or self.is_first:
-            return []
-
-        # Create bwd send infra lazily
-        if self.grad_send_info is None:
-            # Send info for input grads during backward:
-            # List of destinations corresponding to input grads
-            # Can be None if an input has no grad
-            # `grad_send_info` is a mirror of `args_recv_info`
-            self.grad_send_info = self._create_grad_send_info(
-                self.args_recv_info[0]
-            )
-
-        ops: List[dist.P2POp] = []
-        for grad, grad_recv_stage in zip(self.grads_input, self.grad_send_info):
-            if isinstance(grad, torch.Tensor) and grad_recv_stage is not None:
-                logger.debug(
-                    f"[{self.group_rank}] "
-                    f"Sending gradient to Rank {grad_recv_stage}: {grad.size()}"
-                )
-                peer_rank = self.stage_index_to_group_rank[grad_recv_stage]
-                peer_global_rank = (
-                    peer_rank
-                    if self.group is None
-                    else dist.get_global_rank(self.group, peer_rank)
-                )  # TODO
-                ops.append(
-                    dist.P2POp(dist.isend, grad, peer_global_rank, self.group)
-                )
-            else:
-                assert grad is None and grad_recv_stage is None
-
-        return ops
-
-    def _map_tensor_from_recv_info(
-        self,
-        recv_infos: Tuple[InputInfo],
-    ):
-        def get_recv_tensor(info):
-            if isinstance(info, RecvInfo):
-                return info.buffer
-            else:
-                raise AssertionError(f"Expected RecvInfo but got {type(info)}")
-
-        tensors = map_aggregate(
-            recv_infos,
-            get_recv_tensor,
-        )
-
-        return tensors
-
-    def _retrieve_recv_activations(
-        self,
-    ):
-        """
-        Retrieve the activations received for the current stage during forward.
-        """
-        recv_infos = self.args_recv_info[self.fwd_chunk_id]
-        activations = self._map_tensor_from_recv_info(recv_infos)
-        return activations
-
-    def _retrieve_recv_grads(
-        self,
-    ):
-        """
-        Retrieve the gradients received for the current stage during backward.
-        """
-        recv_infos = self.grad_recv_info[self.bwd_chunk_id]
-        grads = self._map_tensor_from_recv_info(recv_infos)
-        return grads
 
     def forward(self, *args, **kwargs):
         raise NotImplementedError(
