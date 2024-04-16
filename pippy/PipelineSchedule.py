@@ -49,7 +49,7 @@ class PipelineSchedule(ABC):
             return self._internal_losses[mb_index]
         elif len(self._internal_losses) != 0 and not valid_index:
             raise RuntimeError(
-                f"Loss of microbatch {mb_index} is not available. "
+                f"Loss for microbatch {mb_index} is not available. "
                 f"Available losses for microbatches: {self._internal_losses}"
             )
         else:
@@ -653,24 +653,23 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
                 % self.n_local_stages
             )
 
-        # Internal loss container
-        internal_losses = []
+        fwd_stage_mb_index: Dict[PipelineStageBase, int] = defaultdict(int)
+        bwd_stage_mb_index: Dict[PipelineStageBase, int] = defaultdict(int)
 
         # Delay send waits
         sends_to_wait: List[dist.Work] = []
 
-        # TODO: share across schedules
-        def maybe_compute_loss(fwd_stage, output, mb_index):
-            if fwd_stage.is_last and self._loss_fn is not None:
-                loss = self._compute_loss(output, target_mbs[mb_index])  # type: ignore[index]
-                internal_losses.append(loss)
-                logger.debug(f"Loss of microbatch {mb_index}: {loss}")
-
         for step in range(self.total_steps):
             # warmup, forward only
             if step < warmup_steps:
+                logger.debug(f"{forward_stage_local_index(step)=}")
+
                 fwd_stage = self._stages[forward_stage_local_index(step)]
-                mb_index = microbatch_index(step)
+                # assigns the current microbatch index and updates it for future steps
+                fwd_stage_mb_index[fwd_stage] = (
+                    mb_index := fwd_stage_mb_index[fwd_stage]
+                ) + 1
+
                 logger.debug(
                     f"{self.rank}: {step=}, {fwd_stage.stage_index=}, {mb_index=}"
                 )
@@ -687,13 +686,27 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
                     works = sorted_batch_isend_irecv(ops)
                     sends_to_wait.extend(works.values())
 
-                    maybe_compute_loss(fwd_stage, output, mb_index)
+                    self._maybe_compute_loss(
+                        fwd_stage, output, target_mbs, mb_index
+                    )
+
             # 1f1b
             elif warmup_steps <= step < warmup_steps + fwd_bwd_steps:
+                logger.debug(f"{forward_stage_local_index(step)=}")
+                logger.debug(f"{backward_stage_local_index(step)=}")
+
                 fwd_stage = self._stages[forward_stage_local_index(step)]
                 bwd_stage = self._stages[backward_stage_local_index(step)]
+
+                fwd_stage_mb_index[fwd_stage] = (
+                    fwd_mb_index := fwd_stage_mb_index[fwd_stage]
+                ) + 1
+                bwd_stage_mb_index[bwd_stage] = (
+                    bwd_mb_index := bwd_stage_mb_index[bwd_stage]
+                ) + 1
+
                 logger.debug(
-                    f"{self.rank}: {step=}, {fwd_stage.stage_index=}, {bwd_stage.stage_index=}, {mb_index=}"
+                    f"{self.rank}: {step=}, {fwd_stage.stage_index=}, {bwd_stage.stage_index=}, {fwd_mb_index=}, {bwd_mb_index=}"
                 )
                 with record_function(f"1F1B {step}"):
                     ops = fwd_stage.get_fwd_recv_ops()
@@ -702,23 +715,30 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
                     for work in works.values():
                         work.wait()
 
-                    output = fwd_stage.forward_one_chunk(arg_mbs[mb_index], kwarg_mbs[mb_index])  # type: ignore[index]
+                    # fwd
+                    output = fwd_stage.forward_one_chunk(arg_mbs[fwd_mb_index], kwarg_mbs[fwd_mb_index])  # type: ignore[index]
                     ops = fwd_stage.get_fwd_send_ops()
+                    self._maybe_compute_loss(
+                        fwd_stage, output, target_mbs, fwd_mb_index
+                    )
 
-                    maybe_compute_loss(fwd_stage, output, mb_index)
-
-                    # TODO 1: give loss to backward.
-                    # TODO 2: for us to know which loss to use, we need to know the backward mb index.
-                    bwd_stage.backward_one_chunk()
+                    # bwd
+                    loss = self._maybe_get_loss(bwd_mb_index)
+                    bwd_stage.backward_one_chunk(loss=loss)
                     ops.extend(bwd_stage.get_bwd_send_ops())
 
                     works = sorted_batch_isend_irecv(ops)
                     sends_to_wait.extend(works.values())
+
             # cooldown
             else:
                 bwd_stage = self._stages[backward_stage_local_index(step)]
+                bwd_stage_mb_index[bwd_stage] = (
+                    bwd_mb_index := bwd_stage_mb_index[bwd_stage]
+                ) + 1
+
                 logger.debug(
-                    f"{self.rank}: {step=}, {bwd_stage.stage_index=}, {mb_index=}"
+                    f"{self.rank}: {step=}, {bwd_stage.stage_index=}, {bwd_mb_index=}"
                 )
                 with record_function(f"Cooldown (backward) {step}"):
                     ops = bwd_stage.get_bwd_recv_ops()
@@ -726,9 +746,8 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
                     for work in works.values():
                         work.wait()
 
-                    # TODO 1: give loss to backward.
-                    # TODO 2: for us to know which loss to use, we need to know the backward mb index.
-                    bwd_stage.backward_one_chunk()
+                    loss = self._maybe_get_loss(bwd_mb_index)
+                    bwd_stage.backward_one_chunk(loss=loss)
 
                     ops = bwd_stage.get_bwd_send_ops()
                     works = sorted_batch_isend_irecv(ops)
@@ -739,8 +758,4 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
             work.wait()
 
         # Return losses if there is a container passed in
-        if losses is not None:
-            # Clean external container first
-            losses.clear()
-            # Copy internal losses to external container
-            losses.extend(internal_losses)
+        self._update_losses(losses)

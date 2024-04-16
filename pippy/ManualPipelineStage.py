@@ -228,6 +228,7 @@ class ManualPipelineStage(PipelineStageBase):
         for chunk_id in range(self.chunks):
             self.set_requires_grad[chunk_id] = False
             if not self.is_first:
+                # We assume that we always receive from stage - 1
                 self.args_recv_info[chunk_id] = tuple(
                     [
                         RecvInfo(
@@ -247,6 +248,7 @@ class ManualPipelineStage(PipelineStageBase):
         # only need the rank that is being sent to
         self.act_send_info: Dict[int, List] = {}
         for idx in range(len(self.outputs)):
+            # We assume we always send to stage + 1
             if not self.is_last:
                 self.act_send_info[idx] = [self.stage_index + 1]
             else:
@@ -267,6 +269,8 @@ class ManualPipelineStage(PipelineStageBase):
     ) -> Tuple[RecvInfo, ...]:
         grad_recv_info: Tuple[RecvInfo, ...] = ()
         if not self.is_last:
+            # Receiving gradients from multiple sources is not supported
+            # hence we only take the first destination
             grad_recv_info = tuple(
                 [
                     RecvInfo(
@@ -277,8 +281,6 @@ class ManualPipelineStage(PipelineStageBase):
                     for idx, dst_list in act_send_info.items()
                 ]
             )
-        else:
-            grad_recv_info = tuple()
         return grad_recv_info
 
     def init_p2p_neighbors(self):
