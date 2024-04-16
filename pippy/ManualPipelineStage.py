@@ -8,7 +8,12 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 
-from pippy.PipelineStage import PipelineStageBase
+from pippy.PipelineStage import (
+    _make_tensor_from_meta,
+    PipelineStageBase,
+    RecvInfo,
+    RootArgPlaceholder,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -181,9 +186,7 @@ class ManualPipelineStage(PipelineStageBase):
         super().__init__(
             module, stage_id, num_stages, device, num_microbatches, group
         )
-        self.module = module.to(device)
-        self.is_first_stage = stage_id == 0
-        self.is_last_stage = stage_id == num_stages - 1
+        self.submod.to(self.device)
         # When we materialize the model partition on cuda, we call reset_parameters() if it is available
         # logger.info(f"input args {input_args=}")
         self.inputs: List[torch.tensor] = []
@@ -193,7 +196,7 @@ class ManualPipelineStage(PipelineStageBase):
             self.inputs = create_buffers(input_args, device)
 
         if output_args is None:
-            self.outputs = self.module(*self.inputs)
+            self.outputs = self.submod(*self.inputs)
             # create buffers for the output so that the data is in the correct
             # shape in order to use in p2p op (send)
             self.outputs = create_buffers(self.outputs, device)
@@ -220,36 +223,63 @@ class ManualPipelineStage(PipelineStageBase):
             (self.group_rank + 1) % self.group_size
         )
 
+        # Receive info during forward
+        # TODO: create args_recv_info lazily? (same needed for PipelineStage)
+        for chunk_id in range(self.chunks):
+            self.set_requires_grad[chunk_id] = False
+            if not self.is_first:
+                self.args_recv_info[chunk_id] = tuple(
+                    [
+                        RecvInfo(
+                            f"recv_for_{self.stage_index}_from_{self.stage_index - 1}",
+                            self.stage_index - 1,
+                            _make_tensor_from_meta(inp, self.device),
+                        )
+                        for inp in self.inputs
+                    ]
+                )  # type: ignore
+            else:
+                self.args_recv_info[chunk_id] = tuple(
+                    [RootArgPlaceholder() for _ in self.inputs]
+                )  # type: ignore
+
+        # Send info during forward for each activation
+        # only need the rank that is being sent to
+        self.act_send_info: Dict[int, List] = {}
+        for idx in range(len(self.outputs)):
+            if not self.is_last:
+                self.act_send_info[idx] = [self.stage_index + 1]
+            else:
+                self.act_send_info[idx] = []
+
         logger.debug(
             f"""
-            finished pipeline stage init, {self.stage_index=}, {self.is_first_stage=},
-            {self.is_last_stage=}, {self.num_stages=},
+            finished pipeline stage init, {self.stage_index=}, {self.is_first=},
+            {self.is_last=}, {self.num_stages=},
             inputs: {[inp.shape for inp in self.inputs]},
             output: {[output.shape for output in self.outputs]}
             """
         )
 
-    def _retrieve_recv_activations(
+    def _create_grad_recv_info(
         self,
-    ):
-        """
-        Retrieve the activations received for the current stage during forward.
-        """
-        # TODO: grad always gets set but later
-        # we can selectively choose which inputs require grads
-        for inp in self.inputs:
-            inp.requires_grad_(True)
-        return self.inputs
-
-    def _retrieve_recv_grads(
-        self,
-    ):
-        """
-        Retrieve the gradients received for the current stage during backward.
-        """
-        # TODO fix so we dont create a tensor
-        self.outputs_grad = [torch.empty_like(x) for x in self.outputs]
-        return self.outputs_grad
+        act_send_info: Dict,
+    ) -> Tuple[RecvInfo, ...]:
+        grad_recv_info: Tuple[RecvInfo, ...] = ()
+        if not self.is_last:
+            grad_recv_info = tuple(
+                [
+                    RecvInfo(
+                        f"recv_grad_for_{self.stage_index}_from_{dst_list[0]}",
+                        dst_list[0],
+                        _make_tensor_from_meta(self.outputs[idx], self.device),
+                    )
+                    for idx, dst_list in act_send_info.items()
+                ]
+            )
+        else:
+            grad_recv_info = tuple()
+        return grad_recv_info
 
     def init_p2p_neighbors(self):
         """
@@ -262,45 +292,26 @@ class ManualPipelineStage(PipelineStageBase):
         recv_tensor = torch.zeros(1, device="cuda")
         send_tensor = torch.ones(1, device="cuda")
         # forward
-        if not self.is_first_stage:
+        if not self.is_first:
             ops.append(
                 dist.P2POp(dist.irecv, recv_tensor, self.prev_stage, self.group)
             )
-        if not self.is_last_stage:
+        if not self.is_last:
             ops.append(
                 dist.P2POp(dist.isend, send_tensor, self.next_stage, self.group)
             )
 
         # backward
-        if not self.is_first_stage:
+        if not self.is_first:
             ops.append(
                 dist.P2POp(dist.isend, send_tensor, self.prev_stage, self.group)
             )
-        if not self.is_last_stage:
+        if not self.is_last:
             ops.append(
                 dist.P2POp(dist.irecv, recv_tensor, self.next_stage, self.group)
             )
 
         return True
-
-    def get_fwd_recv_ops(self) -> List[dist.P2POp]:
-        if self.is_first_stage:
-            return []
-        return [
-            dist.P2POp(dist.irecv, inp, self.prev_stage, self.group)
-            for inp in self.inputs
-        ]
-
-    def get_fwd_send_ops(self) -> List[dist.P2POp]:
-        output_tuples, flatten_input_tensors = self.fwd_cache[
-            self.fwd_chunk_id - 1
-        ]
-        if self.is_last_stage:
-            return []
-        return [
-            dist.P2POp(dist.isend, out, self.next_stage, self.group)
-            for out in output_tuples
-        ]
 
     def check_and_format_outputs(self, outputs: Any) -> List[torch.tensor]:
         # validate the output of the module is a type supported
@@ -318,22 +329,6 @@ class ManualPipelineStage(PipelineStageBase):
                 f"All elements in module output must be torch.tensor instances, but got {[type(x) for x in outputs]}"
             )
         return outputs
-
-    def get_bwd_recv_ops(self) -> List[dist.P2POp]:
-        if self.is_last_stage:
-            return []
-        return [
-            dist.P2POp(dist.irecv, grad, self.next_stage, self.group)
-            for grad in self.outputs_grad
-        ]
-
-    def get_bwd_send_ops(self) -> List[dist.P2POp]:
-        if self.is_first_stage:
-            return []
-        return [
-            dist.P2POp(dist.isend, inp.grad, self.prev_stage, self.group)
-            for inp in self.inputs
-        ]
 
 
 def validate_stage_shapes(pipeline_stages: List[ManualPipelineStage]):
