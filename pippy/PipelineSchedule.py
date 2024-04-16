@@ -20,7 +20,7 @@ class PipelineSchedule(ABC):
     def __init__(
         self,
         n_microbatches: int,
-        loss_fn: Optional[Callable] = None,
+        loss_fn: Optional[Callable[..., torch.Tensor]] = None,
         output_merge_spec: Optional[Union[Dict[str, Any], Tuple[Any]]] = None,
     ):
         # From arguments
@@ -31,6 +31,44 @@ class PipelineSchedule(ABC):
         self._has_backward = self._loss_fn is not None
         # To be filled by subclasses
         self._pipe_info: Optional[Pipe.PipeInfo] = None
+
+        self._internal_losses: List[torch.Tensor] = []
+
+    def _maybe_compute_loss(self, stage, output, target_mbs, mb_index):
+        if stage.is_last and self._has_backward:
+            loss = self._compute_loss(output, target_mbs[mb_index])  # type: ignore[index]
+            self._internal_losses.append(loss)
+            logger.debug(
+                f"[{stage.stage_index}] Loss of microbatch {mb_index}: {loss}"
+            )
+
+    def _maybe_get_loss(self, mb_index):
+        valid_index = 0 <= mb_index < len(self._internal_losses)
+        if self._has_backward and valid_index:
+            return self._internal_losses[mb_index]
+        elif len(self._internal_losses) != 0 and not valid_index:
+            raise RuntimeError(
+                f"Loss of microbatch {mb_index} is not available. "
+                f"Available losses for microbatches: {self._internal_losses}"
+            )
+        else:
+            return None
+
+    def _update_losses(self, losses):
+        """
+        Update the losses to those in the internal state
+        """
+        # Return losses if there is a container passed in
+        if losses is not None:
+            if len(self._internal_losses) != self._n_microbatches:
+                raise RuntimeError(
+                    f"Expecting {self._n_microbatches} losses but got {len(self._internal_losses)}"
+                )
+
+            # Clean external container first
+            losses.clear()
+            # Copy internal losses to external container
+            losses.extend(self._internal_losses)
 
     @abstractmethod
     def step_microbatches(
@@ -202,12 +240,6 @@ class PipelineScheduleSingle(PipelineSchedule):
         self._num_stages = stage.num_stages
         # Set the same has_backward flag for stage object
         self._stage.has_backward = self._has_backward
-        self._should_compute_loss: bool = (
-            self._stage.is_last and self._loss_fn is not None
-        )
-        logger.debug(
-            f"[{self._stage.stage_index}] Should compute loss: {self._should_compute_loss}"
-        )
 
     def step(self, *args, target=None, losses: Optional[List] = None, **kwargs):
         # Clean per iteration
@@ -246,8 +278,6 @@ class ScheduleGPipe(PipelineScheduleSingle):
             arg_mbs, kwarg_mbs, target_mbs, losses
         )
 
-        # Internal loss container
-        internal_losses = []
         # Delay send waits
         fwd_sends_to_wait: List[dist.Work] = []
 
@@ -269,13 +299,7 @@ class ScheduleGPipe(PipelineScheduleSingle):
                 f"[{self._stage.stage_index}] Forwarded microbatch {i}"
             )
 
-            if self._should_compute_loss:
-                target = target_mbs[i]  # type: ignore[index]
-                loss = self._compute_loss(output, target)
-                internal_losses.append(loss)
-                logger.debug(
-                    f"[{self._stage.stage_index}] Loss of microbatch {i}: {loss}"
-                )
+            self._maybe_compute_loss(self._stage, output, target_mbs, i)
 
         # Wait for all forward sends to finish
         # This should not have performance impact because by the time the first
@@ -297,7 +321,7 @@ class ScheduleGPipe(PipelineScheduleSingle):
                 for work in works.values():
                     work.wait()
 
-                loss = internal_losses[i] if len(internal_losses) > 0 else None
+                loss = self._maybe_get_loss(i)
                 self._stage.backward_one_chunk(loss=loss)
 
                 ops = self._stage.get_bwd_send_ops()
@@ -309,11 +333,7 @@ class ScheduleGPipe(PipelineScheduleSingle):
             )
 
         # Return losses if there is a container passed in
-        if losses is not None:
-            # Clean external container first
-            losses.clear()
-            # Copy internal losses to external container
-            losses.extend(internal_losses)
+        self._update_losses(losses)
 
         # Wait for all backward sends to finish
         for work in bwd_sends_to_wait:
@@ -358,9 +378,6 @@ class Schedule1F1B(PipelineScheduleSingle):
             f"Total steps: {total_steps}"
         )
 
-        # Internal loss container
-        internal_losses = []
-
         # Delay send waits
         fwd_sends_to_wait: List[dist.Work] = []
         bwd_sends_to_wait: List[dist.Work] = []
@@ -383,13 +400,7 @@ class Schedule1F1B(PipelineScheduleSingle):
                     works = sorted_batch_isend_irecv(ops)
                     fwd_sends_to_wait.extend(works.values())
 
-                if self._should_compute_loss:
-                    target = target_mbs[i]  # type: ignore[index]
-                    loss = self._compute_loss(output, target)
-                    internal_losses.append(loss)
-                    logger.debug(
-                        f"[{self._stage.stage_index}] Loss of microbatch {i}: {loss}"
-                    )
+                self._maybe_compute_loss(self._stage, output, target_mbs, i)
 
             if i >= warmup_steps and self._has_backward:
                 # backward
@@ -399,11 +410,7 @@ class Schedule1F1B(PipelineScheduleSingle):
                     for work in works.values():
                         work.wait()
 
-                    loss = (
-                        internal_losses[bwd_mb_index]
-                        if len(internal_losses) > 0
-                        else None
-                    )
+                    loss = self._maybe_get_loss(bwd_mb_index)
                     self._stage.backward_one_chunk(loss=loss)
 
                     ops = self._stage.get_bwd_send_ops()
@@ -420,11 +427,7 @@ class Schedule1F1B(PipelineScheduleSingle):
             work.wait()
 
         # Return losses if there is a container passed in
-        if losses is not None:
-            # Clean external container first
-            losses.clear()
-            # Copy internal losses to external container
-            losses.extend(internal_losses)
+        self._update_losses(losses)
 
 
 class PipelineScheduleMulti(PipelineSchedule):
@@ -513,9 +516,6 @@ class ScheduleLoopedBFS(PipelineScheduleMulti):
         else:
             kwarg_mbs = [{}] * self._n_microbatches
 
-        # Internal loss container
-        internal_losses = []
-
         for stage in self._stages:
             for i in range(self._n_microbatches):
                 with record_function(f"Stage {stage.stage_index} Forward"):
@@ -524,14 +524,7 @@ class ScheduleLoopedBFS(PipelineScheduleMulti):
                         dist.batch_isend_irecv(ops).pop().wait()
 
                     output = stage.forward_one_chunk(arg_mbs[i], kwarg_mbs[i])
-
-                    if self._should_compute_loss(stage):
-                        target = target_mbs[i]  # type: ignore[index]
-                        loss = self._compute_loss(output, target)
-                        internal_losses.append(loss)
-                        logger.debug(
-                            f"[{stage.stage_index}] Loss of microbatch {i}: {loss}"
-                        )
+                    self._maybe_compute_loss(stage, output, target_mbs, i)
 
                     ops = stage.get_fwd_send_ops()
                     if ops:
@@ -544,21 +537,14 @@ class ScheduleLoopedBFS(PipelineScheduleMulti):
                     if ops:
                         dist.batch_isend_irecv(ops).pop().wait()
 
-                    loss = (
-                        internal_losses[i] if len(internal_losses) > 0 else None
-                    )
+                    loss = self._maybe_get_loss(i)
                     stage.backward_one_chunk(loss=loss)
 
                     ops = stage.get_bwd_send_ops()
                     if ops:
                         dist.batch_isend_irecv(ops)
 
-        # Return losses if there is a container passed in
-        if losses is not None:
-            # Clean external container first
-            losses.clear()
-            # Copy internal losses to external container
-            losses.extend(internal_losses)
+        self._update_losses(losses)
 
 
 class ScheduleInterleaved1F1B(PipelineScheduleMulti):
