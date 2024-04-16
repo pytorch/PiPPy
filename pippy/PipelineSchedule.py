@@ -32,6 +32,7 @@ class PipelineSchedule(ABC):
         # To be filled by subclasses
         self._pipe_info: Optional[Pipe.PipeInfo] = None
 
+        # Holds the losses for each microbatch.
         self._internal_losses: List[torch.Tensor] = []
 
     def _maybe_compute_loss(self, stage, output, target_mbs, mb_index):
@@ -69,6 +70,8 @@ class PipelineSchedule(ABC):
             losses.clear()
             # Copy internal losses to external container
             losses.extend(self._internal_losses)
+
+        self._internal_losses.clear()
 
     @abstractmethod
     def step_microbatches(
