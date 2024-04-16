@@ -659,13 +659,6 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
         # Delay send waits
         sends_to_wait: List[dist.Work] = []
 
-        # TODO: share across schedules
-        def maybe_compute_loss(fwd_stage, output, mb_index):
-            if fwd_stage.is_last and self._loss_fn is not None:
-                loss = self._compute_loss(output, target_mbs[mb_index])  # type: ignore[index]
-                internal_losses.append(loss)
-                logger.debug(f"Loss of microbatch {mb_index}: {loss}")
-
         for step in range(self.total_steps):
             # warmup, forward only
             if step < warmup_steps:
