@@ -37,7 +37,6 @@ from pippy.PipelineSchedule import (
 from torch.distributed._tensor.device_mesh import init_device_mesh
 from torch.profiler import record_function
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -85,6 +84,13 @@ class MLP(nn.Module):
         self.wh3 = nn.Linear(hidden_dim, hidden_dim, bias=False)
         self.wo = nn.Linear(hidden_dim, out_dim, bias=False)
         self.gelu_act = nn.GELU(approximate="tanh")
+
+        # Apply Kaiming initialization
+        nn.init.kaiming_normal_(self.wi.weight)
+        nn.init.kaiming_normal_(self.wh1.weight)
+        nn.init.kaiming_normal_(self.wh3.weight)
+        nn.init.kaiming_normal_(self.wh3.weight)
+        nn.init.kaiming_normal_(self.wo.weight)
 
     def forward(self, x):
         a = self.wi(x)
@@ -148,7 +154,7 @@ def main(**kwargs):
     rank_print(f"kwargs are {kwargs}")
 
     input_dim = 900
-    hidden_dim = 8000
+    hidden_dim = 800
     output_dim = 900
 
     model = torch.nn.Sequential(
@@ -159,55 +165,73 @@ def main(**kwargs):
         modules=[model for i in range(world_size)]
     )
     microbatch_size = 8
-    global_batch_size = 128
+    global_batch_size = 64
     assert global_batch_size % microbatch_size == 0
     n_microbatches = int(global_batch_size / microbatch_size)
-    n_pp = world_size
 
-    x = torch.randn([microbatch_size, input_dim]).to("meta")
+    x = torch.randn([microbatch_size, input_dim]).to("cpu")
     unused = torch.ones((1, 1), device="meta")
     input_args = x
 
-    stage_model = ManualPipelineStage(
-        module_list[rank],
-        stage_id=rank,
-        num_stages=world_size,
-        device=device,
-        input_args=input_args,
-    )
-    stage_model.init_p2p_neighbors()
-
-    stage_model_looped = [
-        ManualPipelineStage(
+    if kwargs["stage_type"] == "manual":
+        stage_model = ManualPipelineStage(
             module_list[rank],
-            stage_id=(world_size * i) + rank,
-            num_stages=world_size * world_size,
+            stage_id=rank,
+            num_stages=world_size,
             device=device,
             input_args=input_args,
+            num_microbatches=n_microbatches,
         )
-        for i in range(world_size)
-    ]
+
+        stage_model_looped = [
+            ManualPipelineStage(
+                module_list[rank],
+                stage_id=(world_size * i) + rank,
+                num_stages=world_size * world_size,
+                device=device,
+                input_args=input_args,
+                num_microbatches=n_microbatches,
+            )
+            for i in range(world_size)
+        ]
+    elif kwargs["stage_type"] == "tracing":
+        pass
+        # TODO
+        # pipe = pipeline(model, n_microbatches, example_args=(input_args,))
+        # stage = PipelineStage(pipe, rank, device)
+
+    print(f"{[sm.stage_index for sm in stage_model_looped]}")
+
     x_cuda_empty = torch.empty_like(x, device="cuda")
 
     microbatches = []
     for i in range(n_microbatches):
         unused = torch.ones((1, 1), device="cuda")
-        microbatches.append(torch.randn_like(x_cuda_empty))
+        microbatches.append([torch.randn_like(x_cuda_empty)])
 
-    # barrier before
+    # Define a loss function
+    loss_fn = torch.nn.MSELoss(reduction="sum")
+    target_mbs = [
+        torch.randn(microbatch_size, output_dim, device=device)
+        for _ in range(n_microbatches)
+    ]
 
     _run_profiler = kwargs["profiler"]
     _trace_dir = kwargs["trace_dir"]
     for schedule in kwargs["schedules"]:
         logger.info(f"====== Rank {rank} running schedule {schedule} ======")
         if schedule == "gpipe":
-            pipeline = ScheduleGPipe(stage_model, n_microbatches)
+            my_schedule = ScheduleGPipe(stage_model, n_microbatches, loss_fn)
         elif schedule == "1f1b":
-            pipeline = Schedule1F1B(stage_model, n_microbatches)
+            my_schedule = Schedule1F1B(stage_model, n_microbatches, loss_fn)
         elif schedule == "looped_bfs":
-            pipeline = ScheduleLoopedBFS(stage_model_looped)
+            my_schedule = ScheduleLoopedBFS(
+                stage_model_looped, n_microbatches, loss_fn
+            )
         elif schedule == "interleaved_1f1b":
-            pipeline = ScheduleInterleaved1F1B(stage_model_looped)
+            my_schedule = ScheduleInterleaved1F1B(
+                stage_model_looped, n_microbatches, loss_fn
+            )
 
         if _run_profiler:
             logger.info(f"====== Rank {rank} profile ======")
@@ -216,7 +240,15 @@ def main(**kwargs):
             _run_profiler, _trace_dir, schedule, rank
         ) as _torch_profiler:
             with record_function(schedule):
-                pipeline.step(microbatches)
+                if rank == 0:
+                    my_schedule.step_microbatches(microbatches)
+                elif rank == world_size - 1:
+                    losses = []
+                    output = my_schedule.step_microbatches(
+                        target_mbs=target_mbs, losses=losses
+                    )
+                else:
+                    my_schedule.step_microbatches()
         logger.info(f"====== Rank {rank} finished {schedule} ======")
 
 
@@ -268,10 +300,10 @@ if __name__ == "__main__":
         type=str,
         nargs="+",
         choices=["gpipe", "1f1b", "looped_bfs", "interleaved_1f1b"],
-        # default=["gpipe"],
         default=["interleaved_1f1b"],
     )
     parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--stage_type", type=str, default="manual")
     args = parser.parse_args()
     kwargs = vars(args)
 
