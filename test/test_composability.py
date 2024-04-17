@@ -1,7 +1,7 @@
 # (c) Meta Platforms, Inc. and affiliates. Confidential and proprietary.
+import copy
 import unittest
 
-import copy
 import torch
 import torch.distributed as dist
 import torch.nn as nn
@@ -13,6 +13,7 @@ from torch.distributed._composable.fsdp.fully_shard import (
 )
 from torch.distributed._tensor import DTensor
 from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
+
 # torch.testing._internal.common_distributed requies "expecttest"
 from torch.testing._internal.common_distributed import MultiProcessTestCase
 from torch.testing._internal.common_utils import FILE_SCHEMA
@@ -116,11 +117,6 @@ class TestPipelineComposability(MultiProcessTestCase):
             world_size=self.world_size,
         )
 
-        # TODO(whc) there is a bug in our helpers (DeviceMesh: _get_device_handle) where passing `cuda:1` fails
-        #   File "/data/users/whc/pytorch/torch/distributed/_composable/fsdp/_fsdp_init.py",
-        #   line 69, in _get_device_from_mesh
-        #              return torch.device(mesh.device_type, device_handle.current_device())
-        #   AttributeError: 'NoneType' object has no attribute 'current_device'
         device_mesh = init_device_mesh(
             "cuda", mesh_shape=mesh_shape, mesh_dim_names=mesh_dim_names
         )
@@ -154,7 +150,6 @@ class TestPipelineComposability(MultiProcessTestCase):
         full_model = nn.ModuleList(
             [nn.Linear(10, 10) for _ in range(pp_group_size * layers_per_model)]
         )
-
 
         # divide the model (8 layers) by the number of ranks (2)
         partial_model = nn.Sequential(
@@ -249,7 +244,7 @@ class TestPipelineComposability(MultiProcessTestCase):
         num_microbatches = 8
         inputs = [
             torch.rand((num_microbatches, dim), device=device)
-            for _ in range (dp_mesh.size())
+            for _ in range(dp_mesh.size())
         ]
         input = inputs[dp_mesh.get_local_rank()]
         input_mb = [
@@ -288,10 +283,10 @@ class TestPipelineComposability(MultiProcessTestCase):
         # Pretty ugly way to deal with using the sequential container to hold slices of the model.
         # (on pp-stage 1, ref-model's 4th layer gets re-indexed as the 0th layer in the submodule)
         fqn_map = {
-            "0" : "4",
-            "1" : "5",
-            "2" : "6",
-            "3" : "7",
+            "0": "4",
+            "1": "5",
+            "2": "6",
+            "3": "7",
         }
 
         # Validate that whichever weights we have locally match that part of our local/full ref model
