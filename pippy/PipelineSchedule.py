@@ -544,6 +544,9 @@ class ScheduleLoopedBFS(PipelineScheduleMulti):
 
         for stage in reversed(self._stages):
             for i in range(self._n_microbatches):
+                stage._configure_data_parallel_mode(
+                    i == self._n_microbatches - 1
+                )
                 with record_function(f"Stage {stage.stage_index} Backward"):
                     ops = stage.get_bwd_recv_ops()
                     if ops:
