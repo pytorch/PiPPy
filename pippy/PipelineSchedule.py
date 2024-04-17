@@ -392,7 +392,7 @@ class Schedule1F1B(PipelineScheduleSingle):
 
         # bwd chunk counter
         bwd_mb_index = 0
-
+        self._stage._configure_data_parallel_mode(last_backward=False)
         for i in range(total_steps):
             if i < self._n_microbatches:
                 # forward
@@ -411,6 +411,10 @@ class Schedule1F1B(PipelineScheduleSingle):
                 self._maybe_compute_loss(self._stage, output, target_mbs, i)
 
             if i >= warmup_steps and self._has_backward:
+                self._stage._configure_data_parallel_mode(
+                    last_backward=(i == total_steps - 1)
+                )
+
                 # backward
                 with record_function(f"Backward {bwd_mb_index}"):
                     ops = self._stage.get_bwd_recv_ops()
