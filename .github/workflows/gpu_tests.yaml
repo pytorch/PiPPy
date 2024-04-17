@@ -43,7 +43,7 @@ jobs:
         run: conda activate test
       - name: Install dependencies
         run: |
-          pip install numpy
+          pip install numpy expecttest
           pip install --pre -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cu121/torch_nightly.html
       - name: Install pippy
         run: python setup.py install
@@ -53,6 +53,8 @@ jobs:
         run: torchrun --nproc-per-node 4 test/test_autosplit.py
       - name: Test skip connection support
         run: torchrun --nproc-per-node 4 test/test_skip_conn.py
+      - name: Test Composability
+        run: python test/test_composability.py
       - name: Run example
         run: torchrun --nproc-per-node 3 examples/basic/example.py
       - name: Run training example

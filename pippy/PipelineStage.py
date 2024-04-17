@@ -8,6 +8,7 @@ import torch
 import torch.distributed as dist
 import torch.fx as fx
 from torch._subclasses.fake_tensor import FakeTensor
+from torch.distributed._composable.fsdp.fully_shard import FSDP
 from torch.fx.node import map_aggregate
 from torch.nn.parallel import DistributedDataParallel
 
@@ -345,6 +346,17 @@ class PipelineStageBase(ABC):
         recv_infos = self.grad_recv_info[self.bwd_chunk_id]
         grads = self._map_tensor_from_recv_info(recv_infos)
         return grads
+
+    def _configure_data_parallel_mode(self, last_backward: bool):
+        """
+        Whether using PP with FSDP or DDP, there are some runtime differences between the last backward step and the
+        other steps.  Namely, we need to accumulate gradients on previous steps and reduce them on the last step, but
+        there are additional state-variables and performance considerations depending on the data parallelism used.
+        This helper should adapt any pipeline parallel schedule to work with common/supported data parallel libraries.
+        """
+        if isinstance(self.submod, FSDP):
+            self.submod.set_is_last_backward(last_backward)
+            self.submod.set_requires_gradient_sync(last_backward)
 
     def forward_maybe_with_nosync(self, *args, **kwargs):
         # If submod is wrapped with DDP, we use the `no_sync` context manager to
