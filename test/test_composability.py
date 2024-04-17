@@ -237,18 +237,21 @@ class TestPipelineComposability(MultiProcessTestCase):
             reduce_dtype=torch.float32,
         )
         fsdp_config = {"mesh": dp_mesh, "mp_policy": mp_policy}
-        # for layer in partial_model.children():
-        #     fully_shard(
-        #         layer,
-        #         **fsdp_config,
-        #         reshard_after_forward=False,
-        #     )
-        # fsdp_model = fully_shard(partial_model, **fsdp_config)
-        fsdp_model = partial_model
+        for layer in partial_model.children():
+            fully_shard(
+                layer,
+                **fsdp_config,
+                reshard_after_forward=False,
+            )
+        fsdp_model = fully_shard(partial_model, **fsdp_config)
 
         # apply PP
         num_microbatches = 8
-        input = torch.rand((num_microbatches, dim), device=device)
+        inputs = [
+            torch.rand((num_microbatches, dim), device=device)
+            for _ in range (dp_mesh.size())
+        ]
+        input = inputs[dp_mesh.get_local_rank()]
         input_mb = [
             [input[i].reshape((1, dim))] for i in range(num_microbatches)
         ]
@@ -271,18 +274,37 @@ class TestPipelineComposability(MultiProcessTestCase):
         pipeline_schedule.step_microbatches(
             arg_mbs=input_mb, target_mbs=input_mb
         )
-        print(f"{self.rank} finished pipeline step")
 
-        ref_model(input).sum().backward()
+        # Ref model runs on 2 different inputs, accumulating grads across them.
+        # this ensures that we detect if the FSDP reduce becomes a no-op.
+        # (in fsdp case, we use one of these inputs on each DP rank)
+        (ref_model(inputs[0]).sum()).backward()
+        (ref_model(inputs[1]).sum()).backward()
+
+        # simulate the built-in averaging done by FSDP
+        for p in ref_model.parameters():
+            p.grad /= dp_mesh.size()
+
+        # Pretty ugly way to deal with using the sequential container to hold slices of the model.
+        # (on pp-stage 1, ref-model's 4th layer gets re-indexed as the 0th layer in the submodule)
+        fqn_map = {
+            "0" : "4",
+            "1" : "5",
+            "2" : "6",
+            "3" : "7",
+        }
+
+        # Validate that whichever weights we have locally match that part of our local/full ref model
+        # (we force FSDP's grads to be all-gathered (.full_tensor) to make it simpler)
         ref_parameters = dict(ref_model.named_parameters())
-        for name, p in fsdp_model.named_parameters():
-            print(f"validating param {name}")
+        for name, p in partial_model.named_parameters():
+            parts = name.split(".")
+            if pp_group.rank() == 1:
+                parts[0] = fqn_map[parts[0]]
+            name = ".".join(parts)
             ref_p = ref_parameters[name]
-            # self.assertTrue(isinstance(p.grad, DTensor))
-            # self.assertEqual(ref_p.grad, p.grad.full_tensor())
-            self.assertEqual(ref_p.grad, p.grad)
-
-
+            self.assertTrue(isinstance(p.grad, DTensor))
+            self.assertEqual(ref_p.grad, p.grad.full_tensor())
 
 
 if __name__ == "__main__":
