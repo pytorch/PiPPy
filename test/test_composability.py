@@ -6,7 +6,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 from pippy.ManualPipelineStage import ManualPipelineStage
-from pippy.PipelineSchedule import ScheduleGPipe
+from pippy.PipelineSchedule import Schedule1F1B, ScheduleGPipe
 from torch.distributed._composable.fsdp.fully_shard import (
     fully_shard,
     MixedPrecisionPolicy,
@@ -16,7 +16,11 @@ from torch.distributed.device_mesh import DeviceMesh, init_device_mesh
 
 # torch.testing._internal.common_distributed requies "expecttest"
 from torch.testing._internal.common_distributed import MultiProcessTestCase
-from torch.testing._internal.common_utils import FILE_SCHEMA
+from torch.testing._internal.common_utils import (
+    FILE_SCHEMA,
+    instantiate_parametrized_tests,
+    parametrize,
+)
 
 
 class DDPAROnce(torch.nn.Module):
@@ -189,7 +193,8 @@ class TestPipelineComposability(MultiProcessTestCase):
         ddp_pp_model.all_reduce(num_microbatches)
         print(f"{self.rank} finished all_reduce")
 
-    def test_manual_pipeline_with_fsdp(self):
+    @parametrize("schedule_name", ["gpipe", "1f1b"])
+    def test_manual_pipeline_with_fsdp(self, schedule_name):
         device_mesh, device = self._init_device_mesh(
             mesh_shape=(2, 2), mesh_dim_names=("dp", "pp")
         )
@@ -260,12 +265,24 @@ class TestPipelineComposability(MultiProcessTestCase):
             num_microbatches,
         )
 
-        pipeline_schedule = ScheduleGPipe(
-            pipeline_stage,
-            n_microbatches=num_microbatches,
-            # dummy loss needed just to force backwards to run in schedule step
-            loss_fn=lambda y, t: y.sum(),
-        )
+        # dummy loss needed just to force backwards to run in schedule step
+        loss_fn = lambda y, t: y.sum()
+
+        if schedule_name == "gpipe":
+            pipeline_schedule = ScheduleGPipe(
+                pipeline_stage,
+                n_microbatches=num_microbatches,
+                loss_fn=loss_fn,
+            )
+        elif schedule_name == "1f1b":
+            pipeline_schedule = Schedule1F1B(
+                pipeline_stage,
+                n_microbatches=num_microbatches,
+                loss_fn=loss_fn,
+            )
+        else:
+            raise RuntimeError(f"unsupported schedule {schedule_name}")
+
         pipeline_schedule.step_microbatches(
             arg_mbs=input_mb, target_mbs=input_mb
         )
@@ -301,6 +318,8 @@ class TestPipelineComposability(MultiProcessTestCase):
             self.assertTrue(isinstance(p.grad, DTensor))
             self.assertEqual(ref_p.grad, p.grad.full_tensor())
 
+
+instantiate_parametrized_tests(TestPipelineComposability)
 
 if __name__ == "__main__":
     unittest.main()
