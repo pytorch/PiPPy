@@ -717,6 +717,9 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
                     bwd_mb_index := bwd_stage_mb_index[bwd_stage]
                 ) + 1
 
+                bwd_stage._configure_data_parallel_mode(
+                    bwd_mb_index == self._n_microbatches - 1
+                )
                 logger.debug(
                     f"{self.rank}: {step=}, {fwd_stage.stage_index=}, {bwd_stage.stage_index=}, {fwd_mb_index=}, {bwd_mb_index=}"
                 )
@@ -748,7 +751,9 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
                 bwd_stage_mb_index[bwd_stage] = (
                     bwd_mb_index := bwd_stage_mb_index[bwd_stage]
                 ) + 1
-
+                bwd_stage._configure_data_parallel_mode(
+                    bwd_mb_index == self._n_microbatches - 1
+                )
                 logger.debug(
                     f"{self.rank}: {step=}, {bwd_stage.stage_index=}, {bwd_mb_index=}"
                 )

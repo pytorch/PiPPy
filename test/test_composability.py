@@ -9,6 +9,7 @@ from pippy.ManualPipelineStage import ManualPipelineStage
 from pippy.PipelineSchedule import (
     Schedule1F1B,
     ScheduleGPipe,
+    ScheduleInterleaved1F1B,
     ScheduleLoopedBFS,
 )
 from torch.distributed._composable.fsdp.fully_shard import (
@@ -197,7 +198,9 @@ class TestPipelineComposability(MultiProcessTestCase):
         ddp_pp_model.all_reduce(num_microbatches)
         print(f"{self.rank} finished all_reduce")
 
-    @parametrize("schedule_name", ["gpipe", "1f1b", "looped_bfs"])
+    @parametrize(
+        "schedule_name", ["gpipe", "1f1b", "looped_bfs", "interleaved_1f1b"]
+    )
     def test_manual_pipeline_with_fsdp(self, schedule_name):
         device_mesh, device = self._init_device_mesh(
             mesh_shape=(2, 2), mesh_dim_names=("dp", "pp")
@@ -268,7 +271,7 @@ class TestPipelineComposability(MultiProcessTestCase):
         loss_fn = lambda y, t: y.sum()
 
         # divide the model (8 layers) by the number of ranks (2)
-        if schedule_name in {"looped_bfs", "looped_dfs"}:
+        if schedule_name in {"looped_bfs", "interleaved_1f1b"}:
             n_virtual = 2
             num_stages = pp_group.size() * n_virtual
             stages = []
@@ -289,6 +292,14 @@ class TestPipelineComposability(MultiProcessTestCase):
                     n_microbatches=num_microbatches,
                     loss_fn=loss_fn,
                 )
+            elif schedule_name == "interleaved_1f1b":
+                pipeline_schedule = ScheduleInterleaved1F1B(
+                    stages,
+                    n_microbatches=num_microbatches,
+                    loss_fn=loss_fn,
+                )
+            else:
+                raise RuntimeError(f"unsupported schedule {schedule_name}")
         else:
             pipeline_stage, offset = build_stage(
                 pp_group.rank(), pp_group.size()
