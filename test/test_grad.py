@@ -71,9 +71,11 @@ def run_worker(args):
     loss_fn = torch.nn.MSELoss(reduction="sum")
 
     # Run reference
-    ref_out = ref_mod(x)
-    ref_loss = loss_fn(ref_out, target)
-    ref_loss.backward()
+    for _ in range(2):
+        ref_mod.zero_grad()
+        ref_out = ref_mod(x)
+        ref_loss = loss_fn(ref_out, target)
+        ref_loss.backward()
 
     # Create a pipeline
     pipe = pipeline(
@@ -94,13 +96,17 @@ def run_worker(args):
     schedule = ScheduleClass(stage, args.chunks, loss_fn=loss_fn)
 
     # Run
-    if args.rank == 0:
-        schedule.step(x)
-    elif args.rank == args.world_size - 1:
-        losses = []
-        out = schedule.step(target=target, losses=losses)
-    else:
-        schedule.step()
+    stage_module = pipe.get_stage_module(args.rank)
+    for _ in range(2):
+        # Zero gradients
+        stage_module.zero_grad()
+        if args.rank == 0:
+            schedule.step(x)
+        elif args.rank == args.world_size - 1:
+            losses = []
+            out = schedule.step(target=target, losses=losses)
+        else:
+            schedule.step()
 
     dist.barrier()
     print(f"Rank {args.rank} completes")
@@ -118,7 +124,6 @@ def run_worker(args):
         print("Loss test passed")
 
     # Every rank checks gradients
-    stage_module = pipe.get_stage_module(args.rank)
     for name, p in stage_module.named_parameters():
         ref_p = ref_mod.get_parameter(name)
         try:
