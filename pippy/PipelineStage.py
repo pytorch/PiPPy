@@ -155,7 +155,7 @@ class PipelineStageBase(ABC):
 
         map_aggregate(args_recv_info, map_recv_to_send)
 
-        logger.info(f"{self.log_prefix} " f"Grad send info: {grad_send_info}")
+        logger.debug(f"{self.log_prefix} " f"Grad send info: {grad_send_info}")
         return grad_send_info
 
     @abstractmethod
@@ -604,7 +604,7 @@ class _PipelineStage(PipelineStageBase):
 
             # Create a receive buffer for this placeholder
             example_value = placeholder.meta["val"]
-            logger.info(
+            logger.debug(
                 f"{self.log_prefix} "
                 f"Creating recv buffer for input '{placeholder.name}' "
                 f": {example_value.shape}, {example_value.dtype}"
@@ -630,7 +630,7 @@ class _PipelineStage(PipelineStageBase):
             recv_info = create_recv_tensor(placeholder, arg_node)
             args_recv_info.append(recv_info)
 
-        logger.info(
+        logger.debug(
             f"{self.log_prefix} "
             f"Activation recv / args info: {args_recv_info}"
         )
@@ -678,7 +678,7 @@ class _PipelineStage(PipelineStageBase):
                 if dst_rank is not None:
                     dsts.append(dst_rank)
 
-        logger.info(f"{self.log_prefix} " f"Send info: {act_send_info}")
+        logger.debug(f"{self.log_prefix} " f"Send info: {act_send_info}")
         return act_send_info
 
     def _create_grad_recv_info(
@@ -720,7 +720,7 @@ class _PipelineStage(PipelineStageBase):
 
         # Convert to tuple for convenience in get_ops and retrieve tensor
         grad_recv_info_tuple = tuple(grad_recv_info.values())
-        logger.info(
+        logger.debug(
             f"{self.log_prefix} " f"Grad recv info: {grad_recv_info_tuple}"
         )
         return grad_recv_info_tuple

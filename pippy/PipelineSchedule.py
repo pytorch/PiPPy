@@ -34,6 +34,7 @@ class PipelineSchedule(ABC):
 
         # Holds the losses for each microbatch.
         self._internal_losses: List[torch.Tensor] = []
+        logger.info(f"Using {self.__class__.__name__}")
 
     def _maybe_compute_loss(self, stage, output, target_mbs, mb_index):
         if stage.is_last and self._has_backward:
