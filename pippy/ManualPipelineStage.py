@@ -8,7 +8,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 
-from pippy.PipelineStage import (
+from .PipelineStage import (
     _make_tensor_from_meta,
     PipelineStageBase,
     RecvInfo,

@@ -12,10 +12,10 @@ from torch.distributed._composable.fsdp.fully_shard import FSDP
 from torch.fx.node import map_aggregate
 from torch.nn.parallel import DistributedDataParallel
 
-from pippy.backward import stage_backward
-from pippy.debug import map_debug_info
-from pippy.IR import Pipe
-from pippy.utils import flatten_args, modify_graph_op_device
+from .backward import stage_backward
+from .debug import map_debug_info
+from .IR import Pipe
+from .utils import flatten_args, modify_graph_op_device
 
 logger = logging.getLogger(__name__)
 
