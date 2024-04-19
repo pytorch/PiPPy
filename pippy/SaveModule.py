@@ -10,8 +10,8 @@ from typing import Dict
 import torch
 import torch.distributed as dist
 
-from pippy.IR import Pipe
-from pippy.utils import _get_binary_filename
+from .IR import Pipe
+from .utils import _get_binary_filename
 
 
 logger = logging.getLogger(__name__)

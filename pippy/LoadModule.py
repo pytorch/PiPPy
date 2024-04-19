@@ -8,7 +8,7 @@ import torch
 import torch.distributed as dist
 from torch import nn
 
-from pippy.utils import _get_binary_filename
+from .utils import _get_binary_filename
 
 
 logger = logging.getLogger(__name__)
