@@ -1,7 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 from typing import Any, Dict, List
 
-from pippy.events import (
+from .events import (
     Allocator,
     Event,
     EventDependency,
