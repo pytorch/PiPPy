@@ -92,7 +92,6 @@ def run_worker(args):
 
     # Attach to a schedule
     ScheduleClass = schedule_map[args.schedule]
-    print(f"Using {ScheduleClass.__name__}")
     schedule = ScheduleClass(stage, args.chunks, loss_fn=loss_fn)
 
     # Run
