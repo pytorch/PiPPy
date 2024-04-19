@@ -10,7 +10,11 @@ from ._IR import (
 )
 from ._PipelineStage import PipelineStage
 from .ManualPipelineStage import ManualPipelineStage
-from .ModelSplit import split_into_equal_size, split_on_size_threshold
+from .ModelSplit import (
+    split_by_graph,
+    split_into_equal_size,
+    split_on_size_threshold,
+)
 from .PipelineSchedule import (
     Schedule1F1B,
     ScheduleGPipe,
@@ -27,6 +31,7 @@ __all__ = [
     "annotate_split_points",
     "split_into_equal_size",
     "split_on_size_threshold",
+    "split_by_graph",
     "pipeline",
     "Schedule1F1B",
     "ScheduleGPipe",
