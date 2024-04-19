@@ -310,6 +310,19 @@ class PipelineStageBase(ABC):
         # Caching chunk outputs for final output merge or reduction
         self.output_chunks.clear()
 
+        # Clear grad of input buffers in between schedule steps. This is because
+        # `torch.autograd.backward()` will accumulate gradients into leaf
+        # tensors by default. For gradients to pass back to previous stages, we
+        # don't want such accumulation.
+        for (
+            recv_tuple
+        ) in self.args_recv_info.values():  # iterate over all chunks
+            for a in recv_tuple:  # iterate over all input args
+                if isinstance(a, RecvInfo):
+                    # Set to None is the newer and recommended way to clear grads, compared to `zero_()`.
+                    # See https://github.com/pytorch/pytorch/pull/92731
+                    a.buffer.grad = None
+
     def _map_tensor_from_recv_info(
         self,
         recv_infos: Tuple[InputInfo],
