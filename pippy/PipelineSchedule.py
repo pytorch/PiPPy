@@ -9,9 +9,9 @@ import torch
 import torch.distributed as dist
 from torch.profiler import record_function
 
-from pippy.IR import Pipe
-from pippy.microbatch import merge_chunks, split_args_kwargs_into_chunks
-from pippy.PipelineStage import PipelineStageBase
+from .IR import Pipe
+from .microbatch import merge_chunks, split_args_kwargs_into_chunks
+from .PipelineStage import PipelineStageBase
 
 logger = logging.getLogger(__name__)
 
