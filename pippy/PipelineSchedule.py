@@ -580,8 +580,9 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
         # TODO: is this limitation a must?
         if n_microbatches % self.pp_group_size != 0:
             raise ValueError(
-                f"Interleaved 1F1B schedule requires the number of microbatches ({n_microbatches}) \
-                to be a multiple of the number of pipeline ranks ({self.pp_group_size})."
+                "Interleaved 1F1B requires the number of microbatches to be a "
+                f"multiple of the number of pipeline ranks ({self.pp_group_size}), "
+                f"but got {n_microbatches}."
             )
 
         super().__init__(
