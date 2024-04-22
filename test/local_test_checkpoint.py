@@ -13,9 +13,7 @@ import torch.optim as optim
 from pippy.compile import compile_stage
 
 from pippy.IR import pipe_split, TrivialLossWrapper
-from pippy.LoadModule import load_checkpoint
-
-from pippy.SaveModule import save_checkpoint
+from pippy.utilities.hf_checkpoint import load_checkpoint, save_checkpoint
 
 
 DEFAULT_FILENAME = "pytorch_model.bin.index.json"
