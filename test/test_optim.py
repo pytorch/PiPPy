@@ -10,9 +10,13 @@ import torch
 import torch.distributed as dist
 import torch.optim as optim
 
-from pippy.IR import pipe_split, pipeline
-from pippy.PipelineSchedule import Schedule1F1B, ScheduleGPipe
-from pippy.PipelineStage import PipelineStage
+from pippy import (
+    pipe_split,
+    pipeline,
+    PipelineStage,
+    Schedule1F1B,
+    ScheduleGPipe,
+)
 
 
 schedule_map = {

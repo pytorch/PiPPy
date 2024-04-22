@@ -6,6 +6,8 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 
+from pippy import Schedule1F1B, ScheduleInterleaved1F1B
+
 from pippy.ManualPipelineStage import (
     create_metadata_tensor,
     extract_metadata_from_tensor,
@@ -13,8 +15,6 @@ from pippy.ManualPipelineStage import (
     ManualPipelineStage,
     validate_stage_shapes,
 )
-
-from pippy.PipelineSchedule import Schedule1F1B, ScheduleInterleaved1F1B
 
 # torch.testing._internal.common_distributed requies "expecttest"
 from torch.testing._internal.common_distributed import (

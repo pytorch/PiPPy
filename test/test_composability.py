@@ -5,8 +5,8 @@ import unittest
 import torch
 import torch.distributed as dist
 import torch.nn as nn
-from pippy.ManualPipelineStage import ManualPipelineStage
-from pippy.PipelineSchedule import (
+from pippy import (
+    ManualPipelineStage,
     Schedule1F1B,
     ScheduleGPipe,
     ScheduleInterleaved1F1B,

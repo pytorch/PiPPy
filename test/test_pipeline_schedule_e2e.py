@@ -26,8 +26,8 @@ from contextlib import contextmanager, nullcontext
 import torch
 import torch.multiprocessing as mp
 import torch.nn as nn
-from pippy.ManualPipelineStage import ManualPipelineStage
 from pippy.PipelineSchedule import (
+    ManualPipelineStage,
     Schedule1F1B,
     ScheduleGPipe,
     ScheduleInterleaved1F1B,
