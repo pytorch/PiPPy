@@ -44,9 +44,9 @@ class PipelineSchedule(ABC):
                 f"[{stage.stage_index}] Loss of microbatch {mb_index}: {loss}"
             )
 
-    def _maybe_get_loss(self, mb_index):
+    def _maybe_get_loss(self, stage, mb_index):
         valid_index = 0 <= mb_index < len(self._internal_losses)
-        if self._has_backward and valid_index:
+        if stage.is_last and self._has_backward and valid_index:
             return self._internal_losses[mb_index]
         elif len(self._internal_losses) != 0 and not valid_index:
             raise RuntimeError(
@@ -56,12 +56,17 @@ class PipelineSchedule(ABC):
         else:
             return None
 
-    def _update_losses(self, losses):
+    def _update_losses(self, stages, losses):
         """
         Update the losses to those in the internal state
         """
+        # if stages not a list turn into a list
+        if not isinstance(stages, list):
+            stages = [stages]
+        contains_last_stage = any([stage.is_last for stage in stages])
+
         # Return losses if there is a container passed in
-        if losses is not None:
+        if contains_last_stage and losses is not None:
             if len(self._internal_losses) != self._n_microbatches:
                 raise RuntimeError(
                     f"Expecting {self._n_microbatches} losses but got {len(self._internal_losses)}"
@@ -330,7 +335,7 @@ class ScheduleGPipe(PipelineScheduleSingle):
                 for work in works.values():
                     work.wait()
 
-                loss = self._maybe_get_loss(i)
+                loss = self._maybe_get_loss(self._stage, i)
                 self._stage.backward_one_chunk(loss=loss)
 
                 ops = self._stage.get_bwd_send_ops()
@@ -342,7 +347,7 @@ class ScheduleGPipe(PipelineScheduleSingle):
             )
 
         # Return losses if there is a container passed in
-        self._update_losses(losses)
+        self._update_losses(self._stage, losses)
 
         # Wait for all backward sends to finish
         for work in bwd_sends_to_wait:
@@ -423,7 +428,7 @@ class Schedule1F1B(PipelineScheduleSingle):
                     for work in works.values():
                         work.wait()
 
-                    loss = self._maybe_get_loss(bwd_mb_index)
+                    loss = self._maybe_get_loss(self._stage, bwd_mb_index)
                     self._stage.backward_one_chunk(loss=loss)
 
                     ops = self._stage.get_bwd_send_ops()
@@ -440,7 +445,7 @@ class Schedule1F1B(PipelineScheduleSingle):
             work.wait()
 
         # Return losses if there is a container passed in
-        self._update_losses(losses)
+        self._update_losses(self._stage, losses)
 
 
 class PipelineScheduleMulti(PipelineSchedule):
@@ -553,14 +558,14 @@ class ScheduleLoopedBFS(PipelineScheduleMulti):
                     if ops:
                         dist.batch_isend_irecv(ops).pop().wait()
 
-                    loss = self._maybe_get_loss(i)
+                    loss = self._maybe_get_loss(stage, i)
                     stage.backward_one_chunk(loss=loss)
 
                     ops = stage.get_bwd_send_ops()
                     if ops:
                         dist.batch_isend_irecv(ops)
 
-        self._update_losses(losses)
+        self._update_losses(self._stages, losses)
 
 
 class ScheduleInterleaved1F1B(PipelineScheduleMulti):
@@ -739,7 +744,7 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
                     )
 
                     # bwd
-                    loss = self._maybe_get_loss(bwd_mb_index)
+                    loss = self._maybe_get_loss(bwd_stage, bwd_mb_index)
                     bwd_stage.backward_one_chunk(loss=loss)
                     ops.extend(bwd_stage.get_bwd_send_ops())
 
@@ -764,7 +769,7 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
                     for work in works.values():
                         work.wait()
 
-                    loss = self._maybe_get_loss(bwd_mb_index)
+                    loss = self._maybe_get_loss(bwd_stage, bwd_mb_index)
                     bwd_stage.backward_one_chunk(loss=loss)
 
                     ops = bwd_stage.get_bwd_send_ops()
@@ -776,4 +781,4 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
             work.wait()
 
         # Return losses if there is a container passed in
-        self._update_losses(losses)
+        self._update_losses(self._stages, losses)
