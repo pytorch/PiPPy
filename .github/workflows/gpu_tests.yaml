@@ -100,3 +100,5 @@ jobs:
         run: torchrun --nproc-per-node 4 test/test_optim.py --schedule ${{ matrix.schedule }}
       - name: Test gradient equivalence
         run: torchrun --nproc-per-node 4 test/test_grad.py --schedule ${{ matrix.schedule }}
+      - name: Test interleaving schedules
+        run: torchrun --nproc-per-node 4 test/test_interleave.py --schedule ${{ matrix.schedule }}

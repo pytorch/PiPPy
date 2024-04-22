@@ -26,18 +26,7 @@ class TransformerLike(torch.nn.Module):
     def __init__(self) -> None:
         super().__init__()
         self.layers = torch.nn.Sequential(
-            *[
-                # torch.nn.TransformerEncoderLayer(
-                #     d_model=16,
-                #     nhead=4,
-                #     dim_feedforward=16,
-                #     batch_first=True,
-                #     activation="gelu",
-                #     dropout=0.0,
-                # )
-                MLPModule(d_hid)
-                for _ in range(n_layers)
-            ]
+            *[MLPModule(d_hid) for _ in range(n_layers)]
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
