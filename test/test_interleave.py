@@ -100,7 +100,7 @@ def run_worker(args):
         ref_out = model(x)
         ref_loss = loss_fn(ref_out, target)
         pipe_loss = sum(losses)
-        torch.testing.assert_close(out, ref_out, rtol=1e-2, atol=5e-3)
+        torch.testing.assert_close(out, ref_out, rtol=1e-3, atol=1e-4)
         torch.testing.assert_close(pipe_loss, ref_loss)
         print(
             f"equivalence test passed pipe_loss={pipe_loss} ref_loss={ref_loss}"
