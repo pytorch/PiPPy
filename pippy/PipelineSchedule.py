@@ -621,7 +621,9 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
         # increment warmup_steps by 2 for each hop away
         warmup_steps = (self.n_local_stages - 1) * self.pp_group_size
         warmup_steps += 2 * ((self.pp_group_size - 1) - self.rank)
-        warmup_steps = min(warmup_steps, self._n_microbatches * self.n_local_stages)
+        warmup_steps = min(
+            warmup_steps, self._n_microbatches * self.n_local_stages
+        )
         fwd_bwd_steps = (
             self.n_local_stages * self._n_microbatches
         ) - warmup_steps
