@@ -130,7 +130,7 @@ def main(args=None):
     parser.add_argument(
         "--schedule",
         type=str,
-        default="dfs",
+        default="1f1b",
         choices=schedule_map.keys(),
     )
     args = parser.parse_args(args)
