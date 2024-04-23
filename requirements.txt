@@ -1,2 +1,1 @@
 torch >= 2.3.0.dev
-packaging >= 21.3

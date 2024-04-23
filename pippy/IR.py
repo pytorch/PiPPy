@@ -10,7 +10,6 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.fx as fx
-from packaging import version
 from torch.export import ExportedProgram
 from torch.fx.node import map_aggregate
 from torch.fx.passes.split_module import split_module
@@ -29,22 +28,9 @@ from .utils import QualnameMapMixin
 
 logger = logging.getLogger(__name__)
 
-# Because split_module with 4 arguments is available only in PT 1.12+
-TORCH_FX_REQUIRED_VERSION = version.parse("1.12")
-
-torch_version = version.parse(torch.__version__)
-assert (torch_version.major, torch_version.minor) >= (  # type: ignore
-    TORCH_FX_REQUIRED_VERSION.major,  # type: ignore
-    TORCH_FX_REQUIRED_VERSION.minor,  # type: ignore
-), "PiPPy requires PyTorch >= 1.12"
-
 # TODO:
 # 1. investigate gradient sync for shared parameters. how does DDP do it?
-# 2. Modify serialization to put parameters back in their original qualname form?
-# 3. Shape specialized tracing?
-# 4. Can we define semantics for shared module call? Can we make this configurable in the same way as
-#    with shared parameters? probably need to modify split_module in this case
-# 5. Add parameter movement to split_module
+# 2. Add parameter movement to split_module
 
 
 def _find_loss_from_output_and_spec(output_val, spec_val):
@@ -931,110 +917,49 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
             if node.op == "get_attr" and len(node.users) > 1:
                 multi_use_params_qualnames.setdefault(node.target)
 
-        # TODO: re-enable support for multi-use parameters
-        assert len(multi_use_params_qualnames) == 0
-
-        """
-        for param in multi_use_params_qualnames:
-            if isinstance(multi_use_param_spec, MultiUseParameterConfig):
-                multi_use_params_qualnames[param] = multi_use_param_spec
-            elif isinstance(multi_use_param_spec, dict):
-                multi_use_params_qualnames[param] = multi_use_param_spec.get(
-                    param, MultiUseParameterConfig.TRANSMIT
-                )
-            else:
-                raise ValueError(
-                    "multi_use_param_spec must be MultiUseParamSpec enum or dict"
-                )
-
-        # TODO: do we maintain the invariant that `Node.users` is topologically ordered? I don't think so
-        node_to_first_user: Dict[fx.Node, fx.Node] = {}
-        for node in split.graph.nodes:
-            for input in node.all_input_nodes:
-                if input not in node_to_first_user:
-                    node_to_first_user[input] = node
-
-        for node in split.graph.nodes:
-            if (
-                node.op == "get_attr"
-                and node.target in multi_use_params_qualnames
-            ):
-                reuse_type = multi_use_params_qualnames[node.target]
-                if reuse_type == MultiUseParameterConfig.TRANSMIT:
-                    first_user = node_to_first_user[node]
-                    assert first_user.op == "call_module"
-
-                    use_idx = delete_user_reference(
-                        node, first_user, delete_node=False
+        def set_multi_use_param_spec(
+            multi_use_params_qualnames,
+            multi_use_param_spec,
+        ):
+            for param in multi_use_params_qualnames:
+                if isinstance(multi_use_param_spec, MultiUseParameterConfig):
+                    multi_use_params_qualnames[param] = multi_use_param_spec
+                elif isinstance(multi_use_param_spec, dict):
+                    multi_use_params_qualnames[
+                        param
+                    ] = multi_use_param_spec.get(
+                        param, MultiUseParameterConfig.TRANSMIT
+                    )
+                else:
+                    raise ValueError(
+                        "multi_use_param_spec must be MultiUseParamSpec enum or dict"
                     )
 
-                    atoms = node.target.split(".")
-                    mod_itr = split
-                    for atom in atoms[:-1]:
-                        mod_itr = getattr(mod_itr, atom)
-                    param_val = getattr(mod_itr, atoms[-1])
-                    is_buffer = atoms[-1] in mod_itr._buffers
+        def handle_multi_use_params(
+            split,
+            multi_use_params_qualnames,
+        ):
+            # TODO: do we maintain the invariant that `Node.users` is topologically ordered? I don't think so
+            node_to_first_user: Dict[fx.Node, fx.Node] = {}
+            for node in split.graph.nodes:
+                for input in node.all_input_nodes:
+                    if input not in node_to_first_user:
+                        node_to_first_user[input] = node
 
-                    callee_param_def = move_param_to_callee(
-                        split, first_user.target, param_val, use_idx, is_buffer
-                    )
+            for node in split.graph.nodes:
+                if (
+                    node.op == "get_attr"
+                    and node.target in multi_use_params_qualnames
+                ):
+                    reuse_type = multi_use_params_qualnames[node.target]
+                    if reuse_type == MultiUseParameterConfig.TRANSMIT:
+                        first_user = node_to_first_user[node]
+                        assert first_user.op == "call_module"
 
-                    delattr(mod_itr, atoms[-1])
-
-                    # Add extra output to the callee and switch references to the parameter
-                    # access in the pipeline graph to use this.
-                    submod = split.get_submodule(first_user.target)
-                    callee_output_nodes = [
-                        n for n in submod.graph.nodes if n.op == "output"
-                    ]
-                    assert len(callee_output_nodes) == 1
-                    callee_output_node = callee_output_nodes[0]
-
-                    # TODO: zero outputs?
-                    if isinstance(callee_output_node.args[0], tuple):
-                        new_output_args = callee_output_node.args[0] + (
-                            callee_param_def,
-                        )
-                        callee_output_node.args = (new_output_args,)
-                        new_output_idx = len(new_output_args) - 1
-                        promoted_to_tuple = False
-                    else:
-                        new_output_args = (
-                            callee_output_node.args[0],
-                            callee_param_def,
-                        )
-                        callee_output_node.args = (new_output_args,)
-                        new_output_idx = len(new_output_args) - 1
-                        promoted_to_tuple = True
-
-                    submod.graph.lint()
-                    submod.recompile()
-
-                    with split.graph.inserting_after(first_user):
-                        if promoted_to_tuple:
-                            # TODO: test this code path
-                            orig_output_getitem = split.graph.call_function(
-                                operator.getitem, (first_user, 0)
-                            )
-                            first_user.replace_all_uses_with(
-                                orig_output_getitem
-                            )
-                            # HACK because the above replace_all_uses with ALSO replaced the instance
-                            # of first_user within the getitem node we just added
-                            orig_output_getitem.args = (
-                                first_user,
-                            ) + orig_output_getitem.args[1:]
-
-                        transmitted_value_getitem = split.graph.call_function(
-                            operator.getitem, (first_user, new_output_idx)
-                        )
-                        node.replace_all_uses_with(transmitted_value_getitem)
-                        split.graph.erase_node(node)
-                elif reuse_type == MultiUseParameterConfig.REPLICATE:
-                    for user in copy.copy(node.users):
                         use_idx = delete_user_reference(
-                            node, user, delete_node=False
+                            node, first_user, delete_node=False
                         )
+
                         atoms = node.target.split(".")
                         mod_itr = split
                         for atom in atoms[:-1]:
@@ -1042,23 +967,114 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
                         param_val = getattr(mod_itr, atoms[-1])
                         is_buffer = atoms[-1] in mod_itr._buffers
 
-                        move_param_to_callee(
-                            split, user.target, param_val, use_idx, is_buffer
+                        callee_param_def = move_param_to_callee(  # type: ignore[call-arg]
+                            split,
+                            first_user.target,
+                            param_val,
+                            use_idx,
+                            is_buffer,
                         )
 
-                    atoms = node.target.split(".")
-                    mod_itr = split
-                    for atom in atoms[:-1]:
-                        mod_itr = getattr(mod_itr, atom)
+                        delattr(mod_itr, atoms[-1])
 
-                    delattr(mod_itr, atoms[-1])
+                        # Add extra output to the callee and switch references to the parameter
+                        # access in the pipeline graph to use this.
+                        submod = split.get_submodule(first_user.target)
+                        callee_output_nodes = [
+                            n for n in submod.graph.nodes if n.op == "output"
+                        ]
+                        assert len(callee_output_nodes) == 1
+                        callee_output_node = callee_output_nodes[0]
 
-                    split.graph.erase_node(node)
-                else:
-                    raise ValueError(
-                        f"Unknown multi-use config value {reuse_type} specified for {node.target}"
-                    )
-        """
+                        # TODO: zero outputs?
+                        if isinstance(callee_output_node.args[0], tuple):
+                            new_output_args = callee_output_node.args[0] + (
+                                callee_param_def,
+                            )
+                            callee_output_node.args = (new_output_args,)
+                            new_output_idx = len(new_output_args) - 1
+                            promoted_to_tuple = False
+                        else:
+                            new_output_args = (
+                                callee_output_node.args[0],
+                                callee_param_def,
+                            )
+                            callee_output_node.args = (new_output_args,)
+                            new_output_idx = len(new_output_args) - 1
+                            promoted_to_tuple = True
+
+                        submod.graph.lint()
+                        submod.recompile()
+
+                        with split.graph.inserting_after(first_user):
+                            if promoted_to_tuple:
+                                # TODO: test this code path
+                                orig_output_getitem = split.graph.call_function(
+                                    operator.getitem, (first_user, 0)
+                                )
+                                first_user.replace_all_uses_with(
+                                    orig_output_getitem
+                                )
+                                # HACK because the above replace_all_uses with ALSO replaced the instance
+                                # of first_user within the getitem node we just added
+                                orig_output_getitem.args = (
+                                    first_user,
+                                ) + orig_output_getitem.args[1:]
+
+                            transmitted_value_getitem = (
+                                split.graph.call_function(
+                                    operator.getitem,
+                                    (first_user, new_output_idx),
+                                )
+                            )
+                            node.replace_all_uses_with(
+                                transmitted_value_getitem
+                            )
+                            split.graph.erase_node(node)
+                    elif reuse_type == MultiUseParameterConfig.REPLICATE:
+                        for user in copy.copy(node.users):
+                            use_idx = delete_user_reference(
+                                node, user, delete_node=False
+                            )
+                            atoms = node.target.split(".")
+                            mod_itr = split
+                            for atom in atoms[:-1]:
+                                mod_itr = getattr(mod_itr, atom)
+                            param_val = getattr(mod_itr, atoms[-1])
+                            is_buffer = atoms[-1] in mod_itr._buffers
+
+                            move_param_to_callee(  # type: ignore[call-arg]
+                                split,
+                                user.target,
+                                param_val,
+                                use_idx,
+                                is_buffer,
+                            )
+
+                        atoms = node.target.split(".")
+                        mod_itr = split
+                        for atom in atoms[:-1]:
+                            mod_itr = getattr(mod_itr, atom)
+
+                        delattr(mod_itr, atoms[-1])
+
+                        split.graph.erase_node(node)
+                    else:
+                        raise ValueError(
+                            f"Unknown multi-use config value {reuse_type} specified for {node.target}"
+                        )
+
+        if len(multi_use_params_qualnames) > 0:
+            # TODO: re-enable support for multi-use parameters
+            raise NotImplementedError(
+                "Sharing model parameters between stages are not yet supported. "
+                "Found the following shared parameters in your model: "
+                f"{multi_use_params_qualnames}"
+            )
+            set_multi_use_param_spec(
+                multi_use_params_qualnames, multi_use_param_spec
+            )
+            handle_multi_use_params(split, multi_use_params_qualnames)
 
         split.delete_all_unused_submodules()
         split.graph.lint()
@@ -1283,18 +1299,6 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
 class SplitPoint(Enum):
     BEGINNING = 1
     END = 2
-
-
-def _split_before_forwad(self, *args, **kwargs):
-    pipe_split()
-    return self.orig_forward(*args, **kwargs)
-
-
-def _split_after_forwad(self, *args, **kwargs):
-    try:
-        return self.orig_forward(*args, **kwargs)
-    finally:
-        pipe_split()
 
 
 # For backward compatibility, we kept the PipeSplitWrapper class because `class

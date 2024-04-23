@@ -46,7 +46,6 @@ requirements = [
     # If the torch version has a ".dev" suffix, it would represent a nightly version of PyTorch.
     # It can be installed as a binary or from source.
     "torch>=2.3.0.dev",
-    "packaging>=21.3",
 ]
 
 extras: Dict = {}
