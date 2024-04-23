@@ -11,6 +11,9 @@ logger = logging.getLogger(__name__)
 
 
 def flatten_args_detach(args):
+    """
+    Flatten the args into a list form and detach the tensors from computational graph.
+    """
     flat_detached_args = []
 
     def extract_tensor_args(a):
@@ -23,20 +26,18 @@ def flatten_args_detach(args):
             flat_detached_args.append(a)
             return a
 
-    """
-    def dont_traverse_size(a):
-        return type(a) != torch.Size
-    """
-
     new_args = fx.node.map_aggregate(
         args,
-        extract_tensor_args,  # dont_traverse_size
+        extract_tensor_args,
     )
 
     return new_args, flat_detached_args
 
 
 def flatten_args(args):
+    """
+    Flatten the args into a list form.
+    """
     flat_args = []
 
     def extract_tensor_args(a):
@@ -44,14 +45,9 @@ def flatten_args(args):
         flat_args.append(a)
         return a
 
-    """
-    def dont_traverse_size(a):
-        return type(a) != torch.Size
-    """
-
     fx.node.map_aggregate(
         args,
-        extract_tensor_args,  # dont_traverse_size
+        extract_tensor_args,
     )
 
     return flat_args
@@ -61,6 +57,11 @@ def modify_graph_op_device(
     gm: torch.fx.GraphModule,
     new_device: torch.device,
 ):
+    """
+    Modify the device argument of all "call_function" nodes in the graph.  This
+    is useful for moving the graph to a different device. In particular for
+    generator ops, like torch.ones.
+    """
     modified = False
     for node in gm.graph.nodes:
         if node.op == "call_function":
@@ -89,8 +90,8 @@ def modify_graph_op_device(
 
 class QualnameMapMixin:
     """
-    A mixin class to provide qualname remap functionality for both Pipe object
-    and submodules
+    A mixin class that helps a `Pipe` object to remap its qualnames back to
+    original qualnames.
     """
 
     def __init__(
