@@ -3,7 +3,7 @@ import unittest
 
 import torch
 
-from pippy.IR import ArgsChunkSpec, KwargsChunkSpec, pipe_split, pipeline
+from pippy import ArgsChunkSpec, KwargsChunkSpec, pipe_split, pipeline
 
 
 d_hid = 512

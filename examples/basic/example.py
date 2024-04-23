@@ -4,10 +4,7 @@
 
 import os
 import torch
-from pippy import pipeline
-from pippy.IR import annotate_split_points, SplitPoint
-from pippy.PipelineSchedule import ScheduleGPipe
-from pippy.PipelineStage import PipelineStage
+from pippy import pipeline, annotate_split_points, SplitPoint, ScheduleGPipe, PipelineStage
 
 in_dim = 512
 layer_dims = [512, 1024, 256]

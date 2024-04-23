@@ -6,12 +6,14 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 
-from pippy import pipeline
-from pippy.IR import annotate_split_points, SplitPoint
-
-from pippy.ManualPipelineStage import ManualPipelineStage
-from pippy.PipelineSchedule import ScheduleGPipe
-from pippy.PipelineStage import PipelineStage
+from pippy import (
+    annotate_split_points,
+    ManualPipelineStage,
+    pipeline,
+    PipelineStage,
+    ScheduleGPipe,
+    SplitPoint,
+)
 
 # torch.testing._internal.common_distributed requires "expecttest"
 from torch.testing._internal.common_distributed import MultiProcessTestCase

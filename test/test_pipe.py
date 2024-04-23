@@ -4,7 +4,7 @@ import unittest
 
 import torch
 
-from pippy.IR import pipe_split, pipeline
+from pippy import pipe_split, pipeline
 
 
 d_hid = 512

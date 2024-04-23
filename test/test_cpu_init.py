@@ -7,8 +7,7 @@ import pippy
 
 import torch
 import torch.distributed as dist
-from pippy.IR import pipe_split, pipeline
-from pippy.PipelineStage import PipelineStage
+from pippy import pipe_split, pipeline, PipelineStage
 
 
 pippy.microbatch._debug_mask_minibatches = True

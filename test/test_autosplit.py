@@ -7,9 +7,7 @@ import pippy
 
 import torch
 import torch.distributed as dist
-from pippy import pipeline, split_into_equal_size
-from pippy.PipelineSchedule import ScheduleGPipe
-from pippy.PipelineStage import PipelineStage
+from pippy import pipeline, PipelineStage, ScheduleGPipe, split_into_equal_size
 
 
 pippy.microbatch._debug_mask_minibatches = True
