@@ -925,7 +925,9 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
                 if isinstance(multi_use_param_spec, MultiUseParameterConfig):
                     multi_use_params_qualnames[param] = multi_use_param_spec
                 elif isinstance(multi_use_param_spec, dict):
-                    multi_use_params_qualnames[param] = multi_use_param_spec.get(
+                    multi_use_params_qualnames[
+                        param
+                    ] = multi_use_param_spec.get(
                         param, MultiUseParameterConfig.TRANSMIT
                     )
                 else:
@@ -934,7 +936,8 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
                     )
 
         def handle_multi_use_params(
-            split, multi_use_params_qualnames,
+            split,
+            multi_use_params_qualnames,
         ):
             # TODO: do we maintain the invariant that `Node.users` is topologically ordered? I don't think so
             node_to_first_user: Dict[fx.Node, fx.Node] = {}
@@ -964,8 +967,12 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
                         param_val = getattr(mod_itr, atoms[-1])
                         is_buffer = atoms[-1] in mod_itr._buffers
 
-                        callee_param_def = move_param_to_callee(
-                            split, first_user.target, param_val, use_idx, is_buffer
+                        callee_param_def = move_param_to_callee(  # type: ignore[call-arg]
+                            split,
+                            first_user.target,
+                            param_val,
+                            use_idx,
+                            is_buffer,
                         )
 
                         delattr(mod_itr, atoms[-1])
@@ -1014,10 +1021,15 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
                                     first_user,
                                 ) + orig_output_getitem.args[1:]
 
-                            transmitted_value_getitem = split.graph.call_function(
-                                operator.getitem, (first_user, new_output_idx)
+                            transmitted_value_getitem = (
+                                split.graph.call_function(
+                                    operator.getitem,
+                                    (first_user, new_output_idx),
+                                )
                             )
-                            node.replace_all_uses_with(transmitted_value_getitem)
+                            node.replace_all_uses_with(
+                                transmitted_value_getitem
+                            )
                             split.graph.erase_node(node)
                     elif reuse_type == MultiUseParameterConfig.REPLICATE:
                         for user in copy.copy(node.users):
@@ -1031,8 +1043,12 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
                             param_val = getattr(mod_itr, atoms[-1])
                             is_buffer = atoms[-1] in mod_itr._buffers
 
-                            move_param_to_callee(
-                                split, user.target, param_val, use_idx, is_buffer
+                            move_param_to_callee(  # type: ignore[call-arg]
+                                split,
+                                user.target,
+                                param_val,
+                                use_idx,
+                                is_buffer,
                             )
 
                         atoms = node.target.split(".")
@@ -1055,7 +1071,9 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
                 "Found the following shared parameters in your model: "
                 f"{multi_use_params_qualnames}"
             )
-            set_multi_use_param_spec(multi_use_params_qualnames, multi_use_param_spec)
+            set_multi_use_param_spec(
+                multi_use_params_qualnames, multi_use_param_spec
+            )
             handle_multi_use_params(split, multi_use_params_qualnames)
 
         split.delete_all_unused_submodules()
