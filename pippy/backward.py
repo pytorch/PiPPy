@@ -13,6 +13,10 @@ def stage_backward(
     outputs_with_grads_idxs: Optional[List[int]] = None,  # deprecated, not used
 ):
     """
+    This is a helper function to:
+    1. compute the gradients for the stage inputs, and
+    2. accumulate gradients for the stage module's parameters.
+
     Given the input value(s) and the corresponding gradient for the output
     value(s), compute and accumulate gradients for all parameter values (leaves
     in the autograd trace) as well as return a list of the gradients for the
@@ -101,6 +105,10 @@ def stage_backward(
 # TODO: handling requires_grad=False dynamically. Can we analyze this during initial
 # IR emission?
 def _null_coalesce_accumulate(lhs, rhs):
+    """
+    Coalesce two values, even if one of them is null, returning the non-null
+    value.
+    """
     if lhs is None:
         return rhs
     elif rhs is None:
