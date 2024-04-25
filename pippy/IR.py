@@ -14,16 +14,16 @@ from torch.export import ExportedProgram
 from torch.fx.node import map_aggregate
 from torch.fx.passes.split_module import split_module
 
-from .backward import _null_coalesce_accumulate, stage_backward
-from .debug import PIPPY_VERBOSITY
-from .microbatch import split_args_kwargs_into_chunks, TensorChunkSpec
-from .unflatten import (
+from ._backward import _null_coalesce_accumulate, stage_backward
+from ._debug import PIPPY_VERBOSITY
+from ._unflatten import (
     _assign_attr,
     _AttrKind,
     _outline_submodules,
     _sink_params,
 )
-from .utils import QualnameMapMixin
+from ._utils import QualnameMapMixin
+from .microbatch import split_args_kwargs_into_chunks, TensorChunkSpec
 
 
 logger = logging.getLogger(__name__)
