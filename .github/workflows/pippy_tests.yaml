@@ -89,6 +89,11 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cpu/torch_nightly.html; fi
       - name: Install pippy
         run: "python setup.py install"
+      # Util tests
+      - name: Test stage backward helper function
+        run: python test/test_stage_backward.py
+      - name: Test microbatch function
+        run: python test/test_microbatch.py
       # IR tests
       - name: Test forward pipe generation
         run: python test/test_pipe.py
@@ -98,12 +103,11 @@ jobs:
         run: python test/test_unflatten.py
       - name: Test Transformer
         run: python test/test_transformer.py
-      - name: Test pipeline schedule
-        run: python test/test_pipeline_schedule.py
       - name: Test args chunking spec
         run: python test/test_chunkspec.py
-      - name: Test stage backward helper function
-        run: python test/test_stage_backward.py
+      # Runtime tests
+      - name: Test pipeline schedule
+        run: python test/test_pipeline_schedule.py
       # - name: Run null_coalesce_accumulate integration test
       #   run: python test/local_test_null_coalesce_accumulate.py --replicate ${{ matrix.replicate }} --schedule ${{ matrix.schedule }}
       # - name: Run PP + DDP test
