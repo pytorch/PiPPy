@@ -1,5 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
 import logging
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 from torch.utils._pytree import tree_flatten, tree_unflatten
@@ -16,6 +17,17 @@ _debug_mask_minibatches = False
 
 
 class CustomReducer:
+    """
+    Custom reducer class that can be used to specify a custom operation that
+    reduces losses of multiple microbatches into one value.
+
+    Example:
+        >>> sum_reducer = CustomReducer(
+        >>>     torch.tensor(0.0),
+        >>>     lambda a, b: a + b
+        >>> )
+    """
+
     def __init__(self, init_value, reduce_fn):
         self.init_value = init_value
         self.reduce_fn = reduce_fn
@@ -27,6 +39,8 @@ class LossReducer(CustomReducer):
 
 sum_reducer = LossReducer(torch.tensor(0.0), lambda a, b: a + b)
 
+# Default chunking dimension is 0. This is used for the case where the user did
+# not specify a chunking dimension.
 DEFAULT_CHUNK_DIM = 0
 
 
@@ -49,11 +63,23 @@ class Replicate:
     pass
 
 
-def shard_dict_of_args(
+def _shard_dict_of_args(
     args_dict,
     args_chunk_spec,
     num_chunks,
 ):
+    """
+    Given a dictionary of args, and a dictionary of chunking specs, shard the
+    args according to the chunking specs.
+
+    Args:
+        args_dict: Dictionary of args
+        args_chunk_spec: Dictionary of chunking specs
+        num_chunks: Number of chunks to shard the args into
+
+    Returns:
+        args_split: List of sharded args
+    """
     # Stage 1+2: flatten and shard/replicate
 
     # args_sharded_replicated : [num args, num flat values, num chunks]
@@ -72,16 +98,13 @@ def shard_dict_of_args(
         arg_specs.append(spec)
 
         chunk_spec = args_chunk_spec[arg_key]
-        if chunk_spec is not None:
-            chunk_spec_flat, _ = tree_flatten(chunk_spec)
-            if len(flat) != len(chunk_spec_flat):
-                raise ValueError(
-                    f"Argument value {arg} did not have the same number of "
-                    f"values as as chunk spec {chunk_spec}"
-                )
-        else:
-            # If user did not provide an args_chunk_spec, we would use a default spec which chunks along dim 0
-            chunk_spec_flat = [TensorChunkSpec(DEFAULT_CHUNK_DIM)] * len(flat)
+        assert chunk_spec is not None  # Should have been set by caller
+        chunk_spec_flat, _ = tree_flatten(chunk_spec)
+        if len(flat) != len(chunk_spec_flat):
+            raise ValueError(
+                f"Argument value {arg} did not have the same number of "
+                f"values as as chunk spec {chunk_spec}"
+            )
 
         sharded_arg_flat = []
 
@@ -172,12 +195,27 @@ def shard_dict_of_args(
 
 
 def split_args_kwargs_into_chunks(
-    args,
-    kwargs,
-    chunks,
-    args_chunk_spec=None,
-    kwargs_chunk_spec=None,
-):
+    args: Tuple[Any, ...],
+    kwargs: Optional[Dict[str, Any]],
+    chunks: int,
+    args_chunk_spec: Optional[Tuple[TensorChunkSpec, ...]] = None,
+    kwargs_chunk_spec: Optional[Dict[str, TensorChunkSpec]] = None,
+) -> Tuple[List[Tuple], List[Dict]]:
+    """
+    Given a sequence of args and kwargs, split them into a number of chunks
+    according to  their respective chunking specs.
+
+    Args:
+        args: Tuple of args
+        kwargs: Dict of kwargs
+        chunks: Number of chunks to split the args and kwargs into
+        args_chunk_spec: chunking specs for args, in same shape as args
+        kwargs_chunk_spec: chunking specs for kwargs, in same shape as kwargs
+
+    Returns:
+        args_split: List of sharded args
+        kwargs_split: List of sharded kwargs
+    """
     # Given `args` and `kwargs`, we want to yield a set of `chunks` args and kwargs such that
     # the constituent Tensor values have been sharded/replicated according to the `args_chunk_spec`
     # and `kwargs_chunk_spec` specifications. The steps are as follows:
@@ -211,23 +249,28 @@ def split_args_kwargs_into_chunks(
     #       ]
 
     # TODO: _debug_mask_minibatches
+    # Handle the case where kwargs is None
+    if kwargs is None:
+        kwargs = {}
 
-    # If user did not provide args_chunk_spec or kwargs_chunk_spec, we extend their format for use by
-    # `shard_dict_of_args`
+    # If user did not provide args_chunk_spec or kwargs_chunk_spec, we extend
+    # their format and use default chunking along dim 0
     if args_chunk_spec is None:
-        args_chunk_spec = [None] * len(args)
+        args_chunk_spec = (TensorChunkSpec(DEFAULT_CHUNK_DIM),) * len(args)
 
     if kwargs_chunk_spec is None:
-        kwargs_chunk_spec = dict.fromkeys(kwargs, None)
+        kwargs_chunk_spec = dict.fromkeys(
+            kwargs, TensorChunkSpec(DEFAULT_CHUNK_DIM)
+        )
 
-    args_split_dict = shard_dict_of_args(
+    args_split_dict = _shard_dict_of_args(
         dict(enumerate(args)),
         dict(enumerate(args_chunk_spec)),
         chunks,
     )
     real_num_chunks = len(args_split_dict)
 
-    kwargs_split = shard_dict_of_args(
+    kwargs_split = _shard_dict_of_args(
         kwargs,
         kwargs_chunk_spec,
         real_num_chunks,
@@ -238,7 +281,7 @@ def split_args_kwargs_into_chunks(
         # e.g. when `args` has no tensor, just values
         real_num_chunks = len(kwargs_split)
         # Re-shard args
-        args_split_dict = shard_dict_of_args(
+        args_split_dict = _shard_dict_of_args(
             dict(enumerate(args)),
             dict(enumerate(args_chunk_spec)),
             real_num_chunks,
@@ -257,11 +300,23 @@ def split_args_kwargs_into_chunks(
     return args_split, kwargs_split
 
 
-def merge_chunks(chunks, chunk_spec):
-    # Given a list of chunks and a chunk specification, merge the chunks
-    # into a single value according to that chunk spec. This is essentially
-    # the inverse of `split_args_kwargs_into_chunks`, so the steps are
-    # similar to the steps in that function but in reverse. Given the
+def merge_chunks(
+    chunks: List[Any],
+    chunk_spec,
+):
+    """
+    Given a list of chunks, merge them into a single value according to
+    the chunk spec.
+
+    Args:
+        chunks: list of chunks
+        chunk_spec: Chunking spec for the chunks
+
+    Returns:
+        value: Merged value
+    """
+    # This is essentially the inverse of `split_args_kwargs_into_chunks`, so the
+    # steps are similar to the steps in that function but in reverse. Given the
     # input values:
     #
     #       chunks = [
@@ -375,29 +430,3 @@ def merge_chunks(chunks, chunk_spec):
 
     # Stage 4: Unflatten combined args
     return tree_unflatten(args_flattened, flatten_spec)
-
-
-# TODO: determine if we still need this helper
-"""
-def gen_output_chunk_spec(loss_spec, loss_reducer):
-    output_chunk_spec: Any = None
-    if loss_spec is None:
-        pass
-    elif loss_spec == TrivialLossWrapper.loss_spec:
-        output_chunk_spec = loss_reducer
-    elif isinstance(loss_spec, dict):
-        output_chunk_spec = {
-            k: loss_reducer
-            if loss_spec[k]
-            else TensorChunkSpec(DEFAULT_CHUNK_DIM)
-            for k in loss_spec
-        }
-    else:
-        raise ValueError(f"Cannot generate output chunk spec for {loss_spec}")
-
-    logger.info(
-        f"Generated output_chunk_spec for loss_spec {loss_spec}: "
-        f"{output_chunk_spec}"
-    )
-    return output_chunk_spec
-"""
