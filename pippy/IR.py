@@ -1169,11 +1169,6 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
             )
         """
 
-        # Get split example inputs
-        if example_kwargs is None:
-            # Needed by `split_args_kwargs_into_chunks`
-            example_kwargs = {}
-
         args_split, kwargs_split = split_args_kwargs_into_chunks(
             example_args,
             example_kwargs,
