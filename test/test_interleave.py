@@ -6,7 +6,14 @@ import unittest
 import torch
 import torch.distributed as dist
 
-from pippy import annotate_split_points, pipeline, SplitPoint, ScheduleInterleaved1F1B, ScheduleLoopedBFS, PipelineStage
+from pippy import (
+    annotate_split_points,
+    pipeline,
+    PipelineStage,
+    ScheduleInterleaved1F1B,
+    ScheduleLoopedBFS,
+    SplitPoint,
+)
 
 # Using same key words as single-stage tests for convenience in CI.
 schedule_map = {
