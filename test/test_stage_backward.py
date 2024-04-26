@@ -4,7 +4,7 @@ import unittest
 
 import torch
 
-from pippy.backward import stage_backward
+from pippy._backward import stage_backward
 
 
 d_hid = 512
