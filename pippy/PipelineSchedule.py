@@ -625,11 +625,16 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
 
         # warmup steps for latest pp stage is trivial to compute
         # increment warmup_steps by 2 for each hop away
-        warmup_steps = (self.n_local_stages - 1) * self.pp_group_size
-        warmup_steps += 2 * ((self.pp_group_size - 1) - self.rank)
-        warmup_steps = min(
-            warmup_steps, self._n_microbatches * self.n_local_stages
-        )
+        warmup_steps_all_ranks = []
+        for rank in range(self.pp_group_size):
+            warmup_steps = (self.n_local_stages - 1) * self.pp_group_size
+            warmup_steps += 2 * ((self.pp_group_size - 1) - rank)
+            warmup_steps = min(
+                warmup_steps, self._n_microbatches * self.n_local_stages
+            )
+            warmup_steps_all_ranks.append(warmup_steps)
+
+        warmup_steps = warmup_steps_all_ranks[self.rank]
         fwd_bwd_steps = (
             self.n_local_stages * self._n_microbatches
         ) - warmup_steps
@@ -669,6 +674,9 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
         # Delay send waits
         sends_to_wait: List[dist.Work] = []
 
+        # Store ops (potentially across steps)
+        ops: List[dist.P2POp] = []
+
         for step in range(self.total_steps):
             # warmup, forward only
             if step < warmup_steps:
@@ -685,16 +693,30 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
                 )
 
                 with record_function(f"Forward {step}"):
-                    ops = fwd_stage.get_fwd_recv_ops()
+                    ops.extend(fwd_stage.get_fwd_recv_ops())
                     works = sorted_batch_isend_irecv(ops)
                     for work in works.values():
                         work.wait()
+                    # torch.cuda.synchronize()
 
                     output = fwd_stage.forward_one_chunk(arg_mbs[mb_index], kwarg_mbs[mb_index])  # type: ignore[index]
 
-                    ops = fwd_stage.get_fwd_send_ops()
-                    works = sorted_batch_isend_irecv(ops)
-                    sends_to_wait.extend(works.values())
+                    ops.extend(fwd_stage.get_fwd_send_ops())
+                    # TODO:
+                    # if the send is getting sent to a stage doing a fwd-bwd step, then we need to delay it
+                    # otherwise we should send it immediately
+
+                    # the following works for batch_size = 4 (it is being sent to fwd-bwd)
+                    # delays the fwd right before a fwd-bwd
+                    # if step != warmup_steps - 1 or fwd_stage.group_rank == 0:
+
+                    if step != warmup_steps - 1 or fwd_bwd_steps == 0:
+                    # we can detect if its getting sent to an 1f1b state by looking at microbatch index?
+                    # ((fwd_stage.stage_index // n_local_stages) + 1) * mb_index = number of steps taken so far
+                        # last step of warmup, we should delay it and send it with the recv ops of 1f1b
+                        works = sorted_batch_isend_irecv(ops)
+                        # torch.cuda.synchronize()
+                        sends_to_wait.extend(works.values())
 
                     self._maybe_compute_loss(
                         fwd_stage, output, target_mbs, mb_index
@@ -722,15 +744,17 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
                     f"{self.rank}: {step=}, {fwd_stage.stage_index=}, {bwd_stage.stage_index=}, {fwd_mb_index=}, {bwd_mb_index=}"
                 )
                 with record_function(f"1F1B {step}"):
-                    ops = fwd_stage.get_fwd_recv_ops()
+                    ops.extend(fwd_stage.get_fwd_recv_ops())
                     ops.extend(bwd_stage.get_bwd_recv_ops())
                     works = sorted_batch_isend_irecv(ops)
+                    # torch.cuda.synchronize()
                     for work in works.values():
                         work.wait()
+                    sends_to_wait.extend(works.values())
 
                     # fwd
                     output = fwd_stage.forward_one_chunk(arg_mbs[fwd_mb_index], kwarg_mbs[fwd_mb_index])  # type: ignore[index]
-                    ops = fwd_stage.get_fwd_send_ops()
+                    ops.extend(fwd_stage.get_fwd_send_ops())
                     self._maybe_compute_loss(
                         fwd_stage, output, target_mbs, fwd_mb_index
                     )
@@ -740,8 +764,12 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
                     bwd_stage.backward_one_chunk(loss=loss)
                     ops.extend(bwd_stage.get_bwd_send_ops())
 
-                    works = sorted_batch_isend_irecv(ops)
-                    sends_to_wait.extend(works.values())
+                    # send fwd and bwd ops delayed 1 step
+                    # works = sorted_batch_isend_irecv(ops)
+                    # torch.cuda.synchronize()
+                    # for work in works.values():
+                    #     work.wait()
+                    # sends_to_wait.extend(works.values())
 
             # cooldown
             else:
@@ -749,23 +777,23 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
                 bwd_stage_mb_index[bwd_stage] = (
                     bwd_mb_index := bwd_stage_mb_index[bwd_stage]
                 ) + 1
-                bwd_stage._configure_data_parallel_mode(
-                    bwd_mb_index == self._n_microbatches - 1
-                )
+
                 logger.debug(
                     f"{self.rank}: {step=}, {bwd_stage.stage_index=}, {bwd_mb_index=}"
                 )
                 with record_function(f"Cooldown (backward) {step}"):
-                    ops = bwd_stage.get_bwd_recv_ops()
+                    ops.extend(bwd_stage.get_bwd_recv_ops())
                     works = sorted_batch_isend_irecv(ops)
                     for work in works.values():
                         work.wait()
+                    # torch.cuda.synchronize()
 
                     loss = self._maybe_get_loss(bwd_stage, bwd_mb_index)
                     bwd_stage.backward_one_chunk(loss=loss)
 
-                    ops = bwd_stage.get_bwd_send_ops()
+                    ops.extend(bwd_stage.get_bwd_send_ops())
                     works = sorted_batch_isend_irecv(ops)
+                    # torch.cuda.synchronize()
                     sends_to_wait.extend(works.values())
 
         # Make sure all sends are finished
