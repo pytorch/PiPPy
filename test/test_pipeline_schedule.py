@@ -1,5 +1,7 @@
 # (c) Meta Platforms, Inc. and affiliates. Confidential and proprietary.
 
+import random
+import time
 import unittest
 
 import torch
@@ -112,11 +114,11 @@ class ModelWithSleep(nn.Module):
         self.rank = rank
 
     def forward(self, x):
-        import time
         x = self.in_layer(x)
         x = self.middle(x)
+        # this delay helps to simulate inconsistencies in timing between ranks
         if self.rank == 0 or self.rank == 1:
-            time.sleep(0.5)
+            time.sleep(random.uniform(0, 1))
         x = self.out_layer(x)
         x = self.relu(x)
         return x
@@ -431,41 +433,41 @@ class TestPipelineSchedule(MultiProcessTestCase):
             ]
             schedule.step_microbatches(microbatches)
 
-    # PIPPY_VERBOSITY=DEBUG pytest test_pipeline_schedule.py -vsk test_interleaved_1f1b_bug
     @skip_if_lt_x_gpu(4)
-    def test_interleaved_1f1b_bug(self):
-        from datetime import timedelta
-
+    def test_interleaved_1f1b_with_model_sleep(self):
         device = torch.device(f"cuda:{self.rank}")
         dist.init_process_group(
             init_method=self.init_method,
             backend="nccl",
             rank=self.rank,
             world_size=self.world_size,
-            timeout=timedelta(seconds=60)
         )
 
         model = ModelWithSleep(dim=4, hidden_dim=8, out_dim=4, rank=self.rank)
-        batch = torch.rand((8, 4), device=device)
-        num_microbatches = 8
-        stages = self._create_virtual_pipeline_stages(
-            model, torch.rand((1, 4)).to("meta"), device, 2, num_microbatches=num_microbatches
-        )
-        schedule = ScheduleInterleaved1F1B(
-            stages,
-            num_microbatches,
-            loss_fn=nn.MSELoss()
-        )
-        if self.rank == 0:
-            schedule.step(batch)
-        elif self.rank == self.world_size - 1:
-            target = torch.rand((8,), device=device)
-            losses = []
-            schedule.step(target=target, losses=losses)
-        else:
-            schedule.step()
+        stages_per_rank = 2
+        num_microbatches_list = [4, 8, 16]
+        for num_microbatches in num_microbatches_list:
+            batch = torch.rand((num_microbatches, 4), device=device)
+            stages = self._create_virtual_pipeline_stages(
+                model,
+                torch.rand((1, 4)).to("meta"),
+                device,
+                stages_per_rank,
+                num_microbatches=num_microbatches,
+            )
 
-        dist.barrier()
+            schedule = ScheduleInterleaved1F1B(
+                stages, num_microbatches, loss_fn=nn.MSELoss()
+            )
+            if self.rank == 0:
+                schedule.step(batch)
+            elif self.rank == self.world_size - 1:
+                target = torch.rand((num_microbatches,), device=device)
+                losses = []
+                schedule.step(target=target, losses=losses)
+            else:
+                schedule.step()
+
 
 class UtilTest(unittest.TestCase):
     def test_metadata_tensor(self):
