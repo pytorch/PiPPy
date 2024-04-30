@@ -16,13 +16,13 @@ numerical testing (see [A Note About Correctness Testing])
 _debug_mask_minibatches = False
 
 
-class CustomReducer:
+class _CustomReducer:
     """
     Custom reducer class that can be used to specify a custom operation that
     reduces losses of multiple microbatches into one value.
 
     Example:
-        >>> sum_reducer = CustomReducer(
+        >>> sum_reducer = _CustomReducer(
         >>>     torch.tensor(0.0),
         >>>     lambda a, b: a + b
         >>> )
@@ -33,11 +33,11 @@ class CustomReducer:
         self.reduce_fn = reduce_fn
 
 
-class LossReducer(CustomReducer):
+class _LossReducer(_CustomReducer):
     pass
 
 
-sum_reducer = LossReducer(torch.tensor(0.0), lambda a, b: a + b)
+sum_reducer = _LossReducer(torch.tensor(0.0), lambda a, b: a + b)
 
 # Default chunking dimension is 0. This is used for the case where the user did
 # not specify a chunking dimension.
@@ -59,7 +59,7 @@ class TensorChunkSpec:
 
 
 # Class used to specify replication of inputs
-class Replicate:
+class _Replicate:
     pass
 
 
@@ -109,7 +109,7 @@ def _shard_dict_of_args(
         sharded_arg_flat = []
 
         for v, chunk_v in zip(flat, chunk_spec_flat):
-            if chunk_v is Replicate or not isinstance(v, torch.Tensor):
+            if chunk_v is _Replicate or not isinstance(v, torch.Tensor):
                 sharded_arg_flat.append([v] * real_num_chunks)
             elif isinstance(chunk_v, TensorChunkSpec):
                 # TODO: check type of v. If it's a tensor, use chunk (or debug mask).
@@ -413,7 +413,7 @@ def merge_chunks(
                 values_to_cat = partial_values
 
             args_flattened.append(torch.cat(values_to_cat, dim=arg.split_dim))
-        elif isinstance(arg, CustomReducer):
+        elif isinstance(arg, _CustomReducer):
             reduced_val = arg.init_value
 
             for chunk_idx in range(len(chunks_flattened)):

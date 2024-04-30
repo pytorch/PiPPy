@@ -502,7 +502,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
     # args_chunk_spec and kwargs_chunk_spec are used to specify how to chunk
     # inputs. They are used to create microbatched examples before tracing.
     # See context managers `ArgsChunkSpec` and `KwargsChunkSpec`.
-    # TODO: Do we need to support `Replicate`? It's unclear, dropping for now.
+    # TODO: Do we need to support `_Replicate`? It's unclear, dropping for now.
     args_chunk_spec: Optional[Tuple[TensorChunkSpec, ...]] = None
     kwargs_chunk_spec: Optional[Dict[str, TensorChunkSpec]] = None
 
@@ -1165,7 +1165,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         """
         if output_chunk_spec is not None:
             output_loss_value_spec = map_aggregate(
-                output_chunk_spec, lambda v: isinstance(v, LossReducer)
+                output_chunk_spec, lambda v: isinstance(v, _LossReducer)
             )
         """
 
