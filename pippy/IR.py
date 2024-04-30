@@ -1343,6 +1343,7 @@ def pipeline(
     num_chunks: int,
     example_args: Tuple[Any, ...],
     example_kwargs: Optional[Dict[str, Any]] = None,
+    split_spec: Optional[Dict[str, SplitPoint]] = None,
     split_policy: Optional[Callable[[fx.GraphModule], fx.GraphModule]] = None,
 ) -> Pipe:
     """
@@ -1360,6 +1361,8 @@ def pipeline(
         Example positional inputs to be used with this pipeline.
     example_kwargs:
         Example keyword inputs to be used with this pipeline. (default: `None`)
+    split_spec:
+        A dictionary mapping module names to `SplitPoint`s. (default: `None`)
     split_policy:
         The policy to use for splitting the module. (default: `None`)
 
@@ -1367,13 +1370,29 @@ def pipeline(
     -------
     A pipeline representation of class `Pipe`.
     """
-    return Pipe.from_tracing(
-        mod=module,
-        num_chunks=num_chunks,
-        example_args=example_args,
-        example_kwargs=example_kwargs,
-        split_policy=split_policy,
-    )
+    if split_spec is not None and split_policy is not None:
+        raise ValueError(
+            "Cannot specify both `split_spec` and `split_policy`. Please use only one of them."
+        )
+
+    if split_spec is not None:
+        # Annotate split points in the module based on user spec
+        annotate_split_points(module, split_spec)
+        return Pipe.from_tracing(
+            mod=module,
+            num_chunks=num_chunks,
+            example_args=example_args,
+            example_kwargs=example_kwargs,
+        )
+    else:
+        # Use split policy
+        return Pipe.from_tracing(
+            mod=module,
+            num_chunks=num_chunks,
+            example_args=example_args,
+            example_kwargs=example_kwargs,
+            split_policy=split_policy,
+        )
 
 
 # Context manager for setting `args_chunk_spec` during creation of Pipe
