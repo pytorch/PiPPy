@@ -18,8 +18,8 @@ from pippy.IR import (
     TrivialLossWrapper,
 )
 from pippy.microbatch import (
+    _Replicate,
     merge_chunks,
-    Replicate,
     split_args_kwargs_into_chunks,
     TensorChunkSpec,
 )
@@ -613,10 +613,10 @@ class TestIR(unittest.TestCase):
             (x,),
             {"input_nt": input_nt},
             chunks=NCHUNKS,
-            args_chunk_spec=(Replicate,),
+            args_chunk_spec=(_Replicate,),
             kwargs_chunk_spec={
                 "input_nt": SpecialInputNamedTuple(
-                    TensorChunkSpec(0), Replicate
+                    TensorChunkSpec(0), _Replicate
                 )
             },
         )
@@ -655,7 +655,7 @@ class TestIR(unittest.TestCase):
             args_chunk_spec=(TensorChunkSpec(0),),
             kwargs_chunk_spec={
                 "input_nt": SpecialInputNamedTuple(
-                    TensorChunkSpec(0), Replicate
+                    TensorChunkSpec(0), _Replicate
                 )
             },
         )
@@ -687,7 +687,7 @@ class TestIR(unittest.TestCase):
             args_chunk_spec=(TensorChunkSpec(0),),
             kwargs_chunk_spec={
                 "input_nt": SpecialInputNamedTuple(
-                    TensorChunkSpec(0), Replicate
+                    TensorChunkSpec(0), _Replicate
                 )
             },
             _debug_mask_minibatches=True,
