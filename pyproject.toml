@@ -16,5 +16,5 @@ exclude = [
 
 [tool.ufmt]
 excludes = [
-  "pippy/unflatten.py",
+  "pippy/_unflatten.py",
 ]

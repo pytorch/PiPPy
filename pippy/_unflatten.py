@@ -5,14 +5,13 @@
 import copy
 import operator
 from enum import Enum
-from typing import Any, cast, Dict, List, Optional, Union
+from typing import cast, Dict, List, Optional, Union
 
 import torch
 import torch.fx._pytree as fx_pytree
 import torch.utils._pytree as pytree
 from torch.export.exported_program import (
     ConstantArgument,
-    ExportedProgram,
     ModuleCallSignature,
     SymIntArgument,
     TensorArgument,

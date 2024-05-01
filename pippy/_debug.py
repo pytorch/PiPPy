@@ -10,16 +10,15 @@ import torch
 #   - WARNING (default)
 #   - INFO
 #   - DEBUG
-PIPPY_VERBOSITY = os.environ.get("PIPPY_VERBOSITY")
-if PIPPY_VERBOSITY not in [None, "WARNING", "INFO", "DEBUG"]:
+PIPPY_VERBOSITY = os.getenv("PIPPY_VERBOSITY", "WARNING")
+if PIPPY_VERBOSITY not in ["WARNING", "INFO", "DEBUG"]:
     logging.warning(f"Unsupported PIPPY_VERBOSITY level: {PIPPY_VERBOSITY}")
-    PIPPY_VERBOSITY = None
+    PIPPY_VERBOSITY = "WARNING"
 
-if PIPPY_VERBOSITY:
-    logging.getLogger("pippy").setLevel(PIPPY_VERBOSITY)
-    # It seems we need to print something to make the level setting effective
-    # for child loggers. Doing it here.
-    logging.warning(f"Setting PiPPy logging level to: {PIPPY_VERBOSITY}")
+logging.getLogger("pippy").setLevel(PIPPY_VERBOSITY)
+# It seems we need to print something to make the level setting effective
+# for child loggers. Doing it here.
+logging.warning(f"Setting PiPPy logging level to: {PIPPY_VERBOSITY}")
 
 
 def friendly_debug_info(v):
