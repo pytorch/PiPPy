@@ -603,27 +603,22 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
         losses: Optional[List] = None,
     ):
         """
-        # n_loop = n_stage / n_pp
-        # run microbatches in sequences of NPp
+        Operate on the microbatches for interleaved 1f1b schedule (https://arxiv.org/pdf/2104.04473.pdf).
 
-        schedule operates at the rank level
-
-        highest rank has a warmup (F only) count of [len(stages) - 1] * seq_size
-        each hop away from highest rank adds 2 warmup stages
+        Highest rank has a warmup (fwd only) count of [len(stages) - 1] * number of PP ranks
+        and each rank away from highest rank adds 2 warmup steps due to:
             - one happened before highest rank's warmup started,
             - one waiting for backward result to trickle down from highest rank
-        dist_from_highest = (worldsize - 1) - rank
 
-        total_steps = warmup_steps + (num_stages * num_microbatch)
-
-        Rank 0: 0F 0F 0F 0F 2F 2F 2F 2F
-        Rank 1:    1F 1F 1F 1F 3F3B 3F 3F 3F
+        TODO: Interleaved 1F1B does not support using sorted_batch_isend_irecv()
+        because it requires recvs and sends from different peers
+        to execute in the same coalesced operation. As a result, this schedule does
+        not support models with skip connections.
         """
         arg_mbs, kwarg_mbs = self._check_inputs(
             arg_mbs, kwarg_mbs, target_mbs, losses
         )
 
-        # warmup steps for latest pp stage is trivial to compute
         # increment warmup_steps by 2 for each hop away
         warmup_steps = (self.n_local_stages - 1) * self.pp_group_size
         warmup_steps += 2 * ((self.pp_group_size - 1) - self.rank)
@@ -641,7 +636,7 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
             warmup_steps + fwd_bwd_steps * 2 + cooldown_steps
             == self.n_local_stages * self._n_microbatches * 2
         )
-        self.total_steps = warmup_steps + fwd_bwd_steps + cooldown_steps
+        total_steps = warmup_steps + fwd_bwd_steps + cooldown_steps
 
         logger.debug(
             f"""
@@ -669,104 +664,110 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
         # Delay send waits
         sends_to_wait: List[dist.Work] = []
 
-        for step in range(self.total_steps):
-            # warmup, forward only
-            if step < warmup_steps:
-                logger.debug(f"{forward_stage_local_index(step)=}")
+        # Store ops (potentially across steps)
+        ops: List[dist.P2POp] = []
 
-                fwd_stage = self._stages[forward_stage_local_index(step)]
-                # assigns the current microbatch index and updates it for future steps
-                fwd_stage_mb_index[fwd_stage] = (
-                    mb_index := fwd_stage_mb_index[fwd_stage]
-                ) + 1
+        # Warmup Phase (forward only)
+        for step in range(warmup_steps):
+            fwd_stage = self._stages[forward_stage_local_index(step)]
 
-                logger.debug(
-                    f"{self.rank}: {step=}, {fwd_stage.stage_index=}, {mb_index=}"
+            # This will assign the current microbatch index and update it for future steps
+            fwd_stage_mb_index[fwd_stage] = (
+                mb_index := fwd_stage_mb_index[fwd_stage]
+            ) + 1
+
+            logger.debug(
+                f"Rank {self.rank}: {step=}, {fwd_stage.stage_index=}, {mb_index=}"
+            )
+
+            with record_function(f"Forward {step}"):
+                ops.extend(fwd_stage.get_fwd_recv_ops())
+                if ops:
+                    work = dist.batch_isend_irecv(ops).pop()
+                    work.wait()
+                    ops.clear()
+
+                output = fwd_stage.forward_one_chunk(arg_mbs[mb_index], kwarg_mbs[mb_index])  # type: ignore[index]
+
+                ops.extend(fwd_stage.get_fwd_send_ops())
+                # If we are right before the fwd-bwd step, then we need to delay the send to the next step,
+                # This is because fwd-bwd send/recvs among ranks need to be aligned to prevent a hang.
+                # In the edge cases where there are no fwd_bwds and cooldown is immediate, then no delay is needed
+                if ops and (step != warmup_steps - 1 or fwd_bwd_steps == 0):
+                    work = dist.batch_isend_irecv(ops).pop()
+                    sends_to_wait.append(work)
+                    ops.clear()
+
+                self._maybe_compute_loss(
+                    fwd_stage, output, target_mbs, mb_index
                 )
 
-                with record_function(f"Forward {step}"):
-                    ops = fwd_stage.get_fwd_recv_ops()
-                    works = sorted_batch_isend_irecv(ops)
-                    for work in works.values():
-                        work.wait()
+        # 1F1B Phase (forward and backward)
+        for step in range(warmup_steps, warmup_steps + fwd_bwd_steps):
+            fwd_stage = self._stages[forward_stage_local_index(step)]
+            bwd_stage = self._stages[backward_stage_local_index(step)]
 
-                    output = fwd_stage.forward_one_chunk(arg_mbs[mb_index], kwarg_mbs[mb_index])  # type: ignore[index]
+            fwd_stage_mb_index[fwd_stage] = (
+                fwd_mb_index := fwd_stage_mb_index[fwd_stage]
+            ) + 1
+            bwd_stage_mb_index[bwd_stage] = (
+                bwd_mb_index := bwd_stage_mb_index[bwd_stage]
+            ) + 1
 
-                    ops = fwd_stage.get_fwd_send_ops()
-                    works = sorted_batch_isend_irecv(ops)
-                    sends_to_wait.extend(works.values())
+            bwd_stage._configure_data_parallel_mode(
+                bwd_mb_index == self._n_microbatches - 1
+            )
+            logger.debug(
+                f"Rank {self.rank}: {step=}, {fwd_stage.stage_index=}, {bwd_stage.stage_index=}, {fwd_mb_index=}, {bwd_mb_index=}"
+            )
+            with record_function(f"1F1B {step}"):
+                ops.extend(fwd_stage.get_fwd_recv_ops())
+                ops.extend(bwd_stage.get_bwd_recv_ops())
+                if ops:
+                    work = dist.batch_isend_irecv(ops).pop()
+                    work.wait()
+                    ops.clear()
 
-                    self._maybe_compute_loss(
-                        fwd_stage, output, target_mbs, mb_index
-                    )
-
-            # 1f1b
-            elif warmup_steps <= step < warmup_steps + fwd_bwd_steps:
-                logger.debug(f"{forward_stage_local_index(step)=}")
-                logger.debug(f"{backward_stage_local_index(step)=}")
-
-                fwd_stage = self._stages[forward_stage_local_index(step)]
-                bwd_stage = self._stages[backward_stage_local_index(step)]
-
-                fwd_stage_mb_index[fwd_stage] = (
-                    fwd_mb_index := fwd_stage_mb_index[fwd_stage]
-                ) + 1
-                bwd_stage_mb_index[bwd_stage] = (
-                    bwd_mb_index := bwd_stage_mb_index[bwd_stage]
-                ) + 1
-
-                bwd_stage._configure_data_parallel_mode(
-                    bwd_mb_index == self._n_microbatches - 1
+                # Forward
+                output = fwd_stage.forward_one_chunk(arg_mbs[fwd_mb_index], kwarg_mbs[fwd_mb_index])  # type: ignore[index]
+                ops.extend(fwd_stage.get_fwd_send_ops())
+                self._maybe_compute_loss(
+                    fwd_stage, output, target_mbs, fwd_mb_index
                 )
-                logger.debug(
-                    f"{self.rank}: {step=}, {fwd_stage.stage_index=}, {bwd_stage.stage_index=}, {fwd_mb_index=}, {bwd_mb_index=}"
-                )
-                with record_function(f"1F1B {step}"):
-                    ops = fwd_stage.get_fwd_recv_ops()
-                    ops.extend(bwd_stage.get_bwd_recv_ops())
-                    works = sorted_batch_isend_irecv(ops)
-                    for work in works.values():
-                        work.wait()
 
-                    # fwd
-                    output = fwd_stage.forward_one_chunk(arg_mbs[fwd_mb_index], kwarg_mbs[fwd_mb_index])  # type: ignore[index]
-                    ops = fwd_stage.get_fwd_send_ops()
-                    self._maybe_compute_loss(
-                        fwd_stage, output, target_mbs, fwd_mb_index
-                    )
+                # Backward
+                loss = self._maybe_get_loss(bwd_stage, bwd_mb_index)
+                bwd_stage.backward_one_chunk(loss=loss)
+                ops.extend(bwd_stage.get_bwd_send_ops())
 
-                    # bwd
-                    loss = self._maybe_get_loss(bwd_stage, bwd_mb_index)
-                    bwd_stage.backward_one_chunk(loss=loss)
-                    ops.extend(bwd_stage.get_bwd_send_ops())
+        # Cooldown Phase (backward only)
+        for step in range(warmup_steps + fwd_bwd_steps, total_steps):
+            bwd_stage = self._stages[backward_stage_local_index(step)]
+            bwd_stage_mb_index[bwd_stage] = (
+                bwd_mb_index := bwd_stage_mb_index[bwd_stage]
+            ) + 1
+            bwd_stage._configure_data_parallel_mode(
+                bwd_mb_index == self._n_microbatches - 1
+            )
 
-                    works = sorted_batch_isend_irecv(ops)
-                    sends_to_wait.extend(works.values())
+            logger.debug(
+                f"Rank {self.rank}: {step=}, {bwd_stage.stage_index=}, {bwd_mb_index=}"
+            )
+            with record_function(f"Cooldown {step}"):
+                ops.extend(bwd_stage.get_bwd_recv_ops())
+                if ops:
+                    work = dist.batch_isend_irecv(ops).pop()
+                    work.wait()
+                    ops.clear()
 
-            # cooldown
-            else:
-                bwd_stage = self._stages[backward_stage_local_index(step)]
-                bwd_stage_mb_index[bwd_stage] = (
-                    bwd_mb_index := bwd_stage_mb_index[bwd_stage]
-                ) + 1
-                bwd_stage._configure_data_parallel_mode(
-                    bwd_mb_index == self._n_microbatches - 1
-                )
-                logger.debug(
-                    f"{self.rank}: {step=}, {bwd_stage.stage_index=}, {bwd_mb_index=}"
-                )
-                with record_function(f"Cooldown (backward) {step}"):
-                    ops = bwd_stage.get_bwd_recv_ops()
-                    works = sorted_batch_isend_irecv(ops)
-                    for work in works.values():
-                        work.wait()
+                loss = self._maybe_get_loss(bwd_stage, bwd_mb_index)
+                bwd_stage.backward_one_chunk(loss=loss)
 
-                    loss = self._maybe_get_loss(bwd_stage, bwd_mb_index)
-                    bwd_stage.backward_one_chunk(loss=loss)
-
-                    ops = bwd_stage.get_bwd_send_ops()
-                    works = sorted_batch_isend_irecv(ops)
-                    sends_to_wait.extend(works.values())
+                ops.extend(bwd_stage.get_bwd_send_ops())
+                if ops:
+                    work = dist.batch_isend_irecv(ops).pop()
+                    sends_to_wait.append(work)
+                    ops.clear()
 
         # Make sure all sends are finished
         for work in sends_to_wait:
