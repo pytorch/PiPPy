@@ -7,7 +7,7 @@ import pippy.fx
 
 import torch
 from pippy import run_pippy
-from pippy.IR import (
+from pippy._IR import (
     _null_coalesce_accumulate,
     pipe_split,
     pipeline,

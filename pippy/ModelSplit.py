@@ -5,7 +5,7 @@ from typing import Callable, Dict, List, Tuple
 import torch
 import torch.fx as fx
 
-from .IR import aten_pipe_split_alias
+from ._IR import aten_pipe_split_alias
 
 
 logger = logging.getLogger(__name__)

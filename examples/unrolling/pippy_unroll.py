@@ -7,7 +7,7 @@ import torch
 import torch.distributed as dist
 
 from pippy import pipeline
-from pippy.IR import annotate_split_points, PipeSplitWrapper, pipeline
+from pippy import annotate_split_points, SplitPoint, pipeline
 from pippy.PipelineStage import PipelineStage
 
 
@@ -57,7 +57,7 @@ model = IterativeNetwork(d_hid, num_iters).to(device)
 # Add a split point after each iter_block
 annotate_split_points(
     model,
-    {"iter_block": PipeSplitWrapper.SplitPoint.END},
+    {"iter_block": SplitPoint.END},
 )
 
 batch_size = 32

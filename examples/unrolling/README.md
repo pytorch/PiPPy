@@ -36,7 +36,7 @@ iteration block:
 # Add a split point after each iter_block
 annotate_split_points(
     model,
-    {"iter_block": PipeSplitWrapper.SplitPoint.END},
+    {"iter_block": SplitPoint.END},
 )
 ```
 

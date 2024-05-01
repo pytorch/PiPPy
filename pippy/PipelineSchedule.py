@@ -9,7 +9,7 @@ import torch
 import torch.distributed as dist
 from torch.profiler import record_function
 
-from .IR import Pipe
+from ._IR import Pipe
 from .microbatch import merge_chunks, split_args_kwargs_into_chunks
 from .PipelineStage import PipelineStageBase
 

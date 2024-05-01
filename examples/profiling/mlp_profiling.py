@@ -10,7 +10,7 @@ import torch.distributed as dist
 from torch.profiler import profile, ProfilerActivity
 
 from pippy.compile import compile_stage
-from pippy.IR import pipe_split
+from pippy import pipe_split
 
 
 d_hid = 1024
