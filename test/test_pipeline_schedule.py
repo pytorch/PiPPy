@@ -444,7 +444,9 @@ class TestPipelineSchedule(MultiProcessTestCase):
         )
 
         num_dims = 4
-        model = ModelWithSleep(dim=num_dims, hidden_dim=8, out_dim=num_dims, rank=self.rank)
+        model = ModelWithSleep(
+            dim=num_dims, hidden_dim=8, out_dim=num_dims, rank=self.rank
+        )
         stages_per_rank = 2
         num_microbatches_list = [4, 8, 16]
         for num_microbatches in num_microbatches_list:
