@@ -8,14 +8,14 @@ import torch
 import torch.distributed as dist
 import torch.fx as fx
 from torch._subclasses.fake_tensor import FakeTensor
-from torch.distributed._composable.fsdp.fully_shard import FSDP
+from torch.distributed._composable.fsdp.fully_shard import FSDPModule
 from torch.fx.node import map_aggregate
 from torch.nn.parallel import DistributedDataParallel
 
-from .backward import stage_backward
-from .debug import map_debug_info
+from ._backward import stage_backward
+from ._debug import map_debug_info
+from ._utils import flatten_args, modify_graph_op_device
 from .IR import Pipe
-from .utils import flatten_args, modify_graph_op_device
 
 logger = logging.getLogger(__name__)
 
@@ -367,7 +367,7 @@ class PipelineStageBase(ABC):
         there are additional state-variables and performance considerations depending on the data parallelism used.
         This helper should adapt any pipeline parallel schedule to work with common/supported data parallel libraries.
         """
-        if isinstance(self.submod, FSDP):
+        if isinstance(self.submod, FSDPModule):
             self.submod.set_is_last_backward(last_backward)
             self.submod.set_requires_gradient_sync(last_backward)
 

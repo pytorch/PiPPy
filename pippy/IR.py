@@ -14,16 +14,16 @@ from torch.export import ExportedProgram
 from torch.fx.node import map_aggregate
 from torch.fx.passes.split_module import split_module
 
-from .backward import _null_coalesce_accumulate, stage_backward
-from .debug import PIPPY_VERBOSITY
-from .microbatch import split_args_kwargs_into_chunks, TensorChunkSpec
-from .unflatten import (
+from ._backward import _null_coalesce_accumulate, stage_backward
+from ._debug import PIPPY_VERBOSITY
+from ._unflatten import (
     _assign_attr,
     _AttrKind,
     _outline_submodules,
     _sink_params,
 )
-from .utils import QualnameMapMixin
+from ._utils import QualnameMapMixin
+from .microbatch import split_args_kwargs_into_chunks, TensorChunkSpec
 
 
 logger = logging.getLogger(__name__)
@@ -502,7 +502,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
     # args_chunk_spec and kwargs_chunk_spec are used to specify how to chunk
     # inputs. They are used to create microbatched examples before tracing.
     # See context managers `ArgsChunkSpec` and `KwargsChunkSpec`.
-    # TODO: Do we need to support `Replicate`? It's unclear, dropping for now.
+    # TODO: Do we need to support `_Replicate`? It's unclear, dropping for now.
     args_chunk_spec: Optional[Tuple[TensorChunkSpec, ...]] = None
     kwargs_chunk_spec: Optional[Dict[str, TensorChunkSpec]] = None
 
@@ -1165,14 +1165,9 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
         """
         if output_chunk_spec is not None:
             output_loss_value_spec = map_aggregate(
-                output_chunk_spec, lambda v: isinstance(v, LossReducer)
+                output_chunk_spec, lambda v: isinstance(v, _LossReducer)
             )
         """
-
-        # Get split example inputs
-        if example_kwargs is None:
-            # Needed by `split_args_kwargs_into_chunks`
-            example_kwargs = {}
 
         args_split, kwargs_split = split_args_kwargs_into_chunks(
             example_args,
@@ -1348,6 +1343,7 @@ def pipeline(
     num_chunks: int,
     example_args: Tuple[Any, ...],
     example_kwargs: Optional[Dict[str, Any]] = None,
+    split_spec: Optional[Dict[str, SplitPoint]] = None,
     split_policy: Optional[Callable[[fx.GraphModule], fx.GraphModule]] = None,
 ) -> Pipe:
     """
@@ -1365,6 +1361,8 @@ def pipeline(
         Example positional inputs to be used with this pipeline.
     example_kwargs:
         Example keyword inputs to be used with this pipeline. (default: `None`)
+    split_spec:
+        A dictionary mapping module names to `SplitPoint`s. (default: `None`)
     split_policy:
         The policy to use for splitting the module. (default: `None`)
 
@@ -1372,13 +1370,29 @@ def pipeline(
     -------
     A pipeline representation of class `Pipe`.
     """
-    return Pipe.from_tracing(
-        mod=module,
-        num_chunks=num_chunks,
-        example_args=example_args,
-        example_kwargs=example_kwargs,
-        split_policy=split_policy,
-    )
+    if split_spec is not None and split_policy is not None:
+        raise ValueError(
+            "Cannot specify both `split_spec` and `split_policy`. Please use only one of them."
+        )
+
+    if split_spec is not None:
+        # Annotate split points in the module based on user spec
+        annotate_split_points(module, split_spec)
+        return Pipe.from_tracing(
+            mod=module,
+            num_chunks=num_chunks,
+            example_args=example_args,
+            example_kwargs=example_kwargs,
+        )
+    else:
+        # Use split policy
+        return Pipe.from_tracing(
+            mod=module,
+            num_chunks=num_chunks,
+            example_args=example_args,
+            example_kwargs=example_kwargs,
+            split_policy=split_policy,
+        )
 
 
 # Context manager for setting `args_chunk_spec` during creation of Pipe

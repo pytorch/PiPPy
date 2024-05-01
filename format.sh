@@ -7,7 +7,7 @@
 DEFAULT_TARGETS=()
 for f in $(git ls-files | grep '\.py$'); do
   case "$f" in
-    'pippy/unflatten.py')
+    'pippy/_unflatten.py')
       # ignore
       ;;
 

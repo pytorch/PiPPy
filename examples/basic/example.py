@@ -4,7 +4,7 @@
 
 import os
 import torch
-from pippy import pipeline, annotate_split_points, SplitPoint, ScheduleGPipe, PipelineStage
+from pippy import pipeline, SplitPoint, ScheduleGPipe, PipelineStage
 
 in_dim = 512
 layer_dims = [512, 1024, 256]
@@ -67,19 +67,16 @@ else:
 # Create the model
 mn = MyNetwork().to(device)
 
-annotate_split_points(
-    mn,
-    {
-        "layer0": SplitPoint.END,
-        "layer1": SplitPoint.END,
-    },
-)
+split_spec = {
+    "layer0": SplitPoint.END,
+    "layer1": SplitPoint.END,
+}
 
 batch_size = 32
 example_input = torch.randn(batch_size, in_dim, device=device)
 chunks = 4
 
-pipe = pipeline(mn, chunks, example_args=(example_input,))
+pipe = pipeline(mn, chunks, example_args=(example_input,), split_spec=split_spec)
 
 if rank == 0:
     print(" pipe ".center(80, "*"))
