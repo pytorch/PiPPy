@@ -118,7 +118,7 @@ class ModelWithSleep(nn.Module):
         x = self.middle(x)
         # this delay helps to simulate inconsistencies in timing between ranks
         if self.rank == 0 or self.rank == 1:
-            time.sleep(random.uniform(0, 1))
+            time.sleep(random.uniform(0, 0.5))
         x = self.out_layer(x)
         x = self.relu(x)
         return x
@@ -443,14 +443,15 @@ class TestPipelineSchedule(MultiProcessTestCase):
             world_size=self.world_size,
         )
 
-        model = ModelWithSleep(dim=4, hidden_dim=8, out_dim=4, rank=self.rank)
+        num_dims = 4
+        model = ModelWithSleep(dim=num_dims, hidden_dim=8, out_dim=num_dims, rank=self.rank)
         stages_per_rank = 2
         num_microbatches_list = [4, 8, 16]
         for num_microbatches in num_microbatches_list:
-            batch = torch.rand((num_microbatches, 4), device=device)
+            batch = torch.rand((num_microbatches, num_dims), device=device)
             stages = self._create_virtual_pipeline_stages(
                 model,
-                torch.rand((1, 4)).to("meta"),
+                torch.rand((1, num_dims)).to("meta"),
                 device,
                 stages_per_rank,
                 num_microbatches=num_microbatches,
@@ -462,11 +463,14 @@ class TestPipelineSchedule(MultiProcessTestCase):
             if self.rank == 0:
                 schedule.step(batch)
             elif self.rank == self.world_size - 1:
-                target = torch.rand((num_microbatches,), device=device)
+                target = torch.rand((num_microbatches, num_dims), device=device)
                 losses = []
                 schedule.step(target=target, losses=losses)
             else:
                 schedule.step()
+            dist.barrier()
+            torch.cuda.synchronize()
+            print(f"Finished with testing {num_microbatches} microbatches")
 
 
 class UtilTest(unittest.TestCase):
