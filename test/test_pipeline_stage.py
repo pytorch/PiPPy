@@ -86,10 +86,8 @@ class TestPipelineStage(MultiProcessTestCase):
             )
 
     @parametrize("pipeline_stage_type", ["manual", "tracing"])
-    def test_pipeline_stage(self, pipeline_stage_type):
-        # TODO: parameterize
-        use_cuda = True
-
+    @parametrize("use_cuda", [True, False])
+    def test_pipeline_stage(self, pipeline_stage_type, use_cuda):
         device = (
             torch.device(f"cuda:{self.rank}")
             if use_cuda
