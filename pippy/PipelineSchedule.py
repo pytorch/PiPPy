@@ -145,7 +145,9 @@ class PipelineSchedule(ABC):
 
         if losses is not None:
             if not isinstance(losses, list):
-                raise TypeError(f"losses must be a list but got a {type(losses)}")
+                raise TypeError(
+                    f"losses must be a list but got a {type(losses)}"
+                )
 
         return arg_mbs, kwarg_mbs
 
