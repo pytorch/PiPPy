@@ -7,7 +7,7 @@ from typing import NamedTuple
 
 import torch
 
-from pippy.IR import (
+from pippy._IR import (
     _null_coalesce_accumulate,
     annotate_split_points,
     MultiUseParameterConfig,

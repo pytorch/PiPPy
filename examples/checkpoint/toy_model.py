@@ -8,7 +8,7 @@ import torch.optim as optim
 from pippy.compile import compile_stage
 
 from pippy.SaveModule import save_checkpoint
-from pippy.IR import pipe_split
+from pippy import pipe_split
 from torch.utils.data import Dataset, random_split
 
 

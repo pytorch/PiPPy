@@ -9,7 +9,7 @@ import warnings
 import torch
 
 import transformers.utils.fx as fx
-from pippy.IR import (
+from pippy._IR import (
     annotate_split_points,
     MultiUseParameterConfig,
     pipeline,

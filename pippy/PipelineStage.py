@@ -14,8 +14,8 @@ from torch.nn.parallel import DistributedDataParallel
 
 from ._backward import stage_backward
 from ._debug import map_debug_info
+from ._IR import Pipe
 from ._utils import flatten_args, modify_graph_op_device
-from .IR import Pipe
 
 logger = logging.getLogger(__name__)
 

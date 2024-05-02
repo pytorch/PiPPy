@@ -7,7 +7,7 @@ import pippy
 
 import torch
 import torch.distributed as dist
-from pippy.IR import pipe_split
+from pippy._IR import pipe_split
 from torch.nn.parallel import DistributedDataParallel
 
 

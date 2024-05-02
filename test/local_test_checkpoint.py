@@ -10,9 +10,9 @@ import torch
 
 import torch.distributed as dist
 import torch.optim as optim
-from pippy.compile import compile_stage
 
-from pippy.IR import pipe_split, TrivialLossWrapper
+from pippy._IR import pipe_split, TrivialLossWrapper
+from pippy.compile import compile_stage
 from pippy.utilities.hf_checkpoint import load_checkpoint, save_checkpoint
 
 

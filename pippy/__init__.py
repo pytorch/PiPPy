@@ -1,5 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates
-from .IR import (
+from ._IR import (
     annotate_split_points,
     ArgsChunkSpec,
     KwargsChunkSpec,

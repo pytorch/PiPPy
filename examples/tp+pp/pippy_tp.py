@@ -7,7 +7,7 @@ import torch
 
 import pippy
 import pippy.fx
-from pippy.IR import pipe_split
+from pippy import pipe_split
 from pippy.compile import compile_stage
 
 import torch.distributed as dist

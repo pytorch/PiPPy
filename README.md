@@ -109,11 +109,10 @@ mn = MyNetwork(in_dim, layer_dims).to(device)
 
 This network is written as free-form Python code; it has not been modified for any specific parallelism technique.
 
-Let us see our first usage of the `pippy.IR.Pipe` interface:
+Let us see our first usage of the `pippy.Pipe` interface:
 
 ```python
-from pippy import pipeline
-from pippy.IR import annotate_split_points, Pipe, SplitPoint
+from pippy import pipeline, annotate_split_points, Pipe, SplitPoint
 
 annotate_split_points(mn, {'layer0': SplitPoint.END,
                            'layer1': SplitPoint.END})
