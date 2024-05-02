@@ -474,6 +474,44 @@ class TestPipelineSchedule(MultiProcessTestCase):
             torch.cuda.synchronize()
             print(f"Finished with testing {num_microbatches} microbatches")
 
+    def test_check_inputs(self):
+        device = torch.device(f"cuda:{self.rank}")
+        dist.init_process_group(
+            init_method=self.init_method,
+            backend="nccl",
+            rank=self.rank,
+            world_size=self.world_size,
+        )
+
+        # test single pipeline stage
+        model = MLP(dim=8, hidden_dim=4, out_dim=8)
+        microbatch = torch.rand((4, 8), device=device)
+        num_microbatches = 8
+        stage = self._create_pipeline_stage(model, microbatch, device, num_microbatches)
+
+        schedule = Schedule1F1B(stage, num_microbatches)
+        # invalid input length
+        with self.assertRaises(ValueError):
+            invalid_microbatches = [(i,) for i in range(7)]
+            schedule.step_microbatches(invalid_microbatches)
+
+        # invalid input shapes
+        with self.assertRaises(ValueError):
+            invalid_microbatches = [
+                (torch.ones(8, 4, 8))
+            ]
+            schedule.step_microbatches(invalid_microbatches)
+
+        # invalid input type
+        with self.assertRaises(TypeError):
+            invalid_microbatches = torch.ones(8, 4, 8)
+            schedule.step_microbatches(invalid_microbatches)
+
+        # invalid loss
+        with self.assertRaises(TypeError):
+            loss = 1
+            microbatches = [torch.randn_like(microbatch) for _ in range(num_microbatches)]
+            schedule.step_microbatches(microbatches, loss=loss)
 
 class UtilTest(unittest.TestCase):
     def test_metadata_tensor(self):

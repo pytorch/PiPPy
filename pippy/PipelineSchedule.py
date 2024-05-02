@@ -144,9 +144,8 @@ class PipelineSchedule(ABC):
             check_type_and_len(target_mbs, "target_mbs")
 
         if losses is not None:
-            assert isinstance(
-                losses, list
-            ), f"losses must be a list but got a {type(losses)}"
+            if not isinstance(losses, list):
+                raise TypeError(f"losses must be a list but got a {type(losses)}")
 
         return arg_mbs, kwarg_mbs
 
