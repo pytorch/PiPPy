@@ -480,9 +480,10 @@ class TestPipelineSchedule(MultiProcessTestCase):
             if torch.cuda.is_available()
             else "cpu"
         )
+
         dist.init_process_group(
             init_method=self.init_method,
-            backend="nccl",
+            backend="nccl" if dist.is_nccl_available() else "gloo",
             rank=self.rank,
             world_size=self.world_size,
         )
