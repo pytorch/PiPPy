@@ -29,7 +29,9 @@ def _analyze_node_size(
     for node in gm.graph.nodes:
         if node.op == "get_attr":  # a parameter node
             param_name = node.target
-            assert param_name in state_dict
+            if param_name not in state_dict:
+                # In some cases, attr node is not a parameter or buffer, we just skip it
+                continue
             param = state_dict[param_name]
             # Find use site of this parameter
             for user in node.users:
