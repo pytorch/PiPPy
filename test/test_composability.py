@@ -107,13 +107,13 @@ class TestPipelineComposability(MultiProcessTestCase):
         num_microbatches,
     ):
         return ManualPipelineStage(
-            module=model,
-            stage_id=stage_id,
+            submodule=model,
+            stage_index=stage_id,
             num_stages=num_stages,
             device=device,
-            group=group,
             num_microbatches=num_microbatches,
             input_args=inputs,
+            group=group,
         )
 
     def _init_device_mesh(self, mesh_shape, mesh_dim_names):
