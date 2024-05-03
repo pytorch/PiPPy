@@ -96,7 +96,7 @@ def run(args):
     else:
         out = schedule.step()
 
-    dist.destroy_process_group()
+    dist.barrier()
     print(f"Rank {args.rank} completes")
 
 
