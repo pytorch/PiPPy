@@ -9,27 +9,13 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy import pipeline
-from pippy import SplitPoint, annotate_split_points
+from pippy import pipeline, SplitPoint
 from pippy.PipelineSchedule import ScheduleGPipe
 from pippy.PipelineStage import PipelineStage
 
 from transformers import GPT2ForSequenceClassification, GPT2Config
 
 from hf_utils import generate_inputs_for_model, get_number_of_params
-
-
-def add_split_points(gpt2, nranks):
-    decoders_per_rank = (gpt2.config.n_layer + nranks - 1) // nranks
-    print(f"decoders_per_rank = {decoders_per_rank}")
-    nstages = 1
-    for i in range(1, gpt2.config.n_layer // decoders_per_rank):
-        annotate_split_points(
-            gpt2,
-            {f'transformer.h.{i * decoders_per_rank}': SplitPoint.BEGINNING},
-        )
-        nstages += 1
-    assert nstages == nranks, f"nstages = {nstages} nranks = {nranks}"
 
 
 def run(args):
@@ -55,25 +41,30 @@ def run(args):
     example_inputs = generate_inputs_for_model(
         model_class, gpt2, model_name, args.batch_size, args.device)
 
+    split_policy = None
+    split_spec = None
+
     if args.autosplit:
         # Automatic split
         from pippy import split_into_equal_size
-        gpt2_pipe = pipeline(
-            gpt2,
-            num_chunks=args.chunks,
-            example_args=(),
-            example_kwargs=example_inputs,
-            split_policy=split_into_equal_size(args.world_size),
-        )
+        split_policy = split_into_equal_size(args.world_size)
     else:
-        # Manually annotate split points
-        add_split_points(gpt2, args.world_size)
-        gpt2_pipe = pipeline(
-            gpt2,
-            num_chunks=args.chunks,
-            example_args=(),
-            example_kwargs=example_inputs,
-        )
+        # Use manual split spec
+        decoders_per_rank = (gpt2.config.n_layer + args.world_size - 1) // args.world_size
+        print(f"decoders_per_rank = {decoders_per_rank}")
+        split_spec = {
+            f'transformer.h.{i * decoders_per_rank}': SplitPoint.BEGINNING for i in range(1, args.world_size)
+        }
+
+    # Only one of `split_spec` and `split_policy` is used
+    gpt2_pipe = pipeline(
+        gpt2,
+        num_chunks=args.chunks,
+        example_args=(),
+        example_kwargs=example_inputs,
+        split_spec=split_spec,
+        split_policy=split_policy,
+    )
 
     assert gpt2_pipe.num_stages == args.world_size
     if args.rank == 0:
@@ -96,6 +87,10 @@ def run(args):
     else:
         out = schedule.step()
 
+    # Ideally we shouldn't need this barrier, but since this example only has
+    # one iteration, it's added for now to prevent the first few ranks from
+    # exiting before the last few ranks finish.
+    dist.barrier()
     print(f"Rank {args.rank} completes")
 
 
