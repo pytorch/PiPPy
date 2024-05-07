@@ -21,18 +21,29 @@ logger = logging.getLogger(__name__)
 
 
 class RootArgPlaceholder:
+    """
+    Placeholder for model-level inputs.
+    """
+
     pass
 
 
 class RecvInfo:
+    """
+    Represents a stage input.
+    """
+
     def __init__(
         self,
         input_name: str,
         source: int,
         buffer: torch.Tensor,
     ):
+        # Name of this input
         self.input_name = input_name
+        # Stage index of the source of this input
         self.source = source
+        # Buffer to receive the input into.
         self.buffer = buffer
 
     def __repr__(self):
@@ -47,6 +58,9 @@ def _make_tensor_from_meta(
     example: FakeTensor,
     device: torch.device,
 ) -> torch.Tensor:
+    """
+    Create a real tensor from a fake tensor.
+    """
     return torch.empty(
         example.size(),
         dtype=example.dtype,
@@ -56,6 +70,11 @@ def _make_tensor_from_meta(
 
 
 class PipelineStageBase(ABC):
+    """
+    Base class for pipeline stages.
+    Implements common methods used by both the `PipelineStage` used by the tracing frontend and `ManualPipelineStage`.
+    """
+
     def __init__(
         self,
         submodule: torch.nn.Module,
@@ -65,6 +84,17 @@ class PipelineStageBase(ABC):
         num_microbatches: int,
         group: Optional[dist.ProcessGroup] = None,
     ):
+        """
+        Args:
+            submodule (torch.nn.Module): The module to be executed in this stage.
+            stage_index (int): The index of this stage.
+            num_stages (int): The total number of stages in this pipeline.
+            device (torch.device): The device to run this stage on.
+            num_microbatches (int): The number of microbatches to be run with this stage.
+            group (Optional[dist.ProcessGroup]): The process group to use for communication.
+                If `None`, the default process group will be used.
+                Default: `None`.
+        """
         super().__init__()
         if stage_index >= num_stages:
             raise ValueError(
@@ -122,6 +152,9 @@ class PipelineStageBase(ABC):
 
     @property
     def has_backward(self) -> bool:
+        """
+        Returns true if this stage has a backward pass.
+        """
         return self._has_backward
 
     @has_backward.setter
@@ -130,16 +163,25 @@ class PipelineStageBase(ABC):
 
     @property
     def is_first(self):
+        """
+        Returns true if this stage is the first stage in the pipeline.
+        """
         return self.stage_index == 0
 
     @property
     def is_last(self):
+        """
+        Returns true if this stage is the last stage in the pipeline.
+        """
         return self.stage_index == self.num_stages - 1
 
     def _create_grad_send_info(
         self,
         args_recv_info: Tuple,
     ) -> List[Optional[int]]:
+        """
+        Create a list of stage indices to send gradients to.
+        """
         grad_send_info: List[Optional[int]] = []
 
         def map_recv_to_send(a):
@@ -327,6 +369,10 @@ class PipelineStageBase(ABC):
         self,
         recv_infos: Tuple[InputInfo],
     ):
+        """
+        Map tensors from recv infos to a list.
+        """
+
         def get_recv_tensor(info):
             if isinstance(info, RecvInfo):
                 return info.buffer
@@ -408,6 +454,11 @@ class PipelineStageBase(ABC):
         args: Tuple[Any, ...],
         kwargs: Optional[Dict[str, Any]] = None,
     ):
+        """
+        Perform forward pass on the stage with one microbatch.
+        `args` and `kwargs` are the inputs from *external* to this stage. They
+        applies only to the first stage in most cases.
+        """
         if self.is_first:
             # First stage doesn't need to receive anything
             composite_args = args
@@ -508,6 +559,10 @@ class _PipelineStage(PipelineStageBase):
         device: torch.device,
         group: Optional[dist.ProcessGroup] = None,
     ):
+        """
+        Create a pipeline stage given a stage_module to be wrapped by this stage
+        and a `pipe_info` describing the stage relationship of the pipeline.
+        """
         PipelineStageBase.__init__(
             self,
             stage_module,
@@ -578,7 +633,7 @@ class _PipelineStage(PipelineStageBase):
         # Flag per chunk to keep track of whether we have set `requires_grad`
         # for receive buffers. Format: {chunk : Boolean}
         for chunk in range(self.chunks):
-            self.args_recv_info[chunk] = self._create_act_recv_buffers()
+            self.args_recv_info[chunk] = self._create_act_recv_info()
             self.set_requires_grad[chunk] = False
 
         # Send info during forward for each activation
@@ -588,14 +643,21 @@ class _PipelineStage(PipelineStageBase):
         self,
         submod_name: str,
     ):
+        """
+        Given a submodule name, return the stage index of the submodule.
+        """
         if submod_name not in self.submod_to_stage_index:
             raise AssertionError(f"Stage id of {submod_name} not found")
 
         return self.submod_to_stage_index[submod_name]
 
-    def _create_act_recv_buffers(
+    def _create_act_recv_info(
         self,
     ):
+        """
+        Create a tuple of `RecvInfo` for inputs to the stage.
+        """
+
         def create_recv_tensor(placeholder, arg_node):
             """
             Create a receive buffer for a placeholder.
@@ -670,6 +732,16 @@ class _PipelineStage(PipelineStageBase):
             return None
 
     def _create_act_send_info(self):
+        """
+        Create a dict of send info for activations.
+        The dict is of the form:
+        {
+            output_index: [dst_rank_0, dst_rank_1, ...],
+            ...
+        }
+        where the list of `dst_rank`s covers the case where an output value may
+        be consumed by multiple stages.
+        """
         # Output index: List of receiver ranks
         act_send_info: Dict[int, List] = {}
         out_idx = 0
@@ -698,6 +770,9 @@ class _PipelineStage(PipelineStageBase):
         self,
         act_send_info: Dict,
     ) -> Tuple[RecvInfo, ...]:
+        """
+        Create a tuple of `RecvInfo` for gradients.
+        """
         # Dict[output_index, RecvInfo]
         grad_recv_info: Dict[int, RecvInfo] = {}
         output_nodes = [
@@ -738,14 +813,7 @@ class _PipelineStage(PipelineStageBase):
         )
         return grad_recv_info_tuple
 
-    def forward(self, *args, **kwargs):
-        raise NotImplementedError(
-            "forward() function of PipelineStage is deprecated; please create a "
-            "PipelineSchedule and call step(input) instead."
-        )
 
-
-# Backward compatibility support for creation out of Pipe
 class PipelineStage(_PipelineStage):
     def __init__(
         self,
@@ -754,6 +822,9 @@ class PipelineStage(_PipelineStage):
         device: torch.device,
         group: dist.ProcessGroup = None,
     ):
+        """
+        Create a pipeline stage given a `Pipe` (representing the whole pipeline) and a stage index.
+        """
         # Find my stage module
         stage_module = pipe.get_stage_module(stage_index)
         # Get my pipe info
