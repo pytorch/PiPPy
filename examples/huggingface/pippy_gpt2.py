@@ -11,7 +11,7 @@ import torch.distributed as dist
 
 from pippy import pipeline, SplitPoint
 from pippy.PipelineSchedule import ScheduleGPipe
-from pippy.PipelineStage import PipelineStage
+from pippy import PipelineStage
 
 from transformers import GPT2ForSequenceClassification, GPT2Config
 

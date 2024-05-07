@@ -8,6 +8,7 @@ from ._IR import (
     pipeline,
     SplitPoint,
 )
+from ._PipelineStage import PipelineStage
 from .ManualPipelineStage import ManualPipelineStage
 from .ModelSplit import split_into_equal_size, split_on_size_threshold
 from .PipelineSchedule import (
@@ -16,7 +17,6 @@ from .PipelineSchedule import (
     ScheduleInterleaved1F1B,
     ScheduleLoopedBFS,
 )
-from .PipelineStage import PipelineStage
 
 
 __all__ = [
