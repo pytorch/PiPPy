@@ -6,9 +6,7 @@ import os
 import torch
 import torch.distributed as dist
 
-from pippy import pipeline
-from pippy import annotate_split_points, SplitPoint, pipeline
-from pippy.PipelineStage import PipelineStage
+from pippy import pipeline, PipelineStage, annotate_split_points, SplitPoint
 
 
 class IterationBlock(torch.nn.Module):

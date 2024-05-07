@@ -12,7 +12,7 @@ import torch.distributed as dist
 from pippy import pipeline
 from pippy import SplitPoint, annotate_split_points
 from pippy.PipelineSchedule import ScheduleGPipe
-from pippy.PipelineStage import PipelineStage
+from pippy import PipelineStage
 
 from diffusers import UNet2DModel
 
