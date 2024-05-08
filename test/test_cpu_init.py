@@ -7,7 +7,7 @@ import pippy
 
 import torch
 import torch.distributed as dist
-from pippy import pipe_split, pipeline, PipelineStage
+from pippy import pipe_split, pipeline, PipelineStage, ScheduleGPipe
 
 
 pippy.microbatch._debug_mask_minibatches = True
@@ -31,7 +31,10 @@ class ExampleCode(torch.nn.Module):
         x = torch.mm(x, self.mm_param)
         x = torch.relu(x)
         pipe_split()
+        # Test change of tensor creation device after tracing
+        b = torch.zeros(batch_size, d_hid, device=x.device)
         x = self.lin(x)
+        x = x + b
         x = torch.relu(x)
         return x
 
@@ -55,16 +58,20 @@ def run_worker(args):
         device=args.device,
     )
 
+    # Attach to a schedule
+    schedule = ScheduleGPipe(
+        stage,
+        args.chunks,
+    )
+
     # Create real input on real device
     x = torch.randn(batch_size, d_hid, device=args.device)
 
     # Run
     if args.rank == 0:
-        stage(x)
-    elif args.rank == args.world_size - 1:
-        out = stage()
+        schedule.step(x)
     else:
-        stage()
+        out = schedule.step()
 
     dist.barrier()
     print(f"Rank {args.rank} completes")

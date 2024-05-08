@@ -53,6 +53,8 @@ jobs:
         run: torchrun --nproc-per-node 4 test/test_autosplit.py
       - name: Test skip connection support
         run: torchrun --nproc-per-node 4 test/test_skip_conn.py
+      - name: Test trace on different device
+        run: torchrun --nproc-per-node 2 test/test_cpu_init.py
       - name: Test Composability
         run: python test/test_composability.py
       - name: Run example
