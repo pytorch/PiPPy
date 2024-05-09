@@ -327,7 +327,7 @@ class TestPipelineSchedule(MultiProcessTestCase):
         ]
 
         schedule = Schedule1F1B(stage, num_microbatches)
-        schedule.step_microbatches(microbatches)
+        schedule._step_microbatches(microbatches)
         dist.barrier()
 
     @skip_if_lt_x_gpu(4)
@@ -358,7 +358,7 @@ class TestPipelineSchedule(MultiProcessTestCase):
             stages,
             num_microbatches,
         )
-        schedule.step_microbatches(microbatches)
+        schedule._step_microbatches(microbatches)
 
         # num local pipeline stages == world_size
         num_microbatches = 8
@@ -377,14 +377,14 @@ class TestPipelineSchedule(MultiProcessTestCase):
             stages,
             num_microbatches,
         )
-        schedule.step_microbatches(microbatches)
+        schedule._step_microbatches(microbatches)
 
         # differing microbatch size
         num_microbatches = 64
         microbatches = [
             torch.randn_like(microbatch) for _ in range(num_microbatches)
         ]
-        schedule.step_microbatches(microbatches)
+        schedule._step_microbatches(microbatches)
 
     def test_interleaved_1f1b_negative(self):
         device = torch.device("cpu")
@@ -423,7 +423,7 @@ class TestPipelineSchedule(MultiProcessTestCase):
             microbatches = [
                 torch.randn_like(microbatch) for _ in range(num_microbatches)
             ]
-            schedule.step_microbatches(microbatches)
+            schedule._step_microbatches(microbatches)
 
         # invalid microbatch values
         with self.assertRaises(ValueError):
@@ -431,7 +431,7 @@ class TestPipelineSchedule(MultiProcessTestCase):
             microbatches = [
                 torch.randn_like(microbatch) for _ in range(num_microbatches)
             ]
-            schedule.step_microbatches(microbatches)
+            schedule._step_microbatches(microbatches)
 
     @skip_if_lt_x_gpu(4)
     def test_interleaved_1f1b_with_model_sleep(self):
@@ -500,17 +500,17 @@ class TestPipelineSchedule(MultiProcessTestCase):
         # invalid input length
         with self.assertRaises(ValueError):
             invalid_microbatches = [(i,) for i in range(7)]
-            schedule.step_microbatches(invalid_microbatches)
+            schedule._step_microbatches(invalid_microbatches)
 
         # invalid input shapes
         with self.assertRaises(ValueError):
             invalid_microbatches = [(torch.ones(8, 4, 8))]
-            schedule.step_microbatches(invalid_microbatches)
+            schedule._step_microbatches(invalid_microbatches)
 
         # invalid input type
         with self.assertRaises(TypeError):
             invalid_microbatches = torch.ones(8, 4, 8)
-            schedule.step_microbatches(invalid_microbatches)
+            schedule._step_microbatches(invalid_microbatches)
 
         # invalid loss
         with self.assertRaises(TypeError):
@@ -518,7 +518,7 @@ class TestPipelineSchedule(MultiProcessTestCase):
             microbatches = [
                 torch.randn_like(microbatch) for _ in range(num_microbatches)
             ]
-            schedule.step_microbatches(microbatches, loss=loss)
+            schedule._step_microbatches(microbatches, loss=loss)
 
 
 class UtilTest(unittest.TestCase):

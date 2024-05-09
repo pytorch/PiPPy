@@ -80,7 +80,7 @@ class PipelineSchedule(ABC):
         self._internal_losses.clear()
 
     @abstractmethod
-    def step_microbatches(
+    def _step_microbatches(
         self,
         arg_mbs: Optional[List] = None,
         kwarg_mbs: Optional[List] = None,
@@ -226,7 +226,7 @@ class PipelineScheduleSingle(PipelineSchedule):
     """
     Base class for single-stage schedules.
     Implements the `step` method.
-    Derived classes should implement `step_microbatches`.
+    Derived classes should implement `_step_microbatches`.
     """
 
     def __init__(
@@ -267,7 +267,7 @@ class PipelineScheduleSingle(PipelineSchedule):
             targets_split = None
 
         # Run microbatches
-        self.step_microbatches(args_split, kwargs_split, targets_split, losses)
+        self._step_microbatches(args_split, kwargs_split, targets_split, losses)
 
         # Return merged results per original format
         if self._stage.is_last:
@@ -277,7 +277,7 @@ class PipelineScheduleSingle(PipelineSchedule):
 
 
 class ScheduleGPipe(PipelineScheduleSingle):
-    def step_microbatches(
+    def _step_microbatches(
         self,
         arg_mbs: Optional[List] = None,
         kwarg_mbs: Optional[List] = None,
@@ -356,7 +356,7 @@ class ScheduleGPipe(PipelineScheduleSingle):
 
 
 class Schedule1F1B(PipelineScheduleSingle):
-    def step_microbatches(
+    def _step_microbatches(
         self,
         arg_mbs: Optional[List] = None,
         kwarg_mbs: Optional[List] = None,
@@ -453,7 +453,7 @@ class PipelineScheduleMulti(PipelineSchedule):
     """
     Base class for multi-stage schedules.
     Implements the `step` method.
-    Derived classes should implement `step_microbatches`.
+    Derived classes should implement `_step_microbatches`.
     """
 
     def __init__(
@@ -504,7 +504,7 @@ class PipelineScheduleMulti(PipelineSchedule):
             targets_split = None
 
         # Run microbatches
-        self.step_microbatches(args_split, kwargs_split, targets_split, losses)
+        self._step_microbatches(args_split, kwargs_split, targets_split, losses)
 
         # Return merged results per original format
         for stage in self._stages:
@@ -515,7 +515,7 @@ class PipelineScheduleMulti(PipelineSchedule):
 
 
 class ScheduleLoopedBFS(PipelineScheduleMulti):
-    def step_microbatches(
+    def _step_microbatches(
         self,
         arg_mbs: Optional[List] = None,
         kwarg_mbs: Optional[List] = None,
@@ -596,7 +596,7 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
         self.n_local_stages = len(stages)
         self.rank = stages[0].group_rank
 
-    def step_microbatches(
+    def _step_microbatches(
         self,
         arg_mbs: Optional[List] = None,
         kwarg_mbs: Optional[List] = None,

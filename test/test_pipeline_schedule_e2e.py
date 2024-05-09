@@ -241,14 +241,14 @@ def main(**kwargs):
         ) as _torch_profiler:
             with record_function(schedule):
                 if rank == 0:
-                    my_schedule.step_microbatches(microbatches)
+                    my_schedule._step_microbatches(microbatches)
                 elif rank == world_size - 1:
                     losses = []
-                    output = my_schedule.step_microbatches(
+                    output = my_schedule._step_microbatches(
                         target_mbs=target_mbs, losses=losses
                     )
                 else:
-                    my_schedule.step_microbatches()
+                    my_schedule._step_microbatches()
         logger.info(f"====== Rank {rank} finished {schedule} ======")
 
 
