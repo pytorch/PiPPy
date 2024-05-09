@@ -191,7 +191,7 @@ class TestPipelineComposability(MultiProcessTestCase):
             n_microbatches=num_microbatches,
         )
         microbatches = [input1.clone() for _ in range(8)]
-        pipeline_schedule.step_microbatches(arg_mbs=microbatches)
+        pipeline_schedule._step_microbatches(arg_mbs=microbatches)
         print(f"{self.rank} finished pipeline step")
 
         # all reduce
@@ -322,7 +322,7 @@ class TestPipelineComposability(MultiProcessTestCase):
             else:
                 raise RuntimeError(f"unsupported schedule {schedule_name}")
 
-        pipeline_schedule.step_microbatches(
+        pipeline_schedule._step_microbatches(
             arg_mbs=input_mb, target_mbs=input_mb
         )
 
