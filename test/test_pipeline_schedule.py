@@ -164,8 +164,8 @@ class TestPipelineSchedule(MultiProcessTestCase):
         num_stages=None,
     ):
         return ManualPipelineStage(
-            module=model,
-            stage_id=self.rank if stage_id is None else stage_id,
+            submodule=model,
+            stage_index=self.rank if stage_id is None else stage_id,
             num_stages=self.world_size if num_stages is None else num_stages,
             input_args=inputs,
             device=device,

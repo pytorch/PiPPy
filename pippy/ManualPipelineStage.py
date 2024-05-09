@@ -21,20 +21,24 @@ METADATA_TENSOR_LEN = 100
 PLACEHOLDER_VAL = -1
 
 
-def create_buffers(
+def create_empty_tensors(
     tensor: Union[torch.Tensor, List[torch.tensor]], device: torch.device
 ) -> List[torch.Tensor]:
     """
-    Creates buffers for a given tensor on a specified device.
-    This function takes as input a tensor or a list of tensors and returns a tensor or a list of tensors (respectively)
-    of the same shape, but located on the specified device and uninitialized (i.e., filled with arbitrary data).
+    Creates a list of empty tensors with the same properties (like shape and dtype) as the input tensor(s),
+    and places them on the specified device.
+    Args:
+        tensor (Union[torch.Tensor, List[torch.tensor]]): The input tensor(s).
+        device (torch.device): The device where the new tensors will be placed.
+    Returns:
+        List[torch.Tensor]: A list of empty tensors with the same properties as the input tensor(s).
     """
     if isinstance(tensor, torch.Tensor):
         return [torch.empty_like(tensor, device=device)]
     elif isinstance(tensor, (list, tuple)):
         return [torch.empty_like(t, device=device) for t in tensor]
     raise TypeError(
-        f"Unsupported input type {type(tensor)} cannot create buffers"
+        f"Unsupported type {type(tensor)} cannot create empty tensors"
     )
 
 
@@ -157,7 +161,7 @@ def get_stage_shapes(
         # perform forward
         # TODO: if forward fails raise a more descriptive error explaining which stage failed
         fwd_outputs = model(*example_fwd_inputs)
-        fwd_outputs = create_buffers(fwd_outputs, device)
+        fwd_outputs = create_empty_tensors(fwd_outputs, device)
         shapes["outputs"] = [fwd_output.shape for fwd_output in fwd_outputs]
 
         # send shape dims
@@ -172,19 +176,36 @@ def get_stage_shapes(
 
 
 class ManualPipelineStage(PipelineStageBase):
+    """
+    A class representing a pipeline stage in a pipeline parallelism setup.
+    This class is created manually by providing a example input (and optionally output)
+    as opposed to the PipelineStage class that is outputed from pipeline().
+    This class extends the `PipelineStageBase` class and can similarly be used
+    in `PipelineScheule`.
+    Args:
+        submodule (nn.Module): The PyTorch module wrapped by this stage.
+        stage_index (int): The ID of this stage.
+        num_stages (int): The total number of stages.
+        device (torch.device): The device where this stage is located.
+        num_microbatches (int): The number of microbatches to use.
+        input_args (Union[torch.Tensor, List[torch.tensor]], optional): The input arguments for the submodule.
+        output_args (Union[torch.Tensor, List[torch.tensor]], optional): The output arguments for the submodule.
+        group (dist.ProcessGroup, optional): The process group for distributed training. If None, default group.
+    """
+
     def __init__(
         self,
-        module: nn.Module,
-        stage_id: int,
+        submodule: nn.Module,
+        stage_index: int,
         num_stages: int,
         device: torch.device,
         num_microbatches: int,
-        group: dist.ProcessGroup = None,
-        input_args: Optional[Union[torch.Tensor, List[torch.tensor]]] = None,
+        input_args: Union[torch.Tensor, List[torch.tensor]],
         output_args: Optional[Union[torch.Tensor, List[torch.tensor]]] = None,
+        group: dist.ProcessGroup = None,
     ):
         super().__init__(
-            module, stage_id, num_stages, device, num_microbatches, group
+            submodule, stage_index, num_stages, device, num_microbatches, group
         )
         self.submod.to(self.device)
         # When we materialize the model partition on cuda, we call reset_parameters() if it is available
@@ -192,16 +213,18 @@ class ManualPipelineStage(PipelineStageBase):
         self.inputs: List[torch.tensor] = []
         self.outputs: List[torch.tensor] = []
 
-        if input_args is not None:
-            self.inputs = create_buffers(input_args, device)
+        self.inputs = create_empty_tensors(input_args, device)
 
         if output_args is None:
+            logger.info(
+                "output_args not provided, performing forward using input_args"
+            )
             self.outputs = self.submod(*self.inputs)
             # create buffers for the output so that the data is in the correct
             # shape in order to use in p2p op (send)
-            self.outputs = create_buffers(self.outputs, device)
+            self.outputs = create_empty_tensors(self.outputs, device)
         else:
-            self.outputs = create_buffers(output_args, device)
+            self.outputs = create_empty_tensors(output_args, device)
 
         # this is used in backward
         self.inputs_outputs: Deque[Tuple[Tuple[Any, ...], Any]] = deque()
@@ -314,23 +337,6 @@ class ManualPipelineStage(PipelineStageBase):
             )
 
         return True
-
-    def check_and_format_outputs(self, outputs: Any) -> List[torch.tensor]:
-        # validate the output of the module is a type supported
-        # supported types: tensor, tuple[torch.tensor], list[torch.tensor]
-        if not isinstance(outputs, (torch.Tensor, tuple, list)):
-            raise TypeError(
-                f"Module output of type {type(outputs)} is not supported"
-            )
-        if isinstance(outputs, torch.Tensor):
-            return [outputs]
-        if isinstance(outputs, (tuple, list)) and any(
-            not isinstance(x, torch.Tensor) for x in outputs
-        ):
-            raise TypeError(
-                f"All elements in module output must be torch.tensor instances, but got {[type(x) for x in outputs]}"
-            )
-        return outputs
 
 
 def validate_stage_shapes(pipeline_stages: List[ManualPipelineStage]):
