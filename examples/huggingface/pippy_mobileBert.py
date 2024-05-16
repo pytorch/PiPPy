@@ -8,26 +8,11 @@ import os
 
 import torch
 import torch.distributed as dist
+from torch.distributed.pipelining import pipeline, PipelineStage, ScheduleGPipe, SplitPoint
 
-from pippy import pipeline
-from pippy import SplitPoint, annotate_split_points
-from pippy.PipelineSchedule import ScheduleGPipe
-from pippy import PipelineStage
-
-from transformers import MobileBertForMaskedLM, MobileBertConfig
+from transformers import MobileBertModel, MobileBertConfig
 
 from hf_utils import generate_inputs_for_model, get_number_of_params
-
-
-def add_split_points(mobilebert, nranks):
-    # The last rank carries LM head
-    annotate_split_points(
-        mobilebert, {"cls": SplitPoint.BEGINNING})
-    # The rest ranks divide the 24 layers
-    layers_per_rank = mobilebert.config.num_hidden_layers // (nranks - 1)
-    for i in range(1, nranks - 1):
-        annotate_split_points(
-            mobilebert, {f"mobilebert.encoder.layer.{i * layers_per_rank}": SplitPoint.BEGINNING})
 
 
 def run(args):
@@ -36,8 +21,8 @@ def run(args):
     print("Using device:", args.device)
 
     # Create model
-    model_class = MobileBertForMaskedLM
-    model_name = "MobileBertForMaskedLM"
+    model_class = MobileBertModel
+    model_name = "MobileBertModel"
     mobilebert = model_class(config)
     mobilebert.to(args.device)
     mobilebert.eval()
@@ -51,24 +36,27 @@ def run(args):
         model_class, mobilebert, model_name, args.batch_size, args.device)
     input_ids = example_inputs["input_ids"]
 
-    # Annotate split points
-    add_split_points(mobilebert, args.world_size)
+    # Split points
+    split_spec = {}
+    layers_per_rank = mobilebert.config.num_hidden_layers // args.world_size
+    for i in range(1, args.world_size):
+        split_spec[f"encoder.layer.{i * layers_per_rank}"] = SplitPoint.BEGINNING
 
     # Create pipeline
-    mobilebert_pipe = pipeline(
+    pipe = pipeline(
         mobilebert,
         num_chunks=args.chunks,
         example_args=(input_ids, ),
+        split_spec=split_spec,
     )
 
-    assert mobilebert_pipe.num_stages == args.world_size, f"nstages = {mobilebert_pipe.num_stages} nranks = {args.world_size}"
-    if args.rank == 0:
-        for i, sm in enumerate(mobilebert_pipe.split_gm.children()):
-            print(f"Pipeline stage {i} {get_number_of_params(sm) // 10 ** 6}M params")
+    assert pipe.num_stages == args.world_size, f"nstages = {pipe.num_stages} nranks = {args.world_size}"
+    smod = pipe.get_stage_module(args.rank)
+    print(f"Pipeline stage {args.rank} {get_number_of_params(smod) // 10 ** 6}M params")
 
     # Create schedule runtime
     stage = PipelineStage(
-        mobilebert_pipe,
+        pipe,
         args.rank,
         device=args.device,
     )
@@ -82,6 +70,7 @@ def run(args):
     else:
         out = schedule.step()
 
+    dist.destroy_process_group()
     print(f"Rank {args.rank} completes")
 
 

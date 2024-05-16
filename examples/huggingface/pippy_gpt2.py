@@ -8,10 +8,7 @@ import os
 
 import torch
 import torch.distributed as dist
-
-from pippy import pipeline, SplitPoint
-from pippy.PipelineSchedule import ScheduleGPipe
-from pippy import PipelineStage
+from torch.distributed.pipelining import pipeline, PipelineStage, ScheduleGPipe, SplitPoint
 
 from transformers import GPT2ForSequenceClassification, GPT2Config
 
@@ -53,11 +50,12 @@ def run(args):
         decoders_per_rank = (gpt2.config.n_layer + args.world_size - 1) // args.world_size
         print(f"decoders_per_rank = {decoders_per_rank}")
         split_spec = {
-            f'transformer.h.{i * decoders_per_rank}': SplitPoint.BEGINNING for i in range(1, args.world_size)
+            f'transformer.h.{i * decoders_per_rank}': SplitPoint.BEGINNING
+            for i in range(1, args.world_size)
         }
 
     # Only one of `split_spec` and `split_policy` is used
-    gpt2_pipe = pipeline(
+    pipe = pipeline(
         gpt2,
         num_chunks=args.chunks,
         example_args=(),
@@ -66,14 +64,13 @@ def run(args):
         split_policy=split_policy,
     )
 
-    assert gpt2_pipe.num_stages == args.world_size
-    if args.rank == 0:
-        for i, sm in enumerate(gpt2_pipe.split_gm.children()):
-            print(f"Pipeline stage {i} {get_number_of_params(sm) // 10 ** 6}M params")
+    assert pipe.num_stages == args.world_size, f"nstages = {pipe.num_stages} nranks = {args.world_size}"
+    smod = pipe.get_stage_module(args.rank)
+    print(f"Pipeline stage {args.rank} {get_number_of_params(smod) // 10 ** 6}M params")
 
     # Create schedule runtime
     stage = PipelineStage(
-        gpt2_pipe,
+        pipe,
         args.rank,
         device=args.device,
     )
@@ -87,10 +84,7 @@ def run(args):
     else:
         out = schedule.step()
 
-    # Ideally we shouldn't need this barrier, but since this example only has
-    # one iteration, it's added for now to prevent the first few ranks from
-    # exiting before the last few ranks finish.
-    dist.barrier()
+    dist.destroy_process_group()
     print(f"Rank {args.rank} completes")
 
 

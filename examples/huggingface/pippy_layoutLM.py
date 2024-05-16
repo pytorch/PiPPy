@@ -8,29 +8,11 @@ import os
 
 import torch
 import torch.distributed as dist
+from torch.distributed.pipelining import pipeline, PipelineStage, ScheduleGPipe, SplitPoint
 
-from pippy import pipeline
-from pippy import SplitPoint, annotate_split_points
-from pippy.PipelineSchedule import ScheduleGPipe
-from pippy import PipelineStage
-
-from transformers import LayoutLMForMaskedLM, LayoutLMConfig
+from transformers import LayoutLMModel, LayoutLMConfig
 
 from hf_utils import generate_inputs_for_model, get_number_of_params
-
-
-def add_split_points(layoutlm, nranks):
-    # First stage carries the embedding layer
-    annotate_split_points(
-        layoutlm, {"layoutlm.embeddings": SplitPoint.END})
-    # Last stage carries the LM head
-    annotate_split_points(
-        layoutlm, {"cls": SplitPoint.BEGINNING})
-    # 12 Transformer layers divided over the rest 2 ranks
-    layers_per_rank = layoutlm.config.num_hidden_layers // (nranks - 2)
-    for i in range(1, nranks - 2):
-        annotate_split_points(
-            layoutlm, {f"layoutlm.encoder.layer.{i * layers_per_rank}": SplitPoint.BEGINNING})
 
 
 def run(args):
@@ -39,8 +21,8 @@ def run(args):
     print("Using device:", args.device)
 
     # Create model
-    model_class = LayoutLMForMaskedLM
-    model_name = "LayoutLMForMaskedLM"
+    model_class = LayoutLMModel
+    model_name = "LayoutLMModel"
     layoutlm = model_class(config)
     layoutlm.to(args.device)
     layoutlm.eval()
@@ -54,24 +36,30 @@ def run(args):
         model_class, layoutlm, model_name, args.batch_size, args.device)
     input_ids = example_inputs["input_ids"]
 
-    # Annotate split points
-    add_split_points(layoutlm, args.world_size)
+    # Split points
+    split_spec = {}
+    # First stage carries the embedding layer
+    split_spec["embeddings"] = SplitPoint.END
+    # 12 Transformer layers divided over the rest 3 ranks
+    layers_per_rank = layoutlm.config.num_hidden_layers // (args.world_size - 1)
+    for i in range(1, args.world_size - 1):
+        split_spec[f"encoder.layer.{i * layers_per_rank}"] = SplitPoint.BEGINNING
 
     # Create pipeline
-    layoutlm_pipe = pipeline(
+    pipe = pipeline(
         layoutlm,
         num_chunks=args.chunks,
         example_args=(input_ids, ),
+        split_spec=split_spec,
     )
 
-    assert layoutlm_pipe.num_stages == args.world_size, f"nstages = {layoutlm_pipe.num_stages} nranks = {args.world_size}"
-    if args.rank == 0:
-        for i, sm in enumerate(layoutlm_pipe.split_gm.children()):
-            print(f"Pipeline stage {i} {get_number_of_params(sm) // 10 ** 6}M params")
+    assert pipe.num_stages == args.world_size, f"nstages = {pipe.num_stages} nranks = {args.world_size}"
+    smod = pipe.get_stage_module(args.rank)
+    print(f"Pipeline stage {args.rank} {get_number_of_params(smod) // 10 ** 6}M params")
 
     # Create schedule runtime
     stage = PipelineStage(
-        layoutlm_pipe,
+        pipe,
         args.rank,
         device=args.device,
     )
@@ -85,6 +73,7 @@ def run(args):
     else:
         out = schedule.step()
 
+    dist.destroy_process_group()
     print(f"Rank {args.rank} completes")
 
 

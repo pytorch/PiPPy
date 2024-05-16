@@ -8,11 +8,7 @@ import os
 
 import torch
 import torch.distributed as dist
-
-from pippy import pipeline
-from pippy import SplitPoint, annotate_split_points
-from pippy.PipelineSchedule import ScheduleGPipe
-from pippy import PipelineStage
+from torch.distributed.pipelining import pipeline, PipelineStage, ScheduleGPipe, SplitPoint
 
 from diffusers import UNet2DModel
 
@@ -39,23 +35,23 @@ def run(args):
     # Split model into two stages:
     #   Stage 0: down_blocks + mid_block
     #   Stage 2: up_blocks
-    annotate_split_points(unet, {"mid_block": SplitPoint.END})
+    split_spec = {"mid_block": SplitPoint.END}
 
     # Create pipeline
-    unet_pipe = pipeline(
+    pipe = pipeline(
         unet,
         num_chunks=args.chunks,
         example_args=(noise, timestep),
+        split_spec=split_spec,
     )
 
-    assert unet_pipe.num_stages == args.world_size, f"nstages = {unet_pipe.num_stages} nranks = {args.world_size}"
-    if args.rank == 0:
-        for i, sm in enumerate(unet_pipe.split_gm.children()):
-            print(f"Pipeline stage {i} {get_number_of_params(sm) // 10 ** 6}M params")
+    assert pipe.num_stages == args.world_size, f"nstages = {pipe.num_stages} nranks = {args.world_size}"
+    smod = pipe.get_stage_module(args.rank)
+    print(f"Pipeline stage {args.rank} {get_number_of_params(smod) // 10 ** 6}M params")
 
     # Create schedule runtime
     stage = PipelineStage(
-        unet_pipe,
+        pipe,
         args.rank,
         device=args.device,
     )
@@ -69,6 +65,7 @@ def run(args):
     else:
         out = schedule.step()
 
+    dist.destroy_process_group()
     print(f"Rank {args.rank} completes")
 
 if __name__ == "__main__":
