@@ -7,9 +7,7 @@ import pippy
 
 import torch
 import torch.distributed as dist
-from pippy import pipeline, split_by_graph
-from pippy.PipelineSchedule import ScheduleGPipe
-from pippy.PipelineStage import PipelineStage
+from pippy import pipeline, PipelineStage, ScheduleGPipe, split_by_graph
 
 
 pippy.microbatch._debug_mask_minibatches = True
@@ -48,11 +46,13 @@ def run_worker(args):
 
     x = torch.randn(batch_size, d_hid, device=args.device)
 
+    split_policy = split_by_graph(args.world_size)
+
     pipe = pipeline(
         mod,
         args.chunks,
         example_args=(x,),
-        split_policy=split_by_graph(args.world_size, args.rank),
+        split_policy=split_policy,
     )
 
     # Check returned number of stages

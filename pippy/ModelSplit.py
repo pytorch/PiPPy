@@ -5,6 +5,8 @@ from typing import Callable, Dict, List, Tuple
 import torch
 import torch.fx as fx
 
+from pippy.graphsplit import split_by_graph_with_num_stages
+
 from ._IR import aten_pipe_split_alias
 
 
