@@ -1,0 +1,18 @@
+Metadata-Version: 2.1
+Name: torchpippy
+Version: 0.2.0+cdc0ac6
+Summary: Pipeline Parallelism for PyTorch
+Home-page: https://github.com/pytorch/PiPPy
+Author: PiPPy Team
+License: BSD
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: torch>=2.3.0.dev
+
+
+The PiPPy project stands for Pipeline Parallelism for PyTorch. It consists of a
+compiler and runtime stack for automated parallelism and scaling of PyTorch
+models. PiPPy partitions the code of the model in a pipelined fashion and
+enables multiple micro-batches to execute different parts of the model code
+concurrently. For details, please visit PiPPy's [GitHub
+page](https://github.com/pytorch/PiPPy).
