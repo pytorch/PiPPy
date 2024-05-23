@@ -8,22 +8,11 @@ import os
 
 import torch
 import torch.distributed as dist
-
-from pippy import pipeline
-from pippy import SplitPoint, annotate_split_points
-from pippy.PipelineSchedule import ScheduleGPipe
-from pippy import PipelineStage
+from torch.distributed.pipelining import pipeline, PipelineStage, ScheduleGPipe, SplitPoint
 
 from transformers import GPTNeoForCausalLM, GPTNeoConfig
 
 from hf_utils import generate_inputs_for_model, get_number_of_params
-
-
-def add_split_points(gptneo, nranks):
-    layers_per_rank = gptneo.config.num_hidden_layers // nranks
-    for i in range(1, nranks):
-        annotate_split_points(
-            gptneo, {f"transformer.h.{i * layers_per_rank}": SplitPoint.BEGINNING})
 
 
 def run(args):
@@ -47,24 +36,29 @@ def run(args):
         model_class, gptneo, model_name, args.batch_size, args.device)
 
     # Annotate split points
-    add_split_points(gptneo, args.world_size)
+    layers_per_rank = (gptneo.config.num_layers + args.world_size - 1) // args.world_size
+    print(f"decoders_per_rank = {layers_per_rank}")
+    split_spec = {
+        f'transformer.h.{i * layers_per_rank}': SplitPoint.BEGINNING
+        for i in range(1, args.world_size)
+    }
 
     # Create pipeline
-    gptneo_pipe = pipeline(
+    pipe = pipeline(
         gptneo,
         num_chunks=args.chunks,
         example_args=(),
         example_kwargs=example_inputs,
+        split_spec=split_spec,
     )
 
-    assert gptneo_pipe.num_stages == args.world_size, f"nstages = {gptneo_pipe.num_stages} nranks = {args.world_size}"
-    if args.rank == 0:
-        for i, sm in enumerate(gptneo_pipe.split_gm.children()):
-            print(f"Pipeline stage {i} {get_number_of_params(sm) // 10 ** 6}M params")
+    assert pipe.num_stages == args.world_size, f"nstages = {pipe.num_stages} nranks = {args.world_size}"
+    smod = pipe.get_stage_module(args.rank)
+    print(f"Pipeline stage {args.rank} {get_number_of_params(smod) // 10 ** 6}M params")
 
     # Create schedule runtime
     stage = PipelineStage(
-        gptneo_pipe,
+        pipe,
         args.rank,
         device=args.device,
     )
@@ -78,6 +72,7 @@ def run(args):
     else:
         out = schedule.step()
 
+    dist.destroy_process_group()
     print(f"Rank {args.rank} completes")
 
 

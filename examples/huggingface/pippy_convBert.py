@@ -8,27 +8,11 @@ import os
 
 import torch
 import torch.distributed as dist
-
-from pippy import pipeline
-from pippy import SplitPoint, annotate_split_points
-from pippy.PipelineSchedule import ScheduleGPipe
-from pippy import PipelineStage
+from torch.distributed.pipelining import pipeline, PipelineStage, ScheduleGPipe, SplitPoint
 
 from transformers import ConvBertForMaskedLM, ConvBertConfig
 
 from hf_utils import generate_inputs_for_model, get_number_of_params
-
-
-def add_split_points(convbert, nranks):
-    # The first rank takes embedding
-    annotate_split_points(convbert, {"convbert.embeddings": SplitPoint.END})
-    # The last rank takes generation
-    annotate_split_points(convbert, {"generator_predictions": SplitPoint.BEGINNING})
-    # The rest ranks divide encoder layers
-    layers_per_rank = convbert.config.num_hidden_layers // (nranks - 2)
-    for i in range(1, nranks - 2):
-        annotate_split_points(
-            convbert, {f"convbert.encoder.layer.{i * layers_per_rank}": SplitPoint.BEGINNING})
 
 
 def run(args):
@@ -52,24 +36,32 @@ def run(args):
         model_class, convbert, model_name, args.batch_size, args.device)
     input_ids = example_inputs["input_ids"]
 
-    # Annotate split points
-    add_split_points(convbert, args.world_size)
+    # Split points
+    # The first rank takes embedding
+    split_spec = {}
+    split_spec["convbert.embeddings"] = SplitPoint.END
+    # The last rank takes generation
+    split_spec["generator_predictions"] = SplitPoint.BEGINNING
+    # The rest ranks divide encoder layers
+    layers_per_rank = convbert.config.num_hidden_layers // (args.world_size - 2)
+    for i in range(1, args.world_size - 2):
+            split_spec[f"convbert.encoder.layer.{i * layers_per_rank}"] = SplitPoint.BEGINNING
 
     # Create pipeline
-    convbert_pipe = pipeline(
+    pipe = pipeline(
         convbert,
         num_chunks=args.chunks,
         example_args=(input_ids, ),
+        split_spec=split_spec,
     )
-    nstages = len(list(convbert_pipe.split_gm.children()))
-    assert nstages == args.world_size, f"nstages = {nstages} nranks = {args.world_size}"
-    if args.rank == 0:
-        for i, sm in enumerate(convbert_pipe.split_gm.children()):
-            print(f"Pipeline stage {i} {get_number_of_params(sm) // 10 ** 6}M params")
+
+    assert pipe.num_stages == args.world_size, f"nstages = {pipe.num_stages} nranks = {args.world_size}"
+    smod = pipe.get_stage_module(args.rank)
+    print(f"Pipeline stage {args.rank} {get_number_of_params(smod) // 10 ** 6}M params")
 
     # Create schedule runtime
     stage = PipelineStage(
-        convbert_pipe,
+        pipe,
         args.rank,
         device=args.device,
     )
@@ -83,6 +75,7 @@ def run(args):
     else:
         out = schedule.step()
 
+    dist.destroy_process_group()
     print(f"Rank {args.rank} completes")
 
 

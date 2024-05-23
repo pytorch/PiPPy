@@ -8,22 +8,11 @@ import os
 
 import torch
 import torch.distributed as dist
+from torch.distributed.pipelining import pipeline, PipelineStage, ScheduleGPipe, SplitPoint
 
-from pippy import pipeline
-from pippy import SplitPoint, annotate_split_points
-from pippy.PipelineSchedule import ScheduleGPipe
-from pippy import PipelineStage
-
-from transformers import FNetForMaskedLM, FNetConfig
+from transformers import FNetModel, FNetConfig
 
 from hf_utils import generate_inputs_for_model, get_number_of_params
-
-
-def add_split_points(fnet, nranks):
-    layers_per_rank = fnet.config.num_hidden_layers // nranks
-    for i in range(1, nranks):
-        annotate_split_points(
-            fnet, {f"fnet.encoder.layer.{i * layers_per_rank}": SplitPoint.BEGINNING})
 
 
 def run(args):
@@ -32,8 +21,8 @@ def run(args):
     print("Using device:", args.device)
 
     # Create model
-    model_class = FNetForMaskedLM
-    model_name = "FNetForMaskedLM"
+    model_class = FNetModel
+    model_name = "FNetModel"
     fnet = model_class(config)
     fnet.to(args.device)
     fnet.eval()
@@ -47,24 +36,28 @@ def run(args):
         model_class, fnet, model_name, args.batch_size, args.device)
     input_ids = example_inputs["input_ids"]
 
-    # Annotate split points
-    add_split_points(fnet, args.world_size)
+    # Split points
+    layers_per_rank = fnet.config.num_hidden_layers // args.world_size
+    split_spec = {
+        f"encoder.layer.{i * layers_per_rank}": SplitPoint.BEGINNING
+        for i in range(1, args.world_size)
+    }
 
     # Create pipeline
-    fnet_pipe = pipeline(
+    pipe = pipeline(
         fnet,
         num_chunks=args.chunks,
         example_args=(input_ids, ),
+        split_spec=split_spec,
     )
 
-    assert fnet_pipe.num_stages == args.world_size, f"nstages = {fnet_pipe.num_stages} nranks = {args.world_size}"
-    if args.rank == 0:
-        for i, sm in enumerate(fnet_pipe.split_gm.children()):
-            print(f"Pipeline stage {i} {get_number_of_params(sm) // 10 ** 6}M params")
+    assert pipe.num_stages == args.world_size, f"nstages = {pipe.num_stages} nranks = {args.world_size}"
+    smod = pipe.get_stage_module(args.rank)
+    print(f"Pipeline stage {args.rank} {get_number_of_params(smod) // 10 ** 6}M params")
 
     # Create schedule runtime
     stage = PipelineStage(
-        fnet_pipe,
+        pipe,
         args.rank,
         device=args.device,
     )
@@ -78,6 +71,7 @@ def run(args):
     else:
         out = schedule.step()
 
+    dist.destroy_process_group()
     print(f"Rank {args.rank} completes")
 
 

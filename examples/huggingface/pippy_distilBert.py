@@ -8,26 +8,11 @@ import os
 
 import torch
 import torch.distributed as dist
-
-from pippy import pipeline
-from pippy import SplitPoint, annotate_split_points
-from pippy.PipelineSchedule import ScheduleGPipe
-from pippy import PipelineStage
+from torch.distributed.pipelining import pipeline, PipelineStage, ScheduleGPipe, SplitPoint
 
 from transformers import DistilBertForMaskedLM, DistilBertConfig
 
 from hf_utils import generate_inputs_for_model, get_number_of_params
-
-
-def add_split_points(distilbert, nranks):
-    # The first rank carries the embedding layer
-    annotate_split_points(
-        distilbert, {f"distilbert.embeddings": SplitPoint.END})
-    # 6 Transformer layers divided over the rest 3 ranks
-    layers_per_rank = distilbert.config.num_hidden_layers // (nranks - 1)
-    for i in range(1, nranks - 1):
-        annotate_split_points(
-            distilbert, {f"distilbert.transformer.layer.{i * layers_per_rank}": SplitPoint.BEGINNING})
 
 
 def run(args):
@@ -51,24 +36,30 @@ def run(args):
         model_class, distilbert, model_name, args.batch_size, args.device)
     input_ids = example_inputs["input_ids"]
 
-    # Annotate split points
-    add_split_points(distilbert, args.world_size)
+    # Split points
+    split_spec = {}
+    # The first rank carries the embedding layer
+    split_spec[f"distilbert.embeddings"] = SplitPoint.END
+    # 6 Transformer layers divided over the rest 3 ranks
+    layers_per_rank = distilbert.config.num_hidden_layers // (args.world_size - 1)
+    for i in range(1, args.world_size - 1):
+        split_spec[f"distilbert.transformer.layer.{i * layers_per_rank}"] = SplitPoint.BEGINNING
 
     # Create pipeline
-    distilbert_pipe = pipeline(
+    pipe = pipeline(
         distilbert,
         num_chunks=args.chunks,
         example_args=(input_ids, ),
+        split_spec=split_spec,
     )
 
-    assert distilbert_pipe.num_stages == args.world_size, f"nstages = {distilbert_pipe.num_stages} nranks = {args.world_size}"
-    if args.rank == 0:
-        for i, sm in enumerate(distilbert_pipe.split_gm.children()):
-            print(f"Pipeline stage {i} {get_number_of_params(sm) // 10 ** 6}M params")
+    assert pipe.num_stages == args.world_size, f"nstages = {pipe.num_stages} nranks = {args.world_size}"
+    smod = pipe.get_stage_module(args.rank)
+    print(f"Pipeline stage {args.rank} {get_number_of_params(smod) // 10 ** 6}M params")
 
     # Create schedule runtime
     stage = PipelineStage(
-        distilbert_pipe,
+        pipe,
         args.rank,
         device=args.device,
     )
