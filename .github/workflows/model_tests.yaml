@@ -1,15 +1,13 @@
 name: Model Tests
 # Run models in `examples` folder
 
-# Run when any example is changed
 on:
+  # Run when any example is changed
   pull_request:
     paths:
       - '.github/workflows/model_tests.yaml'
       - 'examples/**'
-
-# Nightly run against pytorch nightly build
-on:
+  # Nightly run against pytorch nightly build
   schedule:
     - cron: "30 11 * * *"   # Everyday 11:30 am UTC, i.e. 4:30 am PST
 
