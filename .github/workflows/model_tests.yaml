@@ -13,6 +13,11 @@ on:
   schedule:
     - cron: "30 11 * * *"   # Everyday 11:30 am UTC, i.e. 4:30 am PST
 
+concurrency:
+  # Cancel CI on previous commit when a new commit is pushed to the same branch
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 defaults:
   run:
     shell: bash -l -eo pipefail {0}
