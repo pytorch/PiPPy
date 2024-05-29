@@ -237,7 +237,7 @@ def main(**kwargs):
             )
         elif schedule == "doraPP":
             my_schedule = ScheduleDoraPP(
-                stage_model_looped, n_microbatches, loss_fn
+                stage_model_looped, n_microbatches, loss_fn, microbatch_size=microbatch_size, model_dim=input_dim,
             )
 
         if _run_profiler:
