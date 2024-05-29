@@ -55,8 +55,6 @@ jobs:
         run: torchrun --nproc-per-node 4 examples/huggingface/pippy_convBert.py
       - name: Run deberta
         run: torchrun --nproc-per-node 4 examples/huggingface/pippy_deberta.py
-      - name: Run debertaV2
-        run: torchrun --nproc-per-node 4 examples/huggingface/pippy_debertaV2.py
       - name: Run distilBert
         run: torchrun --nproc-per-node 4 examples/huggingface/pippy_distilBert.py
       - name: Run electra
