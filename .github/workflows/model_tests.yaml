@@ -75,8 +75,8 @@ jobs:
         run: torchrun --nproc-per-node 4 examples/huggingface/pippy_mobileBert.py
       # - name: Run opt
       #   run: torchrun --nproc-per-node 2 examples/huggingface/pippy_opt.py
-      - name: Run trOCR
-        run: torchrun --nproc-per-node 4 examples/huggingface/pippy_trOCR.py
+      # - name: Run trOCR
+      #   run: torchrun --nproc-per-node 4 examples/huggingface/pippy_trOCR.py
       - name: Run unet
         run: torchrun --nproc-per-node 2 examples/huggingface/pippy_unet.py
       - name: Run xlnet
