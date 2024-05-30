@@ -44,7 +44,7 @@ jobs:
       - name: Install Transformers for getting models
         run: pip install transformers
       - name: Install Diffusers for getting models
-        run: conda install -c conda-forge diffusers
+        run: pip install diffusers
       - name: Run GPT2
         run: torchrun --nproc-per-node 4 examples/huggingface/pippy_gpt2.py
       - name: Run BERT
