@@ -8,18 +8,9 @@ import os
 
 import torch
 import torch.distributed as dist
-
-from pippy import pipeline, PipelineStage, SplitPoint, annotate_split_points
-from pippy.PipelineSchedule import ScheduleGPipe
+from torch.distributed.pipelining import pipeline, PipelineStage, ScheduleGPipe, SplitPoint
 
 from transformers import GPT2ForSequenceClassification, GPT2Config
-
-
-def add_split_points(gpt2, nranks):
-    layers_per_rank = gpt2.config.num_hidden_layers // nranks
-    for i in range(1, nranks):
-        annotate_split_points(
-            gpt2, {f"transformer.h.{i * layers_per_rank}": SplitPoint.BEGINNING})
 
 
 def run(args):
@@ -45,20 +36,27 @@ def run(args):
         requires_grad=False,
     )
 
-    # Annotate split points
-    add_split_points(gpt2, args.world_size)
+    # Split spec
+    decoders_per_rank = (gpt2.config.n_layer + args.world_size - 1) // args.world_size
+    print(f"decoders_per_rank = {decoders_per_rank}")
+    split_spec = {
+        f'transformer.h.{i * decoders_per_rank}': SplitPoint.BEGINNING
+        for i in range(1, args.world_size)
+    }
 
     # Create pipeline
-    gpt2_pipe = pipeline(
+    pipe = pipeline(
         gpt2,
         num_chunks=args.chunks,
         example_args=(example_input,),
+        split_spec=split_spec,
     )
-    assert gpt2_pipe.num_stages == args.world_size, f"nstages = {gpt2_pipe.num_stages} nranks = {args.world_size}"
+
+    assert pipe.num_stages == args.world_size, f"nstages = {pipe.num_stages} nranks = {args.world_size}"
 
     # Create schedule runtime
     stage = PipelineStage(
-        gpt2_pipe,
+        pipe,
         args.rank,
         device=args.device,
     )
