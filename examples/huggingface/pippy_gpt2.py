@@ -21,7 +21,7 @@ def run(args):
     config.n_embd = args.n_embd or config.n_embd
     config.n_layer = args.n_layer or config.n_layer
     config.n_head = args.n_head or config.n_head
-    print("Using device:", args.device)
+    print("[Rank {}] Using device: {}".format(args.rank, args.device))
 
     # Create model
     model_class = GPT2ForSequenceClassification
@@ -38,6 +38,8 @@ def run(args):
     example_inputs = generate_inputs_for_model(
         model_class, gpt2, model_name, args.batch_size, args.device)
 
+    assert not args.autosplit or not args.graphsplit
+
     split_policy = None
     split_spec = None
 
@@ -45,6 +47,10 @@ def run(args):
         # Automatic split
         from pippy import split_into_equal_size
         split_policy = split_into_equal_size(args.world_size)
+    elif args.graphsplit:
+        # Graph-based split
+        from pippy import split_by_graph
+        split_policy = split_by_graph(args.world_size)
     else:
         # Use manual split spec
         decoders_per_rank = (gpt2.config.n_layer + args.world_size - 1) // args.world_size
@@ -106,6 +112,7 @@ if __name__ == "__main__":
     parser.add_argument('--n_layer', type=int, default=None)
     parser.add_argument('--n_head', type=int, default=None)
     parser.add_argument('--autosplit', action="store_true")
+    parser.add_argument('--graphsplit', action="store_true")
 
     args = parser.parse_args()
 

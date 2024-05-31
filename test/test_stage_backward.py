@@ -10,6 +10,7 @@ from pippy._backward import stage_backward
 d_hid = 512
 batch_size = 256
 
+
 # MLP as a stage module
 class MLPModule(torch.nn.Module):
     def __init__(self, d_hid):
