@@ -47,7 +47,6 @@ class Edge:
 MAX_MEMORY_IMBALANCE = 2.5
 MAX_COMMUNICATION_IMBALANCE = 1.1
 SCIPY_TIME_LIMIT_SEC = 30
-PRESOLVE = True
 
 
 """
@@ -82,8 +81,7 @@ def split_by_graph_with_num_stages(
 
     # Pre-process the input graph by merging pairs of nodes that need to be in
     # the same stage. This reduces the size of the instance for the main solver
-    if PRESOLVE:
-        nodes, edges = _split_presolve(nodes, edges)
+    nodes, edges = _split_presolve(nodes, edges)
 
     # Run the splitting algorithm with the specified options
     _split_by_milp(
@@ -376,6 +374,12 @@ def _split_presolve(nodes: List[Node], edges: List[Edge]):
         out_degree[nodes[edge.source]] += 1
         in_degree[nodes[edge.target]] += 1
 
+    # Adjust comm weights of input parameters
+    for edge in edges:
+        src = nodes[edge.source]
+        if in_degree[src] == 0 and src.memory_weight == 0:
+            edge.comm_weight = 0
+
     # Initialize singleton clusters
     clusters: List[List[Node]] = []
     node2cluster: Dict[Node, int] = defaultdict(int)
@@ -395,7 +399,11 @@ def _split_presolve(nodes: List[Node], edges: List[Edge]):
         if in_degree[dst] == 1 and out_degree[dst] == 0:
             return True
         # merge chains of degree-1 nodes
-        if in_degree[src] == 1 and out_degree[src] == 1 and in_degree[dst] == 1:
+        if (
+            out_degree[src] == 1
+            and in_degree[dst] == 1
+            and out_degree[dst] == 1
+        ):
             return True
         return False
 
