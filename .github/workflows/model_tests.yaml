@@ -1,0 +1,87 @@
+name: Model Tests
+# Run models in `examples` folder
+
+on:
+  # Run when any example is changed
+  pull_request:
+    paths:
+      - '.github/workflows/model_tests.yaml'
+      - 'examples/**'
+  # Nightly run against pytorch nightly build
+  schedule:
+    - cron: "30 11 * * *"   # Everyday 11:30 am UTC, i.e. 4:30 am PST
+
+concurrency:
+  # Cancel CI on previous commit when a new commit is pushed to the same branch
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash -l -eo pipefail {0}
+
+jobs:
+  model_tests_4gpu:
+    runs-on: linux.g5.12xlarge.nvidia.gpu
+    strategy:
+      matrix:
+        python-version: ['3.10']
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v3
+      - name: Setup conda env
+        uses: conda-incubator/setup-miniconda@v2
+        with:
+          auto-update-conda: true
+          miniconda-version: "latest"
+          activate-environment: test
+          python-version: ${{ matrix.python-version }}
+      - name: Activate conda env
+        run: conda activate test
+      - name: Install dependencies
+        run: |
+          pip install --pre -r requirements.txt --find-links https://download.pytorch.org/whl/nightly/cu121/torch_nightly.html
+      - name: Install Transformers for getting models
+        run: pip install transformers
+      # - name: Install Diffusers for getting models
+      #   run: pip install diffusers
+      - name: Run GPT2
+        run: torchrun --nproc-per-node 4 examples/huggingface/pippy_gpt2.py
+      - name: Run BERT
+        run: torchrun --nproc-per-node 4 examples/huggingface/pippy_bert.py
+      - name: Run blenderbot
+        run: torchrun --nproc-per-node 4 examples/huggingface/pippy_blenderbot.py
+      - name: Run camemBert
+        run: torchrun --nproc-per-node 4 examples/huggingface/pippy_camemBert.py
+      - name: Run convBert
+        run: torchrun --nproc-per-node 4 examples/huggingface/pippy_convBert.py
+      - name: Run deberta
+        run: torchrun --nproc-per-node 4 examples/huggingface/pippy_deberta.py
+      # - name: Run debertaV2
+      #   run: torchrun --nproc-per-node 4 examples/huggingface/pippy_debertaV2.py
+      - name: Run distilBert
+        run: torchrun --nproc-per-node 4 examples/huggingface/pippy_distilBert.py
+      - name: Run electra
+        run: torchrun --nproc-per-node 4 examples/huggingface/pippy_electra.py
+      - name: Run fnet
+        run: torchrun --nproc-per-node 4 examples/huggingface/pippy_fnet.py
+      - name: Run gptNeo
+        run: torchrun --nproc-per-node 4 examples/huggingface/pippy_gptNeo.py
+      - name: Run layoutLM
+        run: torchrun --nproc-per-node 4 examples/huggingface/pippy_layoutLM.py
+      - name: Run mbart
+        run: torchrun --nproc-per-node 4 examples/huggingface/pippy_mbart.py
+      - name: Run megatronBert
+        run: torchrun --nproc-per-node 4 examples/huggingface/pippy_megatronBert.py
+      - name: Run mobileBert
+        run: torchrun --nproc-per-node 4 examples/huggingface/pippy_mobileBert.py
+      # - name: Run opt
+      #   run: torchrun --nproc-per-node 2 examples/huggingface/pippy_opt.py
+      # - name: Run trOCR
+      #   run: torchrun --nproc-per-node 4 examples/huggingface/pippy_trOCR.py
+      # - name: Run unet
+      #   run: torchrun --nproc-per-node 2 examples/huggingface/pippy_unet.py
+      - name: Run xlnet
+        run: torchrun --nproc-per-node 4 examples/huggingface/pippy_xlnet.py
+      - name: Test CPU init + GPU run
+        run: torchrun --nproc-per-node 4 examples/cpu_init/gpt2_cpu_init.py
