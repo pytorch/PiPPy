@@ -6,7 +6,7 @@ on:
     - main
   pull_request:
     paths:
-      - '.github/workflows/**.yaml'
+      - '.github/workflows/pippy_tests.yaml'
       - 'pippy/**'
       - 'test/**'
       - 'examples/**'
