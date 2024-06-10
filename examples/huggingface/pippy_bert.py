@@ -8,7 +8,7 @@ import os
 
 import torch
 import torch.distributed as dist
-from torch.distributed.pipelining import pipeline, PipelineStage, ScheduleGPipe, SplitPoint
+from torch.distributed.pipelining import pipeline, ScheduleGPipe, SplitPoint
 
 from transformers import BertModel, BertConfig
 
@@ -31,9 +31,9 @@ def run(args):
         print(f"Total number of params = {get_number_of_params(bert) // 10 ** 6}M")
         print(bert)
 
-    # Input configs
-    example_inputs = generate_inputs_for_model(
-        model_class, bert, model_name, args.batch_size, args.device)
+    # Example microbatch inputs
+    example_mb = generate_inputs_for_model(
+        model_class, bert, model_name, args.batch_size // args.chunks, args.device)
 
     # Split points
     layers_per_rank = bert.config.num_hidden_layers // args.world_size
@@ -45,9 +45,8 @@ def run(args):
     # Create pipeline
     pipe = pipeline(
         bert,
-        num_chunks=args.chunks,
-        example_args=(),
-        example_kwargs=example_inputs,
+        mb_args=(),
+        mb_kwargs=example_mb,
         split_spec=split_spec,
     )
 
@@ -56,8 +55,7 @@ def run(args):
     print(f"Pipeline stage {args.rank} {get_number_of_params(smod) // 10 ** 6}M params")
 
     # Create schedule runtime
-    stage = PipelineStage(
-        pipe,
+    stage = pipe.build_stage(
         args.rank,
         device=args.device,
     )
@@ -65,9 +63,13 @@ def run(args):
     # Attach to a schedule
     schedule = ScheduleGPipe(stage, args.chunks)
 
+    # Full batch inputs as in single-worker case
+    inputs = generate_inputs_for_model(
+        model_class, bert, model_name, args.batch_size, args.device)
+
     # Run
     if args.rank == 0:
-        schedule.step(**example_inputs)
+        schedule.step(**inputs)
     else:
         out = schedule.step()
 
