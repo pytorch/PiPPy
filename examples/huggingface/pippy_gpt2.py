@@ -34,9 +34,9 @@ def run(args):
         print(f"GPT-2 total number of params = {get_number_of_params(gpt2) // 10 ** 6}M")
         print(gpt2)
 
-    # Input configs
-    example_inputs = generate_inputs_for_model(
-        model_class, gpt2, model_name, args.batch_size, args.device)
+    # Example microbatch inputs
+    mb_inputs = generate_inputs_for_model(
+        model_class, gpt2, model_name, args.batch_size // args.chunks, args.device)
 
     assert not args.autosplit or not args.graphsplit
 
@@ -45,6 +45,7 @@ def run(args):
 
     if args.autosplit:
         # Automatic split
+        # TODO: Migrate to new auto split algorithms
         from pippy import split_into_equal_size
         split_policy = split_into_equal_size(args.world_size)
     elif args.graphsplit:
@@ -63,9 +64,8 @@ def run(args):
     # Only one of `split_spec` and `split_policy` is used
     pipe = pipeline(
         gpt2,
-        num_chunks=args.chunks,
-        example_args=(),
-        example_kwargs=example_inputs,
+        mb_args=(),
+        mb_kwargs=mb_inputs,
         split_spec=split_spec,
         split_policy=split_policy,
     )
@@ -75,8 +75,7 @@ def run(args):
     print(f"Pipeline stage {args.rank} {get_number_of_params(smod) // 10 ** 6}M params")
 
     # Create schedule runtime
-    stage = PipelineStage(
-        pipe,
+    stage = pipe.build_stage(
         args.rank,
         device=args.device,
     )
@@ -84,9 +83,13 @@ def run(args):
     # Attach to a schedule
     schedule = ScheduleGPipe(stage, args.chunks)
 
+    # Full batch inputs as in single-worker case
+    inputs = generate_inputs_for_model(
+        model_class, gpt2, model_name, args.batch_size, args.device)
+
     # Run
     if args.rank == 0:
-        schedule.step(**example_inputs)
+        schedule.step(**inputs)
     else:
         out = schedule.step()
 
