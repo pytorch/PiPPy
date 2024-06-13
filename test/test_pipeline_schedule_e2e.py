@@ -167,8 +167,8 @@ def main(**kwargs):
     module_list = torch.nn.ModuleList(
         modules=[model for i in range(world_size)]
     )
-    microbatch_size = 8
-    global_batch_size = 64
+    microbatch_size = 1
+    global_batch_size = 8
     assert global_batch_size % microbatch_size == 0
     n_microbatches = int(global_batch_size / microbatch_size)
 
@@ -203,7 +203,7 @@ def main(**kwargs):
         # pipe = pipeline(model, n_microbatches, example_args=(input_args,))
         # stage = PipelineStage(pipe, rank, device)
 
-    print(f"{[sm.stage_index for sm in stage_model_looped]}")
+    print(f"Stage: {rank} {[sm.stage_index for sm in stage_model_looped]}")
 
     x_cuda_empty = torch.empty_like(x, device="cuda")
 
@@ -237,8 +237,7 @@ def main(**kwargs):
             )
         elif schedule == "doraPP":
             my_schedule = ScheduleDoraPP(
-                stage_model_looped, n_microbatches, loss_fn, microbatch_size=microbatch_size, model_dim=input_dim,
-            )
+                stage_model_looped, n_microbatches, loss_fn)
 
         if _run_profiler:
             logger.info(f"====== Rank {rank} profile ======")
