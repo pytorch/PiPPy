@@ -2,42 +2,53 @@
 import os
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from pippy import SplitPoint, annotate_split_points, pipeline, PipelineStage
-from pippy.PipelineSchedule import ScheduleGPipe
+from torch.distributed.pipelining import SplitPoint, pipeline, ScheduleGPipe
 
 # Grab the model
 llama = AutoModelForCausalLM.from_pretrained(
     "meta-llama/Llama-2-7b-chat-hf", low_cpu_mem_usage=True
 )
-tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-2-7b-chat-hf")
+print(llama)
 
-prompts = (
-    "How do you", "I like to", "Can I help", "You need to",
-    "The weather is", "I found a", "What is your", "You are so",
-)  # bs = 8
+tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-2-7b-chat-hf")
 tokenizer.pad_token = tokenizer.eos_token
+mb_prompts = (
+    "How do you", "I like to",
+)  # microbatch size = 2
 
 rank = int(os.environ["RANK"])
 world_size = int(os.environ["WORLD_SIZE"])
 device = torch.device(f"cuda:{rank % torch.cuda.device_count()}")
+torch.distributed.init_process_group(rank=rank, world_size=world_size)
+
 llama.to(device).eval()
-inputs = tokenizer(prompts, return_tensors="pt", padding=True).to(device)
 
 # Cut model by equal number of layers per rank
 layers_per_rank = llama.config.num_hidden_layers // world_size
-for i in range(1, world_size):
-    annotate_split_points(llama,
-        {f"model.layers.{i * layers_per_rank}": SplitPoint.BEGINNING})
+print(f"layers_per_rank = {layers_per_rank}")
+split_spec = {
+    f"model.layers.{i * layers_per_rank}": SplitPoint.BEGINNING
+    for i in range(1, world_size)
+}
 
 # Create a pipeline representation from the model
-llama_pipe = pipeline(llama, world_size, example_args=(inputs["input_ids"],))
+mb_inputs = tokenizer(mb_prompts, return_tensors="pt", padding=True).to(device)
+pipe = pipeline(llama, mb_args=(mb_inputs["input_ids"],))
 
 # Create pipeline stage for each rank
-torch.distributed.init_process_group(rank=rank, world_size=world_size)
-stage = PipelineStage(llama_pipe, rank, device=device)
+stage = pipe.build_stage(rank, device=device)
+
+# Run time inputs
+full_batch_prompts = (
+    "How do you", "I like to", "Can I help", "You need to",
+    "The weather is", "I found a", "What is your", "You are so",
+)  # full batch size = 8
+inputs = tokenizer(full_batch_prompts, return_tensors="pt", padding=True).to(device)
 
 # Attach to a schedule
-schedule = ScheduleGPipe(stage, world_size)
+# number of microbatches = 8 // 2 = 4
+num_mbs = 4
+schedule = ScheduleGPipe(stage, num_mbs)
 
 # Run
 if rank == 0:
