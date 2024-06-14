@@ -1,7 +1,7 @@
 # PiPPy: Pipeline Parallelism for PyTorch
 
 > [!NOTE]
-> PiPPy is currently in alpha state and under extensive development. While the 0.2.0 release is available on [PyPI](https://pypi.org/project/torchpippy/), the GitHub version may have updated or new APIs. For up-to-date examples that work with the GitHub version, please refer to programs run in our [CI](.github/workflows/gpu_tests.yaml).
+> PiPPy has been migrated into [PyTorch](https://github.com/pytorch/pytorch) as a subpackage: [`torch.distributed.pipelining`](https://github.com/pytorch/pytorch/tree/main/torch/distributed/pipelining). You can find the detailed documentation [here](https://pytorch.org/docs/main/distributed.pipelining.html). The current repo mainly serves as a land of [examples](examples/). The PiPPy library code will be removed. Please use the APIs in `torch.distributed.pipelining` instead. Thank you!
 
 [**Why PiPPy?**](#why-pippy)
 | [**Install guide**](#install)
