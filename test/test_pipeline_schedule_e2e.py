@@ -147,11 +147,11 @@ def main(**kwargs):
         local_rank, kwargs["log_level"], init_process_group=init_process_group
     )
 
-    logger.info(
+    print(
         f"====== World Rank {rank}, Local Rank {local_rank}, World Size {world_size}, Device {device} main ======"
     )
 
-    rank_print(f"kwargs are {kwargs}")
+    print(f"kwargs are {kwargs}")
 
     input_dim = 900
     hidden_dim = 800
@@ -165,10 +165,11 @@ def main(**kwargs):
         modules=[model for i in range(world_size)]
     )
     microbatch_size = 8
-    global_batch_size = 64
+    global_batch_size = 80
     assert global_batch_size % microbatch_size == 0
     n_microbatches = int(global_batch_size / microbatch_size)
 
+    print(f"{n_microbatches=}")
     x = torch.randn([microbatch_size, input_dim]).to("cpu")
     unused = torch.ones((1, 1), device="meta")
     input_args = x
@@ -176,7 +177,7 @@ def main(**kwargs):
     if kwargs["stage_type"] == "manual":
         stage_model = ManualPipelineStage(
             module_list[rank],
-            stage_id=rank,
+            stage_index=rank,
             num_stages=world_size,
             device=device,
             input_args=input_args,
@@ -186,7 +187,7 @@ def main(**kwargs):
         stage_model_looped = [
             ManualPipelineStage(
                 module_list[rank],
-                stage_id=(world_size * i) + rank,
+                stage_index=(world_size * i) + rank,
                 num_stages=world_size * world_size,
                 device=device,
                 input_args=input_args,
@@ -194,6 +195,8 @@ def main(**kwargs):
             )
             for i in range(world_size)
         ]
+        for i in range(world_size):
+            print(f"rank: {i}, modules: {len(module_list[rank])} stage_index: {(world_size * i) + rank} num_stages: {world_size * world_size}")
     elif kwargs["stage_type"] == "tracing":
         pass
         # TODO
@@ -219,7 +222,7 @@ def main(**kwargs):
     _run_profiler = kwargs["profiler"]
     _trace_dir = kwargs["trace_dir"]
     for schedule in kwargs["schedules"]:
-        logger.info(f"====== Rank {rank} running schedule {schedule} ======")
+        print(f"====== Rank {rank} running schedule {schedule} ======")
         if schedule == "gpipe":
             my_schedule = ScheduleGPipe(stage_model, n_microbatches, loss_fn)
         elif schedule == "1f1b":
@@ -249,7 +252,7 @@ def main(**kwargs):
                     )
                 else:
                     my_schedule._step_microbatches()
-        logger.info(f"====== Rank {rank} finished {schedule} ======")
+        print(f"====== Rank {rank} finished {schedule} ======")
 
 
 def main_wrapper(rank, local_rank, world_size, kwargs):
