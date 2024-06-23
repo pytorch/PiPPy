@@ -188,15 +188,13 @@ def main(**kwargs):
             ManualPipelineStage(
                 module_list[rank],
                 stage_index=(world_size * i) + rank,
-                num_stages=world_size * world_size,
+                num_stages=2 * world_size,
                 device=device,
                 input_args=input_args,
                 num_microbatches=n_microbatches,
             )
-            for i in range(world_size)
+            for i in range(2)
         ]
-        for i in range(world_size):
-            print(f"rank: {i}, modules: {len(module_list[rank])} stage_index: {(world_size * i) + rank} num_stages: {world_size * world_size}")
     elif kwargs["stage_type"] == "tracing":
         pass
         # TODO

@@ -1,5 +1,5 @@
 # (c) Meta Platforms, Inc. and affiliates. Confidential and proprietary.
-
+import time
 import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
@@ -597,7 +597,7 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
         if n_microbatches % self.number_of_rounds != 0:
             raise ValueError(
                 "Flexible Interleaved 1F1B requires the number of microbatches to be a "
-                f"multiple of the number of rounds ({number_of_rounds}), "
+                f"multiple of the number of rounds ({self.number_of_rounds}), "
                 f"but got {n_microbatches}."
             )
 
@@ -625,6 +625,7 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
 
         cooldown_steps = warmup_steps
 
+        print(f"{self.rank=} {warmup_steps=} {fwd_bwd_steps=} {cooldown_steps=}")
         total_steps = warmup_steps + fwd_bwd_steps + cooldown_steps
 
         def forward_stage_local_index(step):
@@ -644,6 +645,14 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
         # Delay send waits
         sends_to_wait: List[dist.Work] = []
 
+
+        start_time = 0
+        count = 0
+        offset = 0
+
+        fwd_count = 0
+        bwd_count = 0
+
         # Store ops (potentially across steps)
         ops: List[dist.P2POp] = []
         # Warmup Phase (forward only)
@@ -658,6 +667,12 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
             logger.debug(
                 f"Rank {self.rank}: {step=}, {fwd_stage.stage_index=}, {mb_index=}"
             )
+            if start_time == 0:
+                start_time = time.time_ns()
+
+            print(f"dumb rank={self.rank}, op=fwd, stage=warmup, id={forward_stage_local_index(step)}, length=1, mb={fwd_count} {time.time_ns()}")
+            fwd_count += 1
+
 
             with record_function(f"Forward {step}"):
                 ops.extend(fwd_stage.get_fwd_recv_ops())
@@ -708,14 +723,21 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
                     ops.clear()
 
                 # Forward
+                print(f"dumb rank={self.rank}, op=fwd, stage=forward, id={forward_stage_local_index(step)}, length=1, mb={fwd_count} {time.time_ns()}")
+                fwd_count += 1
+
                 output = fwd_stage.forward_one_chunk(arg_mbs[fwd_mb_index], kwarg_mbs[fwd_mb_index])  # type: ignore[index]
                 ops.extend(fwd_stage.get_fwd_send_ops())
                 self._maybe_compute_loss(
                     fwd_stage, output, target_mbs, fwd_mb_index
                 )
 
+                print(f"dumb rank={self.rank}, op=bwd, stage=backward, id={backward_stage_local_index(step)}, length=2, mb={bwd_count} {time.time_ns()}")
+                bwd_count += 1
+
                 # Backward
                 loss = self._maybe_get_loss(bwd_stage, bwd_mb_index)
+
                 bwd_stage.backward_one_chunk(loss=loss)
                 ops.extend(bwd_stage.get_bwd_send_ops())
 
@@ -740,6 +762,9 @@ class ScheduleInterleaved1F1B(PipelineScheduleMulti):
                     ops.clear()
 
                 loss = self._maybe_get_loss(bwd_stage, bwd_mb_index)
+
+                print(f"dumb rank={self.rank}, op=bwd, stage=cooldown, id={backward_stage_local_index(step)}, length=2, mb={bwd_count} {time.time_ns()}")
+                bwd_count += 1
                 bwd_stage.backward_one_chunk(loss=loss)
 
                 ops.extend(bwd_stage.get_bwd_send_ops())
