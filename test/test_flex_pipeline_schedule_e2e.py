@@ -10,16 +10,12 @@ or
 with torchrun (1x2, 1 host with 2 processes):
 torchrun --rdzv-backend=c10d --rdzv-endpoint=localhost:29500 --nnodes=1 --nproc-per-node=2 test_pipeline_schedule_e2e.py
 
-for testing flexible pp schedules, use the (1x4, 1 host with 4 processes) config otherwise will fall back to interleaved 1f1b
-torchrun --rdzv-backend=c10d --rdzv-endpoint=localhost:29500 --nnodes=1 --nproc-per-node=4 test_pipeline_schedule_e2e.py -- --schedules flexible_interleaved_1f1b
-
 MULTIPLE HOSTS:
 
 torchrun --rdzv-backend=c10d --rdzv-endpoint=$HOST_NODE_ADDR --nnodes=$NUM_NODES --nproc-per-node=$NUM_TRAINERS test_pipeline_schedule_e2e.py
 
 e.g. (2x2, 2 hosts with 2 processes)
 torchrun --rdzv-backend=c10d --rdzv-endpoint=node1.example.com:29400 --nnodes=2 --nproc-per-node=2 test_pipeline_schedule_e2e.py
-
 """
 
 import argparse
@@ -152,24 +148,17 @@ def main(**kwargs):
         local_rank, kwargs["log_level"], init_process_group=init_process_group
     )
 
-    logger.info(
+    print(
         f"====== World Rank {rank}, Local Rank {local_rank}, World Size {world_size}, Device {device} main ======"
     )
 
-    rank_print(f"kwargs are {kwargs}")
+    print(f"kwargs are {kwargs}")
 
     microbatch_size = 8
-    global_batch_size = 64
-    # Flexible PP has to be tested on a different n_microbatches value
-    flex_pp_global_batch_size = 80
-
+    global_batch_size = 80
     num_stages_local = 2
-
     assert global_batch_size % microbatch_size == 0
-    assert flex_pp_global_batch_size % microbatch_size == 0
-
     n_microbatches = int(global_batch_size / microbatch_size)
-    n_microbatches_flex_pp = int(flex_pp_global_batch_size / microbatch_size)
 
     input_dim = 900
     hidden_dim = 800
@@ -183,6 +172,7 @@ def main(**kwargs):
         modules=[model for i in range(world_size)]
     )
 
+    print(f"{n_microbatches=}")
     x = torch.randn([microbatch_size, input_dim]).to("cpu")
     unused = torch.ones((1, 1), device="meta")
     input_args = x
@@ -208,19 +198,6 @@ def main(**kwargs):
             )
             for i in range(num_stages_local)
         ]
-
-        flex_pp_stage_model_looped = [
-            ManualPipelineStage(
-                module_list[rank],
-                stage_index=(world_size * i) + rank,
-                num_stages=num_stages_local * world_size,
-                device=device,
-                input_args=input_args,
-                num_microbatches=n_microbatches_flex_pp,
-            )
-            for i in range(num_stages_local)
-        ]
-
     elif kwargs["stage_type"] == "tracing":
         pass
         # TODO
@@ -232,15 +209,9 @@ def main(**kwargs):
     x_cuda_empty = torch.empty_like(x, device="cuda")
 
     microbatches = []
-    flex_pp_microbatches = []
-
     for i in range(n_microbatches):
         unused = torch.ones((1, 1), device="cuda")
         microbatches.append([torch.randn_like(x_cuda_empty)])
-
-    for i in range(n_microbatches_flex_pp):
-        unused = torch.ones((1, 1), device="cuda")
-        flex_pp_microbatches.append([torch.randn_like(x_cuda_empty)])
 
     # Define a loss function
     loss_fn = torch.nn.MSELoss(reduction="sum")
@@ -248,55 +219,31 @@ def main(**kwargs):
         torch.randn(microbatch_size, output_dim, device=device)
         for _ in range(n_microbatches)
     ]
-    target_mbs_flex_pp = [
-        torch.randn(microbatch_size, output_dim, device=device)
-        for _ in range(n_microbatches_flex_pp)
-    ]
 
     _run_profiler = kwargs["profiler"]
     _trace_dir = kwargs["trace_dir"]
-    for schedule in kwargs["schedules"]:
 
-        current_microbatches = microbatches
-        current_target_mbs = target_mbs
+    my_schedule = ScheduleFlexibleInterleaved1F1B(
+        stage_model_looped, n_microbatches, loss_fn
+    )
 
-        logger.info(f"====== Rank {rank} running schedule {schedule} ======")
-        if schedule == "gpipe":
-            my_schedule = ScheduleGPipe(stage_model, n_microbatches, loss_fn)
-        elif schedule == "1f1b":
-            my_schedule = Schedule1F1B(stage_model, n_microbatches, loss_fn)
-        elif schedule == "looped_bfs":
-            my_schedule = ScheduleLoopedBFS(
-                stage_model_looped, n_microbatches, loss_fn
-            )
-        elif schedule == "interleaved_1f1b":
-            my_schedule = ScheduleInterleaved1F1B(
-                stage_model_looped, n_microbatches, loss_fn
-            )
-        elif schedule == "flexible_interleaved_1f1b":
-            my_schedule = ScheduleFlexibleInterleaved1F1B(
-                flex_pp_stage_model_looped, n_microbatches_flex_pp, loss_fn
-            )
-            current_microbatches = flex_pp_microbatches
-            current_target_mbs = target_mbs_flex_pp
+    if _run_profiler:
+        logger.info(f"====== Rank {rank} profile ======")
 
-        if _run_profiler:
-            logger.info(f"====== Rank {rank} profile ======")
-
-        with maybe_run_profiler(
-            _run_profiler, _trace_dir, schedule, rank
-        ) as _torch_profiler:
-            with record_function(schedule):
-                if rank == 0:
-                    my_schedule._step_microbatches(current_microbatches)
-                elif rank == world_size - 1:
-                    losses = []
-                    output = my_schedule._step_microbatches(
-                        target_mbs=current_target_mbs, losses=losses
-                    )
-                else:
-                    my_schedule._step_microbatches()
-        logger.info(f"====== Rank {rank} finished {schedule} ======")
+    with maybe_run_profiler(
+        _run_profiler, _trace_dir, schedule, rank
+    ) as _torch_profiler:
+        with record_function(schedule):
+            if rank == 0:
+                my_schedule._step_microbatches(microbatches)
+            elif rank == world_size - 1:
+                losses = []
+                output = my_schedule._step_microbatches(
+                    target_mbs=target_mbs, losses=losses
+                )
+            else:
+                my_schedule._step_microbatches()
+    print(f"====== Rank {rank} finished {schedule} ======")
 
 
 def main_wrapper(rank, local_rank, world_size, kwargs):
@@ -342,13 +289,6 @@ if __name__ == "__main__":
     )
     parser.add_argument("--profiler", type=bool, default=True)
     parser.add_argument("--trace_dir", type=str, default="./traces")
-    parser.add_argument(
-        "--schedules",
-        type=str,
-        nargs="+",
-        choices=["gpipe", "1f1b", "looped_bfs", "interleaved_1f1b", "flexible_interleaved_1f1b"],
-        default=["interleaved_1f1b"],
-    )
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--stage_type", type=str, default="manual")
     args = parser.parse_args()
