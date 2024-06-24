@@ -1,2 +1,2 @@
 ## Contributing
-Feedback on our APIs, as well as finding bugs, would be very helpful.
+This project has been upstreamed to [PyTorch](https://github.com/pytorch/pytorch) under [`torch.distributed.pipelining`](https://github.com/pytorch/pytorch/tree/main/torch/distributed/pipelining). All future development will happen in PyTorch. Please file issues and pull requests directly to PyTorch following these [contributing guidelines](https://github.com/pytorch/pytorch/blob/main/CONTRIBUTING.md).
