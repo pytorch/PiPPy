@@ -34,10 +34,13 @@ from pippy import (
     ScheduleLoopedBFS,
 )
 
+from pippy.PipelineSchedule import ScheduleDoraPP
+
 from torch.distributed._tensor.device_mesh import init_device_mesh
 from torch.profiler import record_function
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 
 # profiling context manager
@@ -164,8 +167,8 @@ def main(**kwargs):
     module_list = torch.nn.ModuleList(
         modules=[model for i in range(world_size)]
     )
-    microbatch_size = 8
-    global_batch_size = 64
+    microbatch_size = 1
+    global_batch_size = 8
     assert global_batch_size % microbatch_size == 0
     n_microbatches = int(global_batch_size / microbatch_size)
 
@@ -176,7 +179,7 @@ def main(**kwargs):
     if kwargs["stage_type"] == "manual":
         stage_model = ManualPipelineStage(
             module_list[rank],
-            stage_id=rank,
+            stage_index=rank,
             num_stages=world_size,
             device=device,
             input_args=input_args,
@@ -186,7 +189,7 @@ def main(**kwargs):
         stage_model_looped = [
             ManualPipelineStage(
                 module_list[rank],
-                stage_id=(world_size * i) + rank,
+                stage_index=(world_size * i) + rank,
                 num_stages=world_size * world_size,
                 device=device,
                 input_args=input_args,
@@ -200,7 +203,7 @@ def main(**kwargs):
         # pipe = pipeline(model, n_microbatches, example_args=(input_args,))
         # stage = PipelineStage(pipe, rank, device)
 
-    print(f"{[sm.stage_index for sm in stage_model_looped]}")
+    print(f"Stage: {rank} {[sm.stage_index for sm in stage_model_looped]}")
 
     x_cuda_empty = torch.empty_like(x, device="cuda")
 
@@ -232,6 +235,9 @@ def main(**kwargs):
             my_schedule = ScheduleInterleaved1F1B(
                 stage_model_looped, n_microbatches, loss_fn
             )
+        elif schedule == "doraPP":
+            my_schedule = ScheduleDoraPP(
+                stage_model_looped, n_microbatches, loss_fn)
 
         if _run_profiler:
             logger.info(f"====== Rank {rank} profile ======")
@@ -299,7 +305,7 @@ if __name__ == "__main__":
         "--schedules",
         type=str,
         nargs="+",
-        choices=["gpipe", "1f1b", "looped_bfs", "interleaved_1f1b"],
+        choices=["gpipe", "1f1b", "looped_bfs", "interleaved_1f1b","doraPP"],
         default=["interleaved_1f1b"],
     )
     parser.add_argument("--device", type=str, default="cuda")
