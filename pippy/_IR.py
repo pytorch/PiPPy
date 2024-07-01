@@ -1142,6 +1142,7 @@ class Pipe(QualnameMapMixin, torch.nn.Module):
             mod,
             example_args,
             example_kwargs,
+            strict=False,
         )
         return ep
 
