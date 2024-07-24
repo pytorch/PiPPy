@@ -38,6 +38,7 @@ with torch.device("meta"):
         "meta-llama/Llama-2-7b-chat-hf"
     )
 
+llama.eval()
 print(llama)
 
 # Cast the model to FakeTensor with real device (from meta device) because
@@ -60,7 +61,7 @@ fake_ids = fake_mode.from_tensor(real_ids)
 
 # Beginning of distributed
 # [Note 2]: change world size here
-world_size = 4
+world_size = 2
 print(f"{world_size=}")
 
 # Cut model by equal number of layers per rank
@@ -72,7 +73,12 @@ split_spec = {
 }
 
 # Convert model into a pipeline
-pipe = pipeline(llama, mb_args=(fake_ids,), split_spec=split_spec)
+pipe = pipeline(
+    llama,
+    mb_args=(fake_ids,),
+    mb_kwargs={"output_attentions": False, "output_hidden_states": False, "use_cache": False,},
+    split_spec=split_spec,
+)
 
 # Materialize each stage
 # [Note 3]: remove this for loop if you are running this script in a
@@ -81,4 +87,5 @@ for rank in range(world_size):
     stage_module = pipe.get_stage_module(rank)
     print(f"Loading weights into stage {rank}")
     load_weights(stage_module)
+    stage_module.print_readable()
 
