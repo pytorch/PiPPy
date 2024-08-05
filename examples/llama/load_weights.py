@@ -3,7 +3,7 @@
 import json
 import torch
 
-from typing import Optional
+from typing import Callable, Dict, Optional
 
 
 def load_weights(
@@ -37,14 +37,19 @@ def load_weights(
     # files because the stage module is a partition of the full model.
     needed_files = set()
     for param in state_dict.keys():
-        file = weight_map[param]
-        needed_files.add(file)
+        # The file a param is saved in
+        file = weight_map.setdefault(param, None)
+        if file:
+            needed_files.add(file)
 
     # Now we load the needed binary files
     for file in needed_files:
         checkpoint = torch.load(file, weights_only=True)
         for param in state_dict.keys():
-            if weight_map[param] == file:
+            file_having_param = weight_map[param]
+            if file_having_param is None:
+                print(f"Cannot find checkpoint file for {param}, skipping")
+            elif file_having_param == file:
                 state_dict[param] = checkpoint[param]
                 updated_states.setdefault(param, None)
 
@@ -58,4 +63,28 @@ def load_weights(
     # We use `assign=True` because otherwise the properties of the tensors in
     # the current module are preserved.
     stage_module.load_state_dict(state_dict, assign=True)
+
+
+def init_buffers(
+    stage_module: torch.nn.Module,
+    device: torch.device,
+    init_callbacks: Dict[str, Callable],
+):
+    """
+    Initialize buffers of `stage_module` per the callback in `init_callbacks`.
+    `init_callbacks` is a dictionary from a buffer's FQN to its init function.
+    """
+    for name, buf in stage_module.named_buffers():
+        if name in init_callbacks:
+            cb = init_callbacks[name]
+            buf_val = cb(device)
+            # Find the parent module
+            splits = name.split(".")
+            mod = stage_module
+            for atom in splits[: -1]:
+                mod = getattr(mod, atom)
+            mod.register_buffer(
+                splits[-1], buf_val, persistent=False,
+            )
+            print(f"Initialized buffer {name}")
 

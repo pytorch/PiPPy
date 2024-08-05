@@ -28,7 +28,7 @@ from torch.distributed.pipelining import pipeline, SplitPoint
 from torch._subclasses.fake_tensor import FakeTensorMode
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from load_weights import load_weights
+from load_weights import load_weights, init_buffers
 
 # Grab the model in meta/fake mode
 fake_mode = FakeTensorMode(allow_non_fake_inputs=True)
@@ -87,5 +87,7 @@ for rank in range(world_size):
     stage_module = pipe.get_stage_module(rank)
     print(f"Loading weights into stage {rank}")
     load_weights(stage_module)
+    if hasattr(llama, "buf_init_callbacks"):
+        init_buffers(stage_module, "cpu", llama.buf_init_callbacks)
     stage_module.print_readable()
 
