@@ -67,8 +67,9 @@ def load_weights(
 
 def init_buffers(
     stage_module: torch.nn.Module,
-    device: torch.device,
     init_callbacks: Dict[str, Callable],
+    device: torch.device,
+    dtype: Optional[torch.dtype] = None,
 ):
     """
     Initialize buffers of `stage_module` per the callback in `init_callbacks`.
@@ -78,6 +79,8 @@ def init_buffers(
         if name in init_callbacks:
             cb = init_callbacks[name]
             buf_val = cb(device)
+            if dtype:
+                buf_val = buf_val.to(dtype)
             # Find the parent module
             splits = name.split(".")
             mod = stage_module
@@ -86,5 +89,5 @@ def init_buffers(
             mod.register_buffer(
                 splits[-1], buf_val, persistent=False,
             )
-            print(f"Initialized buffer {name}")
+            print(f"Initialized buffer {name}, {buf_val.dtype}, {buf_val.device}")
 

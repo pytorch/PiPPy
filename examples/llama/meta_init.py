@@ -88,6 +88,6 @@ for rank in range(world_size):
     print(f"Loading weights into stage {rank}")
     load_weights(stage_module)
     if hasattr(llama, "buf_init_callbacks"):
-        init_buffers(stage_module, "cpu", llama.buf_init_callbacks)
+        init_buffers(stage_module, llama.buf_init_callbacks, "cpu", torch.float16)
     stage_module.print_readable()
 
