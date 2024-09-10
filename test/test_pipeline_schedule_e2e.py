@@ -10,12 +10,16 @@ or
 with torchrun (1x2, 1 host with 2 processes):
 torchrun --rdzv-backend=c10d --rdzv-endpoint=localhost:29500 --nnodes=1 --nproc-per-node=2 test_pipeline_schedule_e2e.py
 
+for testing flexible pp schedules, use the (1x4, 1 host with 4 processes) config otherwise will fall back to interleaved 1f1b
+torchrun --rdzv-backend=c10d --rdzv-endpoint=localhost:29500 --nnodes=1 --nproc-per-node=4 test_pipeline_schedule_e2e.py -- --schedules flexible_interleaved_1f1b
+
 MULTIPLE HOSTS:
 
 torchrun --rdzv-backend=c10d --rdzv-endpoint=$HOST_NODE_ADDR --nnodes=$NUM_NODES --nproc-per-node=$NUM_TRAINERS test_pipeline_schedule_e2e.py
 
 e.g. (2x2, 2 hosts with 2 processes)
 torchrun --rdzv-backend=c10d --rdzv-endpoint=node1.example.com:29400 --nnodes=2 --nproc-per-node=2 test_pipeline_schedule_e2e.py
+
 """
 
 import argparse
@@ -32,6 +36,7 @@ from pippy import (
     ScheduleGPipe,
     ScheduleInterleaved1F1B,
     ScheduleLoopedBFS,
+    ScheduleFlexibleInterleaved1F1B,
 )
 
 from torch.distributed._tensor.device_mesh import init_device_mesh
@@ -153,6 +158,19 @@ def main(**kwargs):
 
     rank_print(f"kwargs are {kwargs}")
 
+    microbatch_size = 8
+    global_batch_size = 64
+    # Flexible PP has to be tested on a different n_microbatches value
+    flex_pp_global_batch_size = 80
+
+    num_stages_local = 2
+
+    assert global_batch_size % microbatch_size == 0
+    assert flex_pp_global_batch_size % microbatch_size == 0
+
+    n_microbatches = int(global_batch_size / microbatch_size)
+    n_microbatches_flex_pp = int(flex_pp_global_batch_size / microbatch_size)
+
     input_dim = 900
     hidden_dim = 800
     output_dim = 900
@@ -164,10 +182,6 @@ def main(**kwargs):
     module_list = torch.nn.ModuleList(
         modules=[model for i in range(world_size)]
     )
-    microbatch_size = 8
-    global_batch_size = 64
-    assert global_batch_size % microbatch_size == 0
-    n_microbatches = int(global_batch_size / microbatch_size)
 
     x = torch.randn([microbatch_size, input_dim]).to("cpu")
     unused = torch.ones((1, 1), device="meta")
@@ -176,7 +190,7 @@ def main(**kwargs):
     if kwargs["stage_type"] == "manual":
         stage_model = ManualPipelineStage(
             module_list[rank],
-            stage_id=rank,
+            stage_index=rank,
             num_stages=world_size,
             device=device,
             input_args=input_args,
@@ -186,14 +200,27 @@ def main(**kwargs):
         stage_model_looped = [
             ManualPipelineStage(
                 module_list[rank],
-                stage_id=(world_size * i) + rank,
-                num_stages=world_size * world_size,
+                stage_index=(world_size * i) + rank,
+                num_stages=num_stages_local * world_size,
                 device=device,
                 input_args=input_args,
                 num_microbatches=n_microbatches,
             )
-            for i in range(world_size)
+            for i in range(num_stages_local)
         ]
+
+        flex_pp_stage_model_looped = [
+            ManualPipelineStage(
+                module_list[rank],
+                stage_index=(world_size * i) + rank,
+                num_stages=num_stages_local * world_size,
+                device=device,
+                input_args=input_args,
+                num_microbatches=n_microbatches_flex_pp,
+            )
+            for i in range(num_stages_local)
+        ]
+
     elif kwargs["stage_type"] == "tracing":
         pass
         # TODO
@@ -205,9 +232,15 @@ def main(**kwargs):
     x_cuda_empty = torch.empty_like(x, device="cuda")
 
     microbatches = []
+    flex_pp_microbatches = []
+
     for i in range(n_microbatches):
         unused = torch.ones((1, 1), device="cuda")
         microbatches.append([torch.randn_like(x_cuda_empty)])
+
+    for i in range(n_microbatches_flex_pp):
+        unused = torch.ones((1, 1), device="cuda")
+        flex_pp_microbatches.append([torch.randn_like(x_cuda_empty)])
 
     # Define a loss function
     loss_fn = torch.nn.MSELoss(reduction="sum")
@@ -215,10 +248,18 @@ def main(**kwargs):
         torch.randn(microbatch_size, output_dim, device=device)
         for _ in range(n_microbatches)
     ]
+    target_mbs_flex_pp = [
+        torch.randn(microbatch_size, output_dim, device=device)
+        for _ in range(n_microbatches_flex_pp)
+    ]
 
     _run_profiler = kwargs["profiler"]
     _trace_dir = kwargs["trace_dir"]
     for schedule in kwargs["schedules"]:
+
+        current_microbatches = microbatches
+        current_target_mbs = target_mbs
+
         logger.info(f"====== Rank {rank} running schedule {schedule} ======")
         if schedule == "gpipe":
             my_schedule = ScheduleGPipe(stage_model, n_microbatches, loss_fn)
@@ -232,6 +273,12 @@ def main(**kwargs):
             my_schedule = ScheduleInterleaved1F1B(
                 stage_model_looped, n_microbatches, loss_fn
             )
+        elif schedule == "flexible_interleaved_1f1b":
+            my_schedule = ScheduleFlexibleInterleaved1F1B(
+                flex_pp_stage_model_looped, n_microbatches_flex_pp, loss_fn
+            )
+            current_microbatches = flex_pp_microbatches
+            current_target_mbs = target_mbs_flex_pp
 
         if _run_profiler:
             logger.info(f"====== Rank {rank} profile ======")
@@ -241,11 +288,11 @@ def main(**kwargs):
         ) as _torch_profiler:
             with record_function(schedule):
                 if rank == 0:
-                    my_schedule._step_microbatches(microbatches)
+                    my_schedule._step_microbatches(current_microbatches)
                 elif rank == world_size - 1:
                     losses = []
                     output = my_schedule._step_microbatches(
-                        target_mbs=target_mbs, losses=losses
+                        target_mbs=current_target_mbs, losses=losses
                     )
                 else:
                     my_schedule._step_microbatches()
@@ -299,7 +346,7 @@ if __name__ == "__main__":
         "--schedules",
         type=str,
         nargs="+",
-        choices=["gpipe", "1f1b", "looped_bfs", "interleaved_1f1b"],
+        choices=["gpipe", "1f1b", "looped_bfs", "interleaved_1f1b", "flexible_interleaved_1f1b"],
         default=["interleaved_1f1b"],
     )
     parser.add_argument("--device", type=str, default="cuda")

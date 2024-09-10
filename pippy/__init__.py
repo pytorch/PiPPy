@@ -20,6 +20,7 @@ from .PipelineSchedule import (
     ScheduleGPipe,
     ScheduleInterleaved1F1B,
     ScheduleLoopedBFS,
+    ScheduleFlexibleInterleaved1F1B,
 )
 
 
@@ -37,6 +38,7 @@ __all__ = [
     "ScheduleGPipe",
     "ScheduleInterleaved1F1B",
     "ScheduleLoopedBFS",
+    "ScheduleFlexibleInterleaved1F1B",
     "ManualPipelineStage",
     "ArgsChunkSpec",
     "KwargsChunkSpec",
